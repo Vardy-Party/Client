@@ -87,7 +87,7 @@ public class StreamResolverTests
                     Content = new StringContent(json)
                 };
             });
-
+        httpClient = new HttpClient(httpMessageHandlerMock.Object);
 
         var healthMock = new Mock<IStreamHealthChecker>();
         healthMock.Setup(h =>

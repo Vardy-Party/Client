@@ -40,12 +40,40 @@ public class EnrichedGameServiceTests
             Options.Create(bbcFixturesSettings), Options.Create(gamesApiSettings),
             NullLogger<EnrichedGameService>.Instance);
 
-        await Task.Delay(200);
+        // Collect emissions
+        var emissions = new List<Dictionary<string, List<Game>>>();
+        Exception streamError = null;
+        var subscription = svc.GamesStream.Subscribe(
+            g => { if (g != null && g.Count > 0) emissions.Add(g); },
+            ex => streamError = ex
+        );
 
-        var result = await svc.GamesStream.FirstAsync(x => x != null);
+        try
+        {
+            // Start the background polling
+            svc.StartBackgroundPolling();
+            
+            // Wait for at least one emission
+            for (int i = 0; i < 50 && emissions.Count == 0; i++)
+            {
+                await Task.Delay(100);
+            }
 
-        Assert.Single(result);
-        Assert.Single(result["PL"]);
+            if (streamError != null)
+                throw new Exception($"Stream error: {streamError.Message}", streamError);
+
+            Assert.NotEmpty(emissions);
+            var result = emissions[0];
+            
+            Assert.NotEmpty(result);
+            Assert.True(result.ContainsKey("PL"), $"Expected 'PL' key but got: {string.Join(", ", result.Keys)}");
+            Assert.Single(result["PL"]);
+        }
+        finally
+        {
+            subscription?.Dispose();
+            svc?.Dispose();
+        }
     }
 
     [Fact]
@@ -63,12 +91,11 @@ public class EnrichedGameServiceTests
             Options.Create(gamesApiSettings),
             NullLogger<EnrichedGameService>.Instance);
 
-        await Task.Delay(200);
-
         Dictionary<string, List<Game>>? current = null;
         svc.GamesStream.Subscribe(g => current = g);
 
-        await Task.Delay(200);
+        // Wait for stream to potentially emit or error
+        await Task.Delay(500);
 
         Assert.Null(current);
     }

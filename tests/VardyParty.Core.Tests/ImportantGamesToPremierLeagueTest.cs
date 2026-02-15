@@ -42,27 +42,48 @@ public class ImportantGamesToPremierLeagueTest
         var svc = new EnrichedGameService(apiMock.Object, bbcMock.Object, matcher, Options.Create(bbcFixturesSettings),
             Options.Create(gamesApiSettings), NullLogger<EnrichedGameService>.Instance);
 
-        // Act
-        // svc.RefreshAsync() was removed. Constructor starts polling.
+        // Collect emissions
+        var emissions = new List<Dictionary<string, List<Game>>>();
+        Exception streamError = null;
+        var subscription = svc.GamesStream.Subscribe(
+            g => { if (g != null && g.Count > 0) emissions.Add(g); },
+            ex => streamError = ex
+        );
 
-        // Wait for background processing (constructor task)
-        await Task.Delay(300);
+        try
+        {
+            // Act - Start background polling and wait for emission
+            svc.StartBackgroundPolling();
+            
+            for (int i = 0; i < 50 && emissions.Count == 0; i++)
+            {
+                await Task.Delay(100);
+            }
 
-        var result = await svc.GamesStream.FirstAsync(x => x != null);
+            if (streamError != null)
+                throw new Exception($"Stream error: {streamError.Message}", streamError);
 
-        // Assert enrichment
-        if (!result.ContainsKey("Important Games"))
-            // If timing issue, fail gracefully or retry?
-            Assert.Fail("Games not loaded in time");
+            // Assert
+            Assert.NotEmpty(emissions);
+            var result = emissions[0];
+            
+            Assert.NotEmpty(result);
+            Assert.True(result.ContainsKey("Important Games"), $"Expected 'Important Games' key but got: {string.Join(", ", result.Keys)}");
 
-        var enriched = result["Important Games"].First();
-        Assert.Equal("Real Madrid", enriched.Home);
-        Assert.Equal("Barcelona", enriched.Away);
-        Assert.Equal("Premier League", enriched.BBCLeague);
+            var enriched = result["Important Games"].First();
+            Assert.Equal("Real Madrid", enriched.Home);
+            Assert.Equal("Barcelona", enriched.Away);
+            Assert.Equal("Premier League", enriched.BBCLeague);
 
-        // Verify the logo mapping using the new LeagueLogoMapper
-        var logoPath = LeagueLogoMapper.GetLogoForLeague(enriched);
-        Assert.False(string.IsNullOrEmpty(logoPath));
-        Assert.Contains("premier-league-logo", logoPath, StringComparison.OrdinalIgnoreCase);
+            // Verify the logo mapping using the new LeagueLogoMapper
+            var logoPath = LeagueLogoMapper.GetLogoForLeague(enriched);
+            Assert.False(string.IsNullOrEmpty(logoPath));
+            Assert.Contains("premier-league-logo", logoPath, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            subscription?.Dispose();
+            svc?.Dispose();
+        }
     }
 }
