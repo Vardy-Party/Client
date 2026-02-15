@@ -1,0 +1,97 @@
+@namespace VardyParty.Components.Shared
+
+<div class="circular-progress @(Throbbing ? "throbbing" : string.Empty) @(StatusClass)">
+    <svg viewBox="0 0 100 100" class="circular-chart">
+        <defs>
+            <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#0066ff" />
+                <stop offset="100%" stop-color="#00d4ff" />
+            </linearGradient>
+        </defs>
+        <path class="circle-bg"
+              d="M50 8
+                 a 42 42 0 0 1 0 84
+                 a 42 42 0 0 1 0 -84" />
+        <path class="circle"
+              stroke-dasharray="@Circumference, @Circumference"
+              stroke-dashoffset="@dashOffset"
+              d="M50 8
+                 a 42 42 0 0 1 0 84
+                 a 42 42 0 0 1 0 -84" />
+        <text x="50" y="50" class="percentage">@("" + Math.Round(Value * 100) + "%")</text>
+    </svg>
+</div>
+
+@code {
+    [Parameter]
+    public double Value { get; set; }
+
+    [Parameter]
+    public bool Throbbing { get; set; } = false;
+
+    [Parameter]
+    public string StatusClass { get; set; } = string.Empty; // e.g. "status-success" or "status-error"
+
+    // Radius 42 -> 2*pi*42 = 263.89378
+    private const double Circumference = 263.9;
+
+    private double dashOffset => Circumference - (Math.Clamp(Value, 0, 1) * Circumference);
+}
+
+<style>
+    .circular-progress {
+        width: 100px;
+        height: 100px;
+    }
+    .circular-chart {
+        display: block;
+        margin: 0 auto;
+        max-width: 100%;
+        max-height: 100%;
+    }
+    .circle-bg {
+        fill: none;
+        stroke: rgba(255, 255, 255, 0.06);
+        stroke-width: 8;
+    }
+    .circle {
+        fill: none;
+        stroke-width: 8;
+        stroke-linecap: round;
+        stroke: url(#gradient); 
+        transition: stroke-dashoffset 0.1s linear; 
+    }
+    .percentage {
+        fill: #e0e0e0;
+        font-family: 'Segoe UI', sans-serif;
+        font-weight: 600;
+        font-size: 20px;
+        text-anchor: middle;
+        dominant-baseline: central;
+    }
+
+    /* Throbbing pulse when operation in progress */
+    .throbbing {
+        animation: throb 1s infinite ease-in-out;
+    }
+
+    @@keyframes throb {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.04); }
+        100% { transform: scale(1); }
+    }
+
+    /* Success flash (green tint) */
+    .status-success .circle {
+        stroke: #28a745 !important; /* green */
+        filter: drop-shadow(0 0 8px rgba(40,167,69,0.8));
+        transition: stroke 150ms ease-in-out;
+    }
+
+    /* Error flash (red tint) */
+    .status-error .circle {
+        stroke: #dc3545 !important; /* red */
+        filter: drop-shadow(0 0 10px rgba(220,53,69,0.9));
+        transition: stroke 150ms ease-in-out;
+    }
+</style>

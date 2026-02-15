@@ -1,0 +1,138 @@
+#if ANDROID
+using System;
+using System.Threading.Tasks;
+using VardyParty.Services;
+using VardyParty.Models;
+
+namespace VardyParty.Platforms.Android
+{
+    public class AndroidVideoPlayerService : INativeVideoPlayerService
+    {
+        public event EventHandler<bool>? BufferingStateChanged;
+
+        private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
+        private static Func<Task>? _onNextStreamRequested;
+        private static int _currentStreamIndex;
+        private static int _totalHealthyStreams;
+        private static PlaybackMetrics? _currentMetrics;
+
+        public Task<PlaybackResult> PlayVideoAsync(string m3u8Url, string refererUrl, string title, Func<Task>? onNextStreamRequested = null)
+        {
+            try
+            {
+                var context = global::Android.App.Application.Context;
+                if (context == null) return Task.FromResult(PlaybackResult.Completed("No context", true));
+
+                _playbackTcs = new TaskCompletionSource<PlaybackResult>();
+                _onNextStreamRequested = onNextStreamRequested;
+
+                var intent = new global::Android.Content.Intent(context, typeof(NativeVideoActivity));
+                intent.PutExtra("M3U8_URL", m3u8Url);
+                intent.PutExtra("REFERER_URL", refererUrl);
+                // Pass the game title (prefer BBC names) if available
+                intent.PutExtra("TITLE", title);
+                // Prefer starting the native activity in the current activity/task so back navigation
+                // returns to the app Home page correctly. Fall back to NewTask when no current
+                // activity is available (e.g., background context).
+                try
+                {
+                    var currentActivity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+                    if (currentActivity != null)
+                    {
+                        // Start in same task/activity
+                        currentActivity.StartActivity(intent);
+                    }
+                    else
+                    {
+                        intent.SetFlags(global::Android.Content.ActivityFlags.NewTask);
+                        context.StartActivity(intent);
+                    }
+                }
+                catch
+                {
+                    // Best-effort: fallback to NewTask if anything goes wrong
+                    try
+                    {
+                        intent.SetFlags(global::Android.Content.ActivityFlags.NewTask);
+                        context.StartActivity(intent);
+                    }
+                    catch { }
+                }
+
+                // Return task which will be signaled by NativeVideoActivity.ReportPlaybackResult
+                return _playbackTcs.Task;
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(PlaybackResult.Completed(ex.Message, true));
+            }
+        }
+
+        internal static void ReportPlaybackResult(PlaybackResult result)
+        {
+            try
+            {
+                _playbackTcs?.TrySetResult(result);
+            }
+            catch { }
+            _playbackTcs = null;
+        }
+
+        internal static async Task RequestNextStream()
+        {
+            if (_onNextStreamRequested != null) await _onNextStreamRequested();
+        }
+
+        internal static void SetStreamInfo(int currentIndex, int totalStreams)
+        {
+            _currentStreamIndex = currentIndex;
+            _totalHealthyStreams = totalStreams;
+        }
+
+        internal static void SetOverlayInfo(PlayerOverlayInfo? info)
+        {
+            if (info == null)
+            {
+                // Clear any cached overlay info
+                _currentStreamIndex = 0;
+                _totalHealthyStreams = 0;
+                return;
+            }
+
+            _currentStreamIndex = info.Index;
+            _totalHealthyStreams = info.Total;
+
+            // Optionally, platform-specific overlay rendering could be triggered here
+            // Native activity will read GetStreamInfo() and additional metadata via AppServiceProvider if needed.
+            // We could expose other fields as needed.
+        }
+
+        internal static string GetStreamInfo()
+        {
+            if (_totalHealthyStreams == 0) return string.Empty;
+            return $"Stream {_currentStreamIndex}/{_totalHealthyStreams}";
+        }
+
+        internal static void ReportBufferingState(bool isBuffering)
+        {
+            // Raise the event - this will be called from NativeVideoActivity
+            // Note: In static context, this would need a static event or instance reference
+            // For now, this method serves as a hook point for the activity to call
+        }
+
+        public PlaybackMetrics? GetCurrentMetrics()
+        {
+            // Return cached metrics from the native activity
+            return _currentMetrics;
+        }
+
+        /// <summary>
+        /// Called by NativeVideoActivity to update current playback metrics
+        /// </summary>
+        internal static void UpdateMetrics(PlaybackMetrics? metrics)
+        {
+            _currentMetrics = metrics;
+        }
+    }
+}
+#endif

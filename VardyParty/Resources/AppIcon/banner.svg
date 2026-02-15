@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect width="320" height="180" rx="16" ry="16" fill="#003090" />
+
+  <!-- Application logo (copied from Resources/Splash/vardyparty_splash.svg) placed left -->
+  <g transform="translate(40,90)">
+    <circle cx="0" cy="0" r="40" fill="#0052B4" stroke="#003090" stroke-width="5"/>
+    <path d="M 0,-34 L 12,-14 L 0,-3 L -12,-14 Z" fill="#003090"/>
+    <path d="M 12,-14 L 30,-18 L 34,0 L 15,12 L 0,-3 Z" fill="#E8E8E8"/>
+    <path d="M -12,-14 L -30,-18 L -34,0 L -15,12 L 0,-3 Z" fill="#E8E8E8"/>
+    <path d="M 15,12 L 22,34 L 8,46 L -8,46 L -15,12 Z" fill="#E8E8E8"/>
+    <path d="M 0,-3 L 15,12 L -15,12 Z" fill="#D5D5D5"/>
+  </g>
+
+  <!-- Title -->
+  <text x="110" y="95" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="32" fill="#FFFFFF">Vardy Party</text>
+
+</svg>

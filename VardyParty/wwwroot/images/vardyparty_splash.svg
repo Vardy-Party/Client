@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="456" height="456" viewBox="120 120 216 216" xmlns="http://www.w3.org/2000/svg">
+  <!-- Splash screen with soccer theme -->
+  
+  <!-- Large soccer ball -->
+  <g transform="translate(228, 228)">
+    <!-- Leicester City blue inside the ball -->
+    <circle cx="0" cy="0" r="100" fill="#0052B4" stroke="#003090" stroke-width="5"/>
+    
+    <!-- Pentagon pattern -->
+    <path d="M 0,-85 L 28,-35 L 0,-8 L -28,-35 Z" fill="#003090"/>
+    <path d="M 28,-35 L 70,-45 L 78,0 L 35,18 L 0,-8 Z" fill="#E8E8E8"/>
+    <path d="M -28,-35 L -70,-45 L -78,0 L -35,18 L 0,-8 Z" fill="#E8E8E8"/>
+    <path d="M 35,18 L 52,62 L 18,85 L -18,85 L -35,18 Z" fill="#E8E8E8"/>
+    <path d="M 0,-8 L 35,18 L -35,18 Z" fill="#D5D5D5"/>
+  </g>
+</svg>

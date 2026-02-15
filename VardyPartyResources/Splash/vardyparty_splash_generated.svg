@@ -1,0 +1,7 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'>
+<rect width='512' height='512' fill='#000000' rx='64' ry='64' />
+<text x='256' y='200' font-size='56' fill='#ffffff' font-family='Segoe UI' font-weight='700' text-anchor='middle'>VardyParty</text>
+<text x='256' y='250' font-size='24' fill='#ffffff' font-family='Segoe UI' font-weight='600' text-anchor='middle'>Version 1.7</text>
+<text x='256' y='290' font-size='20' fill='#e0e0e0' font-family='Segoe UI' text-anchor='middle'>Commit: d47a302</text>
+<text x='256' y='330' font-size='18' fill='#f0f0f0' font-family='Segoe UI' text-anchor='middle'>Built: 2026-01-01 21:13:02 UTC</text>
+</svg>

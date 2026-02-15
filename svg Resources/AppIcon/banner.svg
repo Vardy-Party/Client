@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4A9EFF"/>
+      <stop offset="100%" stop-color="#1F3BA8"/>
+    </linearGradient>
+  </defs>
+  <!-- Background with corner radius -->
+  <rect x="0" y="0" width="320" height="180" rx="20" ry="20" fill="url(#bg)"/>
+  
+  <!-- Left padding-safe logo -->
+  <g transform="translate(56 40)">
+    <circle cx="34" cy="50" r="40" fill="#f5f5f5" stroke="#2d2d2d" stroke-width="3"/>
+    <polygon points="34,18 58,50 34,82 10,50" fill="#d9d9d9"/>
+    <polygon points="34,28 48,50 34,72 20,50" fill="#bfbfbf"/>
+    <polygon points="34,36 42,50 34,64 26,50" fill="#2d2d2d"/>
+  </g>
+
+  <!-- Text block inside 32px padding on both sides -->
+  <g fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">
+    <text x="140" y="90" font-size="34" font-weight="700" text-anchor="start">VardyParty</text>
+    <text x="140" y="115" font-size="16" font-weight="400" fill="#e6e6e6" text-anchor="start">Sports Streaming</text>
+  </g>
+</svg>
