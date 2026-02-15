@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#4A9EFF</color>
+    <color name="colorPrimaryDark">#2D7DD2</color>
+    <color name="colorAccent">#7B5AFF</color>
+    
+    <!-- VardyParty Brand Colors -->
+    <color name="vardyparty_blue">#4A9EFF</color>
+    <color name="vardyparty_blue_dark">#2D7DD2</color>
+    <color name="vardyparty_purple">#7B5AFF</color>
+</resources>

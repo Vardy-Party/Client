@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>VardyParty</title>
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="VardyParty.styles.css" />
+    <link rel="icon" href="data:,">
+</head>
+
+<body>
+
+    <div class="status-bar-safe-area"></div>
+
+    <style>
+        html, body {
+            background: #000;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        #app {
+            min-height: 100vh;
+            background: #000;
+            color: #fff;
+        }
+    </style>
+
+    <div id="app"></div>
+
+    <div id="blazor-error-ui" data-nosnippet>
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+        // Play a simple beep sound using Web Audio API
+        window.playClickSound = function() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return;
+                
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'sine';
+                osc.frequency.value = 800; // Hz
+                gain.gain.value = 0.1; // Volume
+                
+                osc.start();
+                gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.1);
+                osc.stop(ctx.currentTime + 0.1);
+            } catch (e) {
+                console.error("Error playing sound:", e);
+            }
+        };
+
+        // Attach global click listener to play sound
+        document.addEventListener('click', function(e) {
+            // Play sound for buttons, links, or elements with onclick/tabindex
+            if (e.target.closest('button, a, [onclick], [tabindex]')) {
+                window.playClickSound();
+            }
+        }, true); // Capture phase to ensure it runs
+    </script>
+
+</body>
+
+</html>

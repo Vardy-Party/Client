@@ -1,0 +1,257 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+    <PropertyGroup>
+        <TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+
+        <!-- Note for MacCatalyst:
+            The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
+            When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
+            The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
+            either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
+        <!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
+
+        <OutputType>Exe</OutputType>
+        <RootNamespace>VardyParty</RootNamespace>
+        <UseMaui>true</UseMaui>
+        <SingleProject>true</SingleProject>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <EnableDefaultCssItems>false</EnableDefaultCssItems>
+        <Nullable>enable</Nullable>
+
+        <!-- Display name -->
+        <ApplicationTitle>Vardy Party</ApplicationTitle>
+
+        <!-- App Identifier -->
+        <ApplicationId>com.vardyparty</ApplicationId>
+
+        <!-- Versions -->
+        <ApplicationDisplayVersion>1.6.1</ApplicationDisplayVersion>
+        <ApplicationVersion>28</ApplicationVersion>
+
+        <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
+        <!-- Removed global WindowsPackageType None so per-target Windows packaging settings can apply -->
+
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+        <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+        
+        <!-- Android TV Support -->
+        <AndroidEnableProfiledAot Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">false</AndroidEnableProfiledAot>
+
+        <!-- Android: Build for ALL architectures (armeabi-v7a, arm64-v8a, x86, x86_64) -->
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+
+        <!-- FORCE DISABLE Fast Deployment for Android.
+             This is critical to prevent the NoClassDefFoundError loop and 6-minute startup delay.
+             It ensures assemblies are embedded in the APK, making them visible to the WebView's classloader. -->
+        <AndroidFastDeployment>false</AndroidFastDeployment>
+        <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+        <AndroidUseSharedRuntime>false</AndroidUseSharedRuntime>
+
+        <!-- A workaround for resource loading performance. -->
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <InvariantGlobalization>true</InvariantGlobalization>
+    </PropertyGroup>
+
+    <PropertyGroup>
+      <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))</BuildTimestamp>
+    </PropertyGroup>
+
+    <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
+    <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true'">
+      <Exec Command="git rev-parse --short HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true">
+        <Output TaskParameter="ConsoleOutput" PropertyName="GitHashOutput" />
+      </Exec>
+      <PropertyGroup>
+        <GitHash>$(GitHashOutput)</GitHash>
+        <GitHash Condition=" '$(GitHash)' == '' ">unknown</GitHash>
+      </PropertyGroup>
+      <ItemGroup>
+        <_BuildInfoLine Include="Commit=$(GitHash);Built=$(BuildTimestamp)" />
+      </ItemGroup>
+      <WriteLinesToFile File="$(MSBuildProjectDirectory)\Resources\Raw\buildinfo.txt" Lines="@(_BuildInfoLine)" Overwrite="true" />
+    </Target>
+
+    <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true -->
+    <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateSplash)' == 'true'">
+      <PropertyGroup>
+        <SplashFile>$(MSBuildProjectDirectory)\Resources\Splash\vardyparty_splash_generated.svg</SplashFile>
+      </PropertyGroup>
+      <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
+      <ItemGroup>
+        <_SplashLines Include="&lt;svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'&gt;" />
+        <_SplashLines Include="&lt;rect width='512' height='512' fill='#003090'/&gt;" />
+
+		<!-- Soccer Ball Logo (centered at 256, 160) -->
+		<_SplashLines Include="&lt;g transform='translate(256, 160)'&gt;" />
+		<_SplashLines Include="&lt;circle cx='0' cy='0' r='100' fill='#0052B4' stroke='#003090' stroke-width='5'/&gt;" />
+		<_SplashLines Include="&lt;path d='M 0,-85 L 28,-35 L 0,-8 L -28,-35 Z' fill='#003090'/&gt;" />
+		<_SplashLines Include="&lt;path d='M 28,-35 L 70,-45 L 78,0 L 35,18 L 0,-8 Z' fill='#E8E8E8'/&gt;" />
+		<_SplashLines Include="&lt;path d='M -28,-35 L -70,-45 L -78,0 L -35,18 L 0,-8 Z' fill='#E8E8E8'/&gt;" />
+		<_SplashLines Include="&lt;path d='M 35,18 L 52,62 L 18,85 L -18,85 L -35,18 Z' fill='#E8E8E8'/&gt;" />
+		<_SplashLines Include="&lt;path d='M 0,-8 L 35,18 L -35,18 Z' fill='#D5D5D5'/&gt;" />
+		<_SplashLines Include="&lt;/g&gt;" />
+
+		<_SplashLines Include="&lt;text x='256' y='330' font-size='44' fill='#ffffff' font-family='sans-serif' font-weight='700' text-anchor='middle'&gt;VardyParty&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='380' font-size='24' fill='#ffffff' font-family='sans-serif' font-weight='600' text-anchor='middle'&gt;Version $(ApplicationDisplayVersion)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='sans-serif' text-anchor='middle'&gt;Commit: $(GitHash)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='sans-serif' text-anchor='middle'&gt;Built: $(BuildTimestamp)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;/svg&gt;" />
+	  </ItemGroup>
+      <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
+    </Target>
+
+    <!-- Auto-sync Package.appxmanifest version from .csproj properties for Windows builds -->
+    <Target Name="UpdateWindowsPackageVersion" BeforeTargets="_ConvertAppxManifestToGenerationFormat" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+      <PropertyGroup>
+        <ManifestFile>$(MSBuildProjectDirectory)\Platforms\Windows\Package.appxmanifest</ManifestFile>
+        <!-- MSIX requires 4-part version: Major.Minor.Build.Revision -->
+        <MsixVersion>$(ApplicationDisplayVersion).0</MsixVersion>
+      </PropertyGroup>
+      <Message Text="[VardyParty] Syncing Package.appxmanifest version to $(MsixVersion) from ApplicationDisplayVersion" Importance="high" />
+      <!-- Use XML manipulation to properly update version attribute -->
+      <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$manifestPath = '$(ManifestFile)'; if (Test-Path $manifestPath) { [xml]$xml = Get-Content $manifestPath; $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable); $ns.AddNamespace('pkg', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10'); $identity = $xml.SelectSingleNode('//pkg:Identity', $ns); if ($identity) { $identity.SetAttribute('Version', '$(MsixVersion)'); $xml.Save($manifestPath); Write-Host '[VardyParty] Updated Package.appxmanifest to version $(MsixVersion)' } }&quot;" />
+    </Target>
+
+
+    <!-- Splash uses generated SVG with build info -->
+    <ItemGroup>
+      <MauiSplashScreen Include="Resources\Splash\vardyparty_splash_generated.svg" Color="#003090" BaseSize="456,456" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- App Icon - Custom VardyParty Icon -->
+        <MauiIcon Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'" Include="Resources\Splash\vardyparty_splash.svg" Color="#003090" />
+
+        <!-- Splash Screen - Custom VardyParty Splash -->
+        <!-- Use generated splash with build info -->
+
+        <!-- Images -->
+        <MauiImage Include="Resources\Images\*" />
+        
+        <!-- Android TV Banner -->
+        <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
+
+        <!-- Custom Fonts -->
+        <MauiFont Include="Resources\Fonts\*" />
+
+        <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+        <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <!-- Removed custom deletion of MAUI app compat layout to retain default fragment containers -->
+
+    <!-- Retain default MAUI AppCompat layout -->
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.20" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
+        <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
+        <PackageReference Include="QRCoder" Version="1.4.3" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.8.0" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.8.0" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.8.0" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.8.0" />
+      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.8.0.11" />
+      <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.4.0.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Pages\" />
+      <Folder Include="Properties\PublishProfiles\" />
+      <Folder Include="ViewModels\" />
+    </ItemGroup>
+
+    <!-- RESX resources are included by SDK implicitly; keep Resources.resx under Resources/Strings for generation in IDE/build. -->
+    <ItemGroup>
+      <!-- Attach ResXFileCodeGenerator to the implicit EmbeddedResource item so IDE generates a designer file -->
+      <EmbeddedResource Update="Resources\Strings\Resources.resx">
+        <Generator>ResXFileCodeGenerator</Generator>
+        <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+      </EmbeddedResource>
+    </ItemGroup>
+
+  <!-- Create placeholder .jlo files for Android ABIs to avoid packaging errors when tooling doesn't generate them -->
+  <PropertyGroup>
+    <JloFileName>VardyParty.jlo.xml</JloFileName>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <DefaultLanguage>en</DefaultLanguage>
+    <GenerateAppInstallerFile>False</GenerateAppInstallerFile>
+    <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
+    <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+    <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
+    <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
+    <GenerateTestArtifacts>True</GenerateTestArtifacts>
+    <AppInstallerUri>bin\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
+    <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
+    <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <JloArch Include="armeabi-v7a;arm64-v8a;x86;x86_64" />
+  </ItemGroup>
+
+  <Target Name="CreateJloPlaceholders" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <JloPaths Include="@(JloArch->'$(BaseIntermediateOutputPath)android\assets\%(Identity)\$(JloFileName)')" />
+    </ItemGroup>
+    <Message Text="Ensuring Android .jlo placeholders exist for packaging: @(JloPaths)" Importance="Low" />
+    <!-- Make directories for each path -->
+    <MakeDir Directories="@(JloPaths->'%(RootDir)%(Directory)')" />
+    <!-- Create file if missing -->
+    <WriteLinesToFile File="%(JloPaths.Identity)" Lines="&lt;?xml version='1.0' encoding='utf-8'?&gt;&lt;jlo /&gt;" Overwrite="false" Condition="!Exists('%(JloPaths.Identity)')" />
+  </Target>
+
+  <!-- Run unit tests during build (only on developer machines) -->
+  <Target Name="RunUnitTests" AfterTargets="Build" Condition=" '$(RunUnitTestsOnBuild)' == 'true' ">
+    <Exec WorkingDirectory="$(SolutionDir)tests" Command="dotnet test --no-build --verbosity minimal" ContinueOnError="true" />
+  </Target>
+
+  <ItemGroup>
+    <MauiAsset Include="appsettings.json" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VardyParty.Core\VardyParty.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Resources\Strings\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release'">
+        <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+        <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
+    </PropertyGroup>
+	
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
+        <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
+    </PropertyGroup>
+
+    <!-- MSIX packaging defaults for Windows. Password must be provided via environment variable MSIX_CERT_PASSWORD or via publish command. -->
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+      <WindowsPackageType>MSIX</WindowsPackageType>
+      <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+      <PackageCertificateKeyFile>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</PackageCertificateKeyFile>
+      <PackageCertificatePassword>$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
+    </PropertyGroup>
+
+    <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    </PropertyGroup>
+
+</Project>

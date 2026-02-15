@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application 
+        android:allowBackup="true" 
+        android:label="VardyParty"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:icon="@drawable/banner"
+        android:roundIcon="@drawable/banner"
+        android:logo="@drawable/banner"
+        android:banner="@drawable/banner">
+    </application>
+    
+    <!-- Network permissions -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    
+    <!-- Android TV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    
+    <!-- Video playback features -->
+    <uses-feature android:name="android.hardware.screen.landscape" android:required="false" />
+
+    <!-- Required for Auth0 Chrome Custom Tabs on Android 11+ (API 30+) -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+</manifest>

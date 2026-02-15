@@ -1,0 +1,237 @@
+.game-card {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    min-height: 80px;
+    gap: 15px;
+}
+
+.game-card.selected {
+    transform: scale(1.02);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.game-status-badge {
+    min-width: 80px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.status-live {
+    color: #ff4444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.status-upcoming {
+    color: var(--text-secondary);
+    font-size: 18px; /* Increased size */
+    font-weight: 700;
+}
+
+.status-postponed {
+    color: #ffcc00; /* Warning color */
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.match-info {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); /* Grid layout for alignment */
+    align-items: center;
+    gap: 15px;
+}
+
+.team-compact {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0; /* Allow flex item to shrink below content size */
+}
+
+.team-compact.home {
+    justify-content: flex-end;
+    text-align: right;
+}
+
+.team-compact.away {
+    justify-content: flex-start;
+    text-align: left;
+}
+
+.team-name-compact {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1; /* Allow text to take available space */
+}
+
+.team-logo-compact {
+    height: 32px;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0; /* Prevent logo from shrinking */
+    background: rgba(255, 255, 255, 0.95); /* Ensure logo visible on dark background */
+    padding: 3px;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    box-sizing: border-box;
+    overflow: hidden; /* clip image to shape */
+}
+
+.team-logo-compact img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+
+.score-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 60px;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 20px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 5px 10px;
+    border-radius: 6px;
+}
+
+.vs-compact {
+    font-size: 14px;
+    color: var(--text-tertiary);
+    font-weight: 600;
+}
+
+/* Desktop adjustments */
+@media (min-width: 1280px) {
+    .game-card {
+        padding: 20px 30px;
+        min-height: 100px;
+    }
+
+    .team-name-compact {
+        font-size: 22px;
+    }
+
+    .team-logo-compact {
+        height: 40px;
+        width: 40px;
+    }
+
+    .score-container {
+        font-size: 24px;
+        min-width: 80px;
+    }
+
+    .league-badge {
+        width: 56px; /* Increased by 40% from 40px */
+        height: 56px;
+    }
+}
+
+.league-badge {
+    width: 45px; /* Increased by 40% from 32px */
+    height: 45px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    flex-shrink: 0;
+    box-sizing: border-box; /* include padding in size */
+    overflow: hidden; /* clip image to shape */
+}
+
+.league-badge img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+
+.league-badge.league-square {
+    border-radius: 8px;
+}
+
+.team-logo-compact.league-square {
+    border-radius: 8px;
+}
+
+/* Mobile Portrait adjustments */
+@media (max-width: 600px) and (orientation: portrait) {
+    .team-name-compact {
+        font-size: 14px; /* Reduced from 18px to prevent truncation */
+    }
+    
+    .game-card {
+        padding: 12px 6px; /* Reduced horizontal padding (Yellow zones) */
+        gap: 8px; /* Reduced gap between league/status and match info */
+    }
+
+    .team-logo-compact {
+        height: 24px; /* Smaller logos */
+        width: 24px;
+        padding: 2px;
+    }
+    
+    .league-badge {
+        width: 30px; /* Further reduced from 36px (Left Red zone) */
+        height: 30px;
+        padding: 2px;
+    }
+
+    .status-upcoming {
+        font-size: 13px; /* Further reduced from 14px */
+    }
+
+    .status-live {
+        font-size: 12px; /* Further reduced from 13px */
+    }
+    
+    .game-status-badge {
+        min-width: 55px; /* Further reduced from 60px (Left Red zone) */
+        margin-bottom: 0;
+    }
+
+    .score-container {
+        padding: 2px 6px; /* Reduced padding (Middle Red zone) */
+        min-width: 40px; /* Reduced min-width */
+        font-size: 16px; /* Reduced font size */
+    }
+    
+    .match-info {
+        gap: 8px; /* Reduced gap between teams and score */
+    }
+    
+    .team-compact {
+        gap: 6px; /* Reduced gap between name and logo */
+    }
+}

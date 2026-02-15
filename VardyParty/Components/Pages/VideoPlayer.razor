@@ -1,0 +1,291 @@
+@page "/player/{League}/{HomeTeam}/{AwayTeam}/{**StreamUrl}"
+@using Microsoft.Extensions.Logging
+@using VardyParty.Models
+@using VardyParty.Services
+@implements IDisposable
+@inject IApiService ApiService
+@inject INativeVideoPlayerService NativeVideoPlayer
+@inject NavigationManager Navigation
+@inject SelectionState AppSelectionState
+@inject ILogger<VideoPlayer> Logger
+@inject IEnrichedGameService EnrichedGameService
+@inject IStreamSwitchingService StreamSwitchingService
+
+<div class="player-container">
+    <button class="player-back" @onclick="NavigateBack" autofocus>Back</button>
+    
+    <!-- Stream Info Overlay (Bottom Right) -->
+    @if (displayState.IsVisible)
+    {
+        <div class="stream-info-overlay">
+            <div class="stream-info-content">
+                <div class="stream-counter">@displayState.DisplayText</div>
+                <div class="stream-channel">@displayState.CurrentStreamChannel</div>
+            </div>
+        </div>
+    }
+    
+    @if (showStatus)
+    {
+        <div class="status-panel">
+            <p class="status-label">@videoStatus</p>
+        </div>
+    }
+
+    @if (showDetails)
+    {
+        <div class="details-panel">
+            <p><strong>Title:</strong> @HomeTeam vs @AwayTeam (@League)</p>
+            <p><strong>M3U8:</strong> @m3u8Url</p>
+            <p><strong>Source:</strong> @decodedStreamUrl</p>
+            <p><strong>Resolution:</strong> Unknown</p>
+            <p><strong>Bitrate:</strong> Unknown</p>
+            <p><strong>Aspect Ratio:</strong> Unknown</p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string League { get; set; } = string.Empty;
+
+    [Parameter]
+    public string HomeTeam { get; set; } = string.Empty;
+
+    [Parameter]
+    public string AwayTeam { get; set; } = string.Empty;
+
+    [Parameter]
+    public string StreamUrl { get; set; } = string.Empty;
+
+    private string m3u8Url = string.Empty;
+    private string decodedStreamUrl = string.Empty;
+    private bool isLoading = true;
+    private string videoStatus = "Initializing...";
+    private bool showStatus = true;
+    private bool showDetails;
+    private StreamInfoDisplayState displayState = new();
+    private IDisposable? _displayStateSubscription;
+    
+#if ANDROID
+    private VardyParty.Platforms.Android.RemoteKeyHandler.KeyEventHandler? onStopHandler;
+    private VardyParty.Platforms.Android.RemoteKeyHandler.KeyEventHandler? onYellowHandler;
+    private VardyParty.Platforms.Android.RemoteKeyHandler.KeyEventHandler? onBackHandler;
+    private VardyParty.Platforms.Android.RemoteKeyHandler.KeyEventHandler? onRightHandler;
+    private VardyParty.Platforms.Android.RemoteKeyHandler.KeyEventHandler? onLeftHandler;
+#endif
+
+    private class StreamInfoDisplayState
+    {
+        public int TotalHealthyStreams { get; set; }
+        public int CurrentStreamIndex { get; set; }
+        public string CurrentStreamChannel { get; set; } = string.Empty;
+        public bool IsVisible { get; set; }
+        
+        public string DisplayText => IsVisible 
+            ? $"{CurrentStreamIndex} / {TotalHealthyStreams}"
+            : string.Empty;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Initialize stream switching
+        StreamSwitchingService.Initialize(League, HomeTeam, AwayTeam);
+        
+        // Subscribe to display state changes
+        _displayStateSubscription = StreamSwitchingService.HealthyStreamsUpdated.Subscribe(_ =>
+        {
+            UpdateDisplayState();
+        });
+        
+        await LoadAndPlayStreamAsync();
+        SetupRemoteKeyHandlers();
+    }
+
+    public void Dispose()
+    {
+        _displayStateSubscription?.Dispose();
+#if ANDROID
+        try
+        {
+            var remoteHandler = VardyParty.MainActivity.RemoteKeyHandler;
+            if (onStopHandler != null) remoteHandler.OnStop -= onStopHandler;
+            if (onYellowHandler != null) remoteHandler.OnYellow -= onYellowHandler;
+            if (onBackHandler != null) remoteHandler.OnBack -= onBackHandler;
+            if (onRightHandler != null) remoteHandler.OnNext -= onRightHandler;
+            if (onLeftHandler != null) remoteHandler.OnPrevious -= onLeftHandler;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error disposing remote handlers");
+        }
+#endif
+    }
+
+    private void UpdateDisplayState()
+    {
+        var streams = StreamSwitchingService.GetHealthyStreams();
+        var currentIndex = StreamSwitchingService.GetCurrentStreamIndex();
+        var currentStream = StreamSwitchingService.GetCurrentStream();
+        
+        displayState = new StreamInfoDisplayState
+        {
+            TotalHealthyStreams = streams.Count,
+            CurrentStreamIndex = currentIndex,
+            CurrentStreamChannel = currentStream?.Stream.Channel ?? "Unknown",
+            IsVisible = streams.Count > 0
+        };
+        
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAndPlayStreamAsync()
+    {
+        isLoading = true;
+        videoStatus = "Loading stream...";
+        showStatus = true;
+
+        try
+        {
+            // Decode the stream URL
+            decodedStreamUrl = Uri.UnescapeDataString(StreamUrl);
+            AppSelectionState.LastLeague = League;
+            AppSelectionState.LastHomeTeam = HomeTeam;
+            AppSelectionState.LastAwayTeam = AwayTeam;
+            AppSelectionState.LastStreamUrl = decodedStreamUrl;
+            AppSelectionState.LastRoute = $"/player/{Uri.EscapeDataString(League)}/{Uri.EscapeDataString(HomeTeam)}/{Uri.EscapeDataString(AwayTeam)}/{Uri.EscapeDataString(StreamUrl)}";
+            Logger.LogInformation("Native Video Player: Loading stream for {StreamUrl}", decodedStreamUrl);
+
+            // Get M3U8 URL from API
+            var m3u8Response = await ApiService.GetM3U8UrlAsync(decodedStreamUrl);
+
+            if (m3u8Response != null && !string.IsNullOrEmpty(m3u8Response.Url))
+            {
+                m3u8Url = m3u8Response.Url;
+                Logger.LogInformation("Native Video Player: M3U8 URL: {M3U8}", m3u8Url);
+
+                var title = $"{HomeTeam} vs {AwayTeam}";
+
+                // Status before handing off to native player
+                videoStatus = "Connecting and buffering...";
+                StateHasChanged();
+
+                var playbackTask = NativeVideoPlayer.PlayVideoAsync(m3u8Url, decodedStreamUrl, title);
+
+                // Hide loading while native player is active
+                isLoading = false;
+                StateHasChanged();
+
+                var playbackResult = await playbackTask;
+                videoStatus = playbackResult.Message;
+                if (!playbackResult.Success)
+                {
+                    NavigateToStreamsWithError(playbackResult.Message);
+                    return;
+                }
+                
+                // If playback finished successfully (e.g user closed it), navigate back
+                NavigateBack();
+            }
+            else
+            {
+                videoStatus = "No stream URL available";
+                NavigateToStreamsWithError("Failed to retrieve the stream URL. The stream may not be available yet or the link may be invalid.");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            videoStatus = "Connection dropped / error";
+            NavigateToStreamsWithError($"An error occurred: {ex.Message}");
+            return;
+        }
+        finally
+        {
+            if (isLoading)
+            {
+                isLoading = false;
+            }
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleDetails()
+    {
+        showDetails = !showDetails;
+        StateHasChanged();
+    }
+
+    private void NavigateBack()
+    {
+        Logger.LogInformation("[VideoPlayer] Navigating back to home");
+        Navigation.NavigateTo("/", replace: true);
+    }
+
+    private void NavigateToStreamsWithError(string message)
+    {
+        var league = string.IsNullOrEmpty(AppSelectionState.LastLeague) ? League : AppSelectionState.LastLeague;
+        var home = string.IsNullOrEmpty(AppSelectionState.LastHomeTeam) ? HomeTeam : AppSelectionState.LastHomeTeam;
+        var away = string.IsNullOrEmpty(AppSelectionState.LastAwayTeam) ? AwayTeam : AppSelectionState.LastAwayTeam;
+        var encodedLeague = Uri.EscapeDataString(league);
+        var encodedHome = Uri.EscapeDataString(home);
+        var encodedAway = Uri.EscapeDataString(away);
+        var encodedMessage = Uri.EscapeDataString(message ?? "Stream unavailable");
+        var route = $"/streams/{encodedLeague}/{encodedHome}/{encodedAway}?error={encodedMessage}";
+        AppSelectionState.LastRoute = route;
+        Navigation.NavigateTo(route, replace: true);
+    }
+
+    private void SetupRemoteKeyHandlers()
+    {
+#if ANDROID
+        try
+        {
+            var remoteHandler = VardyParty.MainActivity.RemoteKeyHandler;
+            
+            onRightHandler = (keyCode) =>
+            {
+                Logger.LogInformation("[VideoPlayer] Next button pressed - switching to next stream");
+                if (StreamSwitchingService.SwitchToNextStream())
+                {
+                    UpdateDisplayState();
+                }
+            };
+            remoteHandler.OnNext += onRightHandler;
+
+            onLeftHandler = (keyCode) =>
+            {
+                Logger.LogInformation("[VideoPlayer] Previous button pressed - switching to previous stream");
+                if (StreamSwitchingService.SwitchToPreviousStream())
+                {
+                    UpdateDisplayState();
+                }
+            };
+            remoteHandler.OnPrevious += onLeftHandler;
+
+            onYellowHandler = (keyCode) =>
+            {
+                showDetails = !showDetails;
+                StateHasChanged();
+            };
+            remoteHandler.OnYellow += onYellowHandler;
+
+            onStopHandler = (keyCode) =>
+            {
+                NavigateBack();
+            };
+            remoteHandler.OnStop += onStopHandler;
+
+            onBackHandler = (keyCode) =>
+            {
+                NavigateBack();
+            };
+            remoteHandler.OnBack += onBackHandler;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to setup remote key handlers");
+        }
+#endif
+    }
+}

@@ -1,0 +1,407 @@
+/* VardyParty Global Dark Theme Styles */
+
+:root {
+    /* Leicester City Brand Colors - Improved for dark theme */
+    --primary-blue: #4A9EFF;        /* Brighter blue - much better contrast */
+    --primary-blue-dark: #2D7DD2;   /* Darker blue for hover */
+    --accent-purple: #7B5AFF;       /* Brighter purple - better contrast */
+    
+    /* Dark Theme Colors */
+    --bg-primary: #0A0A0A;
+    --bg-secondary: #1A1A1A;
+    --bg-card: #252525;
+    --bg-hover: #2F2F2F;
+    
+    /* Text Colors */
+    --text-primary: #FFFFFF;
+    --text-secondary: #B0B0B0;
+    --text-tertiary: #808080;
+    
+    /* Status Colors */
+    --success: #4CAF50;             /* Brighter green */
+    --warning: #FFA726;             /* Brighter orange */
+    --error: #FF5252;               /* Brighter red */
+    
+    /* Borders */
+    --border-color: #333333;
+    --border-hover: #666666;        /* Brighter border on hover */
+}
+
+/* Force dark theme always (no light theme switching) */
+
+/* Global Styles */
+body, html {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+/* Scrollbar Styling (Dark Theme) */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bg-hover);
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #404040;
+}
+
+/* Button Reset */
+button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    outline: none;
+}
+
+/* Card Component */
+.card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 48, 144, 0.15);
+}
+
+/* Page Container */
+.page-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    min-height: 100vh;
+    background-color: var(--bg-primary);
+}
+
+/* Page Header */
+.page-header {
+    display: block;
+    /* bleed header to edges by negating page container padding (20px) */
+    margin: -20px -20px 0 -20px; /* remove bottom gap so header sits flush with top and sides */
+    padding: 0;
+    background: linear-gradient(180deg, var(--primary-blue-dark), rgba(45,125,210,0.85));
+    color: white;
+    border-bottom: 1px solid rgba(0,0,0,0.15);
+}
+.header-brand {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.page-header-inner {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center; /* center the logo+title group */
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    gap: 12px;
+    padding: 20px 16px; /* vertical padding inside header band */
+    min-height: 68px; /* ensure header tall enough for logo + title */
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.header-title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 800;
+    color: white;
+}
+
+.header-center {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+}
+
+.header-right {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+}
+
+.page-header h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+/* App logo in header */
+.app-logo {
+    height: 44px;
+    width: 44px;
+    margin: 0;
+    vertical-align: middle;
+    background: transparent;
+    padding: 0;
+}
+
+.header-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 800;
+    color: white;
+}
+
+/* Auth button in header */
+.auth-button {
+    margin-left: auto;
+}
+
+.header-auth-button {
+    background: transparent;
+    color: white;
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 8px 14px;
+    border-radius: 8px;
+    margin-right: 14px; /* keep away from right edge */
+}
+
+/* Device auth area (QR + instructions) */
+.auth-device {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.qr-image {
+    width: 120px;
+    height: 120px;
+    object-fit: contain;
+    border: 1px solid var(--border-color);
+    padding: 4px;
+    background: #fff;
+}
+
+/* Inline auth panel: keep sign-in button close to text */
+.auth-panel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+}
+
+.auth-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 16px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(74,158,255,0.04));
+    max-width: 520px;
+    width: 100%;
+    margin: calc(50vh - 120px) auto 24px auto; /* vertically centered-ish */
+    justify-content: center;
+}
+
+.auth-message {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+/* Button Styles */
+.btn {
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-primary {
+    background-color: var(--primary-blue);
+    color: white;
+    border: 2px solid var(--primary-blue);
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+    background-color: var(--primary-blue-dark);
+    border-color: var(--primary-blue-dark);
+    transform: scale(1.05);
+}
+
+.btn-secondary {
+    background-color: var(--accent-purple);
+    color: white;
+    border: 2px solid var(--accent-purple);
+}
+
+.btn-secondary:hover,
+.btn-secondary:focus {
+    background-color: #6e3de8;
+    border-color: #6e3de8;
+    transform: scale(1.05);
+}
+
+.btn-outline {
+    background-color: transparent;
+    color: var(--text-primary);
+    border: 2px solid var(--border-color);
+}
+
+.btn-outline:hover,
+.btn-outline:focus {
+    background-color: var(--bg-hover);
+    border-color: var(--border-hover);
+}
+
+/* Header sign-out button style */
+.header-auth-button {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid transparent;
+    padding: 8px 14px;
+    border-radius: 8px;
+}
+
+.header-auth-button:hover {
+    background: var(--bg-hover);
+}
+
+/* Prominent auth action */
+.auth-action {
+    font-size: 18px;
+    padding: 14px 28px;
+    border-radius: 10px;
+}
+
+.auth-panel.card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.welcome-text {
+    font-size: 18px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* Loading State */
+.loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+
+/* Error State */
+.error {
+    text-align: center;
+    padding: 40px;
+    color: var(--error);
+    font-size: 18px;
+}
+
+/* Badge Styles */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.badge-platinum {
+    background-color: rgba(52, 168, 83, 0.15);
+    color: var(--success);
+    border: 1px solid var(--success);
+}
+
+.badge-gold {
+    background-color: rgba(239, 108, 0, 0.15);
+    color: var(--warning);
+    border: 1px solid var(--warning);
+}
+
+.badge-silver {
+    background-color: rgba(176, 176, 176, 0.15);
+    color: var(--text-secondary);
+    border: 1px solid var(--text-tertiary);
+}
+
+/* Grid Layout */
+.grid {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+    .grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (min-width: 1280px) {
+    .grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (min-width: 1920px) {
+    .grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/* Utility Classes */
+.text-center {
+    text-align: center;
+}
+
+.mt-20 {
+    margin-top: 20px;
+}
+
+.mb-20 {
+    margin-bottom: 20px;
+}
+
+.p-20 {
+    padding: 20px;
+}
+
+@media (max-width: 600px) {
+    .page-header-inner {
+        padding: 0; /* vertical padding inside header band */
+        min-height: 38px; /* ensure header tall enough for logo + title */
+    }
+}

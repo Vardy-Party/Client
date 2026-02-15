@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="UTF-8" ?>
+<Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:VardyParty"
+             x:Class="VardyParty.App"
+             UserAppTheme="Dark">
+    <Application.Resources>
+        <ResourceDictionary>
+
+            <!-- VardyParty Dark Theme Colors - Improved Contrast -->
+            <Color x:Key="Primary">#4A9EFF</Color>
+            <Color x:Key="PrimaryDark">#2D7DD2</Color>
+            <Color x:Key="Secondary">#7B5AFF</Color>
+            <Color x:Key="Tertiary">#5D3FD3</Color>
+            
+            <!-- Semantic Colors -->
+            <Color x:Key="Gray100">#E1E1E1</Color>
+            <Color x:Key="Gray200">#C8C8C8</Color>
+            <Color x:Key="Gray300">#ACACAC</Color>
+            <Color x:Key="Gray400">#919191</Color>
+            <Color x:Key="Gray500">#6E6E6E</Color>
+            <Color x:Key="Gray600">#404040</Color>
+            <Color x:Key="Gray900">#212121</Color>
+            <Color x:Key="Gray950">#141414</Color>
+
+            <!-- Background Colors -->
+            <Color x:Key="BackgroundColor">#0A0A0A</Color>
+            <Color x:Key="SurfaceColor">#1A1A1A</Color>
+            <Color x:Key="CardColor">#252525</Color>
+            
+            <!-- Text Colors -->
+            <Color x:Key="TextPrimary">#FFFFFF</Color>
+            <Color x:Key="TextSecondary">#B0B0B0</Color>
+            <Color x:Key="TextTertiary">#808080</Color>
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Ensure Windows Target Platform Min Version is defined for builds that include Windows packaging targets -->
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+</Project>

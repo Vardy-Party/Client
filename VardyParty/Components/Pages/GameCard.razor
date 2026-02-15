@@ -1,0 +1,143 @@
+@using VardyParty.Models
+@using Microsoft.AspNetCore.Components
+
+<div class="@CardClass" tabindex="0" @onclick="OnCardClick" @ref="cardRef">
+    @if (!string.IsNullOrEmpty(LeagueLogoUrl))
+    {
+        <div class="league-badge">
+            <img class="inspect-logo" src="@LeagueLogoUrl" alt="League" />
+        </div>
+    }
+
+    <div class="game-status-badge">
+        @if (IsGameLive)
+        {
+            <span class="status-live"><span class="live-dot"></span> @StatusText</span>
+        }
+        else if (Game.IsPostponed)
+        {
+            <span class="status-postponed">Postponed</span>
+        }
+        else
+        {
+            <span class="status-upcoming">@StartTimeText</span>
+        }
+    </div>
+    
+    <div class="match-info">
+        <div class="team-compact home">
+            <span class="team-name-compact">@Game.DisplayHome</span>
+            @if (ShowBadges)
+            {
+                <div class="team-logo-compact">
+                    <img class="inspect-logo" src="@Game.HomeBadgeUrl" alt="@Game.DisplayHome" />
+                </div>
+            }
+        </div>
+        
+        <div class="score-container">
+            @if (HasScore)
+            {
+                <span class="score-compact">@Game.HomeScore</span>
+                <span class="score-divider">-</span>
+                <span class="score-compact">@Game.AwayScore</span>
+            }
+            else
+            {
+                <span class="vs-compact">VS</span>
+            }
+        </div>
+
+        <div class="team-compact away">
+            @if (ShowBadges)
+            {
+                <div class="team-logo-compact">
+                    <img class="inspect-logo" src="@Game.AwayBadgeUrl" alt="@Game.DisplayAway" />
+                </div>
+            }
+            <span class="team-name-compact">@Game.DisplayAway</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Game Game { get; set; } = default!;
+    [Parameter] public bool IsSelected { get; set; }
+    [Parameter] public bool ShouldFocus { get; set; }
+    [Parameter] public EventCallback<Game> OnClick { get; set; }
+    [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
+
+    private ElementReference cardRef;
+
+    private string CardClass => IsSelected ? "game-card selected" : "game-card";
+
+    private bool ShowBadges => !string.IsNullOrEmpty(Game.HomeBadgeUrl)
+                               && !string.IsNullOrEmpty(Game.AwayBadgeUrl);
+
+    private bool IsGameLive => Game.Start <= DateTime.UtcNow.AddMinutes(15) && (Game.IsInProgress || Game.IsHalfTime);
+
+    private string StatusText
+    {
+        get
+        {
+            // Use the model helper to ensure consistent formatting and precedence
+            var display = Game.DisplayStatusText();
+            if (!string.IsNullOrEmpty(display)) return display;
+
+            // Fallback to upcoming time
+            return FormatGameTime(Game.Start);
+        }
+    }
+
+    private string StartTimeText => FormatGameTime(Game.Start);
+
+    private bool HasScore => Game.HomeScore.HasValue || Game.AwayScore.HasValue;
+
+    private async Task OnCardClick()
+    {
+        if (OnClick.HasDelegate)
+        {
+            await OnClick.InvokeAsync(Game);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (ShouldFocus)
+        {
+            try
+            {
+                await cardRef.FocusAsync();
+            }
+            catch { /* Ignore focus errors */ }
+        }
+    }
+
+    private string FormatGameTime(DateTime startTime)
+    {
+        var local = startTime.ToLocalTime();
+        if (startTime.Date == DateTime.UtcNow.Date)
+        {
+            return local.ToString("h:mm tt");
+        }
+        else if (startTime.Date == DateTime.UtcNow.Date.AddDays(1))
+        {
+            return $"Tomorrow at {local:h:mm tt}";
+        }
+        else
+        {
+            return local.ToString("MMM dd, h:mm tt");
+        }
+    }
+
+    private static string FormatEncodedMinute(int m)
+    {
+        if (m >= 1000)
+        {
+            var baseMin = m / 100;
+            var extra = m % 100;
+            return $"{baseMin}+{extra}'";
+        }
+        return $"{m}'";
+    }
+}

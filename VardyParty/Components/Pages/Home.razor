@@ -1,0 +1,788 @@
+﻿@page "/"
+@inject IEnrichedGameService GameService
+@inject NavigationManager Navigation
+@inject SelectionState Selection
+@inject ILogger<Home> Logger
+@inject IStreamResolutionOrchestrator StreamResolutionOrchestrator
+@inject IServiceProvider ServiceProvider
+@inject IAuthLoginService AuthLoginService
+@inject IAuthTokenProvider AuthTokenProvider
+@using Microsoft.Extensions.Logging
+@using QRCoder
+@using VardyParty.Models
+@using VardyParty.Orchestrators
+@using VardyParty.Providers
+@using VardyParty.Services
+@implements IDisposable
+
+<div class="page-container">
+    <div class="page-header">
+        <div class="page-header-inner">
+            <div class="header-brand">
+                <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" style="display:inline-block;vertical-align:middle;"/>
+                <h1 class="header-title" style="display:inline-block;vertical-align:middle;margin-left:8px;">Vardy Party</h1>
+            </div>
+            <div class="header-right">
+                @if (isAuthenticated)
+                {
+                    <button class="header-auth-button" @onclick="SignOutAsync">Sign out</button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (!isAuthenticated)
+    {
+        <div class="auth-hero">
+            <div class="auth-hero-inner">
+                <p class="welcome-text" style="margin:0;font-size:20px;font-weight:600;text-align:center;">Welcome — please sign in to browse today's matches.</p>
+                <div style="display:flex;gap:12px;align-items:center;justify-content:center;">
+                    <button class="btn btn-primary auth-action" @onclick="StartSignInAsync" disabled="@isAuthenticating">@(!isAuthenticating ? "Sign in — Continue" : "Signing in…")</button>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(authStatusMessage))
+                {
+                    <div class="auth-message" style="text-align:center;margin-top:8px;">@authStatusMessage</div>
+                }
+            </div>
+
+            @if (deviceCode != null)
+            {
+                <div class="auth-device">
+                    <div>
+                        @if (!string.IsNullOrWhiteSpace(deviceQrDataUri))
+                        {
+                            <img src="@deviceQrDataUri" alt="Device login QR code" class="qr-image"/>
+                        }
+                    </div>
+                    <div>
+                        <p>Open <strong>@deviceQrTarget</strong> or scan the QR code and enter code <strong>@deviceCode.UserCode</strong>.</p>
+                        <p style="margin-top:8px;">
+                            <button class="auth-cancel" @onclick="CancelSignIn">Cancel</button>
+                        </p>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (isLoading && isAuthenticated)
+    {
+        <div class="loading-container">
+            <p class="loading-text">Loading</p>
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <p class="status-message">@statusMessage</p>
+            }
+        </div>
+    }
+    else if (!isAuthenticated)
+    {
+        <div class="empty-state">
+            <!-- consolidated; hero handles welcome -->
+        </div>
+    }
+    else if (games.Count == 0)
+    {
+        <div class="empty-state">
+            <p>There are no games available</p>
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <p class="status-message">@statusMessage</p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="games-grid">
+            @{
+                var anySelected = games.Any(IsSelected);
+            }
+            @for (var i = 0; i < games.Count; i++)
+            {
+                var game = games[i];
+                var isSelected = IsSelected(game);
+                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 1));
+                var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
+
+                <GameCard Game="game"
+                          IsSelected="isSelected"
+                          ShouldFocus="shouldFocus"
+                          LeagueLogoUrl="@leagueLogo"
+                          OnClick="StartStreamResolution"/>
+            }
+        </div>
+    }
+</div>
+
+<!-- Stream Resolution Progress Indicator -->
+@if (isResolvingStreams)
+{
+    <div class="stream-progress-overlay">
+        @if (OperatingSystem.IsWindows())
+        {
+            <button class="overlay-close" @onclick="OnOverlayCloseRequested">✕</button>
+        }
+        @{
+            var isNoHealthy = !string.IsNullOrEmpty(streamResolutionStatus) &&
+                              streamResolutionStatus.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
+        }
+        <div class="stream-progress-card">
+            <div class="progress-details">
+                @{
+                    var titleText = isNoHealthy
+                        ? string.Empty
+                        : streamResolutionStatus == "Playing..."
+                            ? "Now Playing"
+                            : "Finding streams...";
+                }
+                @if (!string.IsNullOrEmpty(titleText))
+                {
+                    <p class="progress-title">@titleText</p>
+                }
+                @if (!string.IsNullOrEmpty(streamResolutionStatus) && !string.Equals(streamResolutionStatus, "Searching for streams", StringComparison.OrdinalIgnoreCase))
+                {
+                    <p class="progress-stats @(isNoHealthy ? "progress-title-warning" : string.Empty)">
+                        @if (isNoHealthy)
+                        {
+                            <span class="progress-warning-icon">⚠</span>
+                        }
+                        @streamResolutionStatus
+                    </p>
+                }
+                @if (!isNoHealthy)
+                {
+                    <div class="progress-bar-container">
+                        @if (totalStreamsFound > 0)
+                        {
+                            var progressPercentage = streamsTested * 100 / totalStreamsFound;
+                            <div class="progress-bar-determinate" style="width: @(progressPercentage)%"></div>
+                        }
+                        else
+                        {
+                            <div class="progress-bar-indeterminate"></div>
+                        }
+                    </div>
+                }
+                <p class="progress-count">
+                    @if (totalStreamsFound > 0)
+                    {
+                        @totalStreamsFound
+                        <text> total • </text>
+                        @streamsTested
+                        <text> tested • </text>
+                        @healthyStreamCount
+                        <text> healthy</text>
+                    }
+                    else
+                    {
+                        @streamsTested
+                        <text> tested • </text>
+                        @healthyStreamCount
+                        <text> healthy</text>
+                    }
+                </p>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly List<Game> games = new();
+    private bool isLoading = true;
+    private bool focusPending = true;
+    private IDisposable? _gamesSubscription;
+    private IDisposable? _errorSubscription;
+    private CancellationTokenSource? _streamResolutionCts;
+    private IOverlayCloseService? _overlayCloseService;
+    private CancellationTokenSource? _authCts;
+    private bool isAuthenticating;
+    private bool isAuthenticated;
+    private string authStatusMessage = string.Empty;
+    private AuthDeviceCode? deviceCode;
+    private string? deviceQrDataUri;
+    private string? deviceQrTarget;
+
+    private readonly HashSet<string> _ignoredLeagues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "WWE", "Rugby", "NFL", "NHL", "NBA", "UFC", "Boxing", "Formula 1", "MotoGP", "Tennis", "Cricket", "Golf"
+    };
+
+    private string statusMessage = string.Empty;
+
+    // Stream resolution state
+    private bool isResolvingStreams;
+    private string streamResolutionStatus = string.Empty;
+    private int totalStreamsFound;
+    private int streamsTested;
+    private int healthyStreamCount;
+    private Game? selectedGame;
+    private IDisposable? _progressSubscription;
+
+    private Task? _streamResolutionTask;
+
+    // Indicates we have finished testing all streams for the currently selected game
+    private bool _resolutionExhausted;
+
+    private void SetOverlayBackSuppression(bool suppress)
+    {
+#if ANDROID
+        try
+        {
+            MainActivity.SetOverlayBackSuppression(suppress);
+        }
+        catch
+        {
+        }
+#endif
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logger.LogInformation("[Home] OnInitialized start");
+        isLoading = true;
+        isAuthenticated = await AuthTokenProvider.IsAuthenticatedAsync();
+
+        if (isAuthenticated)
+        {
+            await LoadGamesAsync();
+        }
+        else
+        {
+            isLoading = false;
+        }
+
+        Logger.LogInformation("[Home] OnInitialized complete");
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                _overlayCloseService = ServiceProvider?.GetService(typeof(IOverlayCloseService)) as IOverlayCloseService;
+                if (_overlayCloseService != null)
+                {
+                    _overlayCloseService.CloseRequested -= OnOverlayCloseRequested;
+                    _overlayCloseService.CloseRequested += OnOverlayCloseRequested;
+                }
+            }
+            catch
+            {
+            }
+        }
+        // Subscribe to Android remote Back while on Home so Back cancels stream resolution when visible
+#if ANDROID
+        try
+        {
+            var remote = MainActivity.RemoteKeyHandler;
+            remote.OnBack -= AndroidBackHandler;
+            remote.OnBack += AndroidBackHandler;
+        }
+        catch
+        {
+        }
+#endif
+    }
+
+
+#if ANDROID
+    private void AndroidBackHandler(global::Android.Views.Keycode kc)
+    {
+        Logger.LogInformation("[Home] Android back pressed - canceling stream resolution if active");
+        try
+        {
+            _streamResolutionCts?.Cancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            StreamResolutionOrchestrator.Reset();
+        }
+        catch
+        {
+        }
+
+        // Ensure we fully stop resolution and clear selection so OnAfterRender does not restart it
+        Selection.CurrentGame = null;
+        selectedGame = null;
+        // Give feedback to user via logging (avoid referencing Android UI types in shared component)
+        Logger.LogInformation("[Home] Stream discovery cancelled by Back");
+        InvokeAsync(() =>
+        {
+            isResolvingStreams = false;
+            streamResolutionStatus = string.Empty;
+            totalStreamsFound = 0;
+            streamsTested = 0;
+            healthyStreamCount = 0;
+            StateHasChanged();
+        });
+        try
+        {
+            MainActivity.SetOverlayBackSuppression(false);
+        }
+        catch
+        {
+        }
+    }
+#if ANDROID
+    protected override void OnAfterRender(bool firstRender)
+    {
+        base.OnAfterRender(firstRender);
+        // Allow overlay to consume Back when visible
+        try
+        {
+            MainActivity.SetOverlayBackSuppression(isResolvingStreams);
+        }
+        catch
+        {
+        }
+    }
+#endif
+#endif
+
+    private async Task StartSignInAsync()
+    {
+        if (isAuthenticating) return;
+
+        isAuthenticating = true;
+        authStatusMessage = string.Empty;
+        deviceCode = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            if (MauiProgram.IsTv)
+            {
+                var deviceLogin = await AuthLoginService.StartDeviceLoginAsync();
+                if (deviceLogin == null)
+                {
+                    authStatusMessage = "Unable to start device sign-in.";
+                    return;
+                }
+
+                deviceCode = deviceLogin.DeviceCode;
+
+                // Generate local QR for device flow
+                deviceQrTarget = string.IsNullOrWhiteSpace(deviceCode.VerificationUriComplete) ? deviceCode.VerificationUri : deviceCode.VerificationUriComplete;
+                try
+                {
+                    using var qrGenerator = new QRCodeGenerator();
+                    var qrData = qrGenerator.CreateQrCode(deviceQrTarget ?? string.Empty, QRCodeGenerator.ECCLevel.Q);
+                    var pngQr = new PngByteQRCode(qrData);
+                    var pngBytes = pngQr.GetGraphic(20);
+                    deviceQrDataUri = "data:image/png;base64," + Convert.ToBase64String(pngBytes);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "[Home] Failed to generate QR code locally");
+                    deviceQrDataUri = null;
+                }
+
+                await InvokeAsync(StateHasChanged);
+
+                _authCts?.Cancel();
+                _authCts = new CancellationTokenSource();
+
+                var result = await AuthLoginService.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
+                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+                {
+                    isAuthenticated = true;
+                    authStatusMessage = string.Empty;
+                    deviceCode = null;
+                    await LoadGamesAsync();
+                }
+                else if (!string.IsNullOrWhiteSpace(result.Error))
+                {
+                    authStatusMessage = result.Error;
+                }
+            }
+            else
+            {
+                var result = await AuthLoginService.LoginInteractiveAsync();
+                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+                {
+                    isAuthenticated = true;
+                    authStatusMessage = string.Empty;
+                    await LoadGamesAsync();
+                }
+                else if (!string.IsNullOrWhiteSpace(result.Error))
+                {
+                    authStatusMessage = result.Error;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            authStatusMessage = "Sign-in canceled.";
+        }
+        catch (Exception ex)
+        {
+            authStatusMessage = ex.Message;
+        }
+        finally
+        {
+            isAuthenticating = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SignOutAsync()
+    {
+        await AuthTokenProvider.LogoutAsync();
+
+        _gamesSubscription?.Dispose();
+        _gamesSubscription = null;
+        _errorSubscription?.Dispose();
+        _errorSubscription = null;
+        _progressSubscription?.Dispose();
+        _progressSubscription = null;
+        StreamResolutionOrchestrator.Reset();
+
+        games.Clear();
+        statusMessage = string.Empty;
+        authStatusMessage = string.Empty;
+        isAuthenticated = false;
+        isLoading = false;
+        deviceCode = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelSignIn()
+    {
+        _authCts?.Cancel();
+        deviceCode = null;
+        deviceQrDataUri = null;
+        deviceQrTarget = null;
+        isAuthenticating = false;
+        authStatusMessage = "Sign-in canceled.";
+    }
+
+    private void OnOverlayCloseRequested()
+    {
+        Logger.LogInformation("[Home] Overlay close requested");
+        try
+        {
+            _streamResolutionCts?.Cancel();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            StreamResolutionOrchestrator.Reset();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            _progressSubscription?.Dispose();
+        }
+        catch
+        {
+        }
+
+        _progressSubscription = null;
+        _resolutionExhausted = true;
+        Selection.CurrentGame = null;
+        selectedGame = null;
+        isResolvingStreams = false;
+        streamResolutionStatus = string.Empty;
+        totalStreamsFound = 0;
+        streamsTested = 0;
+        healthyStreamCount = 0;
+        InvokeAsync(StateHasChanged);
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusPending)
+        {
+            focusPending = false;
+        }
+
+        // If user returned from native player (selectedGame still set) restart stream resolution
+        // so UI resumes discovering streams automatically.
+        try
+        {
+            if (!isResolvingStreams && selectedGame != null)
+            {
+                // Do not restart if we've already exhausted resolution for this selection
+                if (_resolutionExhausted)
+                {
+                    selectedGame = null;
+                }
+                else
+                {
+                    // Only restart resolution if the user did not explicitly cancel (Selection.CurrentGame indicates intent)
+                    if (Selection.CurrentGame != null && Selection.CurrentGame == selectedGame)
+                    {
+                        // Restart resolution in background
+                        _ = StartStreamResolution(selectedGame);
+                    }
+                    else
+                    {
+                        // Clear selection if we should not restart
+                        selectedGame = null;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void OnGamesUpdated(Dictionary<string, List<Game>>? updatedGames)
+    {
+        if (updatedGames == null)
+        {
+            Logger.LogInformation("[Home] Games updated: null (initial state)");
+            return;
+        }
+
+        Logger.LogInformation("[Home] Games updated: {Count} leagues", updatedGames.Count);
+
+        // This method is used when subscribing directly to the raw GamesStream
+        games.Clear();
+
+        foreach (var kvp in updatedGames)
+        {
+            var league = kvp.Key;
+            if (_ignoredLeagues.Contains(league)) continue;
+
+            var leagueGames = kvp.Value ?? new List<Game>();
+            games.AddRange(leagueGames);
+        }
+
+        isLoading = false;
+        statusMessage = string.Empty;
+        InvokeAsync(StateHasChanged);
+    }
+
+    // Handler for flattened display list
+    private void OnGamesUpdatedFlattened(List<Game>? updatedGames)
+    {
+        if (updatedGames == null)
+        {
+            Logger.LogInformation("[Home] Games updated (flattened): null (initial state)");
+            return;
+        }
+
+        Logger.LogInformation("[Home] Games updated (flattened): {Count} games", updatedGames.Count);
+
+        games.Clear();
+        games.AddRange(updatedGames.Where(g => !_ignoredLeagues.Contains(g.League))); // still filter ignored leagues if present
+
+        isLoading = false;
+        statusMessage = string.Empty;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnErrorUpdated(string? error)
+    {
+        if (error == null)
+        {
+            Logger.LogInformation("[Home] Error cleared");
+            statusMessage = string.Empty;
+            InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        Logger.LogWarning("[Home] Error: {Error}", error);
+        statusMessage = error;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private bool IsSelected(Game game)
+    {
+        if (Selection.CurrentGame == null) return false;
+        return string.Equals(game.Home, Selection.CurrentGame.Home, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(game.Away, Selection.CurrentGame.Away, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task StartStreamResolution(Game game)
+    {
+        Logger.LogInformation("[Home] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
+
+        if (_streamResolutionTask is { IsCompleted: false })
+        {
+            var sameGame = selectedGame != null &&
+                           string.Equals(selectedGame.Home, game.Home, StringComparison.OrdinalIgnoreCase) &&
+                           string.Equals(selectedGame.Away, game.Away, StringComparison.OrdinalIgnoreCase);
+
+            if (sameGame)
+            {
+                Logger.LogInformation("[Home] Stream resolution already running for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
+                return;
+            }
+
+            _streamResolutionCts?.Cancel();
+        }
+
+        Selection.CurrentGame = game;
+        selectedGame = game;
+        isResolvingStreams = true;
+        totalStreamsFound = 0;
+        streamsTested = 0;
+        streamResolutionStatus = "Searching for streams...";
+        SetOverlayBackSuppression(true);
+        _resolutionExhausted = false;
+
+        _progressSubscription ??= StreamResolutionOrchestrator.ProgressUpdated.Subscribe(progress =>
+        {
+            isResolvingStreams = progress.IsResolving;
+            streamResolutionStatus = progress.Status;
+            totalStreamsFound = progress.TotalStreams;
+            streamsTested = progress.StreamsTested;
+            healthyStreamCount = progress.HealthyStreams;
+            InvokeAsync(StateHasChanged);
+        });
+
+        await InvokeAsync(StateHasChanged);
+
+#if WINDOWS
+        try
+        {
+            Logger.LogInformation("[Home] Overlay close control should be shown on Windows");
+        }
+        catch { }
+#endif
+
+        _streamResolutionCts?.Cancel();
+        _streamResolutionCts = new CancellationTokenSource();
+        _streamResolutionTask = Task.Run(async () =>
+        {
+            try
+            {
+                var outcome = await StreamResolutionOrchestrator.StartAsync(game, _streamResolutionCts.Token);
+                _resolutionExhausted = true;
+
+                if (outcome.UserClosed)
+                {
+                    Selection.CurrentGame = null;
+                    selectedGame = null;
+                    return;
+                }
+
+                if (outcome.PlaybackResult != null && !outcome.PlaybackResult.Success)
+                {
+                    await InvokeAsync(() => { NavigateToStreamsWithError(outcome.PlaybackResult.Message); });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.LogInformation("[Home] Stream resolution cancelled");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "[Home] Error during stream resolution");
+                await InvokeAsync(() =>
+                {
+                    streamResolutionStatus = $"Error: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
+            finally
+            {
+                await InvokeAsync(() =>
+                {
+                    isResolvingStreams = false;
+                    SetOverlayBackSuppression(false);
+                    StateHasChanged();
+                });
+            }
+        });
+    }
+
+    private void NavigateToStreamsWithError(string? message)
+    {
+        var league = string.IsNullOrWhiteSpace(Selection.LastLeague)
+            ? Selection.CurrentGame?.ApiLeague ?? selectedGame?.ApiLeague ?? string.Empty
+            : Selection.LastLeague;
+        var home = string.IsNullOrWhiteSpace(Selection.LastHomeTeam)
+            ? Selection.CurrentGame?.Home ?? selectedGame?.Home ?? string.Empty
+            : Selection.LastHomeTeam;
+        var away = string.IsNullOrWhiteSpace(Selection.LastAwayTeam)
+            ? Selection.CurrentGame?.Away ?? selectedGame?.Away ?? string.Empty
+            : Selection.LastAwayTeam;
+
+        if (string.IsNullOrWhiteSpace(league) || string.IsNullOrWhiteSpace(home) || string.IsNullOrWhiteSpace(away))
+        {
+            statusMessage = message ?? "Stream unavailable";
+            StateHasChanged();
+            return;
+        }
+
+        var encodedLeague = Uri.EscapeDataString(league);
+        var encodedHome = Uri.EscapeDataString(home);
+        var encodedAway = Uri.EscapeDataString(away);
+        var encodedMessage = Uri.EscapeDataString(message ?? "Stream unavailable");
+        var route = $"/streams/{encodedLeague}/{encodedHome}/{encodedAway}?error={encodedMessage}";
+        Selection.LastRoute = route;
+        Navigation.NavigateTo(route, replace: true);
+    }
+
+    private async Task LoadGamesAsync()
+    {
+        isLoading = true;
+
+        var enrichedGameService = (IEnrichedGameService?)ServiceProvider?.GetService(typeof(IEnrichedGameService));
+        if (enrichedGameService is EnrichedGameService svc)
+        {
+            svc.StartBackgroundPolling();
+        }
+
+        var presentation = (IHomePagePresentationService?)ServiceProvider?.GetService(typeof(IHomePagePresentationService));
+        if (presentation != null)
+        {
+            _gamesSubscription = presentation.DisplayStream.Subscribe(OnGamesUpdatedFlattened);
+        }
+        else
+        {
+            _gamesSubscription = GameService.GamesStream.Subscribe(OnGamesUpdated);
+        }
+
+        _errorSubscription = GameService.ErrorStream.Subscribe(OnErrorUpdated);
+    }
+
+    public void Dispose()
+    {
+        Logger.LogInformation("[Home] Disposing");
+
+        _gamesSubscription?.Dispose();
+        _errorSubscription?.Dispose();
+        _progressSubscription?.Dispose();
+        StreamResolutionOrchestrator.Reset();
+        if (_overlayCloseService != null)
+        {
+            try
+            {
+                _overlayCloseService.CloseRequested -= OnOverlayCloseRequested;
+            }
+            catch
+            {
+            }
+
+            _overlayCloseService = null;
+        }
+#if ANDROID
+        try
+        {
+            var remote = MainActivity.RemoteKeyHandler;
+            if (remote != null) remote.OnBack -= AndroidBackHandler;
+        }
+        catch
+        {
+        }
+#endif
+
+        _streamResolutionCts?.Cancel();
+        _authCts?.Cancel();
+    }
+
+}
