@@ -311,10 +311,20 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (containerIdx >= 0)
             {
                 hasProgressContainer = true;
-                int cStart = html.IndexOf('>', containerIdx, end - containerIdx) + 1;
-                if (cStart > 0 && cStart < end)
+                // Find the closing > of the container opening tag
+                int cStart = html.IndexOf('>', containerIdx) + 1;
+                if (cStart > 0)
                 {
-                    int cEnd = html.IndexOf("</div>", cStart, end - cStart, StringComparison.OrdinalIgnoreCase);
+                    // Search for the closing </div> - try bounded first, then unbounded
+                    int searchLimit = Math.Min(end - cStart, 5000);  // Reasonable limit for container content
+                    int cEnd = html.IndexOf("</div>", cStart, searchLimit, StringComparison.OrdinalIgnoreCase);
+                    
+                    // If not found in limited range, search further
+                    if (cEnd < 0)
+                    {
+                        cEnd = html.IndexOf("</div>", cStart, StringComparison.OrdinalIgnoreCase);
+                    }
+                    
                     progressContainerEnd = cEnd;
                     if (cEnd > cStart)
                     {
@@ -350,19 +360,35 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
             bool RangeContains(string value)
             {
-                if (!hasProgressContainer) return false;
+                if (!hasProgressContainer || containerIdx < 0) return false;
                 var searchStart = containerIdx;
-                // limit search to the progress container bounds if available to avoid matching other fixtures in the block
-                var searchEnd = progressContainerEnd > 0 ? Math.Min(progressContainerEnd, end) : end;
-                var searchLength = searchEnd - containerIdx;
-                return searchStart >= 0 && searchLength > 0 && html.IndexOf(value, searchStart, searchLength, StringComparison.OrdinalIgnoreCase) >= 0;
+                // If we found the container end, search up to there; otherwise search a reasonable distance
+                var searchEnd = progressContainerEnd > 0 ? progressContainerEnd + 100 : Math.Min(containerIdx + 5000, html.Length);
+                var searchLength = searchEnd - searchStart;
+                
+                // Bounds check to avoid negative lengths
+                if (searchLength <= 0) return false;
+                
+                try
+                {
+                    return html.IndexOf(value, searchStart, searchLength, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+                catch
+                {
+                    // Fallback to unbounded search if bounded search fails
+                    return html.IndexOf(value, searchStart, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
             }
 
+            // Check for FT status in multiple ways
             var hasFullTime = hasProgressContainer && (
                 progressInner.Equals("FT", StringComparison.OrdinalIgnoreCase) ||
                 progressInner.IndexOf("Full time", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                progressInner.IndexOf("FT", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 RangeContains(">FT<") ||
-                RangeContains("Full time"));
+                RangeContains("Full time") ||
+                RangeContains("<div>FT</div>") ||
+                RangeContains("FT</div>"));  // Handle FT that might be in a div
             var hasHalfTime = hasProgressContainer && (
                 progressInner.Equals("HT", StringComparison.OrdinalIgnoreCase) ||
                 progressInner.IndexOf("Half time", StringComparison.OrdinalIgnoreCase) >= 0 ||
