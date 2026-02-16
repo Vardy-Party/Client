@@ -7,12 +7,16 @@
   </PropertyGroup>
   <ItemGroup>
     <None Remove="Resources\ParseHtml_ExtractsTeamLogos_Lazio_Como.html" />
+    <None Remove="Resources\RawAetPenaltiesGame.html" />
     <None Remove="Resources\RawFullTimeAggregateGame.html" />
     <None Remove="Resources\RawFullTimeGame.html" />
     <None Remove="Resources\RawInProgressIssue.html" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Resources\ParseHtml_ExtractsTeamLogos_Lazio_Como.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\RawAetPenaltiesGame.html">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\RawFullTimeAggregateGame.html">

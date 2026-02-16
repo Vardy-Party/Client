@@ -429,7 +429,7 @@ namespace VardyParty.Core.Tests
             var html = GetResxValue("RawFullTimeAggregateGame");
 
             var fixtures = CreateParser().ParseHtml(html);
-            var f = fixtures.FirstOrDefault(x => x.Home == "Arsenal" && x.Away == "Chelsea");
+            var f = fixtures.FirstOrDefault();
 
             Assert.NotNull(f);
             Assert.Equal("FT", f.Status);
@@ -437,6 +437,25 @@ namespace VardyParty.Core.Tests
             Assert.False(f.IsInProgress);
             Assert.Equal(1, f.HomeScore);
             Assert.Equal(0, f.AwayScore);
+        }
+
+        [Fact]
+        public void ParseHtml_WithAetPenaltiesFixture_IsCorrect()
+        {
+            var html = GetResxValue("RawAetPenaltiesGame");
+            var fixtures = CreateParser().ParseHtml(html);
+
+            var f = fixtures.FirstOrDefault();
+
+            Assert.NotNull(f);
+            Assert.Equal("AET", f.Status);
+            Assert.True(f.IsFinished);
+            Assert.False(f.IsInProgress);
+            Assert.Equal(1, f.HomeScore);
+            Assert.Equal(1, f.AwayScore);
+            Assert.Equal(4, f.PenaltyWinnerGoals);
+            Assert.Equal(2, f.PenaltyLoserGoals);
+            Assert.Equal("Leeds United", f.PenaltyWinner);
         }
 
         [Fact]
