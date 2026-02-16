@@ -59,9 +59,9 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui@10.0.100 --skip-manifest-update
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -r win-x64
       - name: Build Windows app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 --no-restore
       - name: Upload artifact
@@ -82,7 +82,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui@10.0.100 --skip-manifest-update
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -110,7 +110,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui@10.0.100 --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build iOS app
@@ -133,7 +133,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui@10.0.100 --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build macOS app
@@ -156,7 +156,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui@10.0.100 --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build core library
