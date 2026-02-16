@@ -81,6 +81,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Install MAUI workloads
+        run: dotnet workload install maui --skip-manifest-update
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
