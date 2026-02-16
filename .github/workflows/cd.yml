@@ -39,8 +39,15 @@ jobs:
           $fileSize = (Get-Item $certPath).Length
           if ($fileSize -gt 0) { Write-Host "Certificate file written ($fileSize bytes)" }
           $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
-          $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password
-          if ($cert) { Write-Host "Certificate installed successfully" }
+          try {
+            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
+            if ($cert) { 
+              Write-Host "Certificate imported with thumbprint length: $($cert.Thumbprint.Length)"
+            }
+          } catch {
+            Write-Host "Error importing certificate: $($_.Exception.Message)"
+            exit 1
+          }
         shell: powershell
       - name: Publish Windows app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-windows
