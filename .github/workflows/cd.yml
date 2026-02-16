@@ -30,6 +30,15 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Decode and install certificate
+        run: |
+          $certBytes = [System.Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_BASE64 }}")
+          $certPath = "${{ github.workspace }}\VardyParty\certs\vardyparty.pfx"
+          New-Item -Path "${{ github.workspace }}\VardyParty\certs" -ItemType Directory -Force
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
+          Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction SilentlyContinue
+        shell: powershell
       - name: Publish Windows app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-windows
       - name: Create Windows package
