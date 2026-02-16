@@ -70,12 +70,8 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
-      - name: Restore MAUI workloads from project
-        run: dotnet workload restore VardyParty/VardyParty.csproj
-      - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj -r win-x64
       - name: Build Windows app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 --no-restore
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
