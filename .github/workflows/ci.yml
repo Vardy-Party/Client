@@ -133,7 +133,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui@10.0.100 --skip-manifest-update
+        run: dotnet workload install maui@10.0.20 --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build macOS app
@@ -156,7 +156,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui@10.0.100 --skip-manifest-update
+        run: dotnet workload install maui@10.0.20 --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build core library
