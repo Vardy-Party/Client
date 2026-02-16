@@ -2,6 +2,12 @@
   <Folder Name="/Documents/">
     <File Path="Documents/STREAM_HEALTH_PROTOCOL.md" />
   </Folder>
+  <Folder Name="/Github Actions/">
+    <File Path=".github/CI-CD-SETUP.md" />
+    <File Path=".github/workflows/cd.yml" />
+    <File Path=".github/workflows/ci.yml" />
+    <File Path=".github/workflows/release.yml" />
+  </Folder>
   <Project Path="tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
   <Project Path="VardyParty.Core/VardyParty.Core.csproj" Id="3a0434c7-9ae5-4b08-b649-32352b4a56bc" />
