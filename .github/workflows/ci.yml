@@ -1,16 +1,18 @@
 name: CI - Build & Test
 
+env:
+  DOTNET_VERSION: "10.0.x"
+  VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
+  VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
+  TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
+
 on:
+  push:
+    branches:
+      - '**'
   pull_request:
     branches:
       - main
-      - develop
-      - feature/github-builds
-  push:
-    branches:
-      - main
-      - develop
-      - feature/github-builds
   workflow_dispatch:
 
 jobs:
@@ -22,13 +24,13 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore dependencies
-        run: dotnet restore tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj
+        run: dotnet restore ${{ env.TESTS_CSPROJ }}
       - name: Build test project
-        run: dotnet build tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj -c Release --no-restore
+        run: dotnet build ${{ env.TESTS_CSPROJ }} -c Release --no-restore
       - name: Run unit tests
-        run: dotnet test tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj -c Release --no-build --verbosity normal
+        run: dotnet test ${{ env.TESTS_CSPROJ }} -c Release --no-build --verbosity normal
 
   code-quality:
     name: Code Quality
@@ -39,13 +41,13 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj
+        run: dotnet restore ${{ env.TESTS_CSPROJ }}
       - name: Run StyleCop analyzers
-        run: dotnet build tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        run: dotnet build ${{ env.TESTS_CSPROJ }} -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
         continue-on-error: true
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
@@ -61,11 +63,11 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
       - name: Build Windows app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -83,7 +85,7 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Setup Java
@@ -92,7 +94,7 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Build Android app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -110,15 +112,15 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -136,13 +138,13 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -160,11 +162,11 @@ jobs:
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Build core library (x64)
-        run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 -r linux-x64
+        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-x64
       - name: Build core library (ARM64)
-        run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 -r linux-arm64
+        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-arm64
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
