@@ -3,7 +3,7 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  CI_RUN_ID: 66
+  CI_RUN_ID: 22077185527
 
 on:
   push:
