@@ -115,6 +115,10 @@ jobs:
     if: always() && (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -141,6 +145,10 @@ jobs:
     if: always() && (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
