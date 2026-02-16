@@ -26,7 +26,7 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore dependencies
-        run: dotnet restore
+        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Build test project
         run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 dotnet build -c Release --no-restore
       - name: Run unit tests
