@@ -63,7 +63,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install workloads
-        run: dotnet workload install maui-tizen --skip-manifest-update
+        run: dotnet workload install maui-tizen maui-android --skip-manifest-update
       - name: Restore all dependencies
         run: dotnet restore VardyParty/VardyParty.csproj -r win-x64
       - name: Build Windows app
