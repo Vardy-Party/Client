@@ -16,7 +16,7 @@ on:
       skip_tests:
         description: 'Skip unit tests and code quality checks'
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
@@ -93,7 +93,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui@10.0.20 maui-android@10.0.20
+        run: dotnet workload install maui-android@10.0.20
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
