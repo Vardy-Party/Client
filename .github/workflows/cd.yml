@@ -40,13 +40,26 @@ jobs:
           if ($fileSize -gt 0) { Write-Host "Certificate file written ($fileSize bytes)" }
           $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
           try {
-            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\My" -Password $password -ErrorAction Stop
+            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
             if ($cert) { 
               Write-Host "CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               Write-Host "Certificate imported with thumbprint: $($cert.Thumbprint.Substring(0,8))..."
             }
           } catch {
             Write-Host "Error importing certificate: $($_.Exception.Message)"
+            exit 1
+          }
+        shell: powershell
+      - name: Verify certificate in store
+        run: |
+          $certs = Get-ChildItem -Path "Cert:\CurrentUser\My"
+          Write-Host "Certificates in CurrentUser\My store:"
+          $certs | ForEach-Object { Write-Host "  - $($_.Subject) (Thumbprint: $($_.Thumbprint.Substring(0,8))...)" }
+          $certFound = $certs | Where-Object { $_.Thumbprint -eq "${{ env.CERT_THUMBPRINT }}" }
+          if ($certFound) {
+            Write-Host "✓ Certificate found in store"
+          } else {
+            Write-Host "✗ Certificate NOT found in store!"
             exit 1
           }
         shell: powershell
