@@ -27,19 +27,45 @@ jobs:
       - name: Restore workloads
         run: dotnet workload restore
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (test only)
+        run: dotnet restore tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj
       
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
+      - name: Build test project
+        run: dotnet build tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj --configuration Release --no-restore
       
       - name: Run unit tests
         run: dotnet test tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj --configuration Release --no-build --verbosity normal
 
-  build-windows:
-    name: Build Windows (APPX)
-    runs-on: windows-latest
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
     needs: test
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      
+      - name: Restore workloads
+        run: dotnet workload restore
+      
+      - name: Restore dependencies (test only)
+        run: dotnet restore tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj
+      
+      - name: Run StyleCop analyzers
+        run: dotnet build tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj --configuration Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        continue-on-error: true
+      
+      - name: Check code formatting
+        run: dotnet format --verify-no-changes --verbosity diagnostic
+        continue-on-error: true
+
+  build-windows:
+    name: Build Windows (net10.0-windows)
+    runs-on: windows-latest
+    needs: code-quality
     steps:
       - uses: actions/checkout@v4
       
@@ -54,19 +80,23 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
       
+      - name: Build Windows app
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0
+      
       - name: Publish Windows app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./artifacts/windows
       
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build
-          path: ./output/windows
+          name: build-windows
+          path: ./artifacts/windows
+          retention-days: 5
 
   build-android:
-    name: Build Android (APK)
+    name: Build Android (net10.0-android)
     runs-on: ubuntu-latest
-    needs: test
+    needs: code-quality
     steps:
       - uses: actions/checkout@v4
       
@@ -87,19 +117,23 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
       
+      - name: Build Android app
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
+      
       - name: Publish Android app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./output/android
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./artifacts/android
       
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: ./output/android/*.apk
+          name: build-android
+          path: ./artifacts/android
+          retention-days: 5
 
   build-ios:
-    name: Build iOS (IPA)
+    name: Build iOS (net10.0-ios)
     runs-on: macos-14
-    needs: test
+    needs: code-quality
     steps:
       - uses: actions/checkout@v4
       
@@ -114,19 +148,23 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
       
+      - name: Build iOS app
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios
+      
       - name: Publish iOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-ios /p:ArchiveOnBuild=true -o ./output/ios
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-ios /p:ArchiveOnBuild=true -o ./artifacts/ios
       
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-build
-          path: ./output/ios
+          name: build-ios
+          path: ./artifacts/ios
+          retention-days: 5
 
   build-macos:
-    name: Build macOS
+    name: Build macOS (net10.0-maccatalyst)
     runs-on: macos-14
-    needs: test
+    needs: code-quality
     steps:
       - uses: actions/checkout@v4
       
@@ -141,19 +179,23 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
       
+      - name: Build macOS app
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
+      
       - name: Publish macOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst /p:ArchiveOnBuild=true -o ./artifacts/macos
       
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-build
-          path: ./output/macos
+          name: build-macos
+          path: ./artifacts/macos
+          retention-days: 5
 
   build-linux:
-    name: Build Linux
+    name: Build Linux (net10.0)
     runs-on: ubuntu-latest
-    needs: test
+    needs: code-quality
     steps:
       - uses: actions/checkout@v4
       
@@ -171,8 +213,28 @@ jobs:
       - name: Build core library for Linux
         run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0
       
-      - name: Publish Linux app (net10.0)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-x64 -o ./output/linux/x64 || true
+      - name: Build Linux app (x64)
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0 -r linux-x64
+      
+      - name: Build Linux app (ARM64)
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0 -r linux-arm64
+      
+      - name: Publish Linux app (x64)
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-x64 -o ./artifacts/linux-x64
       
       - name: Publish Linux app (ARM64)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-arm64 -o ./output/linux/arm64 || true
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-arm64 -o ./artifacts/linux-arm64
+      
+      - name: Upload Linux x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-x64
+          path: ./artifacts/linux-x64
+          retention-days: 5
+      
+      - name: Upload Linux ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-arm64
+          path: ./artifacts/linux-arm64
+          retention-days: 5
