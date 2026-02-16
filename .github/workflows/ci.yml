@@ -26,7 +26,7 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore dependencies
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 dotnet restore
+        run: dotnet restore
       - name: Build test project
         run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 dotnet build -c Release --no-restore
       - name: Run unit tests
@@ -46,9 +46,9 @@ jobs:
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Restore dependencies
-        run: find . -name "*.csproj" -type f -print0 | xargs -0 dotnet restore
+        run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Run StyleCop analyzers
-        run: find . -name "*.csproj" -type f -print0 | xargs -0 dotnet build -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 dotnet build -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
         continue-on-error: true
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
