@@ -97,10 +97,8 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources
       - name: Build Android app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
