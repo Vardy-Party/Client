@@ -63,7 +63,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -p:TargetFrameworks=net10.0-windows10.0.19041.0
       - name: Build Windows app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 --no-restore
       - name: Upload artifact
@@ -91,7 +91,7 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -p:TargetFrameworks=net10.0-android
       - name: Build Android app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore
       - name: Upload artifact
@@ -114,7 +114,7 @@ jobs:
       - name: Install workloads
         run: dotnet workload install maui-ios --skip-manifest-update
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -p:TargetFrameworks=net10.0-ios
       - name: Build iOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios --no-restore
       - name: Upload artifact
@@ -137,7 +137,7 @@ jobs:
       - name: Install workloads
         run: dotnet workload install maui-maccatalyst --skip-manifest-update
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -p:TargetFrameworks=net10.0-maccatalyst
       - name: Build macOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst --no-restore
       - name: Upload artifact
@@ -160,7 +160,7 @@ jobs:
       - name: Install workloads
         run: dotnet workload install maui-android --skip-manifest-update
       - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+        run: dotnet restore VardyParty/VardyParty.csproj -p:TargetFrameworks=net10.0
       - name: Build core library
         run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 --no-restore
       - name: Build Linux (x64)
