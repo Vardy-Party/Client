@@ -16,7 +16,7 @@ on:
       skip_tests:
         description: 'Skip unit tests and code quality checks'
         required: false
-        default: true
+        default: false
         type: boolean
 
 jobs:
