@@ -165,11 +165,11 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - Restore dependencies
+      - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
-      - Build core library (x64)
+      - name: Build core library (x64)
         run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 -r linux-x64 --no-restore
-      - Build core library (ARM64)
+      - name: Build core library (ARM64)
         run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 -r linux-arm64 --no-restore
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
