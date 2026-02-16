@@ -77,8 +77,8 @@ jobs:
       - name: Restore workloads
         run: dotnet workload restore
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (Windows only)
+        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-windows10.0.19041.0
       
       - name: Build Windows app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0
@@ -114,8 +114,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (Android only)
+        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-android
       
       - name: Build Android app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
@@ -145,8 +145,8 @@ jobs:
       - name: Restore workloads
         run: dotnet workload restore
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (iOS only)
+        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-ios
       
       - name: Build iOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios
@@ -176,8 +176,8 @@ jobs:
       - name: Restore workloads
         run: dotnet workload restore
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (macOS only)
+        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-maccatalyst
       
       - name: Build macOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
@@ -207,8 +207,8 @@ jobs:
       - name: Restore workloads
         run: dotnet workload restore
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (Linux only)
+        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0
       
       - name: Build core library for Linux
         run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0
