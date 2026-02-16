@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-	  <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+	  <TargetFrameworks>net10.0</TargetFrameworks>
 	  <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>VardyParty</RootNamespace>
@@ -17,3 +17,4 @@
   </ItemGroup>
 
 </Project>
+	

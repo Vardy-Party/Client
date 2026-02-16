@@ -1,0 +1,174 @@
+name: CD - Package & Release
+
+on:
+  workflow_run:
+    workflows: ["CI - Build & Test"]
+    types: [completed]
+    branches:
+      - main
+
+jobs:
+  package-windows:
+    name: Package Windows Installer
+    runs-on: windows-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Windows build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-windows
+          path: ./build-windows
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Create Windows installer package
+        run: |
+          cd build-windows
+          7z a -tzip "../VardyParty-windows-installer.zip" *
+          cd ..
+      
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ./VardyParty-windows-installer.zip
+          retention-days: 30
+
+  package-android:
+    name: Package Android Installer
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Android build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-android
+          path: ./build-android
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: List Android artifacts
+        run: ls -la build-android/
+      
+      - name: Upload Android installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-installer
+          path: ./build-android/*.apk
+          retention-days: 30
+
+  package-ios:
+    name: Package iOS Installer
+    runs-on: macos-26
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download iOS build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-ios
+          path: ./build-ios
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Create iOS installer package
+        run: |
+          cd build-ios
+          zip -r "../VardyParty-ios-installer.zip" .
+          cd ..
+      
+      - name: Upload iOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-installer
+          path: ./VardyParty-ios-installer.zip
+          retention-days: 30
+
+  package-macos:
+    name: Package macOS Installer
+    runs-on: macos-26
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download macOS build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-macos
+          path: ./build-macos
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Create macOS installer package
+        run: |
+          cd build-macos
+          zip -r "../VardyParty-macos-installer.zip" .
+          cd ..
+      
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: ./VardyParty-macos-installer.zip
+          retention-days: 30
+
+  package-linux-x64:
+    name: Package Linux x64 Installer
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Linux x64 build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-linux-x64
+          path: ./build-linux-x64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Create Linux x64 installer package
+        run: |
+          cd build-linux-x64
+          tar -czf "../VardyParty-linux-x64-installer.tar.gz" .
+          cd ..
+      
+      - name: Upload Linux x64 installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-installer
+          path: ./VardyParty-linux-x64-installer.tar.gz
+          retention-days: 30
+
+  package-linux-arm64:
+    name: Package Linux ARM64 Installer
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Linux ARM64 build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-linux-arm64
+          path: ./build-linux-arm64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Create Linux ARM64 installer package
+        run: |
+          cd build-linux-arm64
+          tar -czf "../VardyParty-linux-arm64-installer.tar.gz" .
+          cd ..
+      
+      - name: Upload Linux ARM64 installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-installer
+          path: ./VardyParty-linux-arm64-installer.tar.gz
+          retention-days: 30
