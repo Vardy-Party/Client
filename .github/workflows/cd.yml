@@ -42,7 +42,8 @@ jobs:
           try {
             $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\My" -Password $password -ErrorAction Stop
             if ($cert) { 
-              Write-Host "Certificate imported with thumbprint length: $($cert.Thumbprint.Length)"
+              Write-Host "CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              Write-Host "Certificate imported with thumbprint: $($cert.Thumbprint.Substring(0,8))..."
             }
           } catch {
             Write-Host "Error importing certificate: $($_.Exception.Message)"
@@ -50,7 +51,7 @@ jobs:
           }
         shell: powershell
       - name: Publish Windows app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:PackageCertificateKeyFile="${{ github.workspace }}\VardyParty\certs\vardyparty.pfx" -p:PackageCertificatePassword="${{ secrets.WINDOWS_CERT_PASSWORD }}" -p:PackageCertificateThumbprint="" -o ./publish-windows
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:PackageCertificateThumbprint="${{ env.CERT_THUMBPRINT }}" -o ./publish-windows
       - name: Create Windows package
         run: |
           cd publish-windows
