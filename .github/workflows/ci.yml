@@ -26,11 +26,11 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore dependencies
-        run: dotnet restore ${{ env.TESTS_CSPROJ }}
+        run: dotnet restore "**/*Tests.csproj"
       - name: Build test project
-        run: dotnet build ${{ env.TESTS_CSPROJ }} -c Release --no-restore
+        run: dotnet build "**/*Tests.csproj" -c Release --no-restore
       - name: Run unit tests
-        run: dotnet test ${{ env.TESTS_CSPROJ }} -c Release --no-build --verbosity normal
+        run: dotnet test "**/*Tests.csproj" -c Release --no-build --verbosity normal
 
   code-quality:
     name: Code Quality
@@ -45,9 +45,9 @@ jobs:
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} ${{ env.VARDYPARTY_CORE_CSPROJ }} ${{ env.TESTS_CSPROJ }}
+        run: dotnet restore "**/*.csproj"
       - name: Run StyleCop analyzers
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} ${{ env.VARDYPARTY_CORE_CSPROJ }} ${{ env.TESTS_CSPROJ }} -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        run: dotnet build "**/*.csproj" -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
         continue-on-error: true
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
