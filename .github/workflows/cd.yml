@@ -32,6 +32,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      
       - name: Publish Windows app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-windows
       
@@ -75,6 +78,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-android
       
@@ -107,6 +113,9 @@ jobs:
           name: build-ios
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
+      
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release --no-build -o ./publish-ios
@@ -147,6 +156,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      
       - name: Publish macOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release --no-build -o ./publish-macos
       
@@ -181,6 +193,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       
+      - name: Restore dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
+      
       - name: Publish Linux x64 library
         run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --no-build -o ./publish-linux-x64
       
@@ -211,6 +226,9 @@ jobs:
           name: build-linux-arm64
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
+      
+      - name: Restore dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       
       - name: Publish Linux ARM64 library
         run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --no-build -o ./publish-linux-arm64
