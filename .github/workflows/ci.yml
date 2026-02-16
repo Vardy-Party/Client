@@ -97,8 +97,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
+      - name: Restore dependencies
+        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources
       - name: Build Android app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -121,8 +123,10 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -145,8 +149,10 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
