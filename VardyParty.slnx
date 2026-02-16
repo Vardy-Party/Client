@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/Documents/">
     <File Path="Documents/STREAM_HEALTH_PROTOCOL.md" />
+    <File Path="README.md" />
   </Folder>
   <Folder Name="/Github Actions/">
     <File Path=".github/CI-CD-SETUP.md" />
