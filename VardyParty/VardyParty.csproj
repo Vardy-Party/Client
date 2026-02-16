@@ -2,6 +2,7 @@
 
     <PropertyGroup>
         <TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
         <!-- Note for MacCatalyst:
             The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
