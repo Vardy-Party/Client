@@ -87,7 +87,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish Android app
-        run: dot >dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./output/android
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./output/android
       
       - name: Upload Android Release Asset
         uses: actions/upload-release-asset@v1

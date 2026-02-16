@@ -1,3 +1,5 @@
+File: .github\workflows\ci.yml
+````````
 name: CI - Build & Test
 
 on:
@@ -62,10 +64,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Install workloads
-        run: dotnet workload install windows --skip-manifest-update
       - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-windows10.0.19041.0
+        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build Windows app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
@@ -93,7 +93,7 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-android
+        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build Android app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
       - name: Upload artifact
@@ -116,7 +116,7 @@ jobs:
       - name: Install workloads
         run: dotnet workload install maui-ios --skip-manifest-update
       - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-ios
+        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build iOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios
       - name: Upload artifact
@@ -139,7 +139,7 @@ jobs:
       - name: Install workloads
         run: dotnet workload install maui-maccatalyst --skip-manifest-update
       - name: Restore dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj -f net10.0-maccatalyst
+        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build macOS app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
       - name: Upload artifact
@@ -159,6 +159,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Install workloads
+        run: dotnet workload install maui-android --skip-manifest-update
       - name: Restore dependencies
         run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build core library
