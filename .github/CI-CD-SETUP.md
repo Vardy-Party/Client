@@ -110,6 +110,17 @@ To adjust build parameters, edit the relevant workflow YAML:
 - Output locations
 - Artifact naming
 
+### Workload Restoration
+
+All workflows automatically run `dotnet workload restore` to install required .NET MAUI workloads. This includes:
+- `maui` - Core MAUI framework
+- `maui-android` - Android platform support
+- `maui-ios` - iOS platform support
+- `maui-maccatalyst` - macOS platform support
+- Plus all dependencies
+
+This step ensures the GitHub Actions runners have all necessary components to build for each platform.
+
 ### Test Artifacts
 
 During CI builds, all platform builds are available as workflow artifacts:
