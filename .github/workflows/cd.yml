@@ -1,174 +1,226 @@
 name: CD - Package & Release
 
+env:
+  DOTNET_VERSION: "10.0.x"
+  VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
+  CI_RUN_ID: 66
+
 on:
-  workflow_run:
-    workflows: ["CI - Build & Test"]
-    types: [completed]
+  push:
     branches:
-      - main
+      - feature/packaging
 
 jobs:
   package-windows:
-    name: Package Windows Installer
+    name: Package Windows
     runs-on: windows-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Install MAUI workloads
+        run: dotnet workload install maui --skip-manifest-update
       
       - name: Download Windows build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-windows
-          path: ./build-windows
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: Create Windows installer package
+      - name: Publish Windows app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-windows
+      
+      - name: Create Windows package
         run: |
-          cd build-windows
-          7z a -tzip "../VardyParty-windows-installer.zip" *
+          cd publish-windows
+          7z a -tzip "../VardyParty-windows.zip" *
           cd ..
       
-      - name: Upload Windows installer
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: ./VardyParty-windows-installer.zip
+          name: windows-package
+          path: ./VardyParty-windows.zip
           retention-days: 30
 
   package-android:
-    name: Package Android Installer
+    name: Package Android
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-android --ignore-failed-sources
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
       
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-android
-          path: ./build-android
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: List Android artifacts
-        run: ls -la build-android/
+      - name: Publish Android app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-android
       
-      - name: Upload Android installer
+      - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
-          name: android-installer
-          path: ./build-android/*.apk
+          name: android-package
+          path: ./publish-android/*.apk
           retention-days: 30
 
   package-ios:
-    name: Package iOS Installer
+    name: Package iOS
     runs-on: macos-26
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --ignore-failed-sources
+          dotnet workload install ios --ignore-failed-sources
       
       - name: Download iOS build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-ios
-          path: ./build-ios
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: Create iOS installer package
+      - name: Publish iOS app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release --no-build -o ./publish-ios
+      
+      - name: Create iOS package
         run: |
-          cd build-ios
-          zip -r "../VardyParty-ios-installer.zip" .
+          cd publish-ios
+          zip -r "../VardyParty-ios.zip" .
           cd ..
       
-      - name: Upload iOS installer
+      - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ios-installer
-          path: ./VardyParty-ios-installer.zip
+          name: ios-package
+          path: ./VardyParty-ios.zip
           retention-days: 30
 
   package-macos:
-    name: Package macOS Installer
+    name: Package macOS
     runs-on: macos-26
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --ignore-failed-sources
+          dotnet workload install maccatalyst --ignore-failed-sources
       
       - name: Download macOS build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-macos
-          path: ./build-macos
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: Create macOS installer package
+      - name: Publish macOS app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release --no-build -o ./publish-macos
+      
+      - name: Create macOS package
         run: |
-          cd build-macos
-          zip -r "../VardyParty-macos-installer.zip" .
+          cd publish-macos
+          zip -r "../VardyParty-macos.zip" .
           cd ..
       
-      - name: Upload macOS installer
+      - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: macos-installer
-          path: ./VardyParty-macos-installer.zip
+          name: macos-package
+          path: ./VardyParty-macos.zip
           retention-days: 30
 
   package-linux-x64:
-    name: Package Linux x64 Installer
+    name: Package Linux x64
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-linux-x64
-          path: ./build-linux-x64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: Create Linux x64 installer package
-        run: |
-          cd build-linux-x64
-          tar -czf "../VardyParty-linux-x64-installer.tar.gz" .
-          cd ..
+      - name: Publish Linux x64 library
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --no-build -o ./publish-linux-x64
       
-      - name: Upload Linux x64 installer
+      - name: Create Linux x64 package
+        run: tar -czf VardyParty-linux-x64.tar.gz -C publish-linux-x64 .
+      
+      - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-installer
-          path: ./VardyParty-linux-x64-installer.tar.gz
+          name: linux-x64-package
+          path: ./VardyParty-linux-x64.tar.gz
           retention-days: 30
 
   package-linux-arm64:
-    name: Package Linux ARM64 Installer
+    name: Package Linux ARM64
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-linux-arm64
-          path: ./build-linux-arm64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.CI_RUN_ID }}
       
-      - name: Create Linux ARM64 installer package
-        run: |
-          cd build-linux-arm64
-          tar -czf "../VardyParty-linux-arm64-installer.tar.gz" .
-          cd ..
+      - name: Publish Linux ARM64 library
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --no-build -o ./publish-linux-arm64
       
-      - name: Upload Linux ARM64 installer
+      - name: Create Linux ARM64 package
+        run: tar -czf VardyParty-linux-arm64.tar.gz -C publish-linux-arm64 .
+      
+      - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-installer
-          path: ./VardyParty-linux-arm64-installer.tar.gz
+          name: linux-arm64-package
+          path: ./VardyParty-linux-arm64.tar.gz
           retention-days: 30
