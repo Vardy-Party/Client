@@ -99,8 +99,8 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
+      - name: Restore Android framework only
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore -t:Restore
       - name: Build Android app
         run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore
       - name: Upload artifact
