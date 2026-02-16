@@ -40,7 +40,7 @@ jobs:
           if ($fileSize -gt 0) { Write-Host "Certificate file written ($fileSize bytes)" }
           $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
           try {
-            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
+            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\My" -Password $password -ErrorAction Stop
             if ($cert) { 
               Write-Host "Certificate imported with thumbprint length: $($cert.Thumbprint.Length)"
             }
