@@ -97,10 +97,8 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore Android framework only
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore -t:Restore
       - name: Build Android app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android --no-restore
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -121,10 +119,8 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
         run: dotnet workload install maui-ios --skip-manifest-update
-      - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build iOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios --no-restore
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-ios
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -145,10 +141,8 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
         run: dotnet workload install maui-maccatalyst --skip-manifest-update
-      - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
       - name: Build macOS app
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst --no-restore
+        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -168,24 +162,4 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
-      - name: Restore all dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj
-      - name: Build core library
-        run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0 --no-restore
-      - name: Build Linux (x64)
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0 -r linux-x64 --no-restore
-      - name: Build Linux (ARM64)
-        run: dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0 -r linux-arm64 --no-restore
-      - name: Upload x64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-x64
-          path: VardyParty/bin/Release/net10.0
-          retention-days: 5
-      - name: Upload ARM64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-arm64
-          path: VardyParty/bin/Release/net10.0
-          retention-days: 5
+        run: dotent
