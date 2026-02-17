@@ -3,10 +3,11 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  CI_RUN_ID: 22078979976
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI - Build & Test"]
+    types: [completed]
     branches:
       - feature/packaging
 
@@ -27,7 +28,7 @@ jobs:
         with:
           name: build-windows
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Decode and install certificate
@@ -43,6 +44,21 @@ jobs:
             $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
             if ($cert) { 
               Write-Host "Certificate imported with thumbprint: $($cert.Thumbprint.Substring(0,8))..."
+              
+              # Update .csproj with the actual certificate thumbprint
+              $csprojPath = "${{ github.workspace }}\VardyParty\VardyParty.csproj"
+              [xml]$csproj = Get-Content $csprojPath
+              $ns = @{ msbuild = 'http://schemas.microsoft.com/developer/msbuild/2003' }
+              
+              # Update all PackageCertificateThumbprint elements
+              $thumbprintNodes = $csproj.SelectNodes('//PackageCertificateThumbprint')
+              foreach ($node in $thumbprintNodes) {
+                Write-Host "Updating thumbprint in $($node.ParentNode.Name)"
+                $node.InnerText = $cert.Thumbprint
+              }
+              
+              $csproj.Save($csprojPath)
+              Write-Host "Updated .csproj with new certificate thumbprint"
             }
           } catch {
             Write-Host "Error importing certificate: $($_.Exception.Message)"
@@ -90,7 +106,7 @@ jobs:
         with:
           name: build-android
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish Android app
@@ -120,7 +136,7 @@ jobs:
         with:
           name: build-ios
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish iOS app
@@ -152,7 +168,7 @@ jobs:
         with:
           name: build-macos
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish macOS app
@@ -180,7 +196,7 @@ jobs:
         with:
           name: build-linux-x64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux x64 library
@@ -208,7 +224,7 @@ jobs:
         with:
           name: build-linux-arm64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux ARM64 library
