@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - '**'
+      - '!feature/packaging'
   pull_request:
     branches:
       - main
