@@ -42,7 +42,6 @@ jobs:
           try {
             $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
             if ($cert) { 
-              Add-Content -Path $env:GITHUB_ENV -Value "CERT_THUMBPRINT=$($cert.Thumbprint)"
               Write-Host "Certificate imported with thumbprint: $($cert.Thumbprint.Substring(0,8))..."
             }
           } catch {
@@ -50,31 +49,24 @@ jobs:
             exit 1
           }
         shell: powershell
-      - name: Verify certificate in store
+      - name: Publish Windows app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+      - name: Extract MSIX package
         run: |
-          $certs = Get-ChildItem -Path "Cert:\CurrentUser\My"
-          Write-Host "Certificates in CurrentUser\My store:"
-          $certs | ForEach-Object { Write-Host "  - $($_.Subject) (Thumbprint: $($_.Thumbprint.Substring(0,8))...)" }
-          $certFound = $certs | Where-Object { $_.Thumbprint -eq "${{ env.CERT_THUMBPRINT }}" }
-          if ($certFound) {
-            Write-Host "Certificate found in store"
+          $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
+          if ($msixPath) {
+            Copy-Item $msixPath.FullName "VardyParty-windows.msix"
+            Write-Host "MSIX found: $($msixPath.Name)"
           } else {
-            Write-Host "Certificate NOT found in store!"
+            Write-Host "No MSIX file found!"
             exit 1
           }
         shell: powershell
-      - name: Publish Windows app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:PackageCertificateThumbprint="${{ env.CERT_THUMBPRINT }}" -o ./publish-windows
-      - name: Create Windows package
-        run: |
-          cd publish-windows
-          7z a -tzip "../VardyParty-windows.zip" *
-          cd ..
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: windows-package
-          path: ./VardyParty-windows.zip
+          path: ./VardyParty-windows.msix
           retention-days: 30
 
   package-android:
@@ -102,12 +94,12 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -o ./publish-android
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: ./publish-android/*.apk
+          path: ./VardyParty/bin/Release/net10.0-android/*.apk
           retention-days: 30
 
   package-ios:
@@ -132,17 +124,14 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish iOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release -o ./publish-ios
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
       - name: Create iOS package
-        run: |
-          cd publish-ios
-          zip -r "../VardyParty-ios.zip" .
-          cd ..
+        run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
           name: ios-package
-          path: ./VardyParty-ios.zip
+          path: ./VardyParty-ios.tar.gz
           retention-days: 30
 
   package-macos:
@@ -167,17 +156,14 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release -o ./publish-macos
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
       - name: Create macOS package
-        run: |
-          cd publish-macos
-          zip -r "../VardyParty-macos.zip" .
-          cd ..
+        run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
           name: macos-package
-          path: ./VardyParty-macos.zip
+          path: ./VardyParty-macos.tar.gz
           retention-days: 30
 
   package-linux-x64:
@@ -198,9 +184,9 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release -o ./publish-linux-x64
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
       - name: Create Linux x64 package
-        run: tar -czf VardyParty-linux-x64.tar.gz -C publish-linux-x64 .
+        run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
@@ -226,9 +212,9 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release -o ./publish-linux-arm64
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
       - name: Create Linux ARM64 package
-        run: tar -czf VardyParty-linux-arm64.tar.gz -C publish-linux-arm64 .
+        run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
