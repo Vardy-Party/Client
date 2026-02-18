@@ -1,174 +1,305 @@
 name: CD - Package & Release
 
+env:
+  DOTNET_VERSION: "10.0.x"
+  VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
+  CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id || '22081915754' }}
+
 on:
   workflow_run:
     workflows: ["CI - Build & Test"]
-    types: [completed]
+    types:
+      - completed
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: 'CI Run ID to download artifacts from (required for feature branches)'
+        required: false
+        default: ''
 
 jobs:
   package-windows:
-    name: Package Windows Installer
+    name: Package Windows
     runs-on: windows-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MAUI workloads
+        run: dotnet workload install maui --skip-manifest-update
       - name: Download Windows build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-windows
-          path: ./build-windows
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: Create Windows installer package
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Decode and install certificate
         run: |
-          cd build-windows
-          7z a -tzip "../VardyParty-windows-installer.zip" *
-          cd ..
-      
-      - name: Upload Windows installer
+          $certBytes = [System.Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_BASE64 }}")
+          $certPath = "${{ github.workspace }}\VardyParty\certs\vardyparty.pfx"
+          New-Item -Path "${{ github.workspace }}\VardyParty\certs" -ItemType Directory -Force
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $fileSize = (Get-Item $certPath).Length
+          if ($fileSize -gt 0) { Write-Host "Certificate file written ($fileSize bytes)" }
+          $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
+          try {
+            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $password -ErrorAction Stop
+            if ($cert) { 
+              Write-Host "Certificate imported"
+              $csprojPath = "${{ github.workspace }}\VardyParty\VardyParty.csproj"
+              [xml]$csproj = Get-Content $csprojPath
+              $thumbprintNodes = $csproj.SelectNodes('//PackageCertificateThumbprint')
+              foreach ($node in $thumbprintNodes) {
+                $node.InnerText = $cert.Thumbprint
+              }
+              $csproj.Save($csprojPath)
+            }
+          } catch {
+            Write-Host "Error: $($_.Exception.Message)"
+            exit 1
+          }
+        shell: powershell
+      - name: Publish Windows app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+      - name: Extract MSIX package
+        run: |
+          $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
+          if ($msixPath) {
+            Copy-Item $msixPath.FullName "VardyParty-windows.msix"
+            Write-Host "MSIX found: $($msixPath.Name)"
+          } else {
+            Write-Host "No MSIX file found!"
+            exit 1
+          }
+        shell: powershell
+      - name: Prepare Windows package with certificate
+        run: |
+          $artifactsDir = "windows-artifacts"
+          New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+          Copy-Item "VardyParty-windows.msix" "$artifactsDir/" -Force
+          Copy-Item "VardyParty/certs/vardyparty.pfx" "$artifactsDir/vardyparty.pfx" -Force
+          Write-Host "Files prepared in $artifactsDir"
+        shell: powershell
+      - name: Extract public certificate
+        run: |
+          $artifactsDir = "windows-artifacts"
+          $pfxPath = "$artifactsDir/vardyparty.pfx"
+          $cerPath = "$artifactsDir/vardyparty.cer"
+          $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
+          
+          # Load the certificate
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+          $cert.Import($pfxPath, $password, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::DefaultKeySet)
+          
+          # Export public certificate
+          $certBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+          [System.IO.File]::WriteAllBytes($cerPath, $certBytes)
+          
+          Write-Host "Public certificate extracted to $cerPath"
+        shell: powershell
+      - name: Copy AppxManifest and create integrity manifest
+        run: |
+          $artifactsDir = "windows-artifacts"
+          $manifestPath = "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages"
+          
+          # Copy AppxManifest.xml
+          Get-ChildItem -Path $manifestPath -Filter "AppxManifest.xml" -Recurse | ForEach-Object {
+            Copy-Item $_.FullName "$artifactsDir/AppxManifest.xml" -Force
+          }
+          
+          # Create integrity manifest with SHA256 hashes
+          $hashManifest = @()
+          $hashManifest += "# VardyParty Windows Package Integrity Manifest"
+          $hashManifest += "# Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+          $hashManifest += ""
+          
+          Get-ChildItem -Path $artifactsDir -File | ForEach-Object {
+            $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
+            $hashManifest += "$($_.Name): $hash"
+            Write-Host "SHA256($($_.Name)): $hash"
+          }
+          
+          $hashManifest | Out-File -FilePath "$artifactsDir/INTEGRITY.txt" -Encoding UTF8
+          Write-Host "Integrity manifest created"
+        shell: powershell
+      - name: Copy installation documents
+        run: |
+          $artifactsDir = "windows-artifacts"
+          Copy-Item -Path "docs/WINDOWS_INSTALL.md" -Destination "$artifactsDir/WINDOWS_INSTALL.md" -Force
+          Write-Host "Installation instructions copied"
+        shell: powershell
+      - name: Copy installation script
+        run: |
+          $artifactsDir = "windows-artifacts"
+          Copy-Item -Path "scripts/install-msix.ps1" -Destination "$artifactsDir/install.ps1" -Force
+          Write-Host "Installation script copied"
+        shell: powershell
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: ./VardyParty-windows-installer.zip
+          name: windows-package
+          path: ./windows-artifacts
           retention-days: 30
 
   package-android:
-    name: Package Android Installer
+    name: Package Android
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-android --ignore-failed-sources
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-android
-          path: ./build-android
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: List Android artifacts
-        run: ls -la build-android/
-      
-      - name: Upload Android installer
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Publish Android app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+      - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
-          name: android-installer
-          path: ./build-android/*.apk
+          name: android-package
+          path: ./VardyParty/bin/Release/net10.0-android/*.apk
           retention-days: 30
 
   package-ios:
-    name: Package iOS Installer
+    name: Package iOS
     runs-on: macos-26
-    if: github.event.workflow_run.conclusion == 'success'
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --ignore-failed-sources
+          dotnet workload install ios --ignore-failed-sources
       - name: Download iOS build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-ios
-          path: ./build-ios
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: Create iOS installer package
-        run: |
-          cd build-ios
-          zip -r "../VardyParty-ios-installer.zip" .
-          cd ..
-      
-      - name: Upload iOS installer
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Publish iOS app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
+      - name: Create iOS package
+        run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
+      - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ios-installer
-          path: ./VardyParty-ios-installer.zip
+          name: ios-package
+          path: ./VardyParty-ios.tar.gz
           retention-days: 30
 
   package-macos:
-    name: Package macOS Installer
+    name: Package macOS
     runs-on: macos-26
-    if: github.event.workflow_run.conclusion == 'success'
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --ignore-failed-sources
+          dotnet workload install maccatalyst --ignore-failed-sources
       - name: Download macOS build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-macos
-          path: ./build-macos
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: Create macOS installer package
-        run: |
-          cd build-macos
-          zip -r "../VardyParty-macos-installer.zip" .
-          cd ..
-      
-      - name: Upload macOS installer
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Publish macOS app
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
+      - name: Create macOS package
+        run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
+      - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: macos-installer
-          path: ./VardyParty-macos-installer.zip
+          name: macos-package
+          path: ./VardyParty-macos.tar.gz
           retention-days: 30
 
   package-linux-x64:
-    name: Package Linux x64 Installer
+    name: Package Linux x64
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-linux-x64
-          path: ./build-linux-x64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: Create Linux x64 installer package
-        run: |
-          cd build-linux-x64
-          tar -czf "../VardyParty-linux-x64-installer.tar.gz" .
-          cd ..
-      
-      - name: Upload Linux x64 installer
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
+      - name: Publish Linux x64 library
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
+      - name: Create Linux x64 package
+        run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
+      - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-installer
-          path: ./VardyParty-linux-x64-installer.tar.gz
+          name: linux-x64-package
+          path: ./VardyParty-linux-x64.tar.gz
           retention-days: 30
 
   package-linux-arm64:
-    name: Package Linux ARM64 Installer
+    name: Package Linux ARM64
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
-      
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-linux-arm64
-          path: ./build-linux-arm64
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-      
-      - name: Create Linux ARM64 installer package
-        run: |
-          cd build-linux-arm64
-          tar -czf "../VardyParty-linux-arm64-installer.tar.gz" .
-          cd ..
-      
-      - name: Upload Linux ARM64 installer
+          run-id: ${{ env.CI_RUN_ID }}
+      - name: Restore dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
+      - name: Publish Linux ARM64 library
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
+      - name: Create Linux ARM64 package
+        run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
+      - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-installer
-          path: ./VardyParty-linux-arm64-installer.tar.gz
+          name: linux-arm64-package
+          path: ./VardyParty-linux-arm64.tar.gz
           retention-days: 30
