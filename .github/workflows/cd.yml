@@ -123,206 +123,62 @@ jobs:
       - name: Create installation instructions
         run: |
           $artifactsDir = "windows-artifacts"
-          $instructions = @'
-# VardyParty Windows Installation Guide
-
-This package contains everything needed to install VardyParty on Windows 10+.
-
-## Package Contents
-
-- **VardyParty-windows.msix** - The application installer
-- **vardyparty.pfx** - Self-signed certificate (password protected)
-- **vardyparty.cer** - Public certificate (for viewing/verification)
-- **AppxManifest.xml** - Package metadata and configuration
-- **install.ps1** - Automated installation script (recommended)
-- **INTEGRITY.txt** - SHA256 hashes for file verification
-- **WINDOWS_INSTALL.md** - This file
-
-## Installation Methods
-
-### Method 1: Automated Installation (Recommended)
-
-1. Right-click `install.ps1` and select "Run with PowerShell"
-   - Alternatively, open PowerShell as Administrator and run: `.\install.ps1`
-2. Follow the prompts
-3. When prompted for the certificate password, enter: `P@ssw0rd!`
-4. The script will automatically install the certificate and MSIX
-
-### Method 2: Manual Installation
-
-#### Step 1: Install the Certificate
-1. Open PowerShell as Administrator
-2. Run:
-   ```powershell
-   $password = ConvertTo-SecureString -String "P@ssw0rd!" -Force -AsPlainText
-   Import-PfxCertificate -FilePath "vardyparty.pfx" -CertStoreLocation "Cert:\CurrentUser\My" -Password $password
-   ```
-
-#### Step 2: Install the MSIX
-1. Double-click `VardyParty-windows.msix`, or
-2. Use PowerShell:
-   ```powershell
-   Add-AppxPackage -Path "VardyParty-windows.msix"
-   ```
-
-## Verification
-
-To verify file integrity before installation:
-
-```powershell
-Get-FileHash -Path "VardyParty-windows.msix" -Algorithm SHA256
-Get-FileHash -Path "vardyparty.pfx" -Algorithm SHA256
-```
-
-Compare the output with the hashes in `INTEGRITY.txt`.
-
-## Certificate Information
-
-This package uses a **self-signed certificate** for testing purposes only. 
-
-To view certificate details:
-- Double-click `vardyparty.cer` and select "View Certificate", or
-- Right-click `vardyparty.pfx` and select "Properties"
-
-**⚠️ Security Note:** Self-signed certificates should only be used for testing/development. For production distribution, obtain a code-signing certificate from a trusted Certificate Authority.
-
-## Troubleshooting
-
-### "Administrator rights required" error
-- Ensure you're running PowerShell as Administrator
-- Right-click PowerShell → "Run as administrator"
-
-### Certificate installation fails
-- Verify the password is correct: `P@ssw0rd!`
-- Ensure you have administrator privileges
-- Try the manual method above
-
-### MSIX installation fails
-- Ensure the certificate is installed first
-- Try uninstalling any previous version first
-- Run `Get-AppxPackage VardyParty*` to check current state
-
-### Windows Protected Your PC warning
-- This is normal for self-signed certificates
-- Click "More info" → "Run anyway"
-
-## Uninstalling
-
-To uninstall VardyParty:
-```powershell
-Remove-AppxPackage -Package VardyParty_*
-```
-
-## Support
-
-For issues or questions, please refer to the main repository documentation or open an issue on GitHub.
-'@
-          $instructions | Out-File -FilePath "$artifactsDir/WINDOWS_INSTALL.md" -Encoding UTF8
+          $content = 'VardyParty Windows Installation Guide' + "`r`n`r`n"
+          $content += 'This package contains everything needed to install VardyParty on Windows 10+.' + "`r`n`r`n"
+          $content += '## Package Contents' + "`r`n"
+          $content += '- VardyParty-windows.msix: The application installer' + "`r`n"
+          $content += '- vardyparty.pfx: Self-signed certificate' + "`r`n"
+          $content += '- vardyparty.cer: Public certificate' + "`r`n"
+          $content += '- AppxManifest.xml: Package metadata' + "`r`n"
+          $content += '- install.ps1: Automated installation script' + "`r`n"
+          $content += '- INTEGRITY.txt: SHA256 hashes' + "`r`n`r`n"
+          $content += '## Installation Methods' + "`r`n`r`n"
+          $content += 'Method 1: Automated (Recommended)' + "`r`n"
+          $content += '1. Right-click install.ps1 and select Run with PowerShell' + "`r`n"
+          $content += '2. Follow prompts' + "`r`n"
+          $content += '3. Enter password: P@ssw0rd!' + "`r`n`r`n"
+          $content += 'Method 2: Manual' + "`r`n"
+          $content += '- Install certificate: Import-PfxCertificate -FilePath vardyparty.pfx' + "`r`n"
+          $content += '- Install MSIX: Double-click VardyParty-windows.msix' + "`r`n`r`n"
+          $content += '## Notes' + "`r`n"
+          $content += '- Self-signed certificates are for testing only' + "`r`n"
+          $content += '- Administrator rights required' + "`r`n"
+          $content | Out-File -FilePath "$artifactsDir/WINDOWS_INSTALL.md" -Encoding UTF8
           Write-Host "Installation instructions created"
         shell: powershell
       - name: Create installation script
         run: |
           $artifactsDir = "windows-artifacts"
-          $script = @'
-# VardyParty Windows Installation Script
-# This script automates certificate installation and MSIX package deployment
-# Requires: PowerShell (Windows 10+), Administrator privileges
-
-param(
-    [string]$CertPassword = "P@ssw0rd!",
-    [string]$CertPath = "vardyparty.pfx",
-    [string]$MsixPath = "VardyParty-windows.msix"
-)
-
-function Write-Header {
-    param([string]$Message)
-    Write-Host ""
-    Write-Host "=" * 60
-    Write-Host $Message
-    Write-Host "=" * 60
-}
-
-function Test-AdminRights {
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-# Check for admin privileges
-Write-Header "VardyParty Windows Installer"
-if (-not (Test-AdminRights)) {
-    Write-Host "ERROR: This script requires Administrator privileges."
-    Write-Host "Please run PowerShell as Administrator and try again."
-    exit 1
-}
-
-# Verify files exist
-Write-Host "Verifying installation files..."
-if (-not (Test-Path $CertPath)) {
-    Write-Host "ERROR: Certificate file not found: $CertPath"
-    exit 1
-}
-if (-not (Test-Path $MsixPath)) {
-    Write-Host "ERROR: MSIX package not found: $MsixPath"
-    exit 1
-}
-Write-Host "✓ All required files found"
-
-# Install certificate
-Write-Header "Installing Certificate"
-Write-Host "Installing self-signed certificate..."
-try {
-    $securePassword = ConvertTo-SecureString -String $CertPassword -Force -AsPlainText
-    $cert = Import-PfxCertificate -FilePath $CertPath `
-        -CertStoreLocation "Cert:\CurrentUser\My" `
-        -Password $securePassword `
-        -ErrorAction Stop
-    
-    if ($cert) {
-        Write-Host "✓ Certificate installed successfully"
-        Write-Host "  Subject: $($cert.Subject)"
-        Write-Host "  Thumbprint: $($cert.Thumbprint)"
-    }
-} catch {
-    Write-Host "ERROR: Failed to install certificate"
-    Write-Host "Details: $($_.Exception.Message)"
-    exit 1
-}
-
-# Install MSIX package
-Write-Header "Installing VardyParty Application"
-Write-Host "Installing MSIX package..."
-try {
-    $msixFile = Resolve-Path $MsixPath
-    Add-AppxPackage -Path $msixFile.Path -ErrorAction Stop
-    Write-Host "✓ Application installed successfully"
-} catch {
-    Write-Host "ERROR: Failed to install MSIX package"
-    Write-Host "Details: $($_.Exception.Message)"
-    Write-Host ""
-    Write-Host "If you see 'Administrator rights required', the certificate may not be trusted."
-    Write-Host "Try installing the certificate first, then the MSIX package."
-    exit 1
-}
-
-# Verify installation
-Write-Header "Verification"
-$installed = Get-AppxPackage -Name "*VardyParty*" -ErrorAction SilentlyContinue
-if ($installed) {
-    Write-Host "✓ VardyParty is now installed!"
-    Write-Host "  Name: $($installed.Name)"
-    Write-Host "  Version: $($installed.Version)"
-    Write-Host ""
-    Write-Host "You can now launch VardyParty from the Start Menu or by running:"
-    Write-Host "  explorer.exe shell:appsFolder\$($installed.PackageFamilyName)!App"
-} else {
-    Write-Host "WARNING: Could not verify installation"
-}
-
-Write-Header "Installation Complete"
-Write-Host "Thank you for installing VardyParty!"
-'@
-          $script | Out-File -FilePath "$artifactsDir/install.ps1" -Encoding UTF8
+          $lines = @()
+          $lines += '# VardyParty Windows Installation Script'
+          $lines += 'param([string]$CertPassword = "P@ssw0rd!", [string]$CertPath = "vardyparty.pfx", [string]$MsixPath = "VardyParty-windows.msix")'
+          $lines += 'function Test-AdminRights {'
+          $lines += '  $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()'
+          $lines += '  $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)'
+          $lines += '  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'
+          $lines += '}'
+          $lines += 'Write-Host "VardyParty Installer"'
+          $lines += 'if (-not (Test-AdminRights)) { Write-Host "ERROR: Admin rights required"; exit 1 }'
+          $lines += 'if (-not (Test-Path $CertPath) -or -not (Test-Path $MsixPath)) { Write-Host "ERROR: Files not found"; exit 1 }'
+          $lines += 'Write-Host "Installing Certificate..."'
+          $lines += 'try {'
+          $lines += '  $securePassword = ConvertTo-SecureString -String $CertPassword -Force -AsPlainText'
+          $lines += '  Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $securePassword | Out-Null'
+          $lines += '  Write-Host "Certificate installed"'
+          $lines += '} catch {'
+          $lines += '  Write-Host "ERROR: Certificate installation failed"; exit 1'
+          $lines += '}'
+          $lines += 'Write-Host "Installing VardyParty..."'
+          $lines += 'try {'
+          $lines += '  Add-AppxPackage -Path (Resolve-Path $MsixPath).Path'
+          $lines += '  Write-Host "Application installed successfully"'
+          $lines += '} catch {'
+          $lines += '  Write-Host "ERROR: MSIX installation failed"; exit 1'
+          $lines += '}'
+          $lines += '$installed = Get-AppxPackage -Name "*VardyParty*" -ErrorAction SilentlyContinue'
+          $lines += 'if ($installed) { Write-Host "Success: VardyParty version $($installed.Version)" }'
+          $lines += 'Write-Host "Installation complete!"'
+          $lines | Out-File -FilePath "$artifactsDir/install.ps1" -Encoding UTF8
           Write-Host "Installation script created"
         shell: powershell
       - name: Upload Windows package
