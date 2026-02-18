@@ -6,20 +6,16 @@ env:
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id || '22081915754' }}
 
 on:
-  push:
-    branches:
-      - feature/packaging
   workflow_run:
     workflows: ["CI - Build & Test"]
     types:
       - completed
     branches:
       - main
-      - feature/packaging
   workflow_dispatch:
     inputs:
       ci_run_id:
-        description: 'CI Run ID to download artifacts from (leave empty for latest)'
+        description: 'CI Run ID to download artifacts from (required for feature branches)'
         required: false
         default: ''
 
