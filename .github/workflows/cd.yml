@@ -3,13 +3,18 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  CI_RUN_ID: 22081915754
+  CI_RUN_ID: ${{ github.event.inputs.ci_run_id || '22081915754' }}
 
 on:
   push:
     branches:
       - feature/packaging
   workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: 'CI Run ID to download artifacts from (leave empty for latest)'
+        required: false
+        default: ''
 
 jobs:
   package-windows:
@@ -151,32 +156,45 @@ jobs:
           $artifactsDir = "windows-artifacts"
           $lines = @()
           $lines += '# VardyParty Windows Installation Script'
-          $lines += 'param([string]$CertPassword = "P@ssw0rd!", [string]$CertPath = "vardyparty.pfx", [string]$MsixPath = "VardyParty-windows.msix")'
+          $lines += '$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path'
+          $lines += 'if (-not $scriptDir) { $scriptDir = Get-Location }'
+          $lines += '$CertPath = Join-Path $scriptDir "vardyparty.pfx"'
+          $lines += '$MsixPath = Join-Path $scriptDir "VardyParty-windows.msix"'
+          $lines += '$CertPassword = Read-Host -Prompt "Enter certificate password" -AsSecureString'
           $lines += 'function Test-AdminRights {'
           $lines += '  $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()'
           $lines += '  $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)'
           $lines += '  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'
           $lines += '}'
           $lines += 'Write-Host "VardyParty Installer"'
-          $lines += 'if (-not (Test-AdminRights)) { Write-Host "ERROR: Admin rights required"; exit 1 }'
-          $lines += 'if (-not (Test-Path $CertPath) -or -not (Test-Path $MsixPath)) { Write-Host "ERROR: Files not found"; exit 1 }'
+          $lines += 'Write-Host "Working directory: $scriptDir"'
+          $lines += 'if (-not (Test-AdminRights)) { Write-Host "ERROR: Administrator rights required"; exit 1 }'
+          $lines += 'if (-not (Test-Path $CertPath)) { Write-Host "ERROR: Certificate not found at $CertPath"; exit 1 }'
+          $lines += 'if (-not (Test-Path $MsixPath)) { Write-Host "ERROR: MSIX not found at $MsixPath"; exit 1 }'
           $lines += 'Write-Host "Installing Certificate..."'
           $lines += 'try {'
-          $lines += '  $securePassword = ConvertTo-SecureString -String $CertPassword -Force -AsPlainText'
-          $lines += '  Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $securePassword | Out-Null'
-          $lines += '  Write-Host "Certificate installed"'
+          $lines += '  $cert = Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $CertPassword'
+          $lines += '  Write-Host "Certificate installed successfully"'
+          $lines += '  Write-Host "Subject: $($cert.Subject)"'
           $lines += '} catch {'
-          $lines += '  Write-Host "ERROR: Certificate installation failed"; exit 1'
+          $lines += '  Write-Host "ERROR: Certificate installation failed"'
+          $lines += '  Write-Host "Details: $_"'
+          $lines += '  exit 1'
           $lines += '}'
           $lines += 'Write-Host "Installing VardyParty..."'
           $lines += 'try {'
-          $lines += '  Add-AppxPackage -Path (Resolve-Path $MsixPath).Path'
+          $lines += '  Add-AppxPackage -Path $MsixPath'
           $lines += '  Write-Host "Application installed successfully"'
           $lines += '} catch {'
-          $lines += '  Write-Host "ERROR: MSIX installation failed"; exit 1'
+          $lines += '  Write-Host "ERROR: MSIX installation failed"'
+          $lines += '  Write-Host "Details: $_"'
+          $lines += '  exit 1'
           $lines += '}'
           $lines += '$installed = Get-AppxPackage -Name "*VardyParty*" -ErrorAction SilentlyContinue'
-          $lines += 'if ($installed) { Write-Host "Success: VardyParty version $($installed.Version)" }'
+          $lines += 'if ($installed) {'
+          $lines += '  Write-Host "Success! VardyParty is installed"'
+          $lines += '  Write-Host "Version: $($installed.Version)"'
+          $lines += '}'
           $lines += 'Write-Host "Installation complete!"'
           $lines | Out-File -FilePath "$artifactsDir/install.ps1" -Encoding UTF8
           Write-Host "Installation script created"
