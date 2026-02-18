@@ -257,4 +257,14 @@
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     </PropertyGroup>
 
+    <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->
+    <Target Name="UpdateWindowsManifestVersion" BeforeTargets="BeforeBuild" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+        <PropertyGroup>
+            <ManifestPath>$(MSBuildProjectDirectory)\Platforms\Windows\Package.appxmanifest</ManifestPath>
+            <WindowsVersion>$(ApplicationDisplayVersion).0</WindowsVersion>
+        </PropertyGroup>
+        <Message Text="Updating Package.appxmanifest version to $(WindowsVersion)" Importance="high" />
+        <Exec Command="powershell -NoProfile -Command &quot;(Get-Content '$(ManifestPath)') -replace 'Version=&quot;[\d.]+&quot;', 'Version=&quot;$(WindowsVersion)&quot;' | Set-Content '$(ManifestPath)'&quot;" />
+    </Target>
+
 </Project>

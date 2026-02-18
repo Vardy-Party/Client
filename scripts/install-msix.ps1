@@ -8,8 +8,6 @@ $CertPath = Join-Path $scriptDir "vardyparty.pfx"
 $CerPath = Join-Path $scriptDir "vardyparty.cer"
 $MsixPath = Join-Path $scriptDir "VardyParty-windows.msix"
 
-$CertPassword = Read-Host -Prompt "Enter certificate password" -AsSecureString
-
 function Test-AdminRights {
   $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
@@ -38,19 +36,24 @@ if (-not (Test-Path $MsixPath)) {
   exit 1
 }
 
-Write-Host "Installing Certificate to Trusted Root Store..."
+Write-Host "Installing Certificate to System Stores..."
 try {
-  $cert = Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $CertPassword
-  Write-Host "Certificate imported to Personal store"
-  
-  if (Test-Path $CerPath) {
-    Import-Certificate -FilePath $CerPath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-    Write-Host "Certificate imported to Trusted Root store"
-  } else {
-    Write-Host "WARNING: Public certificate file not found, skipping trusted root installation"
+  if (-not (Test-Path $CerPath)) {
+    Write-Host "ERROR: Public certificate file not found at $CerPath"
+    Read-Host -Prompt "Press Enter to continue"
+    exit 1
   }
   
+  # Import to LocalMachine Root for MSIX trust (requires admin)
+  $cert = Import-Certificate -FilePath $CerPath -CertStoreLocation "Cert:\LocalMachine\Root"
+  Write-Host "Certificate imported to Trusted Root Certification Authorities"
+  
+  # Import to TrustedPeople for MSIX installation (requires admin)
+  Import-Certificate -FilePath $CerPath -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
+  Write-Host "Certificate imported to Trusted People"
+  
   Write-Host "Subject: $($cert.Subject)"
+  Write-Host "Thumbprint: $($cert.Thumbprint)"
 } catch {
   Write-Host "ERROR: Certificate installation failed"
   Write-Host "Details: $_"
