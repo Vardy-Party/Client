@@ -11,37 +11,17 @@ This package contains everything needed to install VardyParty on Windows 10+.
 - **install.ps1** - Automated installation script (recommended)
 - **INTEGRITY.txt** - SHA256 hashes for file verification
 
-## Installation Methods
+## Installation Method
 
-### Method 1: Automated Installation (Recommended)
 
-1. **Right-click PowerShell** and select **"Run as Administrator"**
+1. **Right-click Terminal** and select **"Run as Administrator"**
 2. Navigate to the extracted package folder
-3. Run: `.\install.ps1`
-4. The script will automatically:
+3. Run: `pwsh.exe -ExecutionPolicy Unrestricted`
+4. Run: `.\install.ps1`
+5. Answer `R` for `Run Once` (if asked)
+6. The script will automatically:
    - Install the certificate to system stores (LocalMachine\Root and LocalMachine\TrustedPeople)
    - Install the MSIX package
-
-**Note:** Administrator privileges are required for system-wide certificate installation.
-
-### Method 2: Manual Installation
-
-#### Step 1: Install the Certificate
-1. Open PowerShell as Administrator
-2. Run:
-   ```powershell
-   Import-Certificate -FilePath "vardyparty.cer" -CertStoreLocation "Cert:\LocalMachine\Root"
-   Import-Certificate -FilePath "vardyparty.cer" -CertStoreLocation "Cert:\LocalMachine\TrustedPeople"
-   ```
-
-**Note:** MSIX installation requires certificates in LocalMachine stores, not CurrentUser.
-
-#### Step 2: Install the MSIX
-1. Double-click `VardyParty-windows.msix`, or
-2. Use PowerShell as Administrator:
-   ```powershell
-   Add-AppxPackage -Path "VardyParty-windows.msix"
-   ```
 
 ## Verification
 
