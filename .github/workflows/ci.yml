@@ -67,8 +67,10 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Windows app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,8 +99,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -153,8 +157,10 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
