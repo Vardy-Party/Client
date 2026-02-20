@@ -5,6 +5,19 @@ env:
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id || '22081915754' }}
 
+# Required GitHub Secrets (set in repository settings):
+# - AUTH0_DOMAIN
+# - AUTH0_CLIENTID
+# - AUTH0_AUDIENCE
+# - AUTH0_SCOPE
+# - AUTH0_CALLBACKSCHEME
+# - AUTH0_REDIRECTURI
+# - AUTH0_POSTLOGOUTREDIRECTURI
+# - AUTH0_TOKENLEEAWAYSECONDS
+# - AUTH0_REQUIREDROLECLAIMTYPE
+# - AUTH0_REQUIREDROLE
+# - API_HEADLESSBASEURL
+
 on:
   workflow_run:
     workflows: ["CI - Build & Test"]
@@ -12,6 +25,7 @@ on:
       - completed
     branches:
       - main
+      - feature/newconfig
   workflow_dispatch:
     inputs:
       ci_run_id:
@@ -40,6 +54,29 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Generate appsettings.json
+        run: |
+          $appsettingsPath = "VardyParty/appsettings.json"
+          $appsettings = @{
+              Auth0 = @{
+                  Domain = "${{ secrets.AUTH0_DOMAIN }}"
+                  ClientId = "${{ secrets.AUTH0_CLIENTID }}"
+                  Audience = "${{ secrets.AUTH0_AUDIENCE }}"
+                  Scope = "${{ secrets.AUTH0_SCOPE }}"
+                  CallbackScheme = "${{ secrets.AUTH0_CALLBACKSCHEME }}"
+                  RedirectUri = "${{ secrets.AUTH0_REDIRECTURI }}"
+                  PostLogoutRedirectUri = "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}"
+                  TokenLeewaySeconds = [int]"${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}"
+                  RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
+                  RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
+              }
+              Api = @{
+                  HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+              }
+          }
+          $appsettings | ConvertTo-Json | Out-File -FilePath $appsettingsPath -Encoding UTF8
+          Write-Host "appsettings.json generated at $appsettingsPath"
+        shell: powershell
       - name: Decode and install certificate
         run: |
           $certBytes = [System.Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_BASE64 }}")
@@ -173,6 +210,29 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Generate appsettings.json
+        run: |
+          cat > VardyParty/appsettings.json << 'EOF'
+          {
+            "Auth0": {
+              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
+              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
+              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
+              "Scope": "${{ secrets.AUTH0_SCOPE }}",
+              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
+              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
+              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
+              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
+              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
+              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
+            },
+            "Api": {
+              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
+            }
+          }
+          EOF
+          echo "appsettings.json generated"
+        shell: bash
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Upload Android package
@@ -204,6 +264,29 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Generate appsettings.json
+        run: |
+          cat > VardyParty/appsettings.json << 'EOF'
+          {
+            "Auth0": {
+              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
+              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
+              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
+              "Scope": "${{ secrets.AUTH0_SCOPE }}",
+              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
+              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
+              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
+              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
+              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
+              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
+            },
+            "Api": {
+              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
+            }
+          }
+          EOF
+          echo "appsettings.json generated"
+        shell: bash
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
       - name: Create iOS package
@@ -237,8 +320,31 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Generate appsettings.json
+        run: |
+          cat > VardyParty/appsettings.json << 'EOF'
+          {
+            "Auth0": {
+              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
+              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
+              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
+              "Scope": "${{ secrets.AUTH0_SCOPE }}",
+              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
+              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
+              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
+              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
+              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
+              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
+            },
+            "Api": {
+              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
+            }
+          }
+          EOF
+          echo "appsettings.json generated"
+        shell: bash
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release --no-build
       - name: Create macOS package
         run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
@@ -266,7 +372,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --no-build
       - name: Create Linux x64 package
         run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
       - name: Upload Linux x64 package
@@ -294,7 +400,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --no-build
       - name: Create Linux ARM64 package
         run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
       - name: Upload Linux ARM64 package
