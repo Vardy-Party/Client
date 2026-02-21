@@ -3,6 +3,7 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
+  ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id }}
 on:
   workflow_run:
@@ -197,9 +198,19 @@ jobs:
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Decode and install keystore
         run: |
-          mkdir -p VardyParty/certs
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > VardyParty/certs/vardyparty.keystore
-          echo "Keystore file created at VardyParty/certs/vardyparty.keystore"
+          mkdir -p $(dirname ${{ env.ANDROID_KEYSTORE_PATH }})
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > ${{ env.ANDROID_KEYSTORE_PATH }}
+          
+          # Verify keystore file was created
+          if [ -f ${{ env.ANDROID_KEYSTORE_PATH }} ]; then
+            KEYSTORE_SIZE=$(stat -f%z ${{ env.ANDROID_KEYSTORE_PATH }} 2>/dev/null || stat -c%s ${{ env.ANDROID_KEYSTORE_PATH }} 2>/dev/null)
+            echo "✓ Keystore file verified at: ${{ env.ANDROID_KEYSTORE_PATH }}"
+            echo "✓ Keystore file size: $KEYSTORE_SIZE bytes"
+            ls -lh ${{ env.ANDROID_KEYSTORE_PATH }}
+          else
+            echo "✗ ERROR: Keystore file not found at ${{ env.ANDROID_KEYSTORE_PATH }}"
+            exit 1
+          fi
         shell: bash
       - name: Generate appsettings.json
         run: |
@@ -225,7 +236,7 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyAlias=vardyparty -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
