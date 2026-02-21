@@ -12,7 +12,7 @@ public static class ServiceCollectionExtensions
         {
             var environment = Environment.GetEnvironmentVariable("NETCORE_ENVIRONMENT");
 
-            var isDevelopment = environment.ToLower() == "development";
+            var isDevelopment = environment != null && environment.ToLower() == "development";
 
             if (isDevelopment) return configuration.AddUserSecrets(secretsAssembly, false);
 

@@ -36,8 +36,7 @@ public static class MauiProgram
             .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
         builder.Configuration
             .AddJsonFile("appsettings.json", true)
-            .AddSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables();
+            .AddSecrets(Assembly.GetExecutingAssembly());
 
 
         // NOTE: Previously we loaded appsettings.json synchronously here which can block the UI thread
