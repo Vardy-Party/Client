@@ -104,7 +104,7 @@ jobs:
           }
         shell: powershell
       - name: Publish Windows app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
@@ -288,7 +288,7 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish iOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release --no-build
       - name: Create iOS package
         run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
       - name: Upload iOS package
