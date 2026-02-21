@@ -281,13 +281,25 @@ jobs:
           echo ""
           echo "✅ All APKs signed with production certificate"
         shell: bash
+      - name: Prepare Android package artifacts
+        run: |
+          ARTIFACTS_DIR="android-package-artifacts"
+          mkdir -p "$ARTIFACTS_DIR"
+          
+          # Copy all APKs (flattened, no subdirectories)
+          find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f -exec cp {} "$ARTIFACTS_DIR/" \;
+          
+          # Copy signature verification report
+          cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
+          
+          echo "Prepared artifacts:"
+          ls -lh "$ARTIFACTS_DIR"
+        shell: bash
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: |
-            ./VardyParty/bin/Release/net10.0-android/**/*.apk
-            ./apk-signature-verification.txt
+          path: ./android-package-artifacts
           retention-days: 30
 
   package-ios:
