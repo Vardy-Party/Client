@@ -234,7 +234,7 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
@@ -288,7 +288,7 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish iOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release --no-build
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
       - name: Create iOS package
         run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
       - name: Upload iOS package
@@ -344,7 +344,7 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release --no-build
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
       - name: Create macOS package
         run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
