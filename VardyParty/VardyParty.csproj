@@ -260,7 +260,7 @@
 
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'net10.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
-	    <AndroidSigningKeyStore>certs/vardyparty.keystore</AndroidSigningKeyStore>
+	    <AndroidSigningKeyStore>$(MSBuildProjectDirectory)/certs/vardyparty.keystore</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
 	    <AndroidSigningKeyPass>placeholder</AndroidSigningKeyPass>
 	    <AndroidSigningStorePass>placeholder</AndroidSigningStorePass>
