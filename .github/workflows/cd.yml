@@ -253,6 +253,14 @@ jobs:
           echo "=== APK Signature Verification ==="
           cat apk-signature-verification.txt
           
+          # Check if APK is unsigned
+          if grep -q "jar is unsigned" apk-signature-verification.txt; then
+            echo ""
+            echo "❌ ERROR: APK is unsigned!"
+            echo "The APK must be signed with a production certificate."
+            exit 1
+          fi
+          
           # Check if signed with debug certificate
           if grep -q "CN=Android Debug" apk-signature-verification.txt; then
             echo ""
