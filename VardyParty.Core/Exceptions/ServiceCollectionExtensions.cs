@@ -6,20 +6,18 @@ namespace VardyParty.Exceptions;
 
 public static class ServiceCollectionExtensions
 {
- 
-
-    public static IConfigurationBuilder AddSecrets(this IConfigurationBuilder configuration, Assembly secretsAssembly)
+    extension(IConfigurationBuilder configuration)
     {
-        var environment = Environment.GetEnvironmentVariable("NETCORE_ENVIRONMENT");
-
-        var isDevelopment = string.IsNullOrEmpty(environment) || environment.ToLower() == "development";
-
-        if (isDevelopment)
+        public IConfigurationBuilder AddSecrets(Assembly secretsAssembly)
         {
-            return configuration.AddUserSecrets(secretsAssembly, false);
-        }
+            var environment = Environment.GetEnvironmentVariable("NETCORE_ENVIRONMENT");
 
-        return configuration;
+            var isDevelopment = environment != null && environment.ToLower() == "development";
+
+            if (isDevelopment) return configuration.AddUserSecrets(secretsAssembly, false);
+
+            return configuration;
+        }
     }
 
     extension(IServiceCollection services)
@@ -33,7 +31,5 @@ public static class ServiceCollectionExtensions
             });
             return services;
         }
-
-
     }
 }

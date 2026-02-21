@@ -67,6 +67,8 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Windows app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
@@ -74,9 +76,12 @@ jobs:
         with:
           name: build-windows
           path: |
-            VardyParty/bin/Release/net10.0-windows10.0.19041.0/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-android:
@@ -97,16 +102,21 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore -p:AndroidKeyStore=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-android
           path: |
-            VardyParty/bin/Release/net10.0-android/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-ios:
@@ -127,15 +137,18 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-ios
           path: |
-            VardyParty/bin/Release/net10.0-ios/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-macos:
@@ -153,6 +166,8 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build macOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
       - name: Upload artifact
@@ -160,9 +175,12 @@ jobs:
         with:
           name: build-macos
           path: |
-            VardyParty/bin/Release/net10.0-maccatalyst/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-linux:
@@ -185,14 +203,16 @@ jobs:
         with:
           name: build-linux-x64
           path: |
-            VardyParty.Core/bin/Release/net10.0/linux-x64/
-            VardyParty.Core/obj/
+            VardyParty.Core/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-linux-arm64
           path: |
-            VardyParty.Core/bin/Release/net10.0/linux-arm64/
-            VardyParty.Core/obj/
+            VardyParty.Core/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
