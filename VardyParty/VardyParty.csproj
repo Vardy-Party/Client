@@ -255,10 +255,10 @@
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'net10.0-android'">
     </PropertyGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(Configuration)' == 'Release'">
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'net10.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
 	    <AndroidSigningKeyStore>vardyparty.keystore</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
