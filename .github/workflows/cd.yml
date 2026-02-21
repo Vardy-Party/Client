@@ -239,12 +239,22 @@ jobs:
         env:
           ANDROID_SIGNING_KEY_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_SIGNING_STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
-      - name: Upload Android package
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -v diag 2>&1 | tee publish.log
+      - name: Extract signing diagnostics
+        if: always()
+        run: |
+          echo "=== Full Verbose Log Output ===" 
+          cat publish.log
+          echo ""
+          echo "=== Filtered Signing Output ===" 
+          grep -i "signing\|keystore\|android\|jarsigner\|debug" publish.log || echo "No signing-related output found"
+        shell: bash
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-package
-          path: ./VardyParty/bin/Release/net10.0-android/*.apk
+          name: android-build-logs
+          path: publish.log
           retention-days: 30
 
   package-ios:
