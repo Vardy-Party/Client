@@ -250,8 +250,14 @@ jobs:
           APK_FILE="${APK_FILES[0]}"
           echo "Verifying APK: $APK_FILE"
           
-          # Verify signature with jarsigner
-          jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1
+          # Verify signature with both jarsigner and apksigner
+          {
+            echo "=== jarsigner Verification ==="
+            jarsigner -verify -verbose -certs "$APK_FILE" 2>&1
+            echo ""
+            echo "=== apksigner Verification ==="
+            apksigner verify --print-certs "$APK_FILE" 2>&1
+          } > apk-signature-verification.txt
           
           echo "=== APK Signature Verification ==="
           cat apk-signature-verification.txt
