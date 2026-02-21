@@ -246,48 +246,42 @@ jobs:
             exit 1
           fi
           
-          echo "Found ${#APK_FILES[@]} APK(s) to verify"
+          # Verify only the first APK (all are binary-identical)
+          APK_FILE="${APK_FILES[0]}"
+          echo "Verifying APK: $APK_FILE"
           
-          # Verify each APK
-          for APK_FILE in "${APK_FILES[@]}"; do
+          # Verify signature with jarsigner
+          jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1
+          
+          echo "=== APK Signature Verification ==="
+          cat apk-signature-verification.txt
+          
+          # Check if APK is unsigned
+          if grep -q "jar is unsigned" apk-signature-verification.txt; then
             echo ""
-            echo "Verifying APK: $APK_FILE"
-            
-            # Verify signature with jarsigner
-            jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1
-            
-            echo "=== APK Signature Verification ==="
-            cat apk-signature-verification.txt
-            
-            # Check if APK is unsigned
-            if grep -q "jar is unsigned" apk-signature-verification.txt; then
-              echo ""
-              echo "❌ ERROR: APK is unsigned!"
-              echo "The APK must be signed with a production certificate."
-              exit 1
-            fi
-            
-            # Check if signed with debug certificate
-            if grep -q "CN=Android Debug" apk-signature-verification.txt; then
-              echo ""
-              echo "❌ ERROR: APK is signed with Android Debug certificate!"
-              echo "Expected production certificate, not debug."
-              exit 1
-            fi
-            
-            echo "✅ APK verified: $(basename $APK_FILE)"
-          done
+            echo "❌ ERROR: APK is unsigned!"
+            echo "The APK must be signed with a production certificate."
+            exit 1
+          fi
           
-          echo ""
-          echo "✅ All APKs signed with production certificate"
+          # Check if signed with debug certificate
+          if grep -q "CN=Android Debug" apk-signature-verification.txt; then
+            echo ""
+            echo "❌ ERROR: APK is signed with Android Debug certificate!"
+            echo "Expected production certificate, not debug."
+            exit 1
+          fi
+          
+          echo "✅ APK verified with production certificate"
         shell: bash
       - name: Prepare Android package artifacts
         run: |
           ARTIFACTS_DIR="android-package-artifacts"
           mkdir -p "$ARTIFACTS_DIR"
           
-          # Copy all APKs (flattened, no subdirectories)
-          find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f -exec cp {} "$ARTIFACTS_DIR/" \;
+          # Copy only the first APK (all are binary-identical)
+          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          cp "$APK_FILE" "$ARTIFACTS_DIR/"
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
