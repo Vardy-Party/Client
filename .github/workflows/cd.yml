@@ -3,7 +3,7 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id || '22081915754' }}
+  CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id }}
 on:
   workflow_run:
     workflows: ["CI - Build & Test"]
@@ -218,8 +218,13 @@ jobs:
           EOF
           echo "appsettings.json generated"
         shell: bash
+      - name: Decode and setup Android signing key
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > vardyparty.keystore
+          echo "Android signing key decoded and saved as vardyparty.keystore"
+        shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true /p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:

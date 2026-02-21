@@ -258,6 +258,14 @@
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     </PropertyGroup>
 
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(Configuration)' == 'Release'">
+	    <AndroidKeyStore>True</AndroidKeyStore>
+	    <AndroidSigningKeyStore>vardyparty.keystore</AndroidSigningKeyStore>
+	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
+	    <AndroidSigningKeyPass></AndroidSigningKeyPass>
+	    <AndroidSigningStorePass></AndroidSigningStorePass>
+    </PropertyGroup>
+
     <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->
     <Target Name="UpdateWindowsManifestVersion" BeforeTargets="BeforeBuild" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
         <PropertyGroup>
