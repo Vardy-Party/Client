@@ -236,28 +236,30 @@ jobs:
           echo "appsettings.json generated"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -v diag 2>&1 | tee publish.log
-      - name: Extract signing diagnostics
-        if: always()
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+      - name: Verify APK Signature
         run: |
-          echo "=== Full Verbose Log Output ===" 
-          cat publish.log
+          # Find the APK file
+          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No APK file found"
+            exit 1
+          fi
+          echo "Verifying APK: $APK_FILE"
+          
+          # Verify signature with jarsigner
+          jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1 || true
           echo ""
-          echo "=== Filtered Signing Output ===" 
-          grep -i "signing\|keystore\|android\|jarsigner\|debug" publish.log || echo "No signing-related output found"
+          echo "=== APK Signature Verification ==="
+          cat apk-signature-verification.txt
         shell: bash
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-build-logs
-          path: publish.log
-          retention-days: 30
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
           name: android-package
-          path: ./VardyParty/bin/Release/net10.0-android/**/*.apk
+          path: |
+            ./VardyParty/bin/Release/net10.0-android/**/*.apk
+            ./apk-signature-verification.txt
           retention-days: 30
 
   package-ios:
