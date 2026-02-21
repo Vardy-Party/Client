@@ -28,8 +28,8 @@
         <ApplicationId>com.vardyparty</ApplicationId>
 
         <!-- Versions -->
-        <ApplicationDisplayVersion>1.6.2</ApplicationDisplayVersion>
-        <ApplicationVersion>28</ApplicationVersion>
+        <ApplicationDisplayVersion>1.6.6</ApplicationDisplayVersion>
+        <ApplicationVersion>30</ApplicationVersion>
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
         <!-- Removed global WindowsPackageType None so per-target Windows packaging settings can apply -->
@@ -149,6 +149,7 @@
     <!-- Retain default MAUI AppCompat layout -->
 
     <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.3" />
         <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
         <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
         <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
@@ -254,7 +255,15 @@
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'net10.0-android'">
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
+	    <AndroidKeyStore>True</AndroidKeyStore>
+	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', 'vardyparty.keystore'))</AndroidSigningKeyStore>
+	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
+	    <AndroidSigningKeyPass>$(ANDROID_SIGNING_KEY_PASS)</AndroidSigningKeyPass>
+	    <AndroidSigningStorePass>$(ANDROID_SIGNING_STORE_PASS)</AndroidSigningStorePass>
     </PropertyGroup>
 
     <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->

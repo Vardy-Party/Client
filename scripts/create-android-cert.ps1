@@ -1,0 +1,1 @@
+& 'C:\Program Files\Android\openjdk\jdk-21.0.8\bin\keytool.exe' -genkey -v -keystore certs/vardyparty.keystore -alias vardyparty -keyalg RSA -keysize 2048 -validity 10000
