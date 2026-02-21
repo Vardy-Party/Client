@@ -53,7 +53,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} -r win-x64
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
@@ -400,7 +400,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --no-build
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
       - name: Create Linux ARM64 package
         run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
       - name: Upload Linux ARM64 package
