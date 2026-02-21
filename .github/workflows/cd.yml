@@ -239,38 +239,47 @@ jobs:
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
         run: |
-          # Find the APK file
-          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
-          if [ -z "$APK_FILE" ]; then
-            echo "ERROR: No APK file found"
+          # Find all APK files
+          APK_FILES=($(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f))
+          if [ ${#APK_FILES[@]} -eq 0 ]; then
+            echo "ERROR: No APK files found"
             exit 1
           fi
-          echo "Verifying APK: $APK_FILE"
           
-          # Verify signature with jarsigner
-          jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1
-          echo ""
-          echo "=== APK Signature Verification ==="
-          cat apk-signature-verification.txt
+          echo "Found ${#APK_FILES[@]} APK(s) to verify"
           
-          # Check if APK is unsigned
-          if grep -q "jar is unsigned" apk-signature-verification.txt; then
+          # Verify each APK
+          for APK_FILE in "${APK_FILES[@]}"; do
             echo ""
-            echo "❌ ERROR: APK is unsigned!"
-            echo "The APK must be signed with a production certificate."
-            exit 1
-          fi
-          
-          # Check if signed with debug certificate
-          if grep -q "CN=Android Debug" apk-signature-verification.txt; then
-            echo ""
-            echo "❌ ERROR: APK is signed with Android Debug certificate!"
-            echo "Expected production certificate, not debug."
-            exit 1
-          fi
+            echo "Verifying APK: $APK_FILE"
+            
+            # Verify signature with jarsigner
+            jarsigner -verify -verbose -certs "$APK_FILE" > apk-signature-verification.txt 2>&1
+            
+            echo "=== APK Signature Verification ==="
+            cat apk-signature-verification.txt
+            
+            # Check if APK is unsigned
+            if grep -q "jar is unsigned" apk-signature-verification.txt; then
+              echo ""
+              echo "❌ ERROR: APK is unsigned!"
+              echo "The APK must be signed with a production certificate."
+              exit 1
+            fi
+            
+            # Check if signed with debug certificate
+            if grep -q "CN=Android Debug" apk-signature-verification.txt; then
+              echo ""
+              echo "❌ ERROR: APK is signed with Android Debug certificate!"
+              echo "Expected production certificate, not debug."
+              exit 1
+            fi
+            
+            echo "✅ APK verified: $(basename $APK_FILE)"
+          done
           
           echo ""
-          echo "✅ APK signature verified with production certificate"
+          echo "✅ All APKs signed with production certificate"
         shell: bash
       - name: Upload Android package
         uses: actions/upload-artifact@v4
