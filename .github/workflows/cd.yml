@@ -53,7 +53,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} -r win-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
@@ -104,7 +104,7 @@ jobs:
           }
         shell: powershell
       - name: Publish Windows app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release --no-build -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
@@ -372,7 +372,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
       - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --no-build
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
       - name: Create Linux x64 package
         run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
       - name: Upload Linux x64 package

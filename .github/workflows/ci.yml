@@ -76,9 +76,12 @@ jobs:
         with:
           name: build-windows
           path: |
-            VardyParty/bin/Release/net10.0-windows10.0.19041.0/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-android:
@@ -108,9 +111,12 @@ jobs:
         with:
           name: build-android
           path: |
-            VardyParty/bin/Release/net10.0-android/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-ios:
@@ -137,9 +143,12 @@ jobs:
         with:
           name: build-ios
           path: |
-            VardyParty/bin/Release/net10.0-ios/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-macos:
@@ -166,9 +175,12 @@ jobs:
         with:
           name: build-macos
           path: |
-            VardyParty/bin/Release/net10.0-maccatalyst/
-            VardyParty/obj/
-            VardyParty.Core/obj/
+            VardyParty/
+            VardyParty.Core/
+            !VardyParty/bin/
+            !VardyParty/obj/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
 
   build-linux:
@@ -191,14 +203,16 @@ jobs:
         with:
           name: build-linux-x64
           path: |
-            VardyParty.Core/bin/Release/net10.0/linux-x64/
-            VardyParty.Core/obj/
+            VardyParty.Core/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-linux-arm64
           path: |
-            VardyParty.Core/bin/Release/net10.0/linux-arm64/
-            VardyParty.Core/obj/
+            VardyParty.Core/
+            !VardyParty.Core/bin/
+            !VardyParty.Core/obj/
           retention-days: 5
