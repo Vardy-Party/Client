@@ -4,20 +4,6 @@ env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id || '22081915754' }}
-
-# Required GitHub Secrets (set in repository settings):
-# - AUTH0_DOMAIN
-# - AUTH0_CLIENTID
-# - AUTH0_AUDIENCE
-# - AUTH0_SCOPE
-# - AUTH0_CALLBACKSCHEME
-# - AUTH0_REDIRECTURI
-# - AUTH0_POSTLOGOUTREDIRECTURI
-# - AUTH0_TOKENLEEAWAYSECONDS
-# - AUTH0_REQUIREDROLECLAIMTYPE
-# - AUTH0_REQUIREDROLE
-# - API_HEADLESSBASEURL
-
 on:
   workflow_run:
     workflows: ["CI - Build & Test"]
@@ -25,7 +11,6 @@ on:
       - completed
     branches:
       - main
-      - feature/newconfig
   workflow_dispatch:
     inputs:
       ci_run_id:
