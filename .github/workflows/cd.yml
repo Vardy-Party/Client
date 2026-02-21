@@ -195,6 +195,12 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Decode and install keystore
+        run: |
+          mkdir -p VardyParty/certs
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > VardyParty/certs/vardyparty.keystore
+          echo "Keystore file created at VardyParty/certs/vardyparty.keystore"
+        shell: bash
       - name: Generate appsettings.json
         run: |
           cat > VardyParty/appsettings.json << 'EOF'
@@ -218,13 +224,8 @@ jobs:
           EOF
           echo "appsettings.json generated"
         shell: bash
-      - name: Decode and setup Android signing key
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > vardyparty.keystore
-          echo "Android signing key decoded and saved as vardyparty.keystore"
-        shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true /p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" /p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyAlias=vardyparty -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
