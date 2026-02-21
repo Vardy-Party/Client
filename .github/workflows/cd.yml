@@ -253,6 +253,12 @@ jobs:
           name: android-build-logs
           path: publish.log
           retention-days: 30
+      - name: Upload Android package
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-package
+          path: ./VardyParty/bin/Release/net10.0-android/**/*.apk
+          retention-days: 30
 
   package-ios:
     name: Package iOS
