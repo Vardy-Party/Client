@@ -262,8 +262,8 @@
 	    <AndroidKeyStore>True</AndroidKeyStore>
 	    <AndroidSigningKeyStore>certs/vardyparty.keystore</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
-	    <AndroidSigningKeyPass></AndroidSigningKeyPass>
-	    <AndroidSigningStorePass></AndroidSigningStorePass>
+	    <AndroidSigningKeyPass>placeholder</AndroidSigningKeyPass>
+	    <AndroidSigningStorePass>placeholder</AndroidSigningStorePass>
     </PropertyGroup>
 
     <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->
