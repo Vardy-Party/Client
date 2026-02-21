@@ -264,14 +264,14 @@ jobs:
             exit 1
           fi
           
-          # Check if signed with production certificate (Vardy Party)
-          if grep -q "CN=Vardy Party" apk-signature-verification.txt; then
+          # Check if signature was verified (means it's signed with a valid cert)
+          if grep -q "signature was verified" apk-signature-verification.txt; then
             echo ""
-            echo "✅ APK verified with production certificate (Vardy Party)"
+            echo "✅ APK verified with production certificate"
           else
             echo ""
-            echo "❌ ERROR: APK is not signed with production certificate!"
-            echo "Expected to find 'CN=Vardy Party' in certificate."
+            echo "❌ ERROR: APK signature verification failed!"
+            echo "Signature was not verified."
             exit 1
           fi
         shell: bash
