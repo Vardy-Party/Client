@@ -344,6 +344,7 @@ jobs:
     name: Package iOS
     runs-on: macos-26
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
