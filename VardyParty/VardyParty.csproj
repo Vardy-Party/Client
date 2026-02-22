@@ -223,6 +223,8 @@
 
   <ItemGroup>
     <MauiAsset Include="appsettings.json" CopyToOutputDirectory="Always" />
+    <!-- Include as EmbeddedResource on all platforms for consistent embedded loading -->
+    <EmbeddedResource Include="appsettings.json" />
   </ItemGroup>
 
   <ItemGroup>
