@@ -43,25 +43,40 @@ jobs:
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
-          $appsettings = @{
-              Auth0 = @{
-                  Domain = "${{ secrets.AUTH0_DOMAIN }}"
-                  ClientId = "${{ secrets.AUTH0_CLIENTID }}"
-                  Audience = "${{ secrets.AUTH0_AUDIENCE }}"
-                  Scope = "${{ secrets.AUTH0_SCOPE }}"
-                  CallbackScheme = "${{ secrets.AUTH0_CALLBACKSCHEME }}"
-                  RedirectUri = "${{ secrets.AUTH0_REDIRECTURI }}"
-                  PostLogoutRedirectUri = "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}"
-                  TokenLeewaySeconds = [int]"${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}"
-                  RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
-                  RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
-              }
-              Api = @{
-                  HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+          $appsettings = @{}
+          if (Test-Path $appsettingsPath) {
+              try {
+                  $appsettings = Get-Content $appsettingsPath -Raw | ConvertFrom-Json
+              } catch {
+                  $appsettings = @{}
               }
           }
-          $appsettings | ConvertTo-Json | Out-File -FilePath $appsettingsPath -Encoding UTF8
-          Write-Host "appsettings.json generated at $appsettingsPath"
+          if (-not $appsettings.Auth0) { $appsettings | Add-Member -NotePropertyName Auth0 -NotePropertyValue @{} }
+          if (-not $appsettings.Api) { $appsettings | Add-Member -NotePropertyName Api -NotePropertyValue @{} }
+          $appsettings.Auth0.Domain = "${{ secrets.AUTH0_DOMAIN }}"
+          $appsettings.Auth0.ClientId = "${{ secrets.AUTH0_CLIENTID }}"
+          $appsettings.Auth0.Audience = "${{ secrets.AUTH0_AUDIENCE }}"
+          $appsettings.Auth0.Scope = "${{ secrets.AUTH0_SCOPE }}"
+          $appsettings.Auth0.CallbackScheme = "${{ secrets.AUTH0_CALLBACKSCHEME }}"
+          $appsettings.Auth0.RedirectUri = "${{ secrets.AUTH0_REDIRECTURI }}"
+          $appsettings.Auth0.PostLogoutRedirectUri = "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}"
+          $appsettings.Auth0.TokenLeewaySeconds = [int]"${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}"
+          $appsettings.Auth0.RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
+          $appsettings.Auth0.RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
+          $appsettings.Api.HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+          $appsettings.PSObject.Properties.Remove("AllowUserSecrets")
+          $appsettings | ConvertTo-Json -Depth 10 | Out-File -FilePath $appsettingsPath -Encoding UTF8
+          Write-Host "appsettings.json merged and AllowUserSecrets removed"
+        shell: powershell
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          $appsettingsPath = "VardyParty/appsettings.json"
+          $appsettings = Get-Content $appsettingsPath -Raw | ConvertFrom-Json
+          if ($appsettings.PSObject.Properties.Name -contains "AllowUserSecrets") {
+              Write-Host "ERROR: AllowUserSecrets found in appsettings.json"
+              exit 1
+          }
+          Write-Host "OK: AllowUserSecrets not found in appsettings.json"
         shell: powershell
       - name: Decode and install certificate
         run: |
@@ -214,26 +229,49 @@ jobs:
         shell: bash
       - name: Generate appsettings.json
         run: |
-          cat > VardyParty/appsettings.json << 'EOF'
-          {
-            "Auth0": {
-              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
-              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
-              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
-              "Scope": "${{ secrets.AUTH0_SCOPE }}",
-              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
-              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
-              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
-              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
-              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
-              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
-            },
-            "Api": {
-              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
-            }
-          }
-          EOF
-          echo "appsettings.json generated"
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if [ -f "$APPSETTINGS_PATH" ]; then
+            BASE_JSON=$(cat "$APPSETTINGS_PATH")
+          else
+            BASE_JSON="{}"
+          fi
+          echo "$BASE_JSON" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '(.Auth0 //= {})
+             | (.Api //= {})
+             | .Auth0.Domain = $domain
+             | .Auth0.ClientId = $clientId
+             | .Auth0.Audience = $audience
+             | .Auth0.Scope = $scope
+             | .Auth0.CallbackScheme = $callbackScheme
+             | .Auth0.RedirectUri = $redirectUri
+             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
+             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
+             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
+             | .Auth0.RequiredRole = $requiredRole
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json merged and AllowUserSecrets removed"
+        shell: bash
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
@@ -306,6 +344,7 @@ jobs:
     name: Package iOS
     runs-on: macos-26
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -326,26 +365,40 @@ jobs:
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Generate appsettings.json
         run: |
-          cat > VardyParty/appsettings.json << 'EOF'
-          {
-            "Auth0": {
-              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
-              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
-              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
-              "Scope": "${{ secrets.AUTH0_SCOPE }}",
-              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
-              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
-              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
-              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
-              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
-              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
-            },
-            "Api": {
-              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
-            }
-          }
-          EOF
-          echo "appsettings.json generated"
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if [ -f "$APPSETTINGS_PATH" ]; then
+            BASE_JSON=$(cat "$APPSETTINGS_PATH")
+          else
+            BASE_JSON="{}"
+          fi
+          echo "$BASE_JSON" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '(.Auth0 //= {})
+             | (.Api //= {})
+             | .Auth0.Domain = $domain
+             | .Auth0.ClientId = $clientId
+             | .Auth0.Audience = $audience
+             | .Auth0.Scope = $scope
+             | .Auth0.CallbackScheme = $callbackScheme
+             | .Auth0.RedirectUri = $redirectUri
+             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
+             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
+             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
+             | .Auth0.RequiredRole = $requiredRole
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
@@ -382,26 +435,40 @@ jobs:
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Generate appsettings.json
         run: |
-          cat > VardyParty/appsettings.json << 'EOF'
-          {
-            "Auth0": {
-              "Domain": "${{ secrets.AUTH0_DOMAIN }}",
-              "ClientId": "${{ secrets.AUTH0_CLIENTID }}",
-              "Audience": "${{ secrets.AUTH0_AUDIENCE }}",
-              "Scope": "${{ secrets.AUTH0_SCOPE }}",
-              "CallbackScheme": "${{ secrets.AUTH0_CALLBACKSCHEME }}",
-              "RedirectUri": "${{ secrets.AUTH0_REDIRECTURI }}",
-              "PostLogoutRedirectUri": "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}",
-              "TokenLeewaySeconds": ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }},
-              "RequiredRoleClaimType": "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}",
-              "RequiredRole": "${{ secrets.AUTH0_REQUIREDROLE }}"
-            },
-            "Api": {
-              "HeadlessBaseUrl": "${{ secrets.API_HEADLESSBASEURL }}"
-            }
-          }
-          EOF
-          echo "appsettings.json generated"
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if [ -f "$APPSETTINGS_PATH" ]; then
+            BASE_JSON=$(cat "$APPSETTINGS_PATH")
+          else
+            BASE_JSON="{}"
+          fi
+          echo "$BASE_JSON" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '(.Auth0 //= {})
+             | (.Api //= {})
+             | .Auth0.Domain = $domain
+             | .Auth0.ClientId = $clientId
+             | .Auth0.Audience = $audience
+             | .Auth0.Scope = $scope
+             | .Auth0.CallbackScheme = $callbackScheme
+             | .Auth0.RedirectUri = $redirectUri
+             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
+             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
+             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
+             | .Auth0.RequiredRole = $requiredRole
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
       - name: Publish macOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release

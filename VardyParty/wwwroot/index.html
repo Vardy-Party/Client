@@ -39,6 +39,20 @@
 
     <script src="_framework/blazor.webview.js" autostart="false"></script>
     <script>
+        // Enhanced error logging for Android debugging
+        window.addEventListener('error', function(e) {
+            console.error('[GLOBAL ERROR]', e.message, e.filename, e.lineno, e.colno, e.error);
+            document.getElementById('blazor-error-ui').style.display = 'block';
+        });
+        
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('[UNHANDLED PROMISE]', e.reason);
+            document.getElementById('blazor-error-ui').style.display = 'block';
+        });
+
+        console.log('[INDEX.HTML] Page loaded, Blazor script should be available');
+        console.log('[INDEX.HTML] typeof Blazor:', typeof Blazor);
+        
         // Play a simple beep sound using Web Audio API
         window.playClickSound = function() {
             try {
