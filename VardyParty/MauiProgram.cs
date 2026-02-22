@@ -177,6 +177,11 @@ public static class MauiProgram
         // Build the app first, then asynchronously warm configuration and other non-critical services off the UI thread.
         var app = builder.Build();
 
+        // Validate required configuration sections exist (fail fast if CD/CD merge failed)
+        var logger = app.Services.GetRequiredService<ILogger<App>>();
+        var configuration = app.Services.GetRequiredService<IConfiguration>();
+        ConfigurationValidator.ValidateConfiguration(configuration, logger);
+
         // Capture the IServiceProvider for platform components that need to resolve services
         AppServiceProvider.ServiceProvider = app.Services;
 

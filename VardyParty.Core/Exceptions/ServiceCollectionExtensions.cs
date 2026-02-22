@@ -7,33 +7,41 @@ namespace VardyParty.Exceptions;
 
 public static class ServiceCollectionExtensions
 {
-    public static IConfigurationBuilder AddSecrets(this IConfigurationBuilder configuration, Assembly secretsAssembly)
+    extension(IConfigurationBuilder configuration)
     {
-        // Build temp config to check AllowUserSecrets flag
-        var tempConfig = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .Build();
-        
-        // Default to false for security (only allow if explicitly set to true in local appsettings.json)
-        var allowUserSecrets = tempConfig.GetValue<bool>("AllowUserSecrets", defaultValue: false);
-        
-        // Only load user secrets if allowed AND secrets file exists
-        if (allowUserSecrets && TryGetUserSecretsPath(secretsAssembly, out var secretsPath) && File.Exists(secretsPath))
+        public IConfigurationBuilder AddSecrets(Assembly secretsAssembly)
         {
-            return configuration.AddUserSecrets(secretsAssembly, optional: false);
-        }
+            // Build temp config to check AllowUserSecrets flag
+            var tempConfig = new ConfigurationBuilder()
+                .AddJsonFile("appsettings.json", true)
+                .Build();
 
-        return configuration;
+            // Default to false for security (only allow if explicitly set to true in local appsettings.json)
+            var allowUserSecrets = tempConfig.GetValue("AllowUserSecrets", false);
+
+            // Only load user secrets if allowed AND secrets file exists
+            if (allowUserSecrets && TryGetUserSecretsPath(secretsAssembly, out var secretsPath) && File.Exists(secretsPath))
+                return configuration.AddUserSecrets(secretsAssembly, false);
+
+            return configuration;
+        }
     }
 
-    public static IServiceCollection BindConfiguration<T>(this IServiceCollection services, string configSection)
-        where T : class
+    extension(IServiceCollection services)
     {
-        services.AddOptions<T>().Configure<IConfiguration>((settings, configuration) =>
+        public IServiceCollection BindConfiguration<T>(string configSection)
+            where T : class
         {
-            configuration.GetSection(configSection).Bind(settings);
-        });
-        return services;
+            services.AddOptions<T>()
+                .Configure<IConfiguration>((settings, configuration) =>
+                {
+                    var section = configuration.GetSection(configSection);
+                    if (section.Exists()) section.Bind(settings);
+                    // If section doesn't exist, ConfigurationValidator will catch it at startup
+                });
+
+            return services;
+        }
     }
 
     private static bool TryGetUserSecretsPath(Assembly assembly, out string? path)
