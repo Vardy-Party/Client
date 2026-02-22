@@ -34,28 +34,39 @@ public static class MauiProgram
         builder
             .UseMauiApp<App>()
             .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
-        builder.Configuration
-            .AddJsonFile("appsettings.json", true)
-            .AddSecrets(Assembly.GetExecutingAssembly());
-
-
-        // NOTE: Previously we loaded appsettings.json synchronously here which can block the UI thread
-        // on slow devices. Defer loading of appsettings until after the app is built by warming the
-        // IAppSettingsProvider on a background thread. Services that need configuration should use
-        // IAppSettingsProvider to obtain values asynchronously.
+        
+        // Load appsettings.json from embedded resources (works on all platforms: Android, iOS, macOS, MSIX, etc.)
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            using var stream = assembly.GetManifestResourceStream("VardyParty.appsettings.json");
+            if (stream != null)
+            {
+                builder.Configuration.AddJsonStream(stream);
+            }
+            else
+            {
+                Console.WriteLine("[MauiProgram] Warning: appsettings.json not found in embedded resources");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MauiProgram] Error loading embedded appsettings.json: {ex.Message}");
+        }
+        
+        builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
 
         // Only add BlazorWebView when the platform actually has a working WebView implementation.
         // For Android TV, runtime checks set IsWebViewAvailable; for other platforms assume available.
-        var isAndroid = OperatingSystem.IsAndroid();
-        if (!isAndroid || IsWebViewAvailable)
+#if ANDROID
+        if (IsWebViewAvailable)
         {
-            Console.WriteLine("[MauiProgram] WebView available or non-Android - registering BlazorWebView");
+            Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
             builder.Services.AddMauiBlazorWebView();
         }
         else
         {
             Console.WriteLine("[MauiProgram] Android WebView unavailable or disabled - registering stub/fallback");
-#if ANDROID
             try
             {
                 builder.ConfigureMauiHandlers(handlers =>
@@ -69,8 +80,12 @@ public static class MauiProgram
             {
                 Console.WriteLine($"[MauiProgram] Failed to register fallback handler: {ex.Message}");
             }
-#endif
         }
+#else
+        // Non-Android platforms always have BlazorWebView available
+        Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
+        builder.Services.AddMauiBlazorWebView();
+#endif
 
 #if ANDROID
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
@@ -87,12 +102,11 @@ public static class MauiProgram
         builder.Services.AddTransient<M3U8HttpHandler>();
 
         builder.Services
-            .BindConfiguration<APISettings>("Api")
-            .BindConfiguration<GamesApiSettings>("GamesApi")
-            .BindConfiguration<StreamHealthSettings>("StreamHealth")
-            .BindConfiguration<Auth0Settings>("Auth0")
-            .BindConfiguration<BbcFixturesSettings>("BbcFixtures");
-
+            .BindConfiguration<APISettings>(APISettings.SectionName)
+            .BindConfiguration<GamesApiSettings>(GamesApiSettings.SectionName)
+            .BindConfiguration<StreamHealthSettings>(StreamHealthSettings.SectionName)
+            .BindConfiguration<Auth0Settings>(Auth0Settings.SectionName)
+            .BindConfiguration<BbcFixturesSettings>(BbcFixturesSettings.SectionName);
 
         // Register AppSettings provider early so services can resolve it
         builder.Services
@@ -113,7 +127,6 @@ public static class MauiProgram
             .AddSingleton<SelectionState>()
             .AddTransient<Home>()
             .AddTransient<VideoPlayer>();
-
 
         builder.Services.AddSingleton<Auth0AuthService>();
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
@@ -178,6 +191,11 @@ public static class MauiProgram
 
         // Build the app first, then asynchronously warm configuration and other non-critical services off the UI thread.
         var app = builder.Build();
+
+        // Validate required configuration sections exist (fail fast if CD/CD merge failed)
+        var logger = app.Services.GetRequiredService<ILogger<App>>();
+        var configuration = app.Services.GetRequiredService<IConfiguration>();
+        ConfigurationValidator.ValidateConfiguration(configuration, logger);
 
         // Capture the IServiceProvider for platform components that need to resolve services
         AppServiceProvider.ServiceProvider = app.Services;
