@@ -43,25 +43,29 @@ jobs:
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
-          $appsettings = @{
-              Auth0 = @{
-                  Domain = "${{ secrets.AUTH0_DOMAIN }}"
-                  ClientId = "${{ secrets.AUTH0_CLIENTID }}"
-                  Audience = "${{ secrets.AUTH0_AUDIENCE }}"
-                  Scope = "${{ secrets.AUTH0_SCOPE }}"
-                  CallbackScheme = "${{ secrets.AUTH0_CALLBACKSCHEME }}"
-                  RedirectUri = "${{ secrets.AUTH0_REDIRECTURI }}"
-                  PostLogoutRedirectUri = "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}"
-                  TokenLeewaySeconds = [int]"${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}"
-                  RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
-                  RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
-              }
-              Api = @{
-                  HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+          $appsettings = @{}
+          if (Test-Path $appsettingsPath) {
+              try {
+                  $appsettings = Get-Content $appsettingsPath -Raw | ConvertFrom-Json
+              } catch {
+                  $appsettings = @{}
               }
           }
-          $appsettings | ConvertTo-Json | Out-File -FilePath $appsettingsPath -Encoding UTF8
-          Write-Host "appsettings.json generated at $appsettingsPath"
+          if (-not $appsettings.Auth0) { $appsettings | Add-Member -NotePropertyName Auth0 -NotePropertyValue @{} }
+          if (-not $appsettings.Api) { $appsettings | Add-Member -NotePropertyName Api -NotePropertyValue @{} }
+          $appsettings.Auth0.Domain = "${{ secrets.AUTH0_DOMAIN }}"
+          $appsettings.Auth0.ClientId = "${{ secrets.AUTH0_CLIENTID }}"
+          $appsettings.Auth0.Audience = "${{ secrets.AUTH0_AUDIENCE }}"
+          $appsettings.Auth0.Scope = "${{ secrets.AUTH0_SCOPE }}"
+          $appsettings.Auth0.CallbackScheme = "${{ secrets.AUTH0_CALLBACKSCHEME }}"
+          $appsettings.Auth0.RedirectUri = "${{ secrets.AUTH0_REDIRECTURI }}"
+          $appsettings.Auth0.PostLogoutRedirectUri = "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}"
+          $appsettings.Auth0.TokenLeewaySeconds = [int]"${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}"
+          $appsettings.Auth0.RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
+          $appsettings.Auth0.RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
+          $appsettings.Api.HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+          $appsettings | ConvertTo-Json -Depth 10 | Out-File -FilePath $appsettingsPath -Encoding UTF8
+          Write-Host "appsettings.json merged at $appsettingsPath"
         shell: powershell
       - name: Decode and install certificate
         run: |

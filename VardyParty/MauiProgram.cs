@@ -35,7 +35,7 @@ public static class MauiProgram
             .UseMauiApp<App>()
             .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
         builder.Configuration
-            .AddJsonFile("appsettings.json", true)
+            .AddJsonFile("appsettings.json", false)
             .AddSecrets(Assembly.GetExecutingAssembly());
 
 
@@ -93,7 +93,6 @@ public static class MauiProgram
             .BindConfiguration<Auth0Settings>("Auth0")
             .BindConfiguration<BbcFixturesSettings>("BbcFixtures");
 
-
         // Register AppSettings provider early so services can resolve it
         builder.Services
             .AddSingleton<IGameMatcher, GameMatcher>()
@@ -113,7 +112,6 @@ public static class MauiProgram
             .AddSingleton<SelectionState>()
             .AddTransient<Home>()
             .AddTransient<VideoPlayer>();
-
 
         builder.Services.AddSingleton<Auth0AuthService>();
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
