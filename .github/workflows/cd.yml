@@ -64,8 +64,19 @@ jobs:
           $appsettings.Auth0.RequiredRoleClaimType = "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}"
           $appsettings.Auth0.RequiredRole = "${{ secrets.AUTH0_REQUIREDROLE }}"
           $appsettings.Api.HeadlessBaseUrl = "${{ secrets.API_HEADLESSBASEURL }}"
+          $appsettings.PSObject.Properties.Remove("AllowUserSecrets")
           $appsettings | ConvertTo-Json -Depth 10 | Out-File -FilePath $appsettingsPath -Encoding UTF8
-          Write-Host "appsettings.json merged at $appsettingsPath"
+          Write-Host "appsettings.json merged and AllowUserSecrets removed"
+        shell: powershell
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          $appsettingsPath = "VardyParty/appsettings.json"
+          $appsettings = Get-Content $appsettingsPath -Raw | ConvertFrom-Json
+          if ($appsettings.PSObject.Properties.Name -contains "AllowUserSecrets") {
+              Write-Host "ERROR: AllowUserSecrets found in appsettings.json"
+              exit 1
+          }
+          Write-Host "OK: AllowUserSecrets not found in appsettings.json"
         shell: powershell
       - name: Decode and install certificate
         run: |
@@ -248,9 +259,19 @@ jobs:
              | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
              | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
              | .Auth0.RequiredRole = $requiredRole
-             | .Api.HeadlessBaseUrl = $headlessBaseUrl' \
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
             > "$APPSETTINGS_PATH"
-          echo "appsettings.json merged"
+          echo "appsettings.json merged and AllowUserSecrets removed"
+        shell: bash
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
@@ -373,9 +394,10 @@ jobs:
              | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
              | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
              | .Auth0.RequiredRole = $requiredRole
-             | .Api.HeadlessBaseUrl = $headlessBaseUrl' \
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
             > "$APPSETTINGS_PATH"
-          echo "appsettings.json merged"
+          echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
@@ -442,9 +464,10 @@ jobs:
              | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
              | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
              | .Auth0.RequiredRole = $requiredRole
-             | .Api.HeadlessBaseUrl = $headlessBaseUrl' \
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
             > "$APPSETTINGS_PATH"
-          echo "appsettings.json merged"
+          echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
       - name: Publish macOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
