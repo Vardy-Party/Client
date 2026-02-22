@@ -102,11 +102,11 @@ public static class MauiProgram
         builder.Services.AddTransient<M3U8HttpHandler>();
 
         builder.Services
-            .BindConfiguration<APISettings>("Api")
-            .BindConfiguration<GamesApiSettings>("GamesApi")
-            .BindConfiguration<StreamHealthSettings>("StreamHealth")
-            .BindConfiguration<Auth0Settings>("Auth0")
-            .BindConfiguration<BbcFixturesSettings>("BbcFixtures");
+            .BindConfiguration<APISettings>(APISettings.SectionName)
+            .BindConfiguration<GamesApiSettings>(GamesApiSettings.SectionName)
+            .BindConfiguration<StreamHealthSettings>(StreamHealthSettings.SectionName)
+            .BindConfiguration<Auth0Settings>(Auth0Settings.SectionName)
+            .BindConfiguration<BbcFixturesSettings>(BbcFixturesSettings.SectionName);
 
         // Register AppSettings provider early so services can resolve it
         builder.Services

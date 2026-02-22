@@ -11,10 +11,11 @@ public static class ConfigurationValidator
 {
     private static readonly string[] RequiredSections = 
     {
-        "Api",
-        "GamesApi",
-        "BbcFixtures",
-        "StreamHealth"
+        APISettings.SectionName,
+        GamesApiSettings.SectionName,
+        BbcFixturesSettings.SectionName,
+        StreamHealthSettings.SectionName,
+        Auth0Settings.SectionName
     };
 
     public static void ValidateConfiguration(IConfiguration configuration, ILogger logger)
