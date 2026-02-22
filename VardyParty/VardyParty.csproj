@@ -142,9 +142,6 @@
 
         <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
-        
-        <!-- wwwroot content must be included as MauiAsset for Blazor WebView -->
-        <MauiAsset Include="wwwroot\**" />
     </ItemGroup>
 
     <!-- Removed custom deletion of MAUI app compat layout to retain default fragment containers -->
