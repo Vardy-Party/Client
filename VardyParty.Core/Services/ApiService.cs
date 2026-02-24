@@ -20,7 +20,7 @@ public class ApiService(
     IOptions<GamesApiSettings> gamesApiSettings,
     IOptions<APISettings> apiSettings) : IApiService
 {
-    private readonly string? _baseUrl = $"{apiSettings.Value.HeadlessBaseUrl.TrimEnd('/')}/";
+    private readonly string _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
     private readonly TimeSpan _callTimeout = TimeSpan.FromSeconds(gamesApiSettings.Value?.CallTimeoutSeconds ?? 45);
 
     private readonly TimeSpan _m3u8CallTimeout =
@@ -34,7 +34,7 @@ public class ApiService(
         try
         {
             var url =
-                $"{_baseUrl}{Uri.EscapeDataString(league)}/{Uri.EscapeDataString(homeTeam)}{Uri.EscapeDataString(" v ")}{Uri.EscapeDataString(awayTeam)}";
+                $"{_baseUrl}/{Uri.EscapeDataString(league)}/{Uri.EscapeDataString(homeTeam)}{Uri.EscapeDataString(" v ")}{Uri.EscapeDataString(awayTeam)}";
             var response = await FetchWithRetriesAsync<StreamResponse>(url);
             return response;
         }
@@ -47,7 +47,7 @@ public class ApiService(
 
     public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl)
     {
-        var url = $"{_baseUrl}play/{Uri.EscapeDataString(streamUrl)}";
+        var url = $"{_baseUrl}/play/{Uri.EscapeDataString(streamUrl)}";
         try
         {
             using var cts = new CancellationTokenSource(_m3u8CallTimeout);
@@ -95,7 +95,7 @@ public class ApiService(
     {
         try
         {
-            var url = $"{_baseUrl}new";
+            var url = $"{_baseUrl}/new";
             logger.LogInformation("[Api] GetAllGamesAsync fetching from {Url}", url);
             var attempt = 0;
             var delay = TimeSpan.FromSeconds(1);
