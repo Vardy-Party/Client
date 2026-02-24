@@ -572,10 +572,6 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install Snapcraft tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y snapcraft
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -713,9 +709,11 @@ jobs:
           sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
           echo "Using snap version: $SNAP_FULL_VERSION"
       - name: Build Linux x64 snap
+        id: snapcraft_build
+        uses: snapcore/action-build@v1
+      - name: Rename Linux x64 snap package
         run: |
-          SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
-          SNAP_FILE=$(ls -1 *.snap | head -n 1)
+          SNAP_FILE="${{ steps.snapcraft_build.outputs.snap }}"
           OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           mv "$SNAP_FILE" "$OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
@@ -744,10 +742,6 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install Snapcraft tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y snapcraft
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -885,9 +879,11 @@ jobs:
           sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
           echo "Using snap version: $SNAP_FULL_VERSION"
       - name: Build Linux ARM64 snap
+        id: snapcraft_build
+        uses: snapcore/action-build@v1
+      - name: Rename Linux ARM64 snap package
         run: |
-          SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
-          SNAP_FILE=$(ls -1 *.snap | head -n 1)
+          SNAP_FILE="${{ steps.snapcraft_build.outputs.snap }}"
           OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           mv "$SNAP_FILE" "$OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
