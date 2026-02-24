@@ -491,6 +491,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvlc-dev vlc
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -498,10 +502,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
-      - name: Generate appsettings.json for VardyParty.Core
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Generate appsettings.json for Linux
         run: |
-          APPSETTINGS_PATH="VardyParty.Core/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
           echo "{}" | jq \
             --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
             --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
@@ -532,14 +536,15 @@ jobs:
             > "$APPSETTINGS_PATH"
           echo "appsettings.json generated for Linux x64"
         shell: bash
-      - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --self-contained
+      - name: Publish Linux x64 application
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained -p:PublishSingleFile=false
       - name: Create Linux x64 package
         run: |
-          cd VardyParty.Core/bin/Release/net10.0/linux-x64/publish
+          cd VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
           tar -czf ../../../../../VardyParty-linux-x64.tar.gz .
           cd ../../../../../
           echo "Created VardyParty-linux-x64.tar.gz"
+          ls -lh VardyParty-linux-x64.tar.gz
         shell: bash
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
@@ -558,6 +563,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvlc-dev vlc
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -565,10 +574,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
-      - name: Generate appsettings.json for VardyParty.Core
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Generate appsettings.json for Linux
         run: |
-          APPSETTINGS_PATH="VardyParty.Core/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
           echo "{}" | jq \
             --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
             --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
@@ -599,14 +608,15 @@ jobs:
             > "$APPSETTINGS_PATH"
           echo "appsettings.json generated for Linux ARM64"
         shell: bash
-      - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --self-contained
+      - name: Publish Linux ARM64 application
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained -p:PublishSingleFile=false
       - name: Create Linux ARM64 package
         run: |
-          cd VardyParty.Core/bin/Release/net10.0/linux-arm64/publish
+          cd VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
           tar -czf ../../../../../VardyParty-linux-arm64.tar.gz .
           cd ../../../../../
           echo "Created VardyParty-linux-arm64.tar.gz"
+          ls -lh VardyParty-linux-arm64.tar.gz
         shell: bash
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4

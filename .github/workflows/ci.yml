@@ -194,18 +194,25 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }}
-      - name: Build core library (x64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-x64 --no-restore
-      - name: Build core library (ARM64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-arm64 --no-restore
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvlc-dev vlc
+      - name: Restore VardyParty.Linux dependencies
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Build Linux app (x64)
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
+      - name: Build Linux app (ARM64)
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64 --no-restore
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-linux-x64
           path: |
+            VardyParty.Linux/
             VardyParty.Core/
+            !VardyParty.Linux/bin/
+            !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
           retention-days: 5
@@ -214,7 +221,10 @@ jobs:
         with:
           name: build-linux-arm64
           path: |
+            VardyParty.Linux/
             VardyParty.Core/
+            !VardyParty.Linux/bin/
+            !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
           retention-days: 5
