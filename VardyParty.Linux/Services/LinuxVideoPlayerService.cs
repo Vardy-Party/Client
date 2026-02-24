@@ -77,7 +77,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         try
         {
             var decoderModeOption = _isWsl ? "--avcodec-hw=none" : "--avcodec-hw=any";
-            var videoOutputModeOption = _isWsl ? "--vout=xcb_x11" : "--vout=any";
 
             var vlcOptions = new List<string>
             {
@@ -86,7 +85,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "--network-caching=2000",        // 2 second network cache
                 "--http-reconnect",              // Auto-reconnect on network issues
                 decoderModeOption,                // Prefer hardware decode unless WSL forces software decode
-                videoOutputModeOption,            // Force X11 video output on WSL to avoid wayland crashes
                 "--no-spdif",                    // Avoid passthrough output failures under WSL audio stacks
                 "--no-audio",                    // Test mode: disable audio to avoid WSL ALSA deadlocks
                 "--aout=adummy"                  // Force adummy output module to avoid ALSA device initialization
@@ -161,7 +159,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             _currentMedia.AddOption(_isWsl ? ":avcodec-hw=none" : ":avcodec-hw=any");
-            _currentMedia.AddOption(_isWsl ? ":vout=xcb_x11" : ":vout=any");
             _currentMedia.AddOption(":no-audio");
             _currentMedia.AddOption(":aout=adummy");
             _currentMedia.AddOption(":audio-track=-1");
