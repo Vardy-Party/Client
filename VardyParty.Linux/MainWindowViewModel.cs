@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty.Extensions;
 using VardyParty.Providers;
@@ -14,7 +15,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
-    private readonly IApiService _apiService;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<MainWindowViewModel> _logger;
 
     private bool _isBusy;
@@ -24,12 +25,12 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public MainWindowViewModel(
         IAuthLoginService authLoginService,
         IAuthTokenProvider authTokenProvider,
-        IApiService apiService,
+        IServiceProvider serviceProvider,
         ILogger<MainWindowViewModel> logger)
     {
         _authLoginService = authLoginService;
         _authTokenProvider = authTokenProvider;
-        _apiService = apiService;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -133,7 +134,8 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var gamesByLeague = await _apiService.GetAllGamesAsync(true);
+            var apiService = _serviceProvider.GetRequiredService<IApiService>();
+            var gamesByLeague = await apiService.GetAllGamesAsync(true);
             var displayGames = gamesByLeague.ToDisplay();
 
             Games.Clear();
