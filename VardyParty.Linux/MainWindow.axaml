@@ -14,7 +14,7 @@
         WindowStartupLocation="CenterScreen"
         Background="#111827">
 
-    <Grid RowDefinitions="Auto,Auto,*" Margin="16">
+    <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="16">
         <TextBlock Grid.Row="0"
                    Text="VardyParty Linux"
                    FontSize="28"
@@ -28,7 +28,28 @@
             <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="White" Margin="12,0,0,0" />
         </StackPanel>
 
-        <Border Grid.Row="2" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8">
+        <Border Grid.Row="2"
+                BorderThickness="1"
+                BorderBrush="#374151"
+                CornerRadius="8"
+                Padding="12"
+                Margin="0,0,0,12"
+                IsVisible="{Binding ShowDeviceFlowDetails}">
+            <Grid ColumnDefinitions="Auto,*">
+                <Border Width="220" Height="220" Background="White" CornerRadius="6" Padding="4">
+                    <Image Source="{Binding DeviceQrCode}" Stretch="Uniform" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="6" Margin="16,0,0,0">
+                    <TextBlock Text="Device Login" FontSize="18" FontWeight="SemiBold" Foreground="White" />
+                    <TextBlock Text="Scan QR code or open this URL:" Foreground="#D1D5DB" />
+                    <SelectableTextBlock Text="{Binding DeviceVerificationUri}" Foreground="#93C5FD" />
+                    <TextBlock Text="Enter code:" Foreground="#D1D5DB" Margin="0,8,0,0" />
+                    <SelectableTextBlock Text="{Binding DeviceUserCode}" FontSize="20" FontWeight="Bold" Foreground="#FCD34D" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8">
             <ListBox ItemsSource="{Binding Games}">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="local:GameListItem">
