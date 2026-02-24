@@ -34,9 +34,11 @@ public partial class MainWindow : Window
         // Try to wire up the video surface handle to the player service
         if (DataContext is MainWindowViewModel vm)
         {
-            var handle = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            var platformHandle = this.TryGetPlatformHandle();
+            var handle = platformHandle?.Handle ?? IntPtr.Zero;
             if (handle != IntPtr.Zero)
             {
+                System.Diagnostics.Debug.WriteLine($"[MainWindow] Platform handle descriptor={platformHandle?.HandleDescriptor}, value=0x{handle.ToString("X")}");
                 vm.SetVideoSurfaceHandle(handle);
             }
         }

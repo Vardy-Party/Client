@@ -85,9 +85,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
 
                 vlcOptions.Add("--avcodec-hw=none");
-                vlcOptions.Add("--vout=xcb");
 
-                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software rendering, disabling hardware decode, and using --vout=xcb");
+                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software rendering and disabling hardware decode");
             }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
@@ -255,7 +254,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             var xWindow = unchecked((uint)handle.ToInt64());
             mediaPlayer.XWindow = xWindow;
-            _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.XWindow to 0x{HandleHex} (XID={XWindow})", handle.ToString("X"), xWindow);
+            mediaPlayer.Hwnd = handle;
+            _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.XWindow and Hwnd using 0x{HandleHex} (XID={XWindow})", handle.ToString("X"), xWindow);
             return;
         }
 
