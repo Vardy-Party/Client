@@ -484,6 +484,7 @@ jobs:
   package-linux-x64:
     name: Package Linux x64
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -498,10 +499,48 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
+      - name: Generate appsettings.json for VardyParty.Core
+        run: |
+          APPSETTINGS_PATH="VardyParty.Core/appsettings.json"
+          echo "{}" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '{"Auth0": {
+                "Domain": $domain,
+                "ClientId": $clientId,
+                "Audience": $audience,
+                "Scope": $scope,
+                "CallbackScheme": $callbackScheme,
+                "RedirectUri": $redirectUri,
+                "PostLogoutRedirectUri": $postLogoutRedirectUri,
+                "TokenLeewaySeconds": $tokenLeewaySeconds,
+                "RequiredRoleClaimType": $requiredRoleClaimType,
+                "RequiredRole": $requiredRole
+              },
+              "Api": {
+                "HeadlessBaseUrl": $headlessBaseUrl
+              }}' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json generated for Linux x64"
+        shell: bash
       - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release --self-contained
       - name: Create Linux x64 package
-        run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
+        run: |
+          cd VardyParty.Core/bin/Release/net10.0/linux-x64/publish
+          tar -czf ../../../../../VardyParty-linux-x64.tar.gz .
+          cd ../../../../../
+          echo "Created VardyParty-linux-x64.tar.gz"
+        shell: bash
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
@@ -512,6 +551,7 @@ jobs:
   package-linux-arm64:
     name: Package Linux ARM64
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -526,10 +566,48 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
+      - name: Generate appsettings.json for VardyParty.Core
+        run: |
+          APPSETTINGS_PATH="VardyParty.Core/appsettings.json"
+          echo "{}" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '{"Auth0": {
+                "Domain": $domain,
+                "ClientId": $clientId,
+                "Audience": $audience,
+                "Scope": $scope,
+                "CallbackScheme": $callbackScheme,
+                "RedirectUri": $redirectUri,
+                "PostLogoutRedirectUri": $postLogoutRedirectUri,
+                "TokenLeewaySeconds": $tokenLeewaySeconds,
+                "RequiredRoleClaimType": $requiredRoleClaimType,
+                "RequiredRole": $requiredRole
+              },
+              "Api": {
+                "HeadlessBaseUrl": $headlessBaseUrl
+              }}' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json generated for Linux ARM64"
+        shell: bash
       - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
+        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release --self-contained
       - name: Create Linux ARM64 package
-        run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
+        run: |
+          cd VardyParty.Core/bin/Release/net10.0/linux-arm64/publish
+          tar -czf ../../../../../VardyParty-linux-arm64.tar.gz .
+          cd ../../../../../
+          echo "Created VardyParty-linux-arm64.tar.gz"
+        shell: bash
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:

@@ -194,10 +194,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }}
       - name: Build core library (x64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-x64
+        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-x64 --no-restore
       - name: Build core library (ARM64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-arm64
+        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-arm64 --no-restore
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
