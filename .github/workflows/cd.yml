@@ -509,10 +509,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvlc-dev vlc
+      - name: Skip Linux runtime dependencies for packaging
+        run: echo "Skipping apt install; runtime VLC packages are not required for dotnet publish/tar/upload."
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -607,10 +605,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvlc-dev vlc
+      - name: Skip Linux runtime dependencies for packaging
+        run: echo "Skipping apt install; runtime VLC packages are not required for dotnet publish/tar/upload."
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
