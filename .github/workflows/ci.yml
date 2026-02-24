@@ -249,12 +249,21 @@ jobs:
           sudo apt-get install -y libvlc-dev vlc xvfb
       - name: Restore Linux project
         run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
-      - name: Build Linux app (x64)
-        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
+      - name: Publish Linux app (x64)
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --self-contained false --no-restore
       - name: Runtime smoke test (xvfb)
         run: |
           set +e
-          xvfb-run -a timeout 20s dotnet run --project VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-build
+
+          APP_PATH="VardyParty.Linux/bin/Release/net10.0/linux-x64/publish/VardyParty"
+          if [ ! -x "$APP_PATH" ]; then
+            echo "ERROR: Expected app binary not found or not executable at $APP_PATH"
+            echo "Contents of publish directory:"
+            ls -la VardyParty.Linux/bin/Release/net10.0/linux-x64/publish || true
+            exit 1
+          fi
+
+          xvfb-run -a timeout 20s "$APP_PATH"
           RC=$?
           set -e
 
