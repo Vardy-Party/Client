@@ -123,28 +123,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             EnsureMediaPlayer();
 
-            var preparedSource = await PreparePlaybackSourceAsync(m3u8Url, refererUrl);
-            if (!preparedSource.Success || string.IsNullOrWhiteSpace(preparedSource.PlaybackUrl))
-            {
-                return new PlaybackResult
-                {
-                    Success = false,
-                    Message = preparedSource.ErrorMessage ?? "Failed to prepare playback source"
-                };
-            }
-
-            _logger.LogInformation(
-                "[LinuxVideoPlayerService] Playback source prepared: original={OriginalUrl}; final={FinalUrl}; isTempManifest={IsTempManifest}; detectedM3U8={DetectedM3U8}",
-                m3u8Url,
-                preparedSource.PlaybackUrl,
-                preparedSource.IsTemporaryManifest,
-                preparedSource.DetectedManifest);
+            _logger.LogInformation("[LinuxVideoPlayerService] Using direct playback URL (recovery mode)");
 
             // Create media with options
             var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
-            _currentMedia = preparedSource.IsLocalPath
-                ? new Media(mediaLibVlc, preparedSource.PlaybackUrl, FromType.FromPath)
-                : new Media(mediaLibVlc, new Uri(preparedSource.PlaybackUrl));
+            _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
             
             // Set HTTP Referer header
             if (!string.IsNullOrWhiteSpace(refererUrl))
@@ -154,8 +137,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            _currentMedia.AddOption(":demux=hls");
-
             if (_isWsl)
             {
                 _currentMedia.AddOption(":avcodec-hw=none");
