@@ -15,6 +15,9 @@ namespace VardyParty.Linux.Services
 {
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
+    private const bool ForceFixedTestStream = true;
+    private const string FixedTestStreamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
@@ -78,15 +81,16 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "--quiet",                       // Reduce verbose output
                 "--no-video-title-show",         // Don't show video title on playback
                 "--network-caching=2000",        // 2 second network cache
-                "--http-reconnect"               // Auto-reconnect on network issues
+                "--http-reconnect",              // Auto-reconnect on network issues
+                "--avcodec-hw=any",              // Prefer hardware decoding when available
+                "--no-spdif",                    // Avoid passthrough output failures under WSL audio stacks
+                "--aout=alsa"                    // Prefer ALSA output to reduce Pulse module issues
             };
 
 
             if (_isWsl)
             {
-                vlcOptions.Add("--avcodec-hw=none");
-
-                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; disabling hardware decode and using default video output renderer");
+                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; preferring hardware decode with software fallback");
             }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
@@ -107,9 +111,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         string title,
         Func<Task>? onNextStreamRequested = null)
     {
+        var playbackUrl = ForceFixedTestStream ? FixedTestStreamUrl : m3u8Url;
+        var playbackReferer = ForceFixedTestStream ? string.Empty : refererUrl;
+
+        if (ForceFixedTestStream)
+        {
+            _logger.LogWarning("[LinuxVideoPlayerService] ForceFixedTestStream enabled; overriding stream URL for Linux playback test");
+        }
+
         _logger.LogInformation("[LinuxVideoPlayerService] Playing video: {Title}", title);
-        _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", m3u8Url);
-        _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", refererUrl);
+        _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", playbackUrl);
+        _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", playbackReferer);
 
         _onNextStreamRequested = onNextStreamRequested;
         _playbackTcs = new TaskCompletionSource<PlaybackResult>();
@@ -127,20 +139,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             // Create media with options
             var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
-            _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
+            _currentMedia = new Media(mediaLibVlc, new Uri(playbackUrl));
             
             // Set HTTP Referer header
-            if (!string.IsNullOrWhiteSpace(refererUrl))
+            if (!string.IsNullOrWhiteSpace(playbackReferer))
             {
-                _currentMedia.AddOption($":http-referrer={refererUrl}");
+                _currentMedia.AddOption($":http-referrer={playbackReferer}");
             }
 
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            if (_isWsl)
-            {
-                _currentMedia.AddOption(":avcodec-hw=none");
-            }
+            _currentMedia.AddOption(":avcodec-hw=any");
 
             // Parse media to get stream information
             await _currentMedia.Parse(MediaParseOptions.ParseNetwork);
