@@ -14,6 +14,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_linux_runtime_smoke:
+        description: "Run optional Linux runtime smoke test (installs VLC deps)"
+        required: false
+        default: "false"
 
 jobs:
   test:
@@ -226,3 +231,37 @@ jobs:
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
           retention-days: 5
+
+  linux-runtime-smoke:
+    name: Linux Runtime Smoke (optional)
+    runs-on: ubuntu-latest
+    needs: build-linux
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_linux_runtime_smoke == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvlc-dev vlc xvfb
+      - name: Restore Linux project
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Build Linux app (x64)
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
+      - name: Runtime smoke test (xvfb)
+        run: |
+          set +e
+          xvfb-run -a timeout 20s dotnet run --project VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-build
+          RC=$?
+          set -e
+
+          if [ "$RC" -eq 124 ]; then
+            echo "OK: App launched and stayed running under xvfb (timeout expected)."
+            exit 0
+          fi
+
+          echo "ERROR: Runtime smoke test failed with exit code $RC"
+          exit 1
