@@ -500,7 +500,7 @@ jobs:
           retention-days: 30
 
   package-linux-x64:
-    name: Package Linux x64
+    name: Package Linux x64 Snap
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
@@ -509,8 +509,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Skip Linux runtime dependencies for packaging
-        run: echo "Skipping apt install; runtime VLC packages are not required for dotnet publish/tar/upload."
+      - name: Install Snapcraft tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y snapcraft
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -566,38 +568,66 @@ jobs:
           echo "OK: AllowUserSecrets not found in Linux appsettings.json"
         shell: bash
       - name: Publish Linux x64 application
-        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained -p:PublishSingleFile=false
-      - name: Create Linux x64 package
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Generate snapcraft.yaml (x64)
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64.tar.gz"
-          tar -czf "$OUTPUT_PATH" -C VardyParty.Linux/bin/Release/net10.0/linux-x64/publish .
-          echo "Created $OUTPUT_PATH"
-          ls -lh "$OUTPUT_PATH"
-      - name: Verify Linux x64 package exists
+          cat > snapcraft.yaml << 'EOF'
+          name: vardyparty
+          title: Vardy Party
+          base: core24
+          version: '1.0.0'
+          summary: Vardy Party Linux client
+          description: Vardy Party desktop client packaged as a Snap.
+          grade: devel
+          confinement: devmode
+          architectures:
+            - build-on: [amd64]
+              build-for: [amd64]
+
+          parts:
+            app:
+              plugin: dump
+              source: VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
+              stage-packages:
+                - libvlc5
+                - vlc-plugin-base
+
+          apps:
+            vardyparty:
+              command: VardyParty
+              plugs:
+                - network
+                - network-bind
+                - home
+                - audio-playback
+                - opengl
+                - wayland
+                - x11
+          EOF
+      - name: Build Linux x64 snap
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64.tar.gz"
+          SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
+          SNAP_FILE=$(ls -1 *.snap | head -n 1)
+          mv "$SNAP_FILE" "$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
+          ls -lh "$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
+      - name: Verify Linux x64 snap exists
+        run: |
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
-            echo "ERROR: Linux x64 package not found at $OUTPUT_PATH"
+            echo "ERROR: Linux x64 snap not found at $OUTPUT_PATH"
             exit 1
           fi
-          echo "OK: Linux x64 package found at $OUTPUT_PATH"
-      - name: Debug Linux x64 package paths
-        run: |
-          echo "PWD=$(pwd)"
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          ls -lah "$GITHUB_WORKSPACE"
-          ls -lah "$GITHUB_WORKSPACE/VardyParty-linux-x64.tar.gz" || true
-        shell: bash
+          echo "OK: Linux x64 snap found at $OUTPUT_PATH"
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-package
-          path: ${{ github.workspace }}/VardyParty-linux-x64.tar.gz
+          path: ${{ github.workspace }}/VardyParty-linux-x64.snap
           retention-days: 30
 
   package-linux-arm64:
-    name: Package Linux ARM64
-    runs-on: ubuntu-latest
+    name: Package Linux ARM64 Snap
+    runs-on: ubuntu-24.04-arm
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
@@ -605,8 +635,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Skip Linux runtime dependencies for packaging
-        run: echo "Skipping apt install; runtime VLC packages are not required for dotnet publish/tar/upload."
+      - name: Install Snapcraft tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y snapcraft
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -662,31 +694,59 @@ jobs:
           echo "OK: AllowUserSecrets not found in Linux appsettings.json"
         shell: bash
       - name: Publish Linux ARM64 application
-        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained -p:PublishSingleFile=false
-      - name: Create Linux ARM64 package
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Generate snapcraft.yaml (arm64)
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64.tar.gz"
-          tar -czf "$OUTPUT_PATH" -C VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish .
-          echo "Created $OUTPUT_PATH"
-          ls -lh "$OUTPUT_PATH"
-      - name: Verify Linux ARM64 package exists
+          cat > snapcraft.yaml << 'EOF'
+          name: vardyparty
+          title: Vardy Party
+          base: core24
+          version: '1.0.0'
+          summary: Vardy Party Linux client
+          description: Vardy Party desktop client packaged as a Snap.
+          grade: devel
+          confinement: devmode
+          architectures:
+            - build-on: [arm64]
+              build-for: [arm64]
+
+          parts:
+            app:
+              plugin: dump
+              source: VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
+              stage-packages:
+                - libvlc5
+                - vlc-plugin-base
+
+          apps:
+            vardyparty:
+              command: VardyParty
+              plugs:
+                - network
+                - network-bind
+                - home
+                - audio-playback
+                - opengl
+                - wayland
+                - x11
+          EOF
+      - name: Build Linux ARM64 snap
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64.tar.gz"
+          SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
+          SNAP_FILE=$(ls -1 *.snap | head -n 1)
+          mv "$SNAP_FILE" "$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
+          ls -lh "$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
+      - name: Verify Linux ARM64 snap exists
+        run: |
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
-            echo "ERROR: Linux ARM64 package not found at $OUTPUT_PATH"
+            echo "ERROR: Linux ARM64 snap not found at $OUTPUT_PATH"
             exit 1
           fi
-          echo "OK: Linux ARM64 package found at $OUTPUT_PATH"
-      - name: Debug Linux ARM64 package paths
-        run: |
-          echo "PWD=$(pwd)"
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          ls -lah "$GITHUB_WORKSPACE"
-          ls -lah "$GITHUB_WORKSPACE/VardyParty-linux-arm64.tar.gz" || true
-        shell: bash
+          echo "OK: Linux ARM64 snap found at $OUTPUT_PATH"
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-package
-          path: ${{ github.workspace }}/VardyParty-linux-arm64.tar.gz
+          path: ${{ github.workspace }}/VardyParty-linux-arm64.snap
           retention-days: 30

@@ -6,7 +6,7 @@
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
         x:Class="VardyParty.Linux.MainWindow"
     x:DataType="local:MainWindowViewModel"
-        Title="VardyParty"
+        Title="Vardy Party"
         Width="1280"
         Height="720"
         MinWidth="800"
@@ -16,7 +16,7 @@
 
     <Grid RowDefinitions="Auto,Auto,*" Margin="16">
         <TextBlock Grid.Row="0"
-                   Text="VardyParty Linux"
+                   Text="Vardy Party"
                    FontSize="28"
                    FontWeight="SemiBold"
                    Foreground="White" />
