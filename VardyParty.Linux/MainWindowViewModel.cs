@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using LibVLCSharp.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -26,6 +27,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private LinuxVideoPlayerService? _linuxVideoPlayerService;
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
+    private readonly IEnrichedGameService _enrichedGameService;
     private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
     private readonly SelectionState _selectionState;
     private readonly IServiceProvider _serviceProvider;
@@ -44,10 +46,13 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private CancellationTokenSource? _authCts;
     private CancellationTokenSource? _streamResolutionCts;
     private IDisposable? _progressSubscription;
+    private IDisposable? _gamesSubscription;
+    private IDisposable? _gamesErrorSubscription;
 
     public MainWindowViewModel(
         IAuthLoginService authLoginService,
         IAuthTokenProvider authTokenProvider,
+        IEnrichedGameService enrichedGameService,
         IStreamResolutionOrchestrator streamResolutionOrchestrator,
         SelectionState selectionState,
         IServiceProvider serviceProvider,
@@ -56,6 +61,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _authLoginService = authLoginService;
         _authTokenProvider = authTokenProvider;
+        _enrichedGameService = enrichedGameService;
         _streamResolutionOrchestrator = streamResolutionOrchestrator;
         _selectionState = selectionState;
         _serviceProvider = serviceProvider;
@@ -81,6 +87,31 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             _linuxVideoPlayerService.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
         }
+
+        _gamesSubscription = _enrichedGameService.GamesStream.Subscribe(dict =>
+        {
+            if (dict == null)
+            {
+                return;
+            }
+
+            var displayGames = dict.ToDisplay();
+            Dispatcher.UIThread.Post(() =>
+            {
+                ApplyDisplayGames(displayGames);
+                StatusMessage = $"Loaded {Games.Count} games";
+            });
+        });
+
+        _gamesErrorSubscription = _enrichedGameService.ErrorStream.Subscribe(error =>
+        {
+            if (string.IsNullOrWhiteSpace(error))
+            {
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() => { StatusMessage = error; });
+        });
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -227,23 +258,16 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var apiService = _serviceProvider.GetRequiredService<IApiService>();
-            var gamesByLeague = await apiService.GetAllGamesAsync(true);
-            var displayGames = gamesByLeague.ToDisplay();
-
-            Games.Clear();
-            foreach (var game in displayGames)
+            if (_enrichedGameService is EnrichedGameService enrichedGameService)
             {
-                Games.Add(new GameListItem(
-                    game,
-                    game.DisplayLeague,
-                    $"{game.DisplayHome} vs {game.DisplayAway}",
-                    game.StartUtcForOrdering == DateTime.MaxValue
-                        ? ""
-                        : game.StartUtcForOrdering.ToLocalTime().ToString("HH:mm"),
-                    game.DisplayStatusText()));
+                enrichedGameService.StartBackgroundPolling();
+                StatusMessage = "Live game updates started";
+                return;
             }
 
+            var apiService = _serviceProvider.GetRequiredService<IApiService>();
+            var gamesByLeague = await apiService.GetAllGamesAsync(true);
+            ApplyDisplayGames(gamesByLeague.ToDisplay());
             StatusMessage = $"Loaded {Games.Count} games";
         }
         catch (Exception ex)
@@ -296,8 +320,27 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _linuxVideoPlayerService.PlaybackVisibilityChanged -= OnPlaybackVisibilityChanged;
         }
         _progressSubscription?.Dispose();
+        _gamesSubscription?.Dispose();
+        _gamesErrorSubscription?.Dispose();
         _streamResolutionOrchestrator.Reset();
         DeviceQrCode = null;
+    }
+
+    private void ApplyDisplayGames(IReadOnlyCollection<Game> displayGames)
+    {
+        Games.Clear();
+
+        foreach (var game in displayGames)
+        {
+            Games.Add(new GameListItem(
+                game,
+                game.DisplayLeague,
+                $"{game.DisplayHome} vs {game.DisplayAway}",
+                game.StartUtcForOrdering == DateTime.MaxValue
+                    ? ""
+                    : game.StartUtcForOrdering.ToLocalTime().ToString("HH:mm"),
+                game.DisplayStatusText()));
+        }
     }
 
     public async Task PlaySelectedGameAsync(GameListItem? item)

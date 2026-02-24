@@ -25,7 +25,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private TaskCompletionSource<PlaybackResult>? _playbackTcs;
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
-    private readonly bool _isWsl;
     private string? _tempManifestPath;
     private EventHandler<LogEventArgs>? _libVlcLogHandler;
     private bool _libVlcLogAttached;
@@ -48,7 +47,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger)
     {
         _logger = logger;
-        _isWsl = IsRunningOnWsl();
         InitializeLibVLC();
         EnsureMediaPlayer();
     }
@@ -76,34 +74,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
-            var decoderModeOption = _isWsl ? "--avcodec-hw=none" : "--avcodec-hw=any";
-
             var vlcOptions = new List<string>
             {
                 "--quiet",                       // Reduce verbose output
                 "--no-video-title-show",         // Don't show video title on playback
                 "--network-caching=2000",        // 2 second network cache
                 "--http-reconnect",              // Auto-reconnect on network issues
-                decoderModeOption,                // Prefer hardware decode unless WSL forces software decode
-                "--no-spdif",                    // Avoid passthrough output failures under WSL audio stacks
-                "--no-audio",                    // Test mode: disable audio to avoid WSL ALSA deadlocks
-                "--aout=adummy"                  // Force adummy output module to avoid ALSA device initialization
+                "--avcodec-hw=any",              // Prefer hardware decode on native Linux
+                "--no-spdif"                     // Avoid passthrough output issues
             };
-
-
-            if (_isWsl)
-            {
-                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software video decode to avoid libva-wayland crashes");
-
-                Environment.SetEnvironmentVariable("WAYLAND_DISPLAY", null);
-
-                Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
-                Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
-                Environment.SetEnvironmentVariable("GALLIUM_DRIVER", "llvmpipe");
-                Environment.SetEnvironmentVariable("LIBVA_DRIVER_NAME", "dummy");
-                Environment.SetEnvironmentVariable("LIBVA_DRIVERS_PATH", "/nonexistent");
-                Environment.SetEnvironmentVariable("LIBGL_KOPPER_DISABLE", "1");
-            }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
             AttachLibVlcDiagnostics();
@@ -161,10 +140,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            _currentMedia.AddOption(_isWsl ? ":avcodec-hw=none" : ":avcodec-hw=any");
-            _currentMedia.AddOption(":no-audio");
-            _currentMedia.AddOption(":aout=adummy");
-            _currentMedia.AddOption(":audio-track=-1");
+            _currentMedia.AddOption(":avcodec-hw=any");
 
             // Start playback
             var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
@@ -341,35 +317,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         PlaybackVisibilityChanged?.Invoke(this, false);
         GC.SuppressFinalize(this);
-    }
-
-    private static bool IsRunningOnWsl()
-    {
-        if (!OperatingSystem.IsLinux())
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WSL_DISTRO_NAME")) ||
-            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WSL_INTEROP")))
-        {
-            return true;
-        }
-
-        try
-        {
-            if (File.Exists("/proc/version"))
-            {
-                var version = File.ReadAllText("/proc/version");
-                return version.Contains("microsoft", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        return false;
     }
 
     private async Task<PreparedPlaybackSource> PreparePlaybackSourceAsync(string requestedUrl, string refererUrl)
