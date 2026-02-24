@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using VardyParty.Services;
@@ -35,11 +36,26 @@ public partial class App : Application
         LibVLCSharp.Shared.Core.Initialize();
 
         // Build configuration
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .AddEnvironmentVariables()
-            .Build();
+        var appSettingsPath = ResolveAppSettingsPath();
+        var appSettingsDirectory = Path.GetDirectoryName(appSettingsPath)!;
+        var appSettingsFileName = Path.GetFileName(appSettingsPath);
+
+        var allowUserSecrets = new ConfigurationBuilder()
+            .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: false)
+            .Build()
+            .GetValue("AllowUserSecrets", false);
+
+        var configurationBuilder = new ConfigurationBuilder()
+            .SetBasePath(appSettingsDirectory)
+            .AddJsonFile(appSettingsFileName, optional: false, reloadOnChange: true)
+            .AddEnvironmentVariables();
+
+        if (allowUserSecrets)
+        {
+            configurationBuilder.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
+        }
+
+        var configuration = configurationBuilder.Build();
 
         // Setup Dependency Injection
         var services = new ServiceCollection();
@@ -102,5 +118,29 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static string ResolveAppSettingsPath()
+    {
+        var currentDirectory = Directory.GetCurrentDirectory();
+        var baseDirectory = AppContext.BaseDirectory;
+
+        var candidates = new List<string>
+        {
+            Path.Combine(currentDirectory, "appsettings.json"),
+            Path.Combine(currentDirectory, "VardyParty", "appsettings.json"),
+            Path.Combine(baseDirectory, "appsettings.json"),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "VardyParty", "appsettings.json"))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"Could not find appsettings.json. Checked: {string.Join(", ", candidates)}");
     }
 }

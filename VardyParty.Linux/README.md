@@ -54,6 +54,32 @@ dotnet build -c Release
 dotnet publish -c Release -r linux-x64 --self-contained
 ```
 
+## WSL Jumpstart (tested commands)
+
+Run from Ubuntu WSL in the repository root:
+
+```bash
+sudo apt update
+sudo apt install -y curl wget unzip libice6 libsm6 libvlc5 libvlc-dev vlc
+
+wget https://dot.net/v1/dotnet-install.sh
+chmod +x dotnet-install.sh
+./dotnet-install.sh --channel 10.0
+export PATH="$HOME/.dotnet:$PATH"
+
+dotnet --info
+dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64
+dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64
+```
+
+If your Linux desktop session is available in WSL, run:
+
+```bash
+export DISPLAY=${DISPLAY:-:0}
+dotnet run --project VardyParty.Linux/VardyParty.Linux.csproj -c Debug
+```
+
 ## Running
 
 ### From Build Output
@@ -90,6 +116,21 @@ Create or edit `appsettings.json` in the application directory:
     "HeadlessBaseUrl": "https://api.vardyparty.com"
   }
 }
+```
+
+### User Secrets (matches MAUI behavior)
+
+Linux now follows the same pattern as MAUI:
+
+- Load `appsettings.json`
+- Only load user secrets when `AllowUserSecrets` is `true`
+
+Set secrets with:
+
+```bash
+dotnet user-secrets --project VardyParty.Linux/VardyParty.Linux.csproj set "Auth0:Domain" "your-domain.auth0.com"
+dotnet user-secrets --project VardyParty.Linux/VardyParty.Linux.csproj set "Auth0:ClientId" "your-client-id"
+dotnet user-secrets --project VardyParty.Linux/VardyParty.Linux.csproj set "Api:HeadlessBaseUrl" "https://api.vardyparty.com"
 ```
 
 ## Distribution Packages

@@ -6,6 +6,7 @@
         },
         "wsl": true,
         "Resolve-Path": true,
-        "ForEach-Object": true
+        "ForEach-Object": true,
+        "dotnet build": true
     }
 }
