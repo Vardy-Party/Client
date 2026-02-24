@@ -7,10 +7,11 @@ using System.Threading.Tasks;
 using VardyParty.Models;
 using VardyParty.Services;
 
-namespace VardyParty.Linux.Services;
-
+namespace VardyParty.Linux.Services
+{
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
+    private IntPtr _videoSurfaceHandle = IntPtr.Zero;
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
@@ -27,6 +28,24 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         _logger = logger;
         _isWsl = IsRunningOnWsl();
         InitializeLibVLC();
+        _videoSurfaceHandle = IntPtr.Zero;
+    }
+
+    public void SetVideoSurfaceHandle(IntPtr handle)
+    {
+        _videoSurfaceHandle = handle;
+        if (_mediaPlayer != null && handle != IntPtr.Zero)
+        {
+            try
+            {
+                _mediaPlayer.Hwnd = handle;
+                _logger.LogInformation($"[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{handle.ToString("X")}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to set MediaPlayer.Hwnd");
+            }
+        }
     }
 
     private void InitializeLibVLC()
@@ -93,6 +112,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 _mediaPlayer.Buffering += OnBuffering;
                 _mediaPlayer.EncounteredError += OnEncounteredError;
                 _mediaPlayer.EndReached += OnEndReached;
+
+                // Set the video surface handle if available
+                if (_videoSurfaceHandle != IntPtr.Zero)
+                {
+                    try
+                    {
+                        _mediaPlayer.Hwnd = _videoSurfaceHandle;
+                        _logger.LogInformation($"[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{_videoSurfaceHandle.ToString("X")}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to set MediaPlayer.Hwnd during player creation");
+                    }
+                }
             }
 
             // Create media with options
@@ -295,4 +328,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         return false;
     }
+
 }
+
+}
+
+
+

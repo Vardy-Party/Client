@@ -14,7 +14,7 @@
         WindowStartupLocation="CenterScreen"
         Background="#111827">
 
-    <Grid RowDefinitions="Auto,Auto,*" Margin="16">
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
         <TextBlock Grid.Row="0"
                    Text="Vardy Party"
                    FontSize="28"
@@ -26,7 +26,12 @@
                    Margin="0,12,0,12"
                    Foreground="White" />
 
-        <Border Grid.Row="2"
+        <!-- Video Surface -->
+        <Border Grid.Row="2" Background="#000" CornerRadius="8" Margin="0,0,0,12" Height="360" IsVisible="{Binding ShowVideoPanel}">
+            <NativeControlHost x:Name="VideoSurface" />
+        </Border>
+
+        <Border Grid.Row="3"
                 BorderThickness="1"
                 BorderBrush="#374151"
                 CornerRadius="8"
@@ -47,7 +52,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="2" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8" IsVisible="{Binding ShowGamesPanel}">
+        <Border Grid.Row="3" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8" IsVisible="{Binding ShowGamesPanel}">
             <ListBox x:Name="GamesList"
                      ItemsSource="{Binding Games}"
                      SelectedItem="{Binding SelectedGame}"

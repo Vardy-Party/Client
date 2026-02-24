@@ -14,12 +14,14 @@ using VardyParty.Extensions;
 using VardyParty.Models;
 using VardyParty.Orchestrators;
 using VardyParty.Providers;
+using VardyParty.Linux.Services;
 using VardyParty.Services;
 
 namespace VardyParty.Linux;
 
 public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
+    private INativeVideoPlayerService? _videoPlayerService;
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
     private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
@@ -68,6 +70,28 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                     StatusMessage = progress.Status;
                 }
             });
+
+        // Resolve the video player service
+        _videoPlayerService = _serviceProvider.GetService(typeof(INativeVideoPlayerService)) as INativeVideoPlayerService;
+    }
+
+    public void SetVideoSurfaceHandle(IntPtr handle)
+    {
+        if (_videoPlayerService != null && handle != IntPtr.Zero)
+        {
+            try
+            {
+                if (_videoPlayerService is LinuxVideoPlayerService linuxVideoPlayerService)
+                {
+                    linuxVideoPlayerService.SetVideoSurfaceHandle(handle);
+                    _logger.LogInformation($"[MainWindowViewModel] Set video surface handle: 0x{handle.ToString("X")}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to set video surface handle on player service");
+            }
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -110,6 +134,8 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowAuthPanel => !IsAuthenticated;
 
     public bool ShowGamesPanel => IsAuthenticated;
+
+    public bool ShowVideoPanel => true;
 
     public GameListItem? SelectedGame
     {
