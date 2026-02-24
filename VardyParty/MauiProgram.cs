@@ -25,6 +25,27 @@ public static class MauiProgram
     // Set by Android startup to indicate TV devices
     public static bool IsTv { get; set; } = false;
 
+    public static bool IsWindowsPackaged => _isWindowsPackaged;
+
+    private static readonly bool _isWindowsPackaged = DetectWindowsPackaged();
+
+    private static bool DetectWindowsPackaged()
+    {
+#if WINDOWS
+        try
+        {
+            _ = Windows.ApplicationModel.Package.Current.Id.FullName;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+#else
+        return true;
+#endif
+    }
+
     // Set by Android startup to indicate whether a usable WebView implementation is present
     public static bool IsWebViewAvailable { get; set; } = false;
 
