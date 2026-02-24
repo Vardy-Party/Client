@@ -201,6 +201,18 @@ To verify the implementation:
    - `VardyParty.Linux/README.md` has installation instructions
    - Main `README.md` lists Linux as supported platform
 
+## 🐛 Known Issues & Solutions
+
+### Missing Icon File (Fixed)
+**Issue**: Initial implementation referenced `Assets/vardyparty.ico` which didn't exist, causing build failures.
+
+**Solution**: Removed ApplicationIcon and Icon references from project files. Icon can be added later as an enhancement.
+
+**Future Enhancement**: Create proper icon files for Linux desktop integration:
+- Create `.png` icons in multiple sizes (16x16, 32x32, 48x48, 64x64, 128x128, 256x256)
+- Add `.desktop` file for Linux desktop environments
+- Include icon in AppImage/Flatpak packages
+
 ## 🎊 Conclusion
 
 **Linux support is COMPLETE and PRODUCTION-READY!**

@@ -6,7 +6,6 @@
     <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationIcon>Assets\vardyparty.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>VardyParty.Linux</RootNamespace>
     <AssemblyName>VardyParty</AssemblyName>
@@ -46,11 +45,6 @@
     
     <!-- Copy shared assets -->
     <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- App Icon -->
-    <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
 </Project>
