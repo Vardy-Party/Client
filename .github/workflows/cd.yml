@@ -707,6 +707,18 @@ jobs:
           EOF
           sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
           echo "Using snap version: $SNAP_FULL_VERSION"
+      - name: Validate generated snapcraft.yaml (x64)
+        run: |
+          echo "Generated snapcraft.yaml (x64):"
+          cat snapcraft.yaml
+          if grep -q '^\s*architectures:' snapcraft.yaml; then
+            echo "ERROR: Invalid key 'architectures' found for core24 snapcraft.yaml"
+            exit 1
+          fi
+          if ! grep -q '^\s*platforms:' snapcraft.yaml; then
+            echo "ERROR: Required key 'platforms' missing from snapcraft.yaml"
+            exit 1
+          fi
       - name: Build Linux x64 snap
         id: snapcraft_build
         uses: snapcore/action-build@v1
@@ -876,6 +888,18 @@ jobs:
           EOF
           sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
           echo "Using snap version: $SNAP_FULL_VERSION"
+      - name: Validate generated snapcraft.yaml (arm64)
+        run: |
+          echo "Generated snapcraft.yaml (arm64):"
+          cat snapcraft.yaml
+          if grep -q '^\s*architectures:' snapcraft.yaml; then
+            echo "ERROR: Invalid key 'architectures' found for core24 snapcraft.yaml"
+            exit 1
+          fi
+          if ! grep -q '^\s*platforms:' snapcraft.yaml; then
+            echo "ERROR: Required key 'platforms' missing from snapcraft.yaml"
+            exit 1
+          fi
       - name: Build Linux ARM64 snap
         id: snapcraft_build
         uses: snapcore/action-build@v1
