@@ -76,9 +76,7 @@
                         Height="36"
                         Click="OnCloseVideoClicked" />
             </Border>
-            <Border Grid.Row="1" Background="#000">
-                <NativeControlHost x:Name="VideoSurface" />
-            </Border>
+            <Grid Grid.Row="1" />
         </Grid>
     </Grid>
 </Window>

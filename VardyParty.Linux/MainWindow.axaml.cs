@@ -32,12 +32,9 @@ public partial class MainWindow : Window
     private void TrySetVideoSurfaceHandle()
     {
         // Try to wire up the video surface handle to the player service
-        var videoSurface = this.FindControl<NativeControlHost>("VideoSurface");
-        if (videoSurface != null && DataContext is MainWindowViewModel vm)
+        if (DataContext is MainWindowViewModel vm)
         {
-            var handle = videoSurface.TryGetPlatformHandle()?.Handle
-                         ?? this.TryGetPlatformHandle()?.Handle
-                         ?? IntPtr.Zero;
+            var handle = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
             if (handle != IntPtr.Zero)
             {
                 vm.SetVideoSurfaceHandle(handle);
