@@ -11,7 +11,6 @@ namespace VardyParty.Linux.Services
 {
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
-    private IntPtr _videoSurfaceHandle = IntPtr.Zero;
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
@@ -24,28 +23,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
 
+    public MediaPlayer? MediaPlayer => _mediaPlayer;
+
     public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger)
     {
         _logger = logger;
         _isWsl = IsRunningOnWsl();
         InitializeLibVLC();
-        _videoSurfaceHandle = IntPtr.Zero;
-    }
-
-    public void SetVideoSurfaceHandle(IntPtr handle)
-    {
-        _videoSurfaceHandle = handle;
-        if (_mediaPlayer != null && handle != IntPtr.Zero)
-        {
-            try
-            {
-                ApplyVideoOutputHandle(_mediaPlayer, handle);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to set MediaPlayer video output handle");
-            }
-        }
+        EnsureMediaPlayer();
     }
 
     public void StopPlayback()
@@ -121,30 +106,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _currentMedia?.Dispose();
             _mediaPlayer?.Stop();
 
-            // Create media player if not exists
-            if (_mediaPlayer == null)
-            {
-                var libVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
-                _mediaPlayer = new MediaPlayer(libVlc);
-                _logger.LogDebug("[LinuxVideoPlayerService] MediaPlayer created. Video output should be initialized.");
-                _mediaPlayer.Playing += OnPlaying;
-                _mediaPlayer.Buffering += OnBuffering;
-                _mediaPlayer.EncounteredError += OnEncounteredError;
-                _mediaPlayer.EndReached += OnEndReached;
-
-                // Set the video surface handle if available
-                if (_videoSurfaceHandle != IntPtr.Zero)
-                {
-                    try
-                    {
-                        ApplyVideoOutputHandle(_mediaPlayer, _videoSurfaceHandle);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to set MediaPlayer video output handle during player creation");
-                    }
-                }
-            }
+            EnsureMediaPlayer();
 
             // Create media with options
             var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
@@ -168,7 +130,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             await _currentMedia.Parse(MediaParseOptions.ParseNetwork);
 
             // Start playback
-            _mediaPlayer.Play(_currentMedia);
+            var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
+            mediaPlayer.Play(_currentMedia);
 
             _logger.LogInformation("[LinuxVideoPlayerService] Playback started successfully");
 
@@ -250,18 +213,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
     }
 
-    private void ApplyVideoOutputHandle(MediaPlayer mediaPlayer, IntPtr handle)
+    private void EnsureMediaPlayer()
     {
-        if (OperatingSystem.IsLinux())
+        if (_mediaPlayer != null)
         {
-            var xWindow = unchecked((uint)handle.ToInt64());
-            mediaPlayer.XWindow = xWindow;
-            _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.XWindow using 0x{HandleHex} (XID={XWindow})", handle.ToString("X"), xWindow);
             return;
         }
 
-        mediaPlayer.Hwnd = handle;
-        _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{HandleHex}", handle.ToString("X"));
+        var libVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
+        _mediaPlayer = new MediaPlayer(libVlc);
+        _mediaPlayer.Playing += OnPlaying;
+        _mediaPlayer.Buffering += OnBuffering;
+        _mediaPlayer.EncounteredError += OnEncounteredError;
+        _mediaPlayer.EndReached += OnEndReached;
+        _logger.LogInformation("[LinuxVideoPlayerService] MediaPlayer created");
     }
 
     public PlaybackMetrics? GetCurrentMetrics()

@@ -3,6 +3,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:VardyParty.Linux"
+    xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
         x:Class="VardyParty.Linux.MainWindow"
     x:DataType="local:MainWindowViewModel"
@@ -76,7 +77,10 @@
                         Height="36"
                         Click="OnCloseVideoClicked" />
             </Border>
-            <Grid Grid.Row="1" />
+            <Border Grid.Row="1" Background="#000000">
+                <vlc:VideoView x:Name="VideoSurface"
+                               MediaPlayer="{Binding VideoMediaPlayer}" />
+            </Border>
         </Grid>
     </Grid>
 </Window>

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Avalonia.Media.Imaging;
+using LibVLCSharp.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -82,25 +83,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public void SetVideoSurfaceHandle(IntPtr handle)
-    {
-        if (_videoPlayerService != null && handle != IntPtr.Zero)
-        {
-            try
-            {
-                if (_videoPlayerService is LinuxVideoPlayerService linuxVideoPlayerService)
-                {
-                    linuxVideoPlayerService.SetVideoSurfaceHandle(handle);
-                    _logger.LogInformation("[MainWindowViewModel] Set video surface handle: 0x{HandleHex}", handle.ToString("X"));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to set video surface handle on player service");
-            }
-        }
-    }
-
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<GameListItem> Games { get; } = new();
@@ -145,6 +127,8 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowMainPanel => !ShowVideoPanel;
 
     public bool ShowVideoPanel => _isVideoPlaying;
+
+    public MediaPlayer? VideoMediaPlayer => _linuxVideoPlayerService?.MediaPlayer;
 
     public GameListItem? SelectedGame
     {

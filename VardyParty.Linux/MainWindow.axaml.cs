@@ -1,9 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using System;
-using Avalonia.Platform;
-using Avalonia.Controls.Platform;
-using System.Runtime.InteropServices;
 using Avalonia.Interactivity;
 
 namespace VardyParty.Linux;
@@ -21,27 +18,11 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         Opened += OnOpened;
         Closed += OnClosed;
-        this.AttachedToVisualTree += (_, _) => TrySetVideoSurfaceHandle();
     }
 
     private void InitializeComponent()
     {
         AvaloniaXamlLoader.Load(this);
-    }
-
-    private void TrySetVideoSurfaceHandle()
-    {
-        // Try to wire up the video surface handle to the player service
-        if (DataContext is MainWindowViewModel vm)
-        {
-            var platformHandle = this.TryGetPlatformHandle();
-            var handle = platformHandle?.Handle ?? IntPtr.Zero;
-            if (handle != IntPtr.Zero)
-            {
-                System.Diagnostics.Debug.WriteLine($"[MainWindow] Platform handle descriptor={platformHandle?.HandleDescriptor}, value=0x{handle.ToString("X")}");
-                vm.SetVideoSurfaceHandle(handle);
-            }
-        }
     }
 
     private async void OnOpened(object? sender, EventArgs e)

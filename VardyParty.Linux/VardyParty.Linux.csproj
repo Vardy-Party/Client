@@ -26,6 +26,7 @@
     
     <!-- LibVLC for video playback -->
     <PackageReference Include="LibVLCSharp" Version="3.9.0" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.0" />
     <!-- Note: VideoLAN.LibVLC.Linux will be installed as system dependency, not NuGet package -->
     
     <!-- Configuration and Logging -->
