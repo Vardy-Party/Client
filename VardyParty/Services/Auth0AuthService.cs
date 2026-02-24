@@ -40,6 +40,13 @@ public class Auth0AuthService(
         {
             if (HasValidToken) return new AuthLoginResult(true, _accessToken, null);
 
+            if (!MauiProgram.IsWindowsPackaged)
+            {
+                logger.LogWarning("[Auth0] Interactive login requires a packaged Windows app.");
+                return new AuthLoginResult(false, null,
+                    "Interactive login requires a packaged Windows app. Use device sign-in instead.");
+            }
+
             var client = BuildAuth0Client(_auth0Settings);
             logger.LogInformation("[Auth0] Starting login...");
 
