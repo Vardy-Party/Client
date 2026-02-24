@@ -55,6 +55,12 @@ public partial class App : Application
         // Logging
         services.AddLogging(builder =>
         {
+            var logDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VardyParty",
+                "logs");
+
+            builder.AddProvider(new FileLoggerProvider(logDirectory));
             builder.AddConsole();
             builder.SetMinimumLevel(LogLevel.Information);
         });
