@@ -2,27 +2,45 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:VardyParty.Linux"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
         x:Class="VardyParty.Linux.MainWindow"
+    x:DataType="local:MainWindowViewModel"
         Title="VardyParty"
         Width="1280"
         Height="720"
         MinWidth="800"
         MinHeight="600"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="#111827">
 
-    <Grid>
-        <!-- Blazor WebView will be hosted here -->
-        <TextBlock HorizontalAlignment="Center" 
-                   VerticalAlignment="Center"
-                   FontSize="24"
-                   Text="VardyParty for Linux - Avalonia UI" />
-        
-        <TextBlock HorizontalAlignment="Center" 
-                   VerticalAlignment="Center"
-                   Margin="0,60,0,0"
-                   FontSize="16"
-                   Opacity="0.7"
-                   Text="WebView integration coming soon..." />
+    <Grid RowDefinitions="Auto,Auto,*" Margin="16">
+        <TextBlock Grid.Row="0"
+                   Text="VardyParty Linux"
+                   FontSize="28"
+                   FontWeight="SemiBold"
+                   Foreground="White" />
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,12,0,12">
+            <Button Content="Login" Click="OnLoginClick" IsEnabled="{Binding NotBusy}" MinWidth="100" />
+            <Button Content="Load Games" Click="OnLoadGamesClick" IsEnabled="{Binding CanLoadGames}" MinWidth="120" />
+            <Button Content="Logout" Click="OnLogoutClick" IsEnabled="{Binding IsAuthenticated}" MinWidth="100" />
+            <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="White" Margin="12,0,0,0" />
+        </StackPanel>
+
+        <Border Grid.Row="2" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8">
+            <ListBox ItemsSource="{Binding Games}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="local:GameListItem">
+                        <Grid ColumnDefinitions="2*,2*,Auto,Auto" Margin="0,4">
+                            <TextBlock Grid.Column="0" Text="{Binding Fixture}" Foreground="White" />
+                            <TextBlock Grid.Column="1" Text="{Binding League}" Foreground="#D1D5DB" />
+                            <TextBlock Grid.Column="2" Text="{Binding Kickoff}" Foreground="#9CA3AF" Margin="12,0,0,0" />
+                            <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="#FCD34D" Margin="12,0,0,0" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
     </Grid>
 </Window>
