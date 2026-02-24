@@ -206,6 +206,7 @@ jobs:
       - name: Publish Windows package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty Windows v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
           RELEASE_TAG: "windows-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
@@ -385,6 +386,7 @@ jobs:
       - name: Publish Android package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty Android v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
           RELEASE_TAG: "android-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
@@ -490,6 +492,7 @@ jobs:
       - name: Publish iOS package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty iOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
           RELEASE_TAG: "ios-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
@@ -594,6 +597,7 @@ jobs:
       - name: Publish macOS package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty macOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
           RELEASE_TAG: "macos-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
@@ -785,6 +789,7 @@ jobs:
       - name: Publish Linux x64 package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty Linux x64 v${{ steps.snap_version.outputs.full }}"
           RELEASE_TAG: "linux-x64-v${{ steps.snap_version.outputs.full }}"
         run: |
@@ -976,6 +981,7 @@ jobs:
       - name: Publish Linux ARM64 package as Release asset
         if: github.ref == 'refs/heads/main'
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty Linux ARM64 v${{ steps.snap_version.outputs.full }}"
           RELEASE_TAG: "linux-arm64-v${{ steps.snap_version.outputs.full }}"
         run: |
