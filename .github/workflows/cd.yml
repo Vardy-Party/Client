@@ -580,10 +580,20 @@ jobs:
       - name: Generate snapcraft.yaml (x64)
         run: |
           SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
+          SNAP_BUILD=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
           if [ -z "$SNAP_VERSION" ]; then
             echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
             exit 1
           fi
+          if [ -z "$SNAP_BUILD" ]; then
+            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
+          SNAP_FULL_VERSION="${SNAP_VERSION}+${SNAP_BUILD}"
+          echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
+          echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
+          echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
 
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
@@ -633,17 +643,18 @@ jobs:
                 - wayland
                 - x11
           EOF
-                  sed -i "s/__SNAP_VERSION__/$SNAP_VERSION/" snapcraft.yaml
-                  echo "Using snap version: $SNAP_VERSION"
+          sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
+          echo "Using snap version: $SNAP_FULL_VERSION"
       - name: Build Linux x64 snap
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
           SNAP_FILE=$(ls -1 *.snap | head -n 1)
-          mv "$SNAP_FILE" "$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
-          ls -lh "$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          mv "$SNAP_FILE" "$OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
       - name: Verify Linux x64 snap exists
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64.snap"
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
             echo "ERROR: Linux x64 snap not found at $OUTPUT_PATH"
             exit 1
@@ -653,7 +664,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-package
-          path: ${{ github.workspace }}/VardyParty-linux-x64.snap
+          path: ${{ github.workspace }}/VardyParty-linux-x64-v${{ env.SNAP_VERSION }}-b${{ env.SNAP_BUILD }}.snap
           retention-days: 30
 
   package-linux-arm64:
@@ -737,10 +748,20 @@ jobs:
       - name: Generate snapcraft.yaml (arm64)
         run: |
           SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
+          SNAP_BUILD=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
           if [ -z "$SNAP_VERSION" ]; then
             echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
             exit 1
           fi
+          if [ -z "$SNAP_BUILD" ]; then
+            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
+          SNAP_FULL_VERSION="${SNAP_VERSION}+${SNAP_BUILD}"
+          echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
+          echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
+          echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
 
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
@@ -790,17 +811,18 @@ jobs:
                 - wayland
                 - x11
           EOF
-                  sed -i "s/__SNAP_VERSION__/$SNAP_VERSION/" snapcraft.yaml
-                  echo "Using snap version: $SNAP_VERSION"
+          sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
+          echo "Using snap version: $SNAP_FULL_VERSION"
       - name: Build Linux ARM64 snap
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
           SNAP_FILE=$(ls -1 *.snap | head -n 1)
-          mv "$SNAP_FILE" "$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
-          ls -lh "$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          mv "$SNAP_FILE" "$OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
       - name: Verify Linux ARM64 snap exists
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64.snap"
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
             echo "ERROR: Linux ARM64 snap not found at $OUTPUT_PATH"
             exit 1
@@ -810,5 +832,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-package
-          path: ${{ github.workspace }}/VardyParty-linux-arm64.snap
+          path: ${{ github.workspace }}/VardyParty-linux-arm64-v${{ env.SNAP_VERSION }}-b${{ env.SNAP_BUILD }}.snap
           retention-days: 30
