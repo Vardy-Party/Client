@@ -35,7 +35,9 @@ public partial class MainWindow : Window
         var videoSurface = this.FindControl<NativeControlHost>("VideoSurface");
         if (videoSurface != null && DataContext is MainWindowViewModel vm)
         {
-            var handle = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            var handle = videoSurface.TryGetPlatformHandle()?.Handle
+                         ?? this.TryGetPlatformHandle()?.Handle
+                         ?? IntPtr.Zero;
             if (handle != IntPtr.Zero)
             {
                 vm.SetVideoSurfaceHandle(handle);

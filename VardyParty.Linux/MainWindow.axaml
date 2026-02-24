@@ -67,19 +67,18 @@
             </Border>
         </Grid>
 
-        <Grid IsVisible="{Binding ShowVideoPanel}">
-            <Border Background="#000">
+        <Grid IsVisible="{Binding ShowVideoPanel}" RowDefinitions="Auto,*">
+            <Border Grid.Row="0" Background="#111827" Padding="8">
+                <Button Content="Close"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        MinWidth="88"
+                        Height="36"
+                        Click="OnCloseVideoClicked" />
+            </Border>
+            <Border Grid.Row="1" Background="#000">
                 <NativeControlHost x:Name="VideoSurface" />
             </Border>
-            <Button Content="✕"
-                    Width="44"
-                    Height="44"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Margin="16"
-                    FontSize="20"
-                    FontWeight="Bold"
-                    Click="OnCloseVideoClicked" />
         </Grid>
     </Grid>
 </Window>

@@ -91,7 +91,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 if (_videoPlayerService is LinuxVideoPlayerService linuxVideoPlayerService)
                 {
                     linuxVideoPlayerService.SetVideoSurfaceHandle(handle);
-                    _logger.LogInformation($"[MainWindowViewModel] Set video surface handle: 0x{handle.ToString("X")}");
+                    _logger.LogInformation("[MainWindowViewModel] Set video surface handle: 0x{HandleHex}", handle.ToString("X"));
                 }
             }
             catch (Exception ex)
