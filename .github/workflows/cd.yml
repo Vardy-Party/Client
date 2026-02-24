@@ -203,6 +203,16 @@ jobs:
           name: windows-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./windows-artifacts
           retention-days: 30
+      - name: Publish Windows package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Windows v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "windows-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./windows-artifacts/VardyParty-windows-v*-b*.msix | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Windows package release for $RELEASE_NAME"
+        shell: bash
 
   package-android:
     name: Package Android
@@ -372,6 +382,16 @@ jobs:
           name: android-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./android-package-artifacts
           retention-days: 30
+      - name: Publish Android package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Android v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "android-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./android-package-artifacts/VardyParty-android-v*-b*.apk | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Android package release for $RELEASE_NAME"
+        shell: bash
 
   package-ios:
     name: Package iOS
@@ -467,6 +487,16 @@ jobs:
           name: ios-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
+      - name: Publish iOS package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty iOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "ios-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./VardyParty-ios-v*-b*.tar.gz | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated iOS package release for $RELEASE_NAME"
+        shell: bash
 
   package-macos:
     name: Package macOS
@@ -561,6 +591,16 @@ jobs:
           name: macos-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
+      - name: Publish macOS package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty macOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "macos-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./VardyParty-macos-v*-b*.tar.gz | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated macOS package release for $RELEASE_NAME"
+        shell: bash
 
   package-linux-x64:
     name: Package Linux x64 Snap
@@ -742,6 +782,16 @@ jobs:
           name: linux-x64-package-v${{ steps.snap_version.outputs.full }}
           path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
           retention-days: 30
+      - name: Publish Linux x64 package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Linux x64 v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "linux-x64-v${{ steps.snap_version.outputs.full }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-x64-v*+*.snap | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Linux x64 package release for $RELEASE_NAME"
+        shell: bash
 
   package-linux-arm64:
     name: Package Linux ARM64 Snap
@@ -923,3 +973,13 @@ jobs:
           name: linux-arm64-package-v${{ steps.snap_version.outputs.full }}
           path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
           retention-days: 30
+      - name: Publish Linux ARM64 package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Linux ARM64 v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "linux-arm64-v${{ steps.snap_version.outputs.full }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-arm64-v*+*.snap | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Linux ARM64 package release for $RELEASE_NAME"
+        shell: bash
