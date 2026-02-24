@@ -100,6 +100,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
                 Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
                 Environment.SetEnvironmentVariable("GALLIUM_DRIVER", "llvmpipe");
+                Environment.SetEnvironmentVariable("LIBVA_DRIVER_NAME", "dummy");
+                Environment.SetEnvironmentVariable("LIBVA_DRIVERS_PATH", "/nonexistent");
+                Environment.SetEnvironmentVariable("LIBGL_KOPPER_DISABLE", "1");
             }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
