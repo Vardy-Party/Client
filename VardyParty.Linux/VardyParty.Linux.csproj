@@ -46,6 +46,12 @@
     <!-- Keep Blazor component sources visible in project, but do not compile them in Avalonia app -->
     <None Include="..\VardyParty\Components\**\*.razor" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="..\VardyParty\Components\**\*.cs" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
+
+    <!-- Include Linux app configuration in output and publish artifacts -->
+        <None Include="appsettings.json"
+          Condition="Exists('appsettings.json')"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
     
     <!-- Copy shared assets -->
     <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
