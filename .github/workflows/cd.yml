@@ -40,6 +40,19 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        run: |
+          [xml]$csproj = Get-Content "VardyParty/VardyParty.csproj"
+          $display = ($csproj.SelectSingleNode('//ApplicationDisplayVersion')?.InnerText)
+          $build = ($csproj.SelectSingleNode('//ApplicationVersion')?.InnerText)
+          if ([string]::IsNullOrWhiteSpace($display) -or [string]::IsNullOrWhiteSpace($build)) {
+            Write-Host "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          }
+          "APP_DISPLAY_VERSION=$display" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "APP_BUILD_VERSION=$build" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Using app version: $display (build $build)"
+        shell: powershell
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
@@ -110,7 +123,7 @@ jobs:
         run: |
           $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
           if ($msixPath) {
-            Copy-Item $msixPath.FullName "VardyParty-windows.msix"
+            Copy-Item $msixPath.FullName "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix"
             Write-Host "MSIX found: $($msixPath.Name)"
           } else {
             Write-Host "No MSIX file found!"
@@ -121,7 +134,7 @@ jobs:
         run: |
           $artifactsDir = "windows-artifacts"
           New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
-          Copy-Item "VardyParty-windows.msix" "$artifactsDir/" -Force
+          Copy-Item "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix" "$artifactsDir/" -Force
           Copy-Item "VardyParty/certs/vardyparty.pfx" "$artifactsDir/vardyparty.pfx" -Force
           Write-Host "Files prepared in $artifactsDir"
         shell: powershell
@@ -211,6 +224,18 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        run: |
+          APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Decode and install keystore
         run: |
           mkdir -p $(dirname ${{ env.ANDROID_KEYSTORE_PATH }})
@@ -325,7 +350,7 @@ jobs:
           
           # Copy only the first APK (all are binary-identical)
           APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
-          cp "$APK_FILE" "$ARTIFACTS_DIR/"
+          cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
@@ -363,6 +388,18 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        run: |
+          APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Generate appsettings.json
         run: |
           APPSETTINGS_PATH="VardyParty/appsettings.json"
@@ -412,12 +449,12 @@ jobs:
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
       - name: Create iOS package
-        run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
+        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
           name: ios-package
-          path: ./VardyParty-ios.tar.gz
+          path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
 
   package-macos:
@@ -442,6 +479,18 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        run: |
+          APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Generate appsettings.json
         run: |
           APPSETTINGS_PATH="VardyParty/appsettings.json"
@@ -491,12 +540,12 @@ jobs:
       - name: Publish macOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
       - name: Create macOS package
-        run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
+        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
           name: macos-package
-          path: ./VardyParty-macos.tar.gz
+          path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
 
   package-linux-x64:
@@ -664,7 +713,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-package
-          path: ${{ github.workspace }}/VardyParty-linux-x64-v${{ env.SNAP_VERSION }}-b${{ env.SNAP_BUILD }}.snap
+          path: ${{ github.workspace }}/VardyParty-linux-x64-v*-b*.snap
           retention-days: 30
 
   package-linux-arm64:
@@ -832,5 +881,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-package
-          path: ${{ github.workspace }}/VardyParty-linux-arm64-v${{ env.SNAP_VERSION }}-b${{ env.SNAP_BUILD }}.snap
+          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*-b*.snap
           retention-days: 30
