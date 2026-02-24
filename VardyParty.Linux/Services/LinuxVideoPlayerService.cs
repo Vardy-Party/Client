@@ -41,15 +41,16 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "--http-reconnect"               // Auto-reconnect on network issues
             };
 
+
             if (_isWsl)
             {
                 Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
                 Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
 
                 vlcOptions.Add("--avcodec-hw=none");
-                vlcOptions.Add("--vout=xcb_x11");
+                vlcOptions.Add("--vout=xcb");
 
-                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software rendering and disabling hardware decode for stability");
+                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software rendering, disabling hardware decode, and using --vout=xcb");
             }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
@@ -87,6 +88,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 var libVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
                 _mediaPlayer = new MediaPlayer(libVlc);
+                _logger.LogDebug("[LinuxVideoPlayerService] MediaPlayer created. Video output should be initialized.");
                 _mediaPlayer.Playing += OnPlaying;
                 _mediaPlayer.Buffering += OnBuffering;
                 _mediaPlayer.EncounteredError += OnEncounteredError;
