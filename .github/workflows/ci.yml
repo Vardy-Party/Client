@@ -194,10 +194,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvlc-dev vlc
+      - name: Skip Linux runtime dependencies for CI compile
+        run: echo "Skipping apt install; Linux runtime packages are not required for dotnet restore/build."
       - name: Restore VardyParty.Linux dependencies
         run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
       - name: Build Linux app (x64)
