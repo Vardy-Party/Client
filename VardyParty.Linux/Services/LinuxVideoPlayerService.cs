@@ -1,6 +1,8 @@
 using LibVLCSharp.Shared;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using VardyParty.Models;
 using VardyParty.Services;
@@ -16,12 +18,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private TaskCompletionSource<PlaybackResult>? _playbackTcs;
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
+    private readonly bool _isWsl;
 
     public event EventHandler<bool>? BufferingStateChanged;
 
     public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger)
     {
         _logger = logger;
+        _isWsl = IsRunningOnWsl();
         InitializeLibVLC();
     }
 
@@ -29,13 +33,26 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
-            _libVLC = new LibVLC(
-                "--no-xlib",                    // Disable X11 requirement for headless operation
+            var vlcOptions = new List<string>
+            {
                 "--quiet",                       // Reduce verbose output
-                "--no-video-title-show",        // Don't show video title on playback
-                "--network-caching=2000",       // 2 second network cache
-                "--http-reconnect"              // Auto-reconnect on network issues
-            );
+                "--no-video-title-show",         // Don't show video title on playback
+                "--network-caching=2000",        // 2 second network cache
+                "--http-reconnect"               // Auto-reconnect on network issues
+            };
+
+            if (_isWsl)
+            {
+                Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
+                Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
+
+                vlcOptions.Add("--avcodec-hw=none");
+                vlcOptions.Add("--vout=xcb_x11");
+
+                _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; forcing software rendering and disabling hardware decode for stability");
+            }
+
+            _libVLC = new LibVLC(vlcOptions.ToArray());
 
             _logger.LogInformation("[LinuxVideoPlayerService] LibVLC initialized successfully");
         }
@@ -88,6 +105,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+            if (_isWsl)
+            {
+                _currentMedia.AddOption(":avcodec-hw=none");
+            }
 
             // Parse media to get stream information
             await _currentMedia.Parse(MediaParseOptions.ParseNetwork);
@@ -241,5 +263,34 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private static bool IsRunningOnWsl()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WSL_DISTRO_NAME")) ||
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WSL_INTEROP")))
+        {
+            return true;
+        }
+
+        try
+        {
+            if (File.Exists("/proc/version"))
+            {
+                var version = File.ReadAllText("/proc/version");
+                return version.Contains("microsoft", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
     }
 }
