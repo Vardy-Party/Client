@@ -39,12 +39,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             try
             {
-                _mediaPlayer.Hwnd = handle;
-                _logger.LogInformation($"[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{handle.ToString("X")}");
+                ApplyVideoOutputHandle(_mediaPlayer, handle);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to set MediaPlayer.Hwnd");
+                _logger.LogError(ex, "Failed to set MediaPlayer video output handle");
             }
         }
     }
@@ -137,12 +136,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 {
                     try
                     {
-                        _mediaPlayer.Hwnd = _videoSurfaceHandle;
-                        _logger.LogInformation($"[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{_videoSurfaceHandle.ToString("X")}");
+                        ApplyVideoOutputHandle(_mediaPlayer, _videoSurfaceHandle);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to set MediaPlayer.Hwnd during player creation");
+                        _logger.LogError(ex, "Failed to set MediaPlayer video output handle during player creation");
                     }
                 }
             }
@@ -249,6 +247,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _isBuffering = isBuffering;
             BufferingStateChanged?.Invoke(this, isBuffering);
         }
+    }
+
+    private void ApplyVideoOutputHandle(MediaPlayer mediaPlayer, IntPtr handle)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            var xWindow = unchecked((uint)handle.ToInt64());
+            mediaPlayer.XWindow = xWindow;
+            _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.XWindow to 0x{HandleHex} (XID={XWindow})", handle.ToString("X"), xWindow);
+            return;
+        }
+
+        mediaPlayer.Hwnd = handle;
+        _logger.LogInformation("[LinuxVideoPlayerService] Set MediaPlayer.Hwnd to 0x{HandleHex}", handle.ToString("X"));
     }
 
     public PlaybackMetrics? GetCurrentMetrics()
