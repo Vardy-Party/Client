@@ -19,7 +19,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
     private readonly bool _isWsl;
-    private int _playbackGeneration;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
@@ -100,7 +99,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         _onNextStreamRequested = onNextStreamRequested;
         _playbackTcs = new TaskCompletionSource<PlaybackResult>();
-        var playbackGeneration = ++_playbackGeneration;
 
         try
         {
@@ -134,7 +132,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // Start playback
             var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
             mediaPlayer.Play(_currentMedia);
-            _ = VerifyVideoTrackAsync(playbackGeneration);
 
             _logger.LogInformation("[LinuxVideoPlayerService] Playback started successfully");
 
@@ -158,34 +155,6 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
         PlaybackVisibilityChanged?.Invoke(this, true);
         SetBufferingState(false);
-    }
-
-    private async Task VerifyVideoTrackAsync(int playbackGeneration)
-    {
-        await Task.Delay(TimeSpan.FromSeconds(8));
-
-        if (playbackGeneration != _playbackGeneration)
-        {
-            return;
-        }
-
-        var mediaPlayer = _mediaPlayer;
-        if (mediaPlayer == null || !mediaPlayer.IsPlaying)
-        {
-            return;
-        }
-
-        if (mediaPlayer.VideoTrack <= 0)
-        {
-            _logger.LogWarning("[LinuxVideoPlayerService] No video track detected after startup; treating stream as audio-only");
-            PlaybackVisibilityChanged?.Invoke(this, false);
-            mediaPlayer.Stop();
-            _playbackTcs?.TrySetResult(new PlaybackResult
-            {
-                Success = false,
-                Message = "Stream has audio only (no video)"
-            });
-        }
     }
 
     private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e)
