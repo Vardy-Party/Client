@@ -667,9 +667,8 @@ jobs:
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
           confinement: devmode
-          architectures:
-            - build-on: [amd64]
-              build-for: [amd64]
+          platforms:
+            amd64:
 
           parts:
             app:
@@ -837,9 +836,8 @@ jobs:
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
           confinement: devmode
-          architectures:
-            - build-on: [arm64]
-              build-for: [arm64]
+          platforms:
+            arm64:
 
           parts:
             app:
