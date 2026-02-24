@@ -5,6 +5,7 @@ A cross-platform chess tournament streaming application built with .NET MAUI and
 ## Tech Stack
 
 - **.NET MAUI** (.NET 10) with **Blazor WebView** for the UI (Razor components)
+- **Avalonia UI** (for Linux support)
 - **C#** with nullable reference types
 - **Auth0** for authentication (including QR-code device flow for TV)
 - **System.Reactive** for reactive/observable patterns around stream updates
@@ -12,13 +13,15 @@ A cross-platform chess tournament streaming application built with .NET MAUI and
   - **Android**: ExoPlayer with HLS support
   - **iOS / macOS**: AVPlayer
   - **Windows**: MediaPlayerElement
+  - **Linux**: LibVLC
 
 ## Supported Platforms
 
-- Android (including Android TV)
-- iOS
-- macOS (Mac Catalyst)
-- Windows 10/11
+- ✅ **Android** (including Android TV)
+- ✅ **iOS**
+- ✅ **macOS** (Mac Catalyst)
+- ✅ **Windows** 10/11
+- ✅ **Linux** (x64 and ARM64) - See [Linux Support Guide](docs/LINUX_SUPPORT.md)
 
 ## Key Features
 
@@ -42,6 +45,11 @@ VardyParty/                  # Main MAUI application
 ├── Services/                # App-level services
 ├── Resources/               # Images, fonts, splash screens
 └── wwwroot/                 # Static web assets
+
+VardyParty.Linux/            # Linux native application (Avalonia UI)
+├── Services/                # Linux video player (LibVLC)
+├── Assets/                  # Linux-specific icons
+└── README.md                # Linux build & run instructions
 
 VardyParty.Core/             # Shared business logic library
 ├── Services/                # Core services (API, stream resolution, health checking)

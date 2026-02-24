@@ -3,6 +3,12 @@
         "/^powershell -NoProfile -Command \"\\$bytes = \\[IO\\.File\\]::ReadAllBytes\\('certs/vardyparty\\.pfx'\\); \\[Convert\\]::ToBase64String\\(\\$bytes\\)\"$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "wsl": true,
+        "Resolve-Path": true,
+        "ForEach-Object": true,
+        "dotnet build": true,
+        "dotnet user-secrets": true,
+        ".\\scripts\\launch-linux-app.cmd": true
     }
 }

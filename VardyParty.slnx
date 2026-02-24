@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/Documents/">
+    <File Path="docs/LINUX_IMPLEMENTATION_SUMMARY.md" />
+    <File Path="docs/LINUX_SUPPORT.md" />
     <File Path="Documents/STREAM_HEALTH_PROTOCOL.md" />
     <File Path="README.md" />
   </Folder>
