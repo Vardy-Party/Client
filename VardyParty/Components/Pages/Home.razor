@@ -351,7 +351,7 @@
 
         try
         {
-            if (MauiProgram.IsTv)
+            if (MauiProgram.IsTv || !MauiProgram.IsWindowsPackaged)
             {
                 var deviceLogin = await AuthLoginService.StartDeviceLoginAsync();
                 if (deviceLogin == null)
