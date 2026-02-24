@@ -22,6 +22,7 @@ namespace VardyParty.Linux;
 public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private INativeVideoPlayerService? _videoPlayerService;
+    private LinuxVideoPlayerService? _linuxVideoPlayerService;
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
     private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
@@ -74,6 +75,11 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         // Resolve the video player service
         _videoPlayerService = _serviceProvider.GetService(typeof(INativeVideoPlayerService)) as INativeVideoPlayerService;
+        _linuxVideoPlayerService = _videoPlayerService as LinuxVideoPlayerService;
+        if (_linuxVideoPlayerService != null)
+        {
+            _linuxVideoPlayerService.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
+        }
     }
 
     public void SetVideoSurfaceHandle(IntPtr handle)
@@ -301,6 +307,10 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _authCts?.Dispose();
         _streamResolutionCts?.Cancel();
         _streamResolutionCts?.Dispose();
+        if (_linuxVideoPlayerService != null)
+        {
+            _linuxVideoPlayerService.PlaybackVisibilityChanged -= OnPlaybackVisibilityChanged;
+        }
         _progressSubscription?.Dispose();
         _streamResolutionOrchestrator.Reset();
         DeviceQrCode = null;
@@ -318,7 +328,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _streamResolutionCts?.Cancel();
             _streamResolutionCts?.Dispose();
             _streamResolutionCts = new CancellationTokenSource();
-            SetVideoPlaying(true);
 
             _selectionState.CurrentGame = item.Game;
             StatusMessage = $"Resolving streams for {item.Fixture}...";
@@ -508,6 +517,11 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ShowVideoPanel));
         OnPropertyChanged(nameof(ShowMainPanel));
         OnPropertyChanged(nameof(ShowGamesPanel));
+    }
+
+    private void OnPlaybackVisibilityChanged(object? sender, bool isVisible)
+    {
+        SetVideoPlaying(isVisible);
     }
 }
 

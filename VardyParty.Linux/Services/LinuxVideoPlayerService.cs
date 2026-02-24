@@ -22,6 +22,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly bool _isWsl;
 
     public event EventHandler<bool>? BufferingStateChanged;
+    public event EventHandler<bool>? PlaybackVisibilityChanged;
 
     public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger)
     {
@@ -53,6 +54,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         try
         {
             _mediaPlayer?.Stop();
+            PlaybackVisibilityChanged?.Invoke(this, false);
             _playbackTcs?.TrySetResult(new PlaybackResult
             {
                 Success = true,
@@ -189,6 +191,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private void OnPlaying(object? sender, EventArgs e)
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
+        PlaybackVisibilityChanged?.Invoke(this, true);
         SetBufferingState(false);
     }
 
@@ -202,6 +205,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private void OnEncounteredError(object? sender, EventArgs e)
     {
         _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
+        PlaybackVisibilityChanged?.Invoke(this, false);
         
         _playbackTcs?.TrySetResult(new PlaybackResult
         {
@@ -229,6 +233,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         else
         {
+            PlaybackVisibilityChanged?.Invoke(this, false);
             _playbackTcs?.TrySetResult(new PlaybackResult
             {
                 Success = true,
@@ -314,6 +319,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _logger.LogWarning(ex, "[LinuxVideoPlayerService] Error during disposal");
         }
 
+        PlaybackVisibilityChanged?.Invoke(this, false);
         GC.SuppressFinalize(this);
     }
 
