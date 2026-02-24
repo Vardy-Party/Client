@@ -4,6 +4,7 @@ using System;
 using Avalonia.Platform;
 using Avalonia.Controls.Platform;
 using System.Runtime.InteropServices;
+using Avalonia.Interactivity;
 
 namespace VardyParty.Linux;
 
@@ -63,6 +64,14 @@ public partial class MainWindow : Window
         if (DataContext is MainWindowViewModel vm)
         {
             await vm.PlaySelectedGameAsync(vm.SelectedGame);
+        }
+    }
+
+    private void OnCloseVideoClicked(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+        {
+            vm.CloseVideoPlayback();
         }
     }
 }

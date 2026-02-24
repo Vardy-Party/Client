@@ -48,6 +48,23 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
     }
 
+    public void StopPlayback()
+    {
+        try
+        {
+            _mediaPlayer?.Stop();
+            _playbackTcs?.TrySetResult(new PlaybackResult
+            {
+                Success = true,
+                Message = "User closed playback"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] Error while stopping playback");
+        }
+    }
+
     private void InitializeLibVLC()
     {
         try

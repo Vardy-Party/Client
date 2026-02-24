@@ -33,6 +33,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool _isBusy;
     private bool _isResolvingStreams;
     private bool _isAuthenticated;
+    private bool _isVideoPlaying;
     private string _statusMessage = "Ready";
     private string _deviceVerificationUri = string.Empty;
     private string _deviceUserCode = string.Empty;
@@ -133,9 +134,11 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public bool ShowAuthPanel => !IsAuthenticated;
 
-    public bool ShowGamesPanel => IsAuthenticated;
+    public bool ShowGamesPanel => IsAuthenticated && !ShowVideoPanel;
 
-    public bool ShowVideoPanel => true;
+    public bool ShowMainPanel => !ShowVideoPanel;
+
+    public bool ShowVideoPanel => _isVideoPlaying;
 
     public GameListItem? SelectedGame
     {
@@ -315,6 +318,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _streamResolutionCts?.Cancel();
             _streamResolutionCts?.Dispose();
             _streamResolutionCts = new CancellationTokenSource();
+            SetVideoPlaying(true);
 
             _selectionState.CurrentGame = item.Game;
             StatusMessage = $"Resolving streams for {item.Fixture}...";
@@ -348,6 +352,34 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             _logger.LogError(ex, "Failed to resolve/play stream on Linux UI");
             StatusMessage = $"Playback failed: {ex.Message}";
+        }
+        finally
+        {
+            SetVideoPlaying(false);
+        }
+    }
+
+    public void CloseVideoPlayback()
+    {
+        try
+        {
+            _streamResolutionCts?.Cancel();
+
+            if (_videoPlayerService is LinuxVideoPlayerService linuxVideoPlayerService)
+            {
+                linuxVideoPlayerService.StopPlayback();
+            }
+
+            StatusMessage = "Playback closed";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to close playback");
+            StatusMessage = "Failed to close playback";
+        }
+        finally
+        {
+            SetVideoPlaying(false);
         }
     }
 
@@ -463,6 +495,19 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private void SetVideoPlaying(bool isVideoPlaying)
+    {
+        if (_isVideoPlaying == isVideoPlaying)
+        {
+            return;
+        }
+
+        _isVideoPlaying = isVideoPlaying;
+        OnPropertyChanged(nameof(ShowVideoPanel));
+        OnPropertyChanged(nameof(ShowMainPanel));
+        OnPropertyChanged(nameof(ShowGamesPanel));
     }
 }
 
