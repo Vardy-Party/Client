@@ -571,9 +571,7 @@ jobs:
         run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained -p:PublishSingleFile=false
       - name: Create Linux x64 package
         run: |
-          cd VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
-          tar -czf ../../../../../VardyParty-linux-x64.tar.gz .
-          cd ../../../../../
+          tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Linux/bin/Release/net10.0/linux-x64/publish .
           echo "Created VardyParty-linux-x64.tar.gz"
           ls -lh VardyParty-linux-x64.tar.gz
         shell: bash
@@ -656,9 +654,7 @@ jobs:
         run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained -p:PublishSingleFile=false
       - name: Create Linux ARM64 package
         run: |
-          cd VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
-          tar -czf ../../../../../VardyParty-linux-arm64.tar.gz .
-          cd ../../../../../
+          tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish .
           echo "Created VardyParty-linux-arm64.tar.gz"
           ls -lh VardyParty-linux-arm64.tar.gz
         shell: bash

@@ -8,6 +8,7 @@
         "Resolve-Path": true,
         "ForEach-Object": true,
         "dotnet build": true,
-        "dotnet user-secrets": true
+        "dotnet user-secrets": true,
+        ".\\scripts\\launch-linux-app.cmd": true
     }
 }
