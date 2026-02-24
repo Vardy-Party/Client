@@ -569,13 +569,27 @@ jobs:
         shell: bash
       - name: Publish Linux x64 application
         run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Verify Linux icon exists
+        run: |
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          if [ ! -f "$ICON_PATH" ]; then
+            echo "ERROR: Linux icon not found at $ICON_PATH"
+            exit 1
+          fi
+          echo "OK: Linux icon found at $ICON_PATH"
       - name: Generate snapcraft.yaml (x64)
         run: |
+          SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
+          if [ -z "$SNAP_VERSION" ]; then
+            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
           title: Vardy Party
           base: core24
-          version: '1.0.0'
+          version: '__SNAP_VERSION__'
           summary: Vardy Party Linux client
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
@@ -588,6 +602,20 @@ jobs:
             app:
               plugin: dump
               source: VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
+              override-build: |
+                craftctl default
+                mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
+                cat > "$CRAFT_PART_INSTALL/meta/gui/vardyparty.desktop" << 'DESKTOP'
+                [Desktop Entry]
+                Name=Vardy Party
+                Comment=Vardy Party Linux client
+                Exec=vardyparty
+                Icon=${SNAP}/meta/gui/vardyparty.svg
+                Terminal=false
+                Type=Application
+                Categories=AudioVideo;Video;
+                DESKTOP
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
               stage-packages:
                 - libvlc5
                 - vlc-plugin-base
@@ -595,6 +623,7 @@ jobs:
           apps:
             vardyparty:
               command: VardyParty
+              desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
                 - network-bind
@@ -604,6 +633,8 @@ jobs:
                 - wayland
                 - x11
           EOF
+                  sed -i "s/__SNAP_VERSION__/$SNAP_VERSION/" snapcraft.yaml
+                  echo "Using snap version: $SNAP_VERSION"
       - name: Build Linux x64 snap
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
@@ -695,13 +726,27 @@ jobs:
         shell: bash
       - name: Publish Linux ARM64 application
         run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Verify Linux icon exists
+        run: |
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          if [ ! -f "$ICON_PATH" ]; then
+            echo "ERROR: Linux icon not found at $ICON_PATH"
+            exit 1
+          fi
+          echo "OK: Linux icon found at $ICON_PATH"
       - name: Generate snapcraft.yaml (arm64)
         run: |
+          SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
+          if [ -z "$SNAP_VERSION" ]; then
+            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
           title: Vardy Party
           base: core24
-          version: '1.0.0'
+          version: '__SNAP_VERSION__'
           summary: Vardy Party Linux client
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
@@ -714,6 +759,20 @@ jobs:
             app:
               plugin: dump
               source: VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
+              override-build: |
+                craftctl default
+                mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
+                cat > "$CRAFT_PART_INSTALL/meta/gui/vardyparty.desktop" << 'DESKTOP'
+                [Desktop Entry]
+                Name=Vardy Party
+                Comment=Vardy Party Linux client
+                Exec=vardyparty
+                Icon=${SNAP}/meta/gui/vardyparty.svg
+                Terminal=false
+                Type=Application
+                Categories=AudioVideo;Video;
+                DESKTOP
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
               stage-packages:
                 - libvlc5
                 - vlc-plugin-base
@@ -721,6 +780,7 @@ jobs:
           apps:
             vardyparty:
               command: VardyParty
+              desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
                 - network-bind
@@ -730,6 +790,8 @@ jobs:
                 - wayland
                 - x11
           EOF
+                  sed -i "s/__SNAP_VERSION__/$SNAP_VERSION/" snapcraft.yaml
+                  echo "Using snap version: $SNAP_VERSION"
       - name: Build Linux ARM64 snap
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
