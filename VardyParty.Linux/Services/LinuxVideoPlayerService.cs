@@ -68,7 +68,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // Create media player if not exists
             if (_mediaPlayer == null)
             {
-                _mediaPlayer = new MediaPlayer(_libVLC);
+                var libVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
+                _mediaPlayer = new MediaPlayer(libVlc);
                 _mediaPlayer.Playing += OnPlaying;
                 _mediaPlayer.Buffering += OnBuffering;
                 _mediaPlayer.EncounteredError += OnEncounteredError;
@@ -76,7 +77,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             }
 
             // Create media with options
-            _currentMedia = new Media(_libVLC, new Uri(m3u8Url));
+            var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
+            _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
             
             // Set HTTP Referer header
             if (!string.IsNullOrWhiteSpace(refererUrl))
@@ -196,10 +198,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // We'd need to parse the track information from media
             return new PlaybackMetrics
             {
-                Resolution = "Unknown", // LibVLC limitation - would need deeper track analysis
-                Framerate = 0,
-                Codec = "H.264", // Typical for HLS streams
-                Bitrate = 0
+                Resolution = null,
+                Framerate = null,
+                VideoCodec = "H.264",
+                AudioCodec = null,
+                BitrateKbps = null
             };
         }
         catch (Exception ex)

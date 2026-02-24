@@ -28,9 +28,11 @@
     <!-- Configuration and Logging -->
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.3" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,9 +41,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Copy Blazor components from main MAUI project -->
-    <Compile Include="..\VardyParty\Components\**\*.razor" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="..\VardyParty\Components\**\*.cs" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- Keep Blazor component sources visible in project, but do not compile them in Avalonia app -->
+    <None Include="..\VardyParty\Components\**\*.razor" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="..\VardyParty\Components\**\*.cs" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
     
     <!-- Copy shared assets -->
     <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

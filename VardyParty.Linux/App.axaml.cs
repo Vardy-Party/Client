@@ -16,6 +16,7 @@ using VardyParty.Resolvers;
 using VardyParty.Parsers;
 using VardyParty.Health;
 using VardyParty.Handlers;
+using VardyParty.Models;
 
 namespace VardyParty.Linux;
 
@@ -69,8 +70,9 @@ public partial class App : Application
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
         services.AddSingleton<IStreamHealthService, StreamHealthService>();
-        services.AddSingleton<IAuthTokenProvider, AuthTokenProvider>();
-        services.AddSingleton<IAuthLoginService, AuthLoginService>();
+        services.AddSingleton<LinuxAuthService>();
+        services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
+        services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
         
         // HTTP Client with custom handler
         services.AddTransient<M3U8HttpHandler>();
