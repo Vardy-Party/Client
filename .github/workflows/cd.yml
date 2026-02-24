@@ -41,6 +41,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Extract app version metadata
+        id: app_version
         run: |
           [xml]$csproj = Get-Content "VardyParty/VardyParty.csproj"
           $display = ($csproj.SelectSingleNode('//ApplicationDisplayVersion')?.InnerText)
@@ -51,6 +52,8 @@ jobs:
           }
           "APP_DISPLAY_VERSION=$display" | Out-File -FilePath $env:GITHUB_ENV -Append
           "APP_BUILD_VERSION=$build" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "display=$display" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "build=$build" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Using app version: $display (build $build)"
         shell: powershell
       - name: Generate appsettings.json
@@ -195,7 +198,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: windows-package
+          name: windows-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./windows-artifacts
           retention-days: 30
 
@@ -225,6 +228,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Extract app version metadata
+        id: app_version
         run: |
           APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
           APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
@@ -234,6 +238,8 @@ jobs:
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
           echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
         shell: bash
       - name: Decode and install keystore
@@ -361,7 +367,7 @@ jobs:
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
-          name: android-package
+          name: android-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./android-package-artifacts
           retention-days: 30
 
@@ -389,6 +395,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Extract app version metadata
+        id: app_version
         run: |
           APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
           APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
@@ -398,6 +405,8 @@ jobs:
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
           echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
         shell: bash
       - name: Generate appsettings.json
@@ -453,7 +462,7 @@ jobs:
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ios-package
+          name: ios-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
 
@@ -480,6 +489,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Extract app version metadata
+        id: app_version
         run: |
           APP_DISPLAY_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
           APP_BUILD_VERSION=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty/VardyParty.csproj || true)
@@ -489,6 +499,8 @@ jobs:
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
           echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
         shell: bash
       - name: Generate appsettings.json
@@ -544,7 +556,7 @@ jobs:
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: macos-package
+          name: macos-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
 
@@ -627,6 +639,7 @@ jobs:
           fi
           echo "OK: Linux icon found at $ICON_PATH"
       - name: Generate snapcraft.yaml (x64)
+        id: snap_version
         run: |
           SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
           SNAP_BUILD=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
@@ -643,6 +656,9 @@ jobs:
           echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
           echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
           echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
+          echo "display=$SNAP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$SNAP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "full=$SNAP_FULL_VERSION" >> "$GITHUB_OUTPUT"
 
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
@@ -698,12 +714,12 @@ jobs:
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
           SNAP_FILE=$(ls -1 *.snap | head -n 1)
-          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           mv "$SNAP_FILE" "$OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
       - name: Verify Linux x64 snap exists
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
             echo "ERROR: Linux x64 snap not found at $OUTPUT_PATH"
             exit 1
@@ -712,8 +728,8 @@ jobs:
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-package
-          path: ${{ github.workspace }}/VardyParty-linux-x64-v*-b*.snap
+          name: linux-x64-package-v${{ steps.snap_version.outputs.full }}
+          path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
           retention-days: 30
 
   package-linux-arm64:
@@ -795,6 +811,7 @@ jobs:
           fi
           echo "OK: Linux icon found at $ICON_PATH"
       - name: Generate snapcraft.yaml (arm64)
+        id: snap_version
         run: |
           SNAP_VERSION=$(grep -oPm1 '(?<=<ApplicationDisplayVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
           SNAP_BUILD=$(grep -oPm1 '(?<=<ApplicationVersion>)[^<]+' VardyParty.Linux/VardyParty.Linux.csproj || true)
@@ -811,6 +828,9 @@ jobs:
           echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
           echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
           echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
+          echo "display=$SNAP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$SNAP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "full=$SNAP_FULL_VERSION" >> "$GITHUB_OUTPUT"
 
           cat > snapcraft.yaml << 'EOF'
           name: vardyparty
@@ -866,12 +886,12 @@ jobs:
         run: |
           SNAPCRAFT_BUILD_ENVIRONMENT=host snapcraft --destructive-mode
           SNAP_FILE=$(ls -1 *.snap | head -n 1)
-          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           mv "$SNAP_FILE" "$OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
       - name: Verify Linux ARM64 snap exists
         run: |
-          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}-b${SNAP_BUILD}.snap"
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
           if [ ! -f "$OUTPUT_PATH" ]; then
             echo "ERROR: Linux ARM64 snap not found at $OUTPUT_PATH"
             exit 1
@@ -880,6 +900,6 @@ jobs:
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-package
-          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*-b*.snap
+          name: linux-arm64-package-v${{ steps.snap_version.outputs.full }}
+          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
           retention-days: 30
