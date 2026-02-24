@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>VardyParty.Linux</RootNamespace>
+    <AssemblyName>VardyParty</AssemblyName>
+    <ApplicationDisplayVersion>1.7.0</ApplicationDisplayVersion>
+    <ApplicationVersion>33</ApplicationVersion>
+    <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Avalonia UI Framework -->
+    <PackageReference Include="Avalonia" Version="11.2.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.2" />
+    
+    <!-- Avalonia Diagnostics (Debug only) -->
+    <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.2.2" />
+    
+    <!-- LibVLC for video playback -->
+    <PackageReference Include="LibVLCSharp" Version="3.9.0" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.0" />
+    <!-- Note: VideoLAN.LibVLC.Linux will be installed as system dependency, not NuGet package -->
+    
+    <!-- Configuration and Logging -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference to shared Core library -->
+    <ProjectReference Include="..\VardyParty.Core\VardyParty.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Keep Blazor component sources visible in project, but do not compile them in Avalonia app -->
+    <None Include="..\VardyParty\Components\**\*.razor" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="..\VardyParty\Components\**\*.cs" Link="Components\%(RecursiveDir)%(Filename)%(Extension)" />
+
+    <!-- Include Linux app configuration in output and publish artifacts -->
+        <None Include="appsettings.json"
+          Condition="Exists('appsettings.json')"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    
+    <!-- Copy shared assets -->
+    <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

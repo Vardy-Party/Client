@@ -17,7 +17,7 @@ public class StreamResolver(
     IOptions<GamesApiSettings> gamesApiSettings,
     ILogger<StreamResolver> logger) : IStreamResolver
 {
-    private readonly string? _baseUrl = apiSettings.Value.HeadlessBaseUrl.TrimEnd('/') ?? string.Empty;
+    private readonly string _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
 
     private readonly TimeSpan _m3U8CallTimeout =
         TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);

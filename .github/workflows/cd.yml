@@ -40,6 +40,24 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        id: app_version
+        run: |
+          [xml]$csproj = Get-Content "VardyParty/VardyParty.csproj"
+          $displayNode = $csproj.SelectSingleNode('//ApplicationDisplayVersion')
+          $buildNode = $csproj.SelectSingleNode('//ApplicationVersion')
+          $display = if ($null -ne $displayNode) { $displayNode.InnerText } else { "" }
+          $build = if ($null -ne $buildNode) { $buildNode.InnerText } else { "" }
+          if ([string]::IsNullOrWhiteSpace($display) -or [string]::IsNullOrWhiteSpace($build)) {
+            Write-Host "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          }
+          "APP_DISPLAY_VERSION=$display" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "APP_BUILD_VERSION=$build" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "display=$display" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "build=$build" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Using app version: $display (build $build)"
+        shell: powershell
       - name: Generate appsettings.json
         run: |
           $appsettingsPath = "VardyParty/appsettings.json"
@@ -110,7 +128,7 @@ jobs:
         run: |
           $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
           if ($msixPath) {
-            Copy-Item $msixPath.FullName "VardyParty-windows.msix"
+            Copy-Item $msixPath.FullName "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix"
             Write-Host "MSIX found: $($msixPath.Name)"
           } else {
             Write-Host "No MSIX file found!"
@@ -121,7 +139,7 @@ jobs:
         run: |
           $artifactsDir = "windows-artifacts"
           New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
-          Copy-Item "VardyParty-windows.msix" "$artifactsDir/" -Force
+          Copy-Item "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix" "$artifactsDir/" -Force
           Copy-Item "VardyParty/certs/vardyparty.pfx" "$artifactsDir/vardyparty.pfx" -Force
           Write-Host "Files prepared in $artifactsDir"
         shell: powershell
@@ -182,9 +200,19 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: windows-package
+          name: windows-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./windows-artifacts
           retention-days: 30
+      - name: Publish Windows package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Windows v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "windows-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./windows-artifacts/VardyParty-windows-v*-b*.msix | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Windows package release for $RELEASE_NAME"
+        shell: bash
 
   package-android:
     name: Package Android
@@ -211,6 +239,21 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        id: app_version
+        run: |
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Decode and install keystore
         run: |
           mkdir -p $(dirname ${{ env.ANDROID_KEYSTORE_PATH }})
@@ -325,7 +368,7 @@ jobs:
           
           # Copy only the first APK (all are binary-identical)
           APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
-          cp "$APK_FILE" "$ARTIFACTS_DIR/"
+          cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
@@ -336,9 +379,19 @@ jobs:
       - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
-          name: android-package
+          name: android-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./android-package-artifacts
           retention-days: 30
+      - name: Publish Android package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Android v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "android-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./android-package-artifacts/VardyParty-android-v*-b*.apk | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Android package release for $RELEASE_NAME"
+        shell: bash
 
   package-ios:
     name: Package iOS
@@ -363,6 +416,21 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        id: app_version
+        run: |
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Generate appsettings.json
         run: |
           APPSETTINGS_PATH="VardyParty/appsettings.json"
@@ -400,16 +468,35 @@ jobs:
             > "$APPSETTINGS_PATH"
           echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in appsettings.json"
+        shell: bash
       - name: Publish iOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
       - name: Create iOS package
-        run: tar -czf VardyParty-ios.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
+        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ios-package
-          path: ./VardyParty-ios.tar.gz
+          name: ios-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
+          path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
+      - name: Publish iOS package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty iOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "ios-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./VardyParty-ios-v*-b*.tar.gz | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated iOS package release for $RELEASE_NAME"
+        shell: bash
 
   package-macos:
     name: Package macOS
@@ -433,6 +520,21 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Extract app version metadata
+        id: app_version
+        run: |
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            exit 1
+          fi
+          echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_VERSION=$APP_BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "display=$APP_DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$APP_BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using app version: $APP_DISPLAY_VERSION (build $APP_BUILD_VERSION)"
+        shell: bash
       - name: Generate appsettings.json
         run: |
           APPSETTINGS_PATH="VardyParty/appsettings.json"
@@ -470,20 +572,40 @@ jobs:
             > "$APPSETTINGS_PATH"
           echo "appsettings.json merged and AllowUserSecrets removed"
         shell: bash
+      - name: Verify AllowUserSecrets is not in appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in appsettings.json"
+        shell: bash
       - name: Publish macOS app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
       - name: Create macOS package
-        run: tar -czf VardyParty-macos.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
+        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: macos-package
-          path: ./VardyParty-macos.tar.gz
+          name: macos-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
+          path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
+      - name: Publish macOS package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty macOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "macos-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls ./VardyParty-macos-v*-b*.tar.gz | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated macOS package release for $RELEASE_NAME"
+        shell: bash
 
   package-linux-x64:
-    name: Package Linux x64
+    name: Package Linux x64 Snap
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -497,21 +619,184 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
-      - name: Publish Linux x64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-x64 -c Release
-      - name: Create Linux x64 package
-        run: tar -czf VardyParty-linux-x64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-x64 .
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Generate appsettings.json for Linux
+        run: |
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          if [ -f "$APPSETTINGS_PATH" ]; then
+            BASE_JSON=$(cat "$APPSETTINGS_PATH")
+          else
+            BASE_JSON="{}"
+          fi
+          echo "$BASE_JSON" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '(.Auth0 //= {})
+             | (.Api //= {})
+             | .Auth0.Domain = $domain
+             | .Auth0.ClientId = $clientId
+             | .Auth0.Audience = $audience
+             | .Auth0.Scope = $scope
+             | .Auth0.CallbackScheme = $callbackScheme
+             | .Auth0.RedirectUri = $redirectUri
+             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
+             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
+             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
+             | .Auth0.RequiredRole = $requiredRole
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json merged and AllowUserSecrets removed for Linux x64"
+        shell: bash
+      - name: Verify AllowUserSecrets is not in Linux appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in Linux appsettings.json"
+        shell: bash
+      - name: Publish Linux x64 application
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Verify Linux icon exists
+        run: |
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          if [ ! -f "$ICON_PATH" ]; then
+            echo "ERROR: Linux icon not found at $ICON_PATH"
+            exit 1
+          fi
+          echo "OK: Linux icon found at $ICON_PATH"
+      - name: Generate snapcraft.yaml (x64)
+        id: snap_version
+        run: |
+          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          if [ -z "$SNAP_VERSION" ]; then
+            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+          if [ -z "$SNAP_BUILD" ]; then
+            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
+          SNAP_FULL_VERSION="${SNAP_VERSION}+${SNAP_BUILD}"
+          echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
+          echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
+          echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
+          echo "display=$SNAP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$SNAP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "full=$SNAP_FULL_VERSION" >> "$GITHUB_OUTPUT"
+
+          cat > snapcraft.yaml << 'EOF'
+          name: vardyparty
+          title: Vardy Party
+          base: core24
+          version: '__SNAP_VERSION__'
+          summary: Vardy Party Linux client
+          description: Vardy Party desktop client packaged as a Snap.
+          grade: devel
+          confinement: devmode
+          platforms:
+            amd64:
+
+          parts:
+            app:
+              plugin: dump
+              source: VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
+              override-build: |
+                craftctl default
+                mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
+                cat > "$CRAFT_PART_INSTALL/meta/gui/vardyparty.desktop" << 'DESKTOP'
+                [Desktop Entry]
+                Name=Vardy Party
+                Comment=Vardy Party Linux client
+                Exec=vardyparty
+                Icon=${SNAP}/meta/gui/vardyparty.svg
+                Terminal=false
+                Type=Application
+                Categories=AudioVideo;Video;
+                DESKTOP
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+              stage-packages:
+                - libvlc5
+                - vlc-plugin-base
+
+          apps:
+            vardyparty:
+              command: VardyParty
+              desktop: meta/gui/vardyparty.desktop
+              plugs:
+                - network
+                - network-bind
+                - home
+                - audio-playback
+                - opengl
+                - wayland
+                - x11
+          EOF
+          sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
+          echo "Using snap version: $SNAP_FULL_VERSION"
+      - name: Validate generated snapcraft.yaml (x64)
+        run: |
+          echo "Generated snapcraft.yaml (x64):"
+          cat snapcraft.yaml
+          if grep -q '^\s*architectures:' snapcraft.yaml; then
+            echo "ERROR: Invalid key 'architectures' found for core24 snapcraft.yaml"
+            exit 1
+          fi
+          if ! grep -q '^\s*platforms:' snapcraft.yaml; then
+            echo "ERROR: Required key 'platforms' missing from snapcraft.yaml"
+            exit 1
+          fi
+      - name: Build Linux x64 snap
+        id: snapcraft_build
+        uses: snapcore/action-build@v1
+      - name: Rename Linux x64 snap package
+        run: |
+          SNAP_FILE="${{ steps.snapcraft_build.outputs.snap }}"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
+          mv "$SNAP_FILE" "$OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
+      - name: Verify Linux x64 snap exists
+        run: |
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-x64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
+          if [ ! -f "$OUTPUT_PATH" ]; then
+            echo "ERROR: Linux x64 snap not found at $OUTPUT_PATH"
+            exit 1
+          fi
+          echo "OK: Linux x64 snap found at $OUTPUT_PATH"
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64-package
-          path: ./VardyParty-linux-x64.tar.gz
+          name: linux-x64-package-v${{ steps.snap_version.outputs.full }}
+          path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
           retention-days: 30
+      - name: Publish Linux x64 package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Linux x64 v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "linux-x64-v${{ steps.snap_version.outputs.full }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-x64-v*+*.snap | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Linux x64 package release for $RELEASE_NAME"
+        shell: bash
 
   package-linux-arm64:
-    name: Package Linux ARM64
-    runs-on: ubuntu-latest
+    name: Package Linux ARM64 Snap
+    runs-on: ubuntu-24.04-arm
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -525,14 +810,176 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj
-      - name: Publish Linux ARM64 library
-        run: dotnet publish VardyParty.Core/VardyParty.Core.csproj -f net10.0 -r linux-arm64 -c Release
-      - name: Create Linux ARM64 package
-        run: tar -czf VardyParty-linux-arm64.tar.gz -C VardyParty.Core/bin/Release/net10.0/linux-arm64 .
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Generate appsettings.json for Linux
+        run: |
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          if [ -f "$APPSETTINGS_PATH" ]; then
+            BASE_JSON=$(cat "$APPSETTINGS_PATH")
+          else
+            BASE_JSON="{}"
+          fi
+          echo "$BASE_JSON" | jq \
+            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
+            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
+            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
+            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            '(.Auth0 //= {})
+             | (.Api //= {})
+             | .Auth0.Domain = $domain
+             | .Auth0.ClientId = $clientId
+             | .Auth0.Audience = $audience
+             | .Auth0.Scope = $scope
+             | .Auth0.CallbackScheme = $callbackScheme
+             | .Auth0.RedirectUri = $redirectUri
+             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
+             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
+             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
+             | .Auth0.RequiredRole = $requiredRole
+             | .Api.HeadlessBaseUrl = $headlessBaseUrl
+             | del(.AllowUserSecrets)' \
+            > "$APPSETTINGS_PATH"
+          echo "appsettings.json merged and AllowUserSecrets removed for Linux ARM64"
+        shell: bash
+      - name: Verify AllowUserSecrets is not in Linux appsettings.json
+        run: |
+          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+            echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
+            exit 1
+          fi
+          echo "OK: AllowUserSecrets not found in Linux appsettings.json"
+        shell: bash
+      - name: Publish Linux ARM64 application
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
+      - name: Verify Linux icon exists
+        run: |
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          if [ ! -f "$ICON_PATH" ]; then
+            echo "ERROR: Linux icon not found at $ICON_PATH"
+            exit 1
+          fi
+          echo "OK: Linux icon found at $ICON_PATH"
+      - name: Generate snapcraft.yaml (arm64)
+        id: snap_version
+        run: |
+          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          if [ -z "$SNAP_VERSION" ]; then
+            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+          if [ -z "$SNAP_BUILD" ]; then
+            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            exit 1
+          fi
+
+          SNAP_FULL_VERSION="${SNAP_VERSION}+${SNAP_BUILD}"
+          echo "SNAP_VERSION=$SNAP_VERSION" >> "$GITHUB_ENV"
+          echo "SNAP_BUILD=$SNAP_BUILD" >> "$GITHUB_ENV"
+          echo "SNAP_FULL_VERSION=$SNAP_FULL_VERSION" >> "$GITHUB_ENV"
+          echo "display=$SNAP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$SNAP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "full=$SNAP_FULL_VERSION" >> "$GITHUB_OUTPUT"
+
+          cat > snapcraft.yaml << 'EOF'
+          name: vardyparty
+          title: Vardy Party
+          base: core24
+          version: '__SNAP_VERSION__'
+          summary: Vardy Party Linux client
+          description: Vardy Party desktop client packaged as a Snap.
+          grade: devel
+          confinement: devmode
+          platforms:
+            arm64:
+
+          parts:
+            app:
+              plugin: dump
+              source: VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
+              override-build: |
+                craftctl default
+                mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
+                cat > "$CRAFT_PART_INSTALL/meta/gui/vardyparty.desktop" << 'DESKTOP'
+                [Desktop Entry]
+                Name=Vardy Party
+                Comment=Vardy Party Linux client
+                Exec=vardyparty
+                Icon=${SNAP}/meta/gui/vardyparty.svg
+                Terminal=false
+                Type=Application
+                Categories=AudioVideo;Video;
+                DESKTOP
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+              stage-packages:
+                - libvlc5
+                - vlc-plugin-base
+
+          apps:
+            vardyparty:
+              command: VardyParty
+              desktop: meta/gui/vardyparty.desktop
+              plugs:
+                - network
+                - network-bind
+                - home
+                - audio-playback
+                - opengl
+                - wayland
+                - x11
+          EOF
+          sed -i "s/__SNAP_VERSION__/$SNAP_FULL_VERSION/" snapcraft.yaml
+          echo "Using snap version: $SNAP_FULL_VERSION"
+      - name: Validate generated snapcraft.yaml (arm64)
+        run: |
+          echo "Generated snapcraft.yaml (arm64):"
+          cat snapcraft.yaml
+          if grep -q '^\s*architectures:' snapcraft.yaml; then
+            echo "ERROR: Invalid key 'architectures' found for core24 snapcraft.yaml"
+            exit 1
+          fi
+          if ! grep -q '^\s*platforms:' snapcraft.yaml; then
+            echo "ERROR: Required key 'platforms' missing from snapcraft.yaml"
+            exit 1
+          fi
+      - name: Build Linux ARM64 snap
+        id: snapcraft_build
+        uses: snapcore/action-build@v1
+      - name: Rename Linux ARM64 snap package
+        run: |
+          SNAP_FILE="${{ steps.snapcraft_build.outputs.snap }}"
+          OUTPUT_FILE="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
+          mv "$SNAP_FILE" "$OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
+      - name: Verify Linux ARM64 snap exists
+        run: |
+          OUTPUT_PATH="$GITHUB_WORKSPACE/VardyParty-linux-arm64-v${SNAP_VERSION}+${SNAP_BUILD}.snap"
+          if [ ! -f "$OUTPUT_PATH" ]; then
+            echo "ERROR: Linux ARM64 snap not found at $OUTPUT_PATH"
+            exit 1
+          fi
+          echo "OK: Linux ARM64 snap found at $OUTPUT_PATH"
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
-          name: linux-arm64-package
-          path: ./VardyParty-linux-arm64.tar.gz
+          name: linux-arm64-package-v${{ steps.snap_version.outputs.full }}
+          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
           retention-days: 30
+      - name: Publish Linux ARM64 package as Release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NAME: "VardyParty Linux ARM64 v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "linux-arm64-v${{ steps.snap_version.outputs.full }}"
+        run: |
+          set -e
+          PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-arm64-v*+*.snap | head -1)
+          gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated Linux ARM64 package release for $RELEASE_NAME"
+        shell: bash

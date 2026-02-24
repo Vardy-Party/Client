@@ -14,6 +14,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_linux_runtime_smoke:
+        description: "Run optional Linux runtime smoke test (installs VLC deps)"
+        required: false
+        default: "false"
 
 jobs:
   test:
@@ -194,16 +199,23 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Build core library (x64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-x64
-      - name: Build core library (ARM64)
-        run: dotnet build ${{ env.VARDYPARTY_CORE_CSPROJ }} -c Release -f net10.0 -r linux-arm64
+      - name: Skip Linux runtime dependencies for CI compile
+        run: echo "Skipping apt install; Linux runtime packages are not required for dotnet restore/build."
+      - name: Restore VardyParty.Linux dependencies
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Build Linux app (x64)
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
+      - name: Build Linux app (ARM64)
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64 --no-restore
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-linux-x64
           path: |
+            VardyParty.Linux/
             VardyParty.Core/
+            !VardyParty.Linux/bin/
+            !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
           retention-days: 5
@@ -212,7 +224,53 @@ jobs:
         with:
           name: build-linux-arm64
           path: |
+            VardyParty.Linux/
             VardyParty.Core/
+            !VardyParty.Linux/bin/
+            !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
           retention-days: 5
+
+  linux-runtime-smoke:
+    name: Linux Runtime Smoke (optional)
+    runs-on: ubuntu-latest
+    needs: build-linux
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_linux_runtime_smoke == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvlc-dev vlc xvfb
+      - name: Restore Linux project
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Publish Linux app (x64)
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --self-contained false --no-restore
+      - name: Runtime smoke test (xvfb)
+        run: |
+          set +e
+
+          APP_PATH="VardyParty.Linux/bin/Release/net10.0/linux-x64/publish/VardyParty"
+          if [ ! -x "$APP_PATH" ]; then
+            echo "ERROR: Expected app binary not found or not executable at $APP_PATH"
+            echo "Contents of publish directory:"
+            ls -la VardyParty.Linux/bin/Release/net10.0/linux-x64/publish || true
+            exit 1
+          fi
+
+          xvfb-run -a timeout 20s "$APP_PATH"
+          RC=$?
+          set -e
+
+          if [ "$RC" -eq 124 ]; then
+            echo "OK: App launched and stayed running under xvfb (timeout expected)."
+            exit 0
+          fi
+
+          echo "ERROR: Runtime smoke test failed with exit code $RC"
+          exit 1
