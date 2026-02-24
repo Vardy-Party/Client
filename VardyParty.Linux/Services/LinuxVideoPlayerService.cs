@@ -84,13 +84,18 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "--http-reconnect",              // Auto-reconnect on network issues
                 "--avcodec-hw=any",              // Prefer hardware decoding when available
                 "--no-spdif",                    // Avoid passthrough output failures under WSL audio stacks
-                "--aout=alsa"                    // Prefer ALSA output to reduce Pulse module issues
+                "--no-audio",                    // Test mode: disable audio to avoid WSL ALSA deadlocks
+                "--aout=dummy"                   // Force dummy audio output to avoid any ALSA device initialization
             };
 
 
             if (_isWsl)
             {
                 _logger.LogWarning("[LinuxVideoPlayerService] WSL environment detected; preferring hardware decode with software fallback");
+
+                Environment.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1");
+                Environment.SetEnvironmentVariable("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe");
+                Environment.SetEnvironmentVariable("GALLIUM_DRIVER", "llvmpipe");
             }
 
             _libVLC = new LibVLC(vlcOptions.ToArray());
@@ -150,6 +155,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             _currentMedia.AddOption(":avcodec-hw=any");
+            _currentMedia.AddOption(":no-audio");
+            _currentMedia.AddOption(":aout=dummy");
+            _currentMedia.AddOption(":audio-track=-1");
 
             // Parse media to get stream information
             await _currentMedia.Parse(MediaParseOptions.ParseNetwork);
