@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
-using Avalonia.Interactivity;
 using System;
 
 namespace VardyParty.Linux;
@@ -41,27 +40,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnLoginClick(object? sender, RoutedEventArgs e)
+    private async void OnGamesSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
         {
-            await vm.LoginAsync();
-        }
-    }
-
-    private async void OnLoadGamesClick(object? sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel vm)
-        {
-            await vm.LoadGamesAsync();
-        }
-    }
-
-    private async void OnLogoutClick(object? sender, RoutedEventArgs e)
-    {
-        if (DataContext is MainWindowViewModel vm)
-        {
-            await vm.LogoutAsync();
+            await vm.PlaySelectedGameAsync(vm.SelectedGame);
         }
     }
 }

@@ -4,12 +4,15 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Avalonia.Media.Imaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
 using VardyParty.Extensions;
+using VardyParty.Models;
+using VardyParty.Orchestrators;
 using VardyParty.Providers;
 using VardyParty.Services;
 
@@ -19,29 +22,52 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
+    private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
+    private readonly SelectionState _selectionState;
     private readonly IServiceProvider _serviceProvider;
     private readonly Auth0Settings _auth0Settings;
     private readonly ILogger<MainWindowViewModel> _logger;
 
     private bool _isBusy;
+    private bool _isResolvingStreams;
     private bool _isAuthenticated;
     private string _statusMessage = "Ready";
     private string _deviceVerificationUri = string.Empty;
     private string _deviceUserCode = string.Empty;
     private Bitmap? _deviceQrCode;
+    private GameListItem? _selectedGame;
+    private CancellationTokenSource? _authCts;
+    private CancellationTokenSource? _streamResolutionCts;
+    private IDisposable? _progressSubscription;
 
     public MainWindowViewModel(
         IAuthLoginService authLoginService,
         IAuthTokenProvider authTokenProvider,
+        IStreamResolutionOrchestrator streamResolutionOrchestrator,
+        SelectionState selectionState,
         IServiceProvider serviceProvider,
         IOptions<Auth0Settings> auth0Settings,
         ILogger<MainWindowViewModel> logger)
     {
         _authLoginService = authLoginService;
         _authTokenProvider = authTokenProvider;
+        _streamResolutionOrchestrator = streamResolutionOrchestrator;
+        _selectionState = selectionState;
         _serviceProvider = serviceProvider;
         _auth0Settings = auth0Settings.Value;
         _logger = logger;
+
+        _progressSubscription = _streamResolutionOrchestrator.ProgressUpdated
+            .Subscribe(progress =>
+            {
+                _isResolvingStreams = progress.IsResolving;
+                OnPropertyChanged(nameof(IsResolvingStreams));
+
+                if (!string.IsNullOrWhiteSpace(progress.Status))
+                {
+                    StatusMessage = progress.Status;
+                }
+            });
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -72,10 +98,29 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _isAuthenticated = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CanLoadGames));
+            OnPropertyChanged(nameof(ShowAuthPanel));
+            OnPropertyChanged(nameof(ShowGamesPanel));
         }
     }
 
     public bool CanLoadGames => IsAuthenticated && !IsBusy;
+
+    public bool IsResolvingStreams => _isResolvingStreams;
+
+    public bool ShowAuthPanel => !IsAuthenticated;
+
+    public bool ShowGamesPanel => IsAuthenticated;
+
+    public GameListItem? SelectedGame
+    {
+        get => _selectedGame;
+        set
+        {
+            if (ReferenceEquals(_selectedGame, value)) return;
+            _selectedGame = value;
+            OnPropertyChanged();
+        }
+    }
 
     public string StatusMessage
     {
@@ -129,71 +174,25 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public async Task InitializeAsync()
     {
         IsAuthenticated = await _authTokenProvider.IsAuthenticatedAsync();
-        StatusMessage = IsAuthenticated ? "Authenticated" : "Not authenticated";
+        StatusMessage = IsAuthenticated ? "Authenticated" : "Sign in required";
         if (IsAuthenticated)
         {
             ClearDeviceFlowDetails();
+            await LoadGamesAsync();
+            return;
         }
+
+        await StartDeviceFlowLoginAsync();
     }
 
     public async Task LoginAsync()
     {
-        if (IsBusy) return;
-
-        try
-        {
-            IsBusy = true;
-            StatusMessage = "Signing in...";
-
-            AuthLoginResult result;
-            if (IsLoopbackRedirectUri(_auth0Settings.RedirectUri))
-            {
-                ClearDeviceFlowDetails();
-                result = await _authLoginService.LoginInteractiveAsync();
-            }
-            else
-            {
-                var deviceLogin = await _authLoginService.StartDeviceLoginAsync();
-                if (deviceLogin?.DeviceCode == null)
-                {
-                    IsAuthenticated = false;
-                    StatusMessage = "Login failed: device login unavailable. Check Auth0 Domain/ClientId and device-code grant.";
-                    return;
-                }
-
-                var code = deviceLogin.DeviceCode.UserCode;
-                var verificationUri = deviceLogin.DeviceCode.VerificationUriComplete ?? deviceLogin.DeviceCode.VerificationUri;
-                await SetDeviceFlowDetailsAsync(verificationUri, code);
-                StatusMessage = $"Open {verificationUri} and enter code {code}. Waiting for approval...";
-                result = await _authLoginService.PollDeviceLoginAsync(deviceLogin.DeviceCode);
-            }
-
-            if (!result.IsSuccess)
-            {
-                IsAuthenticated = false;
-                StatusMessage = $"Login failed: {result.Error}";
-                return;
-            }
-
-            IsAuthenticated = true;
-            ClearDeviceFlowDetails();
-            StatusMessage = "Signed in";
-            await LoadGamesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Linux login failed");
-            StatusMessage = $"Login error: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        await StartDeviceFlowLoginAsync();
     }
 
     public async Task LoadGamesAsync()
     {
-        if (IsBusy) return;
+        if (IsBusy || !IsAuthenticated) return;
 
         try
         {
@@ -217,6 +216,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             foreach (var game in displayGames)
             {
                 Games.Add(new GameListItem(
+                    game,
                     game.DisplayLeague,
                     $"{game.DisplayHome} vs {game.DisplayAway}",
                     game.StartUtcForOrdering == DateTime.MaxValue
@@ -246,10 +246,14 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             IsBusy = true;
             await _authTokenProvider.LogoutAsync();
+            _authCts?.Cancel();
+            _streamResolutionCts?.Cancel();
             Games.Clear();
+            SelectedGame = null;
             IsAuthenticated = false;
             ClearDeviceFlowDetails();
-            StatusMessage = "Logged out";
+            StatusMessage = "Signed out";
+            await StartDeviceFlowLoginAsync();
         }
         catch (Exception ex)
         {
@@ -264,7 +268,127 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _authCts?.Cancel();
+        _authCts?.Dispose();
+        _streamResolutionCts?.Cancel();
+        _streamResolutionCts?.Dispose();
+        _progressSubscription?.Dispose();
+        _streamResolutionOrchestrator.Reset();
         DeviceQrCode = null;
+    }
+
+    public async Task PlaySelectedGameAsync(GameListItem? item)
+    {
+        if (item == null || !IsAuthenticated)
+        {
+            return;
+        }
+
+        try
+        {
+            _streamResolutionCts?.Cancel();
+            _streamResolutionCts?.Dispose();
+            _streamResolutionCts = new CancellationTokenSource();
+
+            _selectionState.CurrentGame = item.Game;
+            StatusMessage = $"Resolving streams for {item.Fixture}...";
+
+            var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, _streamResolutionCts.Token);
+            if (outcome.PlaybackResult is { Success: false })
+            {
+                StatusMessage = outcome.PlaybackResult.Message ?? "Playback failed";
+                return;
+            }
+
+            if (outcome.NoWorkingStreams)
+            {
+                StatusMessage = "No working streams found";
+                return;
+            }
+
+            if (outcome.UserClosed)
+            {
+                StatusMessage = "Playback closed";
+                return;
+            }
+
+            StatusMessage = "Playback complete";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Playback canceled";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to resolve/play stream on Linux UI");
+            StatusMessage = $"Playback failed: {ex.Message}";
+        }
+    }
+
+    private async Task StartDeviceFlowLoginAsync()
+    {
+        if (IsBusy || IsAuthenticated)
+        {
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            StatusMessage = "Preparing sign-in...";
+            _authCts?.Cancel();
+            _authCts?.Dispose();
+            _authCts = new CancellationTokenSource();
+
+            AuthLoginResult result;
+            if (IsLoopbackRedirectUri(_auth0Settings.RedirectUri))
+            {
+                ClearDeviceFlowDetails();
+                result = await _authLoginService.LoginInteractiveAsync();
+            }
+            else
+            {
+                var deviceLogin = await _authLoginService.StartDeviceLoginAsync();
+                if (deviceLogin?.DeviceCode == null)
+                {
+                    IsAuthenticated = false;
+                    StatusMessage = "Device login unavailable. Check Auth0 settings and device-code grant.";
+                    return;
+                }
+
+                var code = deviceLogin.DeviceCode.UserCode;
+                var verificationUri = deviceLogin.DeviceCode.VerificationUriComplete ?? deviceLogin.DeviceCode.VerificationUri;
+                await SetDeviceFlowDetailsAsync(verificationUri, code);
+                StatusMessage = $"Scan QR or open {verificationUri} and enter {code}.";
+
+                result = await _authLoginService.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
+            }
+
+            if (!result.IsSuccess)
+            {
+                IsAuthenticated = false;
+                StatusMessage = $"Login failed: {result.Error}";
+                return;
+            }
+
+            IsAuthenticated = true;
+            ClearDeviceFlowDetails();
+            StatusMessage = "Signed in";
+            await LoadGamesAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Sign-in canceled";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Linux login failed");
+            StatusMessage = $"Login error: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private async Task SetDeviceFlowDetailsAsync(string verificationUri, string userCode)
@@ -316,4 +440,4 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 }
 
-public sealed record GameListItem(string League, string Fixture, string Kickoff, string Status);
+public sealed record GameListItem(Game Game, string League, string Fixture, string Kickoff, string Status);

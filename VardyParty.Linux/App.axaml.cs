@@ -86,6 +86,8 @@ public partial class App : Application
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
+        services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
+        services.AddSingleton<ISessionIdProvider, SessionIdProvider>();
         services.AddSingleton<LinuxAuthService>();
         services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
         services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());

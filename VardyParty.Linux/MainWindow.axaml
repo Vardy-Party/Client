@@ -14,19 +14,17 @@
         WindowStartupLocation="CenterScreen"
         Background="#111827">
 
-    <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="16">
+    <Grid RowDefinitions="Auto,Auto,*" Margin="16">
         <TextBlock Grid.Row="0"
                    Text="VardyParty Linux"
                    FontSize="28"
                    FontWeight="SemiBold"
                    Foreground="White" />
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,12,0,12">
-            <Button Content="Login" Click="OnLoginClick" IsEnabled="{Binding NotBusy}" MinWidth="100" />
-            <Button Content="Load Games" Click="OnLoadGamesClick" IsEnabled="{Binding CanLoadGames}" MinWidth="120" />
-            <Button Content="Logout" Click="OnLogoutClick" IsEnabled="{Binding IsAuthenticated}" MinWidth="100" />
-            <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="White" Margin="12,0,0,0" />
-        </StackPanel>
+        <TextBlock Grid.Row="1"
+                   Text="{Binding StatusMessage}"
+                   Margin="0,12,0,12"
+                   Foreground="White" />
 
         <Border Grid.Row="2"
                 BorderThickness="1"
@@ -34,7 +32,7 @@
                 CornerRadius="8"
                 Padding="12"
                 Margin="0,0,0,12"
-                IsVisible="{Binding ShowDeviceFlowDetails}">
+                IsVisible="{Binding ShowAuthPanel}">
             <Grid ColumnDefinitions="Auto,*">
                 <Border Width="220" Height="220" Background="White" CornerRadius="6" Padding="4">
                     <Image Source="{Binding DeviceQrCode}" Stretch="Uniform" />
@@ -49,8 +47,11 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="3" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8">
-            <ListBox ItemsSource="{Binding Games}">
+        <Border Grid.Row="2" BorderThickness="1" BorderBrush="#374151" CornerRadius="8" Padding="8" IsVisible="{Binding ShowGamesPanel}">
+            <ListBox x:Name="GamesList"
+                     ItemsSource="{Binding Games}"
+                     SelectedItem="{Binding SelectedGame}"
+                     SelectionChanged="OnGamesSelectionChanged">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="local:GameListItem">
                         <Grid ColumnDefinitions="2*,2*,Auto,Auto" Margin="0,4">
