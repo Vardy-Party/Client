@@ -512,7 +512,10 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                  int penIdx = html.IndexOf("penalties", start, rangeLen, StringComparison.OrdinalIgnoreCase);
                  if (penIdx >= 0)
                  {
-                     var blockSub = html.Substring(start, rangeLen);
+                     // Cap the range for penalty regex to prevent performance issues with games at end of page
+                     // Last game on page could have rangeLen of 100KB+, causing 400ms+ regex penalty
+                     int cappedRangeLen = Math.Min(rangeLen, 5000);
+                     var blockSub = html.Substring(start, cappedRangeLen);
                      var penMatch = Regex.Match(blockSub, @"(?<winner>[^<>\n]{1,100}?)\s+win\s+(?<w>\d+)\s*-\s*(?<l>\d+)\s+on\s+penalties", RegexOptions.IgnoreCase);
                      if (penMatch.Success)
                      {
