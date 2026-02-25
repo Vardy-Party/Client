@@ -379,8 +379,13 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 }
                 catch
                 {
-                    // Fallback to unbounded search if bounded search fails
-                    return html.IndexOf(value, searchStart, StringComparison.OrdinalIgnoreCase) >= 0;
+                    // Fallback to bounded search with cap at 10KB to prevent performance issues
+                    var maxFallback = Math.Min(html.Length - searchStart, 10000);
+                    if (maxFallback > 0)
+                    {
+                        return html.IndexOf(value, searchStart, maxFallback, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }
+                    return false;
                 }
             }
 
