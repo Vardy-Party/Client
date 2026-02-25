@@ -17,4 +17,7 @@
   <Project Path="VardyParty/VardyParty.csproj">
     <Deploy Solution="Debug|*" />
   </Project>
+  <Project Path="VardyParty.Linux/VardyParty.Linux.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
 </Solution>
