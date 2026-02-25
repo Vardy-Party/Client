@@ -210,8 +210,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty Windows v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
-          RELEASE_TAG: "windows-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls ./windows-artifacts/VardyParty-windows-v*-b*.msix | head -1)
@@ -390,8 +390,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty Android v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
-          RELEASE_TAG: "android-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls ./android-package-artifacts/VardyParty-android-v*-b*.apk | head -1)
@@ -496,8 +496,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty iOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
-          RELEASE_TAG: "ios-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls ./VardyParty-ios-v*-b*.tar.gz | head -1)
@@ -601,8 +601,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty macOS v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
-          RELEASE_TAG: "macos-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
+          RELEASE_TAG: "${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls ./VardyParty-macos-v*-b*.tar.gz | head -1)
@@ -793,8 +793,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty Linux x64 v${{ steps.snap_version.outputs.full }}"
-          RELEASE_TAG: "linux-x64-v${{ steps.snap_version.outputs.full }}"
+          RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "${{ steps.snap_version.outputs.full }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-x64-v*+*.snap | head -1)
@@ -985,8 +985,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NAME: "VardyParty Linux ARM64 v${{ steps.snap_version.outputs.full }}"
-          RELEASE_TAG: "linux-arm64-v${{ steps.snap_version.outputs.full }}"
+          RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.full }}"
+          RELEASE_TAG: "${{ steps.snap_version.outputs.full }}"
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-arm64-v*+*.snap | head -1)
