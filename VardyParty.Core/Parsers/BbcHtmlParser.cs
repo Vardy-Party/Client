@@ -317,14 +317,16 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 int cStart = html.IndexOf('>', containerIdx) + 1;
                 if (cStart > 0)
                 {
-                    // Search for the closing </div> - try bounded first, then unbounded
+                    // Search for the closing </div> - try bounded first, then fallback with larger limit
                     int searchLimit = Math.Min(end - cStart, 5000);  // Reasonable limit for container content
                     int cEnd = html.IndexOf("</div>", cStart, searchLimit, StringComparison.OrdinalIgnoreCase);
                     
-                    // If not found in limited range, search further
+                    // If not found in limited range, search further but cap at 15KB to prevent performance issues
+                    // This handles edge cases while avoiding the 300ms+ penalty for games at end of large pages
                     if (cEnd < 0)
                     {
-                        cEnd = html.IndexOf("</div>", cStart, StringComparison.OrdinalIgnoreCase);
+                        int maxSearch = Math.Min(html.Length - cStart, 15000);
+                        cEnd = html.IndexOf("</div>", cStart, maxSearch, StringComparison.OrdinalIgnoreCase);
                     }
                     
                     progressContainerEnd = cEnd;
