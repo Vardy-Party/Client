@@ -6,6 +6,8 @@ namespace VardyParty.Parsers;
 
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {
+    private static readonly int Timeout = 200;
+
     // Simple, robust regex-based parser. Keeps memory footprint low.
     public List<BbcFixture> ParseHtml(string html, CancellationToken cancellationToken = default)
     {
@@ -225,7 +227,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     // Use helper that takes (html, start, end) to avoid substring
                     ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap);
                     swGame.Stop();
-                    if (swGame.ElapsedMilliseconds > 200)
+                    if (swGame.ElapsedMilliseconds > Timeout)
                     {
                          logger.LogWarning("[BBC] Slow game parse ({Elapsed}ms) for ID {Id} in League {League}", swGame.ElapsedMilliseconds, id, currentLeague);
                     }
@@ -450,7 +452,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (firstBadgeIdx >= 0)
             {
                 // Scan back for http
-                int searchBackLimit = Math.Max(start, firstBadgeIdx - 200);
+                int searchBackLimit = Math.Max(start, firstBadgeIdx - Timeout);
                 int httpIdx = html.LastIndexOf("http", firstBadgeIdx, firstBadgeIdx - searchBackLimit, StringComparison.OrdinalIgnoreCase);
                 if (httpIdx >= 0)
                 {
@@ -464,7 +466,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         int secondBadgeIdx = FindBadgeExtension(searchStart2, end);
                         if (secondBadgeIdx >= 0)
                         {
-                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - 200);
+                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - Timeout);
                              int http2Idx = html.LastIndexOf("http", secondBadgeIdx, secondBadgeIdx - searchBackLimit2, StringComparison.OrdinalIgnoreCase);
                              if (http2Idx >= 0)
                              {
