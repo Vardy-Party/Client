@@ -6,6 +6,8 @@ namespace VardyParty.Parsers;
 
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {
+    private static readonly int Timeout = 200;
+
     // Simple, robust regex-based parser. Keeps memory footprint low.
     public List<BbcFixture> ParseHtml(string html, CancellationToken cancellationToken = default)
     {
@@ -225,7 +227,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     // Use helper that takes (html, start, end) to avoid substring
                     ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap);
                     swGame.Stop();
-                    if (swGame.ElapsedMilliseconds > 200)
+                    if (swGame.ElapsedMilliseconds > Timeout)
                     {
                          logger.LogWarning("[BBC] Slow game parse ({Elapsed}ms) for ID {Id} in League {League}", swGame.ElapsedMilliseconds, id, currentLeague);
                     }
@@ -315,14 +317,16 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 int cStart = html.IndexOf('>', containerIdx) + 1;
                 if (cStart > 0)
                 {
-                    // Search for the closing </div> - try bounded first, then unbounded
+                    // Search for the closing </div> - try bounded first, then fallback with larger limit
                     int searchLimit = Math.Min(end - cStart, 5000);  // Reasonable limit for container content
                     int cEnd = html.IndexOf("</div>", cStart, searchLimit, StringComparison.OrdinalIgnoreCase);
                     
-                    // If not found in limited range, search further
+                    // If not found in limited range, search further but cap at 10KB to prevent performance issues
+                    // This handles edge cases while avoiding the 300ms+ penalty for games at end of large pages
                     if (cEnd < 0)
                     {
-                        cEnd = html.IndexOf("</div>", cStart, StringComparison.OrdinalIgnoreCase);
+                        int maxSearch = Math.Min(html.Length - cStart, 10000);
+                        cEnd = html.IndexOf("</div>", cStart, maxSearch, StringComparison.OrdinalIgnoreCase);
                     }
                     
                     progressContainerEnd = cEnd;
@@ -375,8 +379,13 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 }
                 catch
                 {
-                    // Fallback to unbounded search if bounded search fails
-                    return html.IndexOf(value, searchStart, StringComparison.OrdinalIgnoreCase) >= 0;
+                    // Fallback to bounded search with cap at 10KB to prevent performance issues
+                    var maxFallback = Math.Min(html.Length - searchStart, 10000);
+                    if (maxFallback > 0)
+                    {
+                        return html.IndexOf(value, searchStart, maxFallback, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }
+                    return false;
                 }
             }
 
@@ -450,7 +459,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (firstBadgeIdx >= 0)
             {
                 // Scan back for http
-                int searchBackLimit = Math.Max(start, firstBadgeIdx - 200);
+                int searchBackLimit = Math.Max(start, firstBadgeIdx - Timeout);
                 int httpIdx = html.LastIndexOf("http", firstBadgeIdx, firstBadgeIdx - searchBackLimit, StringComparison.OrdinalIgnoreCase);
                 if (httpIdx >= 0)
                 {
@@ -464,7 +473,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         int secondBadgeIdx = FindBadgeExtension(searchStart2, end);
                         if (secondBadgeIdx >= 0)
                         {
-                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - 200);
+                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - Timeout);
                              int http2Idx = html.LastIndexOf("http", secondBadgeIdx, secondBadgeIdx - searchBackLimit2, StringComparison.OrdinalIgnoreCase);
                              if (http2Idx >= 0)
                              {
@@ -503,7 +512,10 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                  int penIdx = html.IndexOf("penalties", start, rangeLen, StringComparison.OrdinalIgnoreCase);
                  if (penIdx >= 0)
                  {
-                     var blockSub = html.Substring(start, rangeLen);
+                     // Cap the range for penalty regex to prevent performance issues with games at end of page
+                     // Last game on page could have rangeLen of 100KB+, causing 400ms+ regex penalty
+                     int cappedRangeLen = Math.Min(rangeLen, 5000);
+                     var blockSub = html.Substring(start, cappedRangeLen);
                      var penMatch = Regex.Match(blockSub, @"(?<winner>[^<>\n]{1,100}?)\s+win\s+(?<w>\d+)\s*-\s*(?<l>\d+)\s+on\s+penalties", RegexOptions.IgnoreCase);
                      if (penMatch.Success)
                      {
