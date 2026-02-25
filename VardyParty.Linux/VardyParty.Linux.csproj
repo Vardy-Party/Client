@@ -9,8 +9,8 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>VardyParty.Linux</RootNamespace>
     <AssemblyName>VardyParty</AssemblyName>
-    <ApplicationDisplayVersion>1.7.0</ApplicationDisplayVersion>
-    <ApplicationVersion>33</ApplicationVersion>
+    <ApplicationDisplayVersion>1.7.1</ApplicationDisplayVersion>
+    <ApplicationVersion>34</ApplicationVersion>
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
   </PropertyGroup>
 
