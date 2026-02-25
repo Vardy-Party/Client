@@ -321,11 +321,11 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     int searchLimit = Math.Min(end - cStart, 5000);  // Reasonable limit for container content
                     int cEnd = html.IndexOf("</div>", cStart, searchLimit, StringComparison.OrdinalIgnoreCase);
                     
-                    // If not found in limited range, search further but cap at 15KB to prevent performance issues
+                    // If not found in limited range, search further but cap at 10KB to prevent performance issues
                     // This handles edge cases while avoiding the 300ms+ penalty for games at end of large pages
                     if (cEnd < 0)
                     {
-                        int maxSearch = Math.Min(html.Length - cStart, 15000);
+                        int maxSearch = Math.Min(html.Length - cStart, 10000);
                         cEnd = html.IndexOf("</div>", cStart, maxSearch, StringComparison.OrdinalIgnoreCase);
                     }
                     
