@@ -15,9 +15,6 @@ namespace VardyParty.Linux.Services
 {
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
-    private const bool ForceFixedTestStream = true;
-    private const string FixedTestStreamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
-
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
