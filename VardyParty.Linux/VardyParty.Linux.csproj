@@ -11,7 +11,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>VardyParty.Linux</RootNamespace>
     <AssemblyName>VardyParty</AssemblyName>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <!-- Version properties are now imported from Version.props -->
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
   </PropertyGroup>
