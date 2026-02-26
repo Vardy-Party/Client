@@ -463,10 +463,12 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
-            var fullPath = TryResolveImagePath(relativePath);
-            if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+            var fileName = Path.GetFileName(relativePath);
+            var fullPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "images", "leagues", fileName);
+            
+            if (!File.Exists(fullPath))
             {
-                _logger.LogInformation("League logo not found for {ImagePath}", relativePath);
+                _logger.LogInformation("League logo not found for {ImagePath}", fullPath);
                 return null;
             }
 
@@ -512,35 +514,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         return await Dispatcher.UIThread.InvokeAsync(factory);
     }
 
-    private static string? TryResolveImagePath(string relativePath)
-    {
-        var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
-        var fileName = Path.GetFileName(normalized);
-        var baseDirectory = AppContext.BaseDirectory;
-        var currentDirectory = Directory.GetCurrentDirectory();
-
-        var candidates = new List<string>
-        {
-            Path.Combine(baseDirectory, "wwwroot", normalized),
-            Path.Combine(baseDirectory, normalized),
-            Path.Combine(currentDirectory, "wwwroot", normalized),
-            Path.Combine(currentDirectory, normalized),
-            Path.Combine(baseDirectory, "Resources", "Images", "Leagues", fileName),
-            Path.Combine(currentDirectory, "Resources", "Images", "Leagues", fileName),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "VardyParty", "Resources", "Images", "Leagues", fileName))
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
     private IImage? LoadSvgFromStream(System.IO.Stream stream, string source)
     {
         try
@@ -560,11 +533,11 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private static string FormatGameTime(DateTime startTime)
     {
         var local = startTime.ToLocalTime();
-        if (startTime.Date == DateTime.UtcNow.Date)
+        if (local.Date == DateTime.Now.Date)
         {
             return local.ToString("h:mm tt");
         }
-        else if (startTime.Date == DateTime.UtcNow.Date.AddDays(1))
+        else if (local.Date == DateTime.Now.Date.AddDays(1))
         {
             return $"Tomorrow at {local:h:mm tt}";
         }

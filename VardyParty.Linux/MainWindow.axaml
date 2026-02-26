@@ -56,70 +56,71 @@
                          SelectionChanged="OnGamesSelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="local:GameListItem">
-                            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,*" Margin="0,6">
-                                <TextBlock Grid.Row="0"
-                                           Grid.Column="0"
+                            <Grid RowDefinitions="Auto" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,*" Margin="0,6" VerticalAlignment="Center">
+                                <TextBlock Grid.Column="0"
                                            Text="{Binding StatusText}"
-                                           Foreground="#9CA3AF" />
+                                           Foreground="#9CA3AF"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0" />
 
-                                <Border Grid.Row="0"
-                                        Grid.Column="1"
+                                <Border Grid.Column="1"
                                         Background="White"
                                         CornerRadius="4"
                                         Padding="2"
-                                        Margin="8,0,0,0"
-                                        IsVisible="{Binding HasLeagueIcon}">
-                                    <Image Width="16"
-                                           Height="16"
+                                        Margin="0,0,12,0"
+                                        IsVisible="{Binding HasLeagueIcon}"
+                                        VerticalAlignment="Center">
+                                    <Image Width="24"
+                                           Height="24"
                                            Source="{Binding LeagueIcon}"
                                            Stretch="Uniform" />
                                 </Border>
 
-                                <TextBlock Grid.Row="1"
-                                           Grid.Column="2"
+                                <TextBlock Grid.Column="2"
                                            Text="{Binding HomeTeam}"
                                            Foreground="White"
                                            TextAlignment="Right"
                                            HorizontalAlignment="Right"
-                                           Margin="0,0,6,0" />
+                                           Margin="0,0,6,0"
+                                           VerticalAlignment="Center" />
 
-                                <Border Grid.Row="1"
-                                        Grid.Column="3"
+                                <Border Grid.Column="3"
                                         Background="White"
-                                        CornerRadius="12"
+                                        CornerRadius="14"
                                         Padding="2"
                                         Margin="0,0,6,0"
-                                        IsVisible="{Binding HasHomeBadge}">
-                                    <Image Width="20"
-                                           Height="20"
+                                        IsVisible="{Binding HasHomeBadge}"
+                                        VerticalAlignment="Center">
+                                    <Image Width="28"
+                                           Height="28"
                                            Source="{Binding HomeBadge}"
                                            Stretch="Uniform" />
                                 </Border>
 
-                                <TextBlock Grid.Row="1"
-                                           Grid.Column="4"
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding ScoreText}"
                                            Foreground="#FCD34D"
-                                           Margin="12,0" />
+                                           Margin="12,0"
+                                           VerticalAlignment="Center" />
 
-                                <Border Grid.Row="1"
-                                        Grid.Column="5"
+                                <Border Grid.Column="5"
                                         Background="White"
-                                        CornerRadius="12"
+                                        CornerRadius="14"
                                         Padding="2"
                                         Margin="6,0,0,0"
-                                        IsVisible="{Binding HasAwayBadge}">
-                                    <Image Width="20"
-                                           Height="20"
+                                        IsVisible="{Binding HasAwayBadge}"
+                                        VerticalAlignment="Center">
+                                    <Image Width="28"
+                                           Height="28"
                                            Source="{Binding AwayBadge}"
                                            Stretch="Uniform" />
                                 </Border>
 
-                                <TextBlock Grid.Row="1"
-                                           Grid.Column="6"
+                                <TextBlock Grid.Column="6"
                                            Text="{Binding AwayTeam}"
                                            Foreground="White"
-                                           Margin="6,0,0,0" />
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center" />
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
