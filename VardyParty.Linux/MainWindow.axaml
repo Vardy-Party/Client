@@ -56,58 +56,70 @@
                          SelectionChanged="OnGamesSelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="local:GameListItem">
-                            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,Auto,*,Auto,*,Auto" Margin="0,6">
-                                <StackPanel Grid.Row="0" Grid.ColumnSpan="6" Orientation="Horizontal" Spacing="6">
+                            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,*" Margin="0,6">
+                                <TextBlock Grid.Row="0"
+                                           Grid.Column="0"
+                                           Text="{Binding StatusText}"
+                                           Foreground="#9CA3AF" />
+
+                                <Border Grid.Row="0"
+                                        Grid.Column="1"
+                                        Background="White"
+                                        CornerRadius="4"
+                                        Padding="2"
+                                        Margin="8,0,0,0"
+                                        IsVisible="{Binding HasLeagueIcon}">
                                     <Image Width="16"
                                            Height="16"
                                            Source="{Binding LeagueIcon}"
-                                           IsVisible="{Binding HasLeagueIcon}" />
-                                    <TextBlock Text="{Binding League}"
-                                               Foreground="#D1D5DB"
-                                               FontSize="12" />
-                                </StackPanel>
-
-                                <TextBlock Grid.Row="1"
-                                           Grid.Column="0"
-                                           Text="{Binding StatusText}"
-                                           Foreground="#9CA3AF"
-                                           Margin="0,0,12,0" />
-
-                                <Image Grid.Row="1"
-                                       Grid.Column="1"
-                                       Width="24"
-                                       Height="24"
-                                       Margin="0,0,6,0"
-                                       Source="{Binding HomeBadge}"
-                                       IsVisible="{Binding HasHomeBadge}"
-                                       Stretch="Uniform" />
+                                           Stretch="Uniform" />
+                                </Border>
 
                                 <TextBlock Grid.Row="1"
                                            Grid.Column="2"
                                            Text="{Binding HomeTeam}"
                                            Foreground="White"
                                            TextAlignment="Right"
-                                           HorizontalAlignment="Right" />
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,6,0" />
+
+                                <Border Grid.Row="1"
+                                        Grid.Column="3"
+                                        Background="White"
+                                        CornerRadius="12"
+                                        Padding="2"
+                                        Margin="0,0,6,0"
+                                        IsVisible="{Binding HasHomeBadge}">
+                                    <Image Width="20"
+                                           Height="20"
+                                           Source="{Binding HomeBadge}"
+                                           Stretch="Uniform" />
+                                </Border>
 
                                 <TextBlock Grid.Row="1"
-                                           Grid.Column="3"
+                                           Grid.Column="4"
                                            Text="{Binding ScoreText}"
                                            Foreground="#FCD34D"
                                            Margin="12,0" />
 
-                                <TextBlock Grid.Row="1"
-                                           Grid.Column="4"
-                                           Text="{Binding AwayTeam}"
-                                           Foreground="White" />
+                                <Border Grid.Row="1"
+                                        Grid.Column="5"
+                                        Background="White"
+                                        CornerRadius="12"
+                                        Padding="2"
+                                        Margin="6,0,0,0"
+                                        IsVisible="{Binding HasAwayBadge}">
+                                    <Image Width="20"
+                                           Height="20"
+                                           Source="{Binding AwayBadge}"
+                                           Stretch="Uniform" />
+                                </Border>
 
-                                <Image Grid.Row="1"
-                                       Grid.Column="5"
-                                       Width="24"
-                                       Height="24"
-                                       Margin="6,0,0,0"
-                                       Source="{Binding AwayBadge}"
-                                       IsVisible="{Binding HasAwayBadge}"
-                                       Stretch="Uniform" />
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="6"
+                                           Text="{Binding AwayTeam}"
+                                           Foreground="White"
+                                           Margin="6,0,0,0" />
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>

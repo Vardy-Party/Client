@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -40,7 +41,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly Auth0Settings _auth0Settings;
     private readonly ILogger<MainWindowViewModel> _logger;
     private readonly Dictionary<string, IImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<string> _tempImageFiles = new();
 
     private bool _isBusy;
     private bool _isResolvingStreams;
@@ -345,20 +345,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             }
         }
         _imageCache.Clear();
-        foreach (var path in _tempImageFiles)
-        {
-            try
-            {
-                if (File.Exists(path))
-                {
-                    File.Delete(path);
-                }
-            }
-            catch
-            {
-            }
-        }
-        _tempImageFiles.Clear();
     }
 
     private void ApplyDisplayGames(IReadOnlyCollection<GameListItem> displayGames)
@@ -434,19 +420,25 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 : Path.GetExtension(imageUrl);
             if (extension.Equals(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                var tempPath = Path.Combine(Path.GetTempPath(), $"vardyparty_badge_{Guid.NewGuid():N}{extension}");
-                await File.WriteAllBytesAsync(tempPath, bytes).ConfigureAwait(false);
-                var image = LoadSvgFromPath(tempPath);
+                var image = await CreateSvgImageAsync(() =>
+                {
+                    using var stream = new MemoryStream(bytes);
+                    return LoadSvgFromStream(stream, imageUrl);
+                }).ConfigureAwait(false);
+
                 if (image != null)
                 {
-                    _tempImageFiles.Add(tempPath);
                     _imageCache[imageUrl] = image;
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to parse SVG image {ImageUrl} (length {Length})", imageUrl, bytes.Length);
                 }
                 return image;
             }
 
-            await using var stream = new MemoryStream(bytes);
-            var bitmap = new Bitmap(stream);
+            await using var bitmapStream = new MemoryStream(bytes);
+            var bitmap = new Bitmap(bitmapStream);
             _imageCache[imageUrl] = bitmap;
             return bitmap;
         }
@@ -457,16 +449,16 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private Task<IImage?> LoadLocalImageAsync(string relativePath)
+    private async Task<IImage?> LoadLocalImageAsync(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
-            return Task.FromResult<IImage?>(null);
+            return null;
         }
 
         if (_imageCache.TryGetValue(relativePath, out var cached))
         {
-            return Task.FromResult<IImage?>(cached);
+            return cached;
         }
 
         try
@@ -474,31 +466,50 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             var fullPath = TryResolveImagePath(relativePath);
             if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
             {
-                _logger.LogDebug("League logo not found for {ImagePath}", relativePath);
-                return Task.FromResult<IImage?>(null);
+                _logger.LogInformation("League logo not found for {ImagePath}", relativePath);
+                return null;
             }
 
             var extension = Path.GetExtension(fullPath);
             if (extension.Equals(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                var image = LoadSvgFromPath(fullPath);
+                var image = await CreateSvgImageAsync(() =>
+                {
+                    using var stream = File.OpenRead(fullPath);
+                    return LoadSvgFromStream(stream, fullPath);
+                }).ConfigureAwait(false);
+
                 if (image != null)
                 {
                     _imageCache[relativePath] = image;
                 }
-                return Task.FromResult<IImage?>(image);
+                else
+                {
+                    _logger.LogWarning("Failed to parse SVG image {ImagePath}", fullPath);
+                }
+                return image;
             }
 
-            using var stream = File.OpenRead(fullPath);
-            var bitmap = new Bitmap(stream);
+            using var bitmapStream = File.OpenRead(fullPath);
+            var bitmap = new Bitmap(bitmapStream);
             _imageCache[relativePath] = bitmap;
-            return Task.FromResult<IImage?>(bitmap);
+            return bitmap;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to load local image {ImagePath}", relativePath);
-            return Task.FromResult<IImage?>(null);
+            return null;
         }
+    }
+
+    private static async Task<IImage?> CreateSvgImageAsync(Func<IImage?> factory)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            return factory();
+        }
+
+        return await Dispatcher.UIThread.InvokeAsync(factory);
     }
 
     private static string? TryResolveImagePath(string relativePath)
@@ -530,18 +541,18 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         return null;
     }
 
-    private static IImage? LoadSvgFromPath(string path)
+    private IImage? LoadSvgFromStream(System.IO.Stream stream, string source)
     {
         try
         {
-            var fullPath = Path.GetFullPath(path);
             return new SvgImage
             {
-                Source = SvgSource.Load(fullPath)
+                Source = SvgSource.LoadFromStream(stream, null)
             };
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "SVG parse threw for {Source}", source);
             return null;
         }
     }
