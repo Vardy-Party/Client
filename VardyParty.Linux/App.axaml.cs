@@ -24,6 +24,7 @@ namespace VardyParty.Linux;
 
 public partial class App : Application
 {
+    private const string LinuxUserSecretsId = "543d9e88-b60c-4397-bc9d-c4614b8b1dcb";
     public IServiceProvider? Services { get; private set; }
 
     public override void Initialize()
@@ -52,6 +53,15 @@ public partial class App : Application
         if (allowUserSecrets)
         {
             configurationBuilder.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
+
+            var userSecretsPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".microsoft",
+                "usersecrets",
+                LinuxUserSecretsId,
+                "secrets.json");
+
+            configurationBuilder.AddJsonFile(userSecretsPath, optional: true, reloadOnChange: true);
         }
 
         var configuration = configurationBuilder.Build();
