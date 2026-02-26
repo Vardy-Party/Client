@@ -9,7 +9,7 @@ on:
       version_bump_type:
         description: 'Version bump type'
         required: true
-        default: 'minor'
+        default: 'patch'
         type: choice
         options:
           - major
@@ -37,7 +37,7 @@ jobs:
         id: bump-version
         run: |
           CURRENT="${{ steps.read-version.outputs.current_version }}"
-          BUMP_TYPE="${{ github.event.inputs.version_bump_type || 'minor' }}"
+          BUMP_TYPE="${{ github.event.inputs.version_bump_type || 'patch' }}"
           
           # Parse version (e.g., 1.7.2 -> major=1, minor=7, patch=2)
           IFS='.' read -ra VERSION_PARTS <<< "$CURRENT"
