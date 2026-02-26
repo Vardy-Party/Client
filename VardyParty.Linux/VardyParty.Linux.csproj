@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Version.props" />
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -9,8 +11,8 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>VardyParty.Linux</RootNamespace>
     <AssemblyName>VardyParty</AssemblyName>
-    <ApplicationDisplayVersion>1.7.1</ApplicationDisplayVersion>
-    <ApplicationVersion>34</ApplicationVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Version properties are now imported from Version.props -->
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
   </PropertyGroup>
 

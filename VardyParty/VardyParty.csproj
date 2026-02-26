@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
 
+    <Import Project="..\Version.props" />
+
     <PropertyGroup>
         <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
@@ -20,6 +22,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <EnableDefaultCssItems>false</EnableDefaultCssItems>
         <Nullable>enable</Nullable>
+        <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -28,8 +31,7 @@
         <ApplicationId>com.vardyparty</ApplicationId>
 
         <!-- Versions -->
-        <ApplicationDisplayVersion>1.7.1</ApplicationDisplayVersion>
-        <ApplicationVersion>34</ApplicationVersion>
+        <!-- <ApplicationDisplayVersion> and <ApplicationVersion> are now imported from Version.props -->
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
         <!-- Removed global WindowsPackageType None so per-target Windows packaging settings can apply -->
