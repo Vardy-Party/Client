@@ -56,11 +56,58 @@
                          SelectionChanged="OnGamesSelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="local:GameListItem">
-                            <Grid ColumnDefinitions="2*,2*,Auto,Auto" Margin="0,4">
-                                <TextBlock Grid.Column="0" Text="{Binding Fixture}" Foreground="White" />
-                                <TextBlock Grid.Column="1" Text="{Binding League}" Foreground="#D1D5DB" />
-                                <TextBlock Grid.Column="2" Text="{Binding Kickoff}" Foreground="#9CA3AF" Margin="12,0,0,0" />
-                                <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="#FCD34D" Margin="12,0,0,0" />
+                            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,Auto,*,Auto,*,Auto" Margin="0,6">
+                                <StackPanel Grid.Row="0" Grid.ColumnSpan="6" Orientation="Horizontal" Spacing="6">
+                                    <Image Width="16"
+                                           Height="16"
+                                           Source="{Binding LeagueIcon}"
+                                           IsVisible="{Binding HasLeagueIcon}" />
+                                    <TextBlock Text="{Binding League}"
+                                               Foreground="#D1D5DB"
+                                               FontSize="12" />
+                                </StackPanel>
+
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="0"
+                                           Text="{Binding StatusText}"
+                                           Foreground="#9CA3AF"
+                                           Margin="0,0,12,0" />
+
+                                <Image Grid.Row="1"
+                                       Grid.Column="1"
+                                       Width="24"
+                                       Height="24"
+                                       Margin="0,0,6,0"
+                                       Source="{Binding HomeBadge}"
+                                       IsVisible="{Binding HasHomeBadge}"
+                                       Stretch="Uniform" />
+
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="2"
+                                           Text="{Binding HomeTeam}"
+                                           Foreground="White"
+                                           TextAlignment="Right"
+                                           HorizontalAlignment="Right" />
+
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="3"
+                                           Text="{Binding ScoreText}"
+                                           Foreground="#FCD34D"
+                                           Margin="12,0" />
+
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="4"
+                                           Text="{Binding AwayTeam}"
+                                           Foreground="White" />
+
+                                <Image Grid.Row="1"
+                                       Grid.Column="5"
+                                       Width="24"
+                                       Height="24"
+                                       Margin="6,0,0,0"
+                                       Source="{Binding AwayBadge}"
+                                       IsVisible="{Binding HasAwayBadge}"
+                                       Stretch="Uniform" />
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>

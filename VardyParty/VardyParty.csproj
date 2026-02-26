@@ -133,6 +133,9 @@
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
+        <Content Include="Resources\Images\Leagues\**\*.*"
+                 Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest" />
         
         <!-- Android TV Banner -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />

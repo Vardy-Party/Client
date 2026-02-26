@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Svg.Skia;
 using Avalonia.Threading;
 using LibVLCSharp.Shared;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +27,8 @@ namespace VardyParty.Linux;
 
 public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
+    private static readonly HttpClient BadgeHttpClient = new();
+
     private INativeVideoPlayerService? _videoPlayerService;
     private LinuxVideoPlayerService? _linuxVideoPlayerService;
     private readonly IAuthLoginService _authLoginService;
@@ -33,6 +39,8 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly Auth0Settings _auth0Settings;
     private readonly ILogger<MainWindowViewModel> _logger;
+    private readonly Dictionary<string, IImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _tempImageFiles = new();
 
     private bool _isBusy;
     private bool _isResolvingStreams;
@@ -96,10 +104,14 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             }
 
             var displayGames = dict.ToDisplay();
-            Dispatcher.UIThread.Post(() =>
+            _ = Task.Run(async () =>
             {
-                ApplyDisplayGames(displayGames);
-                StatusMessage = $"Loaded {Games.Count} games";
+                var items = await BuildDisplayGamesAsync(displayGames);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    ApplyDisplayGames(items);
+                    StatusMessage = $"Loaded {Games.Count} games";
+                });
             });
         });
 
@@ -267,7 +279,8 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
             var apiService = _serviceProvider.GetRequiredService<IApiService>();
             var gamesByLeague = await apiService.GetAllGamesAsync(true);
-            ApplyDisplayGames(gamesByLeague.ToDisplay());
+            var items = await BuildDisplayGamesAsync(gamesByLeague.ToDisplay());
+            ApplyDisplayGames(items);
             StatusMessage = $"Loaded {Games.Count} games";
         }
         catch (Exception ex)
@@ -324,22 +337,199 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _gamesErrorSubscription?.Dispose();
         _streamResolutionOrchestrator.Reset();
         DeviceQrCode = null;
+        foreach (var image in _imageCache.Values)
+        {
+            if (image is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+        _imageCache.Clear();
+        foreach (var path in _tempImageFiles)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+            }
+        }
+        _tempImageFiles.Clear();
     }
 
-    private void ApplyDisplayGames(IReadOnlyCollection<Game> displayGames)
+    private void ApplyDisplayGames(IReadOnlyCollection<GameListItem> displayGames)
     {
         Games.Clear();
 
         foreach (var game in displayGames)
         {
-            Games.Add(new GameListItem(
+            Games.Add(game);
+        }
+    }
+
+    private async Task<IReadOnlyCollection<GameListItem>> BuildDisplayGamesAsync(IReadOnlyCollection<Game> displayGames)
+    {
+        var items = new List<GameListItem>(displayGames.Count);
+
+        foreach (var game in displayGames)
+        {
+            var homeBadge = await LoadRemoteImageAsync(game.HomeBadgeUrl);
+            var awayBadge = await LoadRemoteImageAsync(game.AwayBadgeUrl);
+            var hasHomeBadge = homeBadge != null;
+            var hasAwayBadge = awayBadge != null;
+
+            var leagueLogoPath = LeagueLogoMapper.GetLogoForLeague(game);
+            var leagueIcon = await LoadLocalImageAsync(leagueLogoPath);
+            var hasLeagueIcon = leagueIcon != null;
+
+            var statusText = game.DisplayStatusText();
+            if (string.IsNullOrWhiteSpace(statusText))
+            {
+                statusText = FormatGameTime(game.Start);
+            }
+
+            var scoreText = game.HomeScore.HasValue && game.AwayScore.HasValue
+                ? $"{game.HomeScore}-{game.AwayScore}"
+                : "VS";
+
+            items.Add(new GameListItem(
                 game,
                 game.DisplayLeague,
-                $"{game.DisplayHome} vs {game.DisplayAway}",
-                game.StartUtcForOrdering == DateTime.MaxValue
-                    ? ""
-                    : game.StartUtcForOrdering.ToLocalTime().ToString("HH:mm"),
-                game.DisplayStatusText()));
+                game.DisplayHome,
+                game.DisplayAway,
+                scoreText,
+                statusText,
+                homeBadge,
+                awayBadge,
+                hasHomeBadge,
+                hasAwayBadge,
+                leagueIcon,
+                hasLeagueIcon));
+        }
+
+        return items;
+    }
+
+    private async Task<IImage?> LoadRemoteImageAsync(string imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return null;
+        }
+
+        if (_imageCache.TryGetValue(imageUrl, out var cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var bytes = await BadgeHttpClient.GetByteArrayAsync(imageUrl).ConfigureAwait(false);
+            var extension = Uri.TryCreate(imageUrl, UriKind.Absolute, out var imageUri)
+                ? Path.GetExtension(imageUri.AbsolutePath)
+                : Path.GetExtension(imageUrl);
+            if (extension.Equals(".svg", StringComparison.OrdinalIgnoreCase))
+            {
+                var tempPath = Path.Combine(Path.GetTempPath(), $"vardyparty_badge_{Guid.NewGuid():N}{extension}");
+                await File.WriteAllBytesAsync(tempPath, bytes).ConfigureAwait(false);
+                var image = LoadSvgFromPath(tempPath);
+                if (image != null)
+                {
+                    _tempImageFiles.Add(tempPath);
+                    _imageCache[imageUrl] = image;
+                }
+                return image;
+            }
+
+            await using var stream = new MemoryStream(bytes);
+            var bitmap = new Bitmap(stream);
+            _imageCache[imageUrl] = bitmap;
+            return bitmap;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to load image {ImageUrl}", imageUrl);
+            return null;
+        }
+    }
+
+    private Task<IImage?> LoadLocalImageAsync(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return Task.FromResult<IImage?>(null);
+        }
+
+        if (_imageCache.TryGetValue(relativePath, out var cached))
+        {
+            return Task.FromResult<IImage?>(cached);
+        }
+
+        try
+        {
+            var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
+            var fullPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", normalized);
+            if (!File.Exists(fullPath))
+            {
+                return Task.FromResult<IImage?>(null);
+            }
+
+            var extension = Path.GetExtension(fullPath);
+            if (extension.Equals(".svg", StringComparison.OrdinalIgnoreCase))
+            {
+                var image = LoadSvgFromPath(fullPath);
+                if (image != null)
+                {
+                    _imageCache[relativePath] = image;
+                }
+                return Task.FromResult<IImage?>(image);
+            }
+
+            using var stream = File.OpenRead(fullPath);
+            var bitmap = new Bitmap(stream);
+            _imageCache[relativePath] = bitmap;
+            return Task.FromResult<IImage?>(bitmap);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to load local image {ImagePath}", relativePath);
+            return Task.FromResult<IImage?>(null);
+        }
+    }
+
+    private static IImage? LoadSvgFromPath(string path)
+    {
+        try
+        {
+            return new SvgImage
+            {
+                Source = SvgSource.Load(path)
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatGameTime(DateTime startTime)
+    {
+        var local = startTime.ToLocalTime();
+        if (startTime.Date == DateTime.UtcNow.Date)
+        {
+            return local.ToString("h:mm tt");
+        }
+        else if (startTime.Date == DateTime.UtcNow.Date.AddDays(1))
+        {
+            return $"Tomorrow at {local:h:mm tt}";
+        }
+        else
+        {
+            return local.ToString("MMM dd, h:mm tt");
         }
     }
 
@@ -357,7 +547,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _streamResolutionCts = new CancellationTokenSource();
 
             _selectionState.CurrentGame = item.Game;
-            StatusMessage = $"Resolving streams for {item.Fixture}...";
+            StatusMessage = $"Resolving streams for {item.HomeTeam} vs {item.AwayTeam}...";
 
             var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, _streamResolutionCts.Token);
             if (outcome.PlaybackResult is { Success: false })
@@ -552,4 +742,16 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 }
 
-public sealed record GameListItem(Game Game, string League, string Fixture, string Kickoff, string Status);
+public sealed record GameListItem(
+    Game Game,
+    string League,
+    string HomeTeam,
+    string AwayTeam,
+    string ScoreText,
+    string StatusText,
+    IImage? HomeBadge,
+    IImage? AwayBadge,
+    bool HasHomeBadge,
+    bool HasAwayBadge,
+    IImage? LeagueIcon,
+    bool HasLeagueIcon);
