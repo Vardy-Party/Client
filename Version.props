@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <!-- 
+    Centralized version management for all VardyParty applications (MAUI and Linux/Avalonia).
+    
+    Version scheme:
+    - ApplicationVersion: Internal build counter (incremented on every build)
+    - ApplicationDisplayVersion: User-facing semantic version Major.Minor.Patch (incremented on main merges)
+  -->
+  <PropertyGroup>
+    <!-- Internal build counter - auto-incremented on every GitHub Actions build -->
+    <ApplicationVersion>35</ApplicationVersion>
+    
+    <!-- User-facing semantic version - bumped minor on main branch merges -->
+    <ApplicationDisplayVersion>1.7.2</ApplicationDisplayVersion>
+    
+    <!-- Product name for versioning -->
+    <Product>VardyParty</Product>
+    <Company>Vardy Party</Company>
+    <Copyright>Copyright © Vardy Party. All rights reserved.</Copyright>
+    <Description>VardyParty - Multi-platform football streaming application</Description>
+  </PropertyGroup>
+</Project>

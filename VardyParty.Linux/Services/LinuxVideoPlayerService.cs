@@ -15,9 +15,6 @@ namespace VardyParty.Linux.Services
 {
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
-    private const bool ForceFixedTestStream = true;
-    private const string FixedTestStreamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
-
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
@@ -97,22 +94,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     }
 
     public async Task<PlaybackResult> PlayVideoAsync(
+        // ReSharper disable once InconsistentNaming
         string m3u8Url,
         string refererUrl,
         string title,
         Func<Task>? onNextStreamRequested = null)
     {
-        var playbackUrl = ForceFixedTestStream ? FixedTestStreamUrl : m3u8Url;
-        var playbackReferer = ForceFixedTestStream ? string.Empty : refererUrl;
-
-        if (ForceFixedTestStream)
-        {
-            _logger.LogWarning("[LinuxVideoPlayerService] ForceFixedTestStream enabled; overriding stream URL for Linux playback test");
-        }
-
         _logger.LogInformation("[LinuxVideoPlayerService] Playing video: {Title}", title);
-        _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", playbackUrl);
-        _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", playbackReferer);
+        _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", m3u8Url);
+        _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", refererUrl);
 
         _onNextStreamRequested = onNextStreamRequested;
         _playbackTcs = new TaskCompletionSource<PlaybackResult>();
@@ -130,17 +120,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             // Create media with options
             var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
-            _currentMedia = new Media(mediaLibVlc, new Uri(playbackUrl));
+            _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
             
             // Set HTTP Referer header
-            if (!string.IsNullOrWhiteSpace(playbackReferer))
+            if (!string.IsNullOrWhiteSpace(refererUrl))
             {
-                _currentMedia.AddOption($":http-referrer={playbackReferer}");
+                _currentMedia.AddOption($":http-referrer={refererUrl}");
             }
 
             // Set HTTP User-Agent
             _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             _currentMedia.AddOption(":avcodec-hw=any");
+
+            // Ensure the video panel is visible before starting playback
+            PlaybackVisibilityChanged?.Invoke(this, true);
 
             // Start playback
             var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
@@ -155,6 +148,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "[LinuxVideoPlayerService] Error during playback");
+            PlaybackVisibilityChanged?.Invoke(this, false);
             return new PlaybackResult
             {
                 Success = false,

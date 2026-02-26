@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
 
+    <Import Project="..\Version.props" />
+
     <PropertyGroup>
         <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
@@ -20,6 +22,10 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <EnableDefaultCssItems>false</EnableDefaultCssItems>
         <Nullable>enable</Nullable>
+        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+        <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+        <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+        <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -28,8 +34,7 @@
         <ApplicationId>com.vardyparty</ApplicationId>
 
         <!-- Versions -->
-        <ApplicationDisplayVersion>1.7.1</ApplicationDisplayVersion>
-        <ApplicationVersion>34</ApplicationVersion>
+        <!-- <ApplicationDisplayVersion> and <ApplicationVersion> are now imported from Version.props -->
 
         <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
         <!-- Removed global WindowsPackageType None so per-target Windows packaging settings can apply -->
@@ -45,6 +50,10 @@
 
         <!-- Android: Build for ALL architectures (armeabi-v7a, arm64-v8a, x86, x86_64) -->
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+
+        <!-- Re-enable trimming and AOT for Android now that assembly info is properly generated -->
+        <PublishTrimmed Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</PublishTrimmed>
+        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</RunAotCompilation>
 
         <!-- FORCE DISABLE Fast Deployment for Android.
              This is critical to prevent the NoClassDefFoundError loop and 6-minute startup delay.
@@ -133,6 +142,9 @@
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
+        <Content Include="Resources\Images\Leagues\**\*.*"
+                 Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest" />
         
         <!-- Android TV Banner -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
@@ -262,7 +274,7 @@
 
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
-	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', 'vardyparty.keystore'))</AndroidSigningKeyStore>
+	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', ' vardyparty.keystore'))</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
 	    <AndroidSigningKeyPass>$(ANDROID_SIGNING_KEY_PASS)</AndroidSigningKeyPass>
 	    <AndroidSigningStorePass>$(ANDROID_SIGNING_STORE_PASS)</AndroidSigningStorePass>
