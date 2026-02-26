@@ -26,6 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Display version info
+        run: |
+          APP_VERSION=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
+          DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
+          echo "::notice::Building with ApplicationVersion=${APP_VERSION}, ApplicationDisplayVersion=${DISPLAY_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
