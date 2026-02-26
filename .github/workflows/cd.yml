@@ -46,13 +46,13 @@ jobs:
       - name: Extract app version metadata
         id: app_version
         run: |
-          [xml]$csproj = Get-Content "VardyParty/VardyParty.csproj"
-          $displayNode = $csproj.SelectSingleNode('//ApplicationDisplayVersion')
-          $buildNode = $csproj.SelectSingleNode('//ApplicationVersion')
+          [xml]$versionProps = Get-Content "Version.props"
+          $displayNode = $versionProps.SelectSingleNode('//ApplicationDisplayVersion')
+          $buildNode = $versionProps.SelectSingleNode('//ApplicationVersion')
           $display = if ($null -ne $displayNode) { $displayNode.InnerText } else { "" }
           $build = if ($null -ne $buildNode) { $buildNode.InnerText } else { "" }
           if ([string]::IsNullOrWhiteSpace($display) -or [string]::IsNullOrWhiteSpace($build)) {
-            Write-Host "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            Write-Host "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in Version.props"
             exit 1
           }
           "APP_DISPLAY_VERSION=$display" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -250,10 +250,10 @@ jobs:
       - name: Extract app version metadata
         id: app_version
         run: |
-          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
-          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
-            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in Version.props"
             exit 1
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
@@ -432,10 +432,10 @@ jobs:
       - name: Extract app version metadata
         id: app_version
         run: |
-          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
-          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
-            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in Version.props"
             exit 1
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
@@ -541,10 +541,10 @@ jobs:
       - name: Extract app version metadata
         id: app_version
         run: |
-          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
-          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
-            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in Version.props"
             exit 1
           fi
           echo "APP_DISPLAY_VERSION=$APP_DISPLAY_VERSION" >> "$GITHUB_ENV"
@@ -702,14 +702,14 @@ jobs:
       - name: Generate snapcraft.yaml (x64)
         id: snap_version
         run: |
-          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
-          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$SNAP_VERSION" ]; then
-            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            echo "ERROR: <ApplicationDisplayVersion> not found in Version.props"
             exit 1
           fi
           if [ -z "$SNAP_BUILD" ]; then
-            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            echo "ERROR: <ApplicationVersion> not found in Version.props"
             exit 1
           fi
 
@@ -898,14 +898,14 @@ jobs:
       - name: Generate snapcraft.yaml (arm64)
         id: snap_version
         run: |
-          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
-          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty.Linux/VardyParty.Linux.csproj | head -n 1)
+          SNAP_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          SNAP_BUILD=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$SNAP_VERSION" ]; then
-            echo "ERROR: <ApplicationDisplayVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            echo "ERROR: <ApplicationDisplayVersion> not found in Version.props"
             exit 1
           fi
           if [ -z "$SNAP_BUILD" ]; then
-            echo "ERROR: <ApplicationVersion> not found in VardyParty.Linux/VardyParty.Linux.csproj"
+            echo "ERROR: <ApplicationVersion> not found in Version.props"
             exit 1
           fi
 
