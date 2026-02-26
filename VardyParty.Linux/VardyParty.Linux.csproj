@@ -58,8 +58,8 @@
           CopyToPublishDirectory="PreserveNewest" />
     
     <!-- Copy shared assets -->
-    <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\VardyParty\Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\VardyParty\wwwroot\**\*.*" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\VardyParty\Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

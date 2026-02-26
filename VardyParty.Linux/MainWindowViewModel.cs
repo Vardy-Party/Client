@@ -471,10 +471,10 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
-            var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
-            var fullPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", normalized);
-            if (!File.Exists(fullPath))
+            var fullPath = TryResolveImagePath(relativePath);
+            if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
             {
+                _logger.LogDebug("League logo not found for {ImagePath}", relativePath);
                 return Task.FromResult<IImage?>(null);
             }
 
@@ -501,13 +501,43 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private static string? TryResolveImagePath(string relativePath)
+    {
+        var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        var fileName = Path.GetFileName(normalized);
+        var baseDirectory = AppContext.BaseDirectory;
+        var currentDirectory = Directory.GetCurrentDirectory();
+
+        var candidates = new List<string>
+        {
+            Path.Combine(baseDirectory, "wwwroot", normalized),
+            Path.Combine(baseDirectory, normalized),
+            Path.Combine(currentDirectory, "wwwroot", normalized),
+            Path.Combine(currentDirectory, normalized),
+            Path.Combine(baseDirectory, "Resources", "Images", "Leagues", fileName),
+            Path.Combine(currentDirectory, "Resources", "Images", "Leagues", fileName),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "VardyParty", "Resources", "Images", "Leagues", fileName))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
     private static IImage? LoadSvgFromPath(string path)
     {
         try
         {
+            var fullPath = Path.GetFullPath(path);
             return new SvgImage
             {
-                Source = SvgSource.Load(path)
+                Source = SvgSource.Load(fullPath)
             };
         }
         catch
