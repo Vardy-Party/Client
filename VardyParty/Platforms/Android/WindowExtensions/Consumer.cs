@@ -9,7 +9,6 @@ namespace AndroidX.Window.Extensions.Core.Util.Function
     // window-extensions library (or the sidecar JAR). Providing a no-op implementation avoids ClassNotFoundException
     // loops during WebView initialization, which can hang the UI thread on startup.
     // Note: The package name intentionally matches the Java package expected by the WebView.
-    [Preserve(AllMembers = true)]
     [JniTypeSignature("androidx/window/extensions/core/util/function/Consumer", GenerateJavaPeer = true)]
     [Register("androidx/window/extensions/core/util/function/Consumer", DoNotGenerateAcw = false)]
     public class Consumer : Java.Lang.Object

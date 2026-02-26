@@ -22,7 +22,10 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <EnableDefaultCssItems>false</EnableDefaultCssItems>
         <Nullable>enable</Nullable>
-        <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+        <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+        <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+        <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -47,6 +50,10 @@
 
         <!-- Android: Build for ALL architectures (armeabi-v7a, arm64-v8a, x86, x86_64) -->
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+
+        <!-- Re-enable trimming and AOT for Android now that assembly info is properly generated -->
+        <PublishTrimmed Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</PublishTrimmed>
+        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</RunAotCompilation>
 
         <!-- FORCE DISABLE Fast Deployment for Android.
              This is critical to prevent the NoClassDefFoundError loop and 6-minute startup delay.
@@ -267,7 +274,7 @@
 
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
-	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', 'vardyparty.keystore'))</AndroidSigningKeyStore>
+	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', ' vardyparty.keystore'))</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
 	    <AndroidSigningKeyPass>$(ANDROID_SIGNING_KEY_PASS)</AndroidSigningKeyPass>
 	    <AndroidSigningStorePass>$(ANDROID_SIGNING_STORE_PASS)</AndroidSigningStorePass>

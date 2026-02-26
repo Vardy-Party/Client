@@ -1,11 +1,9 @@
-name: Bump Display Version on Main Merge
+name: Bump Display Version
 
 on:
-  push:
+  pull_request:
     branches:
       - main
-    paths:
-      - 'Version.props'
   workflow_dispatch:
     inputs:
       version_bump_type:
@@ -26,6 +24,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref || github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Read current version
@@ -33,7 +32,6 @@ jobs:
         run: |
           DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
           echo "current_version=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
-          echo "version_parts=(${DISPLAY_VERSION//./ })" >> $GITHUB_OUTPUT
 
       - name: Parse and bump version
         id: bump-version
@@ -69,21 +67,12 @@ jobs:
       - name: Update Version.props
         run: |
           sed -i "s/<ApplicationDisplayVersion>[^<]*<\/ApplicationDisplayVersion>/<ApplicationDisplayVersion>${{ steps.bump-version.outputs.new_version }}<\/ApplicationDisplayVersion>/" Version.props
-          # Reset ApplicationVersion to 1 on display version bump (optional - remove if not desired)
-          # sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>1<\/ApplicationVersion>/" Version.props
 
       - name: Commit and push version update
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Actions"
           git add Version.props
-          git commit -m "ci: bump ApplicationDisplayVersion to ${{ steps.bump-version.outputs.new_version }}" || echo "No changes to commit"
-          git push origin HEAD:${{ github.ref }}
-        continue-on-error: true
-
-      - name: Create release tag
-        run: |
-          TAG="v${{ steps.bump-version.outputs.new_version }}"
-          git tag -a "$TAG" -m "Release ${{ steps.bump-version.outputs.new_version }}"
-          git push origin "$TAG"
-        continue-on-error: true
+          git commit -m "ci: bump ApplicationDisplayVersion to ${{ steps.bump-version.outputs.new_version }}"
+          git push origin HEAD:${{ github.head_ref || github.ref }}
