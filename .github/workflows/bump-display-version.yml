@@ -16,6 +16,9 @@ on:
           - minor
           - patch
 
+permissions:
+  contents: write
+
 jobs:
   bump-display-version:
     runs-on: ubuntu-latest
@@ -24,23 +27,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref }}
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Read current version
         id: read-version
         run: |
+          BUILD_VERSION=$(grep -oP '(?<=<ApplicationVersion>)\K[^<]+(?=</ApplicationVersion>)' Version.props)
           DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
-          echo "current_version=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
+          echo "build_version=${BUILD_VERSION}" >> $GITHUB_OUTPUT
+          echo "display_version=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Parse and bump version
+      - name: Parse and bump versions
         id: bump-version
         run: |
-          CURRENT="${{ steps.read-version.outputs.current_version }}"
+          BUILD_VERSION="${{ steps.read-version.outputs.build_version }}"
+          DISPLAY_VERSION="${{ steps.read-version.outputs.display_version }}"
           BUMP_TYPE="${{ github.event.inputs.version_bump_type || 'patch' }}"
           
-          # Parse version (e.g., 1.7.2 -> major=1, minor=7, patch=2)
-          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT"
+          # Increment ApplicationVersion by 1
+          NEW_BUILD_VERSION=$((BUILD_VERSION + 1))
+          
+          # Parse DisplayVersion (e.g., 1.7.2 -> major=1, minor=7, patch=2)
+          IFS='.' read -ra VERSION_PARTS <<< "$DISPLAY_VERSION"
           MAJOR=${VERSION_PARTS[0]}
           MINOR=${VERSION_PARTS[1]}
           PATCH=${VERSION_PARTS[2]:-0}
@@ -60,19 +69,21 @@ jobs:
               ;;
           esac
           
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "::notice::Bumped ApplicationDisplayVersion from ${CURRENT} to ${NEW_VERSION} (${BUMP_TYPE})"
+          NEW_DISPLAY_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "build_version=${NEW_BUILD_VERSION}" >> $GITHUB_OUTPUT
+          echo "display_version=${NEW_DISPLAY_VERSION}" >> $GITHUB_OUTPUT
+          echo "::notice::Bumped ApplicationVersion from ${BUILD_VERSION} to ${NEW_BUILD_VERSION}"
+          echo "::notice::Bumped ApplicationDisplayVersion from ${DISPLAY_VERSION} to ${NEW_DISPLAY_VERSION} (${BUMP_TYPE})"
 
       - name: Update Version.props
         run: |
-          sed -i "s/<ApplicationDisplayVersion>[^<]*<\/ApplicationDisplayVersion>/<ApplicationDisplayVersion>${{ steps.bump-version.outputs.new_version }}<\/ApplicationDisplayVersion>/" Version.props
+          sed -i "s/<ApplicationVersion>[^<]*<\/ApplicationVersion>/<ApplicationVersion>${{ steps.bump-version.outputs.build_version }}<\/ApplicationVersion>/" Version.props
+          sed -i "s/<ApplicationDisplayVersion>[^<]*<\/ApplicationDisplayVersion>/<ApplicationDisplayVersion>${{ steps.bump-version.outputs.display_version }}<\/ApplicationDisplayVersion>/" Version.props
 
       - name: Commit and push version update
-        if: github.event_name == 'workflow_dispatch'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Actions"
           git add Version.props
-          git commit -m "ci: bump ApplicationDisplayVersion to ${{ steps.bump-version.outputs.new_version }}"
-          git push origin HEAD:${{ github.head_ref || github.ref }}
+          git commit -m "ci: bump ApplicationVersion to ${{ steps.bump-version.outputs.build_version }} and ApplicationDisplayVersion to ${{ steps.bump-version.outputs.display_version }}"
+          git push origin ${{ github.head_ref }}
