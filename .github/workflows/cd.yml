@@ -754,6 +754,18 @@ jobs:
               stage-packages:
                 - libvlc5
                 - vlc-plugin-base
+                - libice6
+                - libsm6
+                - libx11-6
+                - libxkbcommon0
+                - libxcursor1
+                - libxinerama1
+                - libxrandr2
+                - libxrender1
+                - libxext6
+                - libxft2
+                - fontconfig-config
+                - fonts-dejavu-core
 
           apps:
             vardyparty:
@@ -950,6 +962,18 @@ jobs:
               stage-packages:
                 - libvlc5
                 - vlc-plugin-base
+                - libice6
+                - libsm6
+                - libx11-6
+                - libxkbcommon0
+                - libxcursor1
+                - libxinerama1
+                - libxrandr2
+                - libxrender1
+                - libxext6
+                - libxft2
+                - fontconfig-config
+                - fonts-dejavu-core
 
           apps:
             vardyparty:
