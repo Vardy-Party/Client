@@ -18,4 +18,6 @@ public record BbcFixture(
     bool AfterExtraTime = false,
     string PenaltyWinner = "",
     int? PenaltyWinnerGoals = null,
-    int? PenaltyLoserGoals = null);
+    int? PenaltyLoserGoals = null,
+    int? AggregateHomeScore = null,
+    int? AggregateAwayScore = null);

@@ -1,0 +1,56 @@
+name: Auto-Increment Build Version
+
+on:
+  workflow_call:
+    outputs:
+      new_version:
+        description: "The new build version"
+        value: ${{ jobs.increment-version.outputs.new_version }}
+      new_display_version:
+        description: "The new display version"
+        value: ${{ jobs.increment-version.outputs.new_display_version }}
+
+jobs:
+  increment-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      new_display_version: ${{ steps.version.outputs.new_display_version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read current version
+        id: read-version
+        run: |
+          # Extract ApplicationVersion from Version.props
+          APP_VERSION=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
+          DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
+          echo "current_version=${APP_VERSION}" >> $GITHUB_OUTPUT
+          echo "current_display_version=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Increment and update version
+        id: version
+        run: |
+          CURRENT=${{ steps.read-version.outputs.current_version }}
+          NEW_VERSION=$((CURRENT + 1))
+          DISPLAY_VERSION=${{ steps.read-version.outputs.current_display_version }}
+          
+          # Update Version.props with new ApplicationVersion
+          sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
+          
+          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "new_display_version=${DISPLAY_VERSION}" >> $GITHUB_OUTPUT
+          echo "::notice::Incremented ApplicationVersion from $CURRENT to ${NEW_VERSION}"
+
+      - name: Commit and push version update
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Actions"
+          git add Version.props
+          git commit -m "ci: auto-increment ApplicationVersion to ${{ steps.version.outputs.new_version }}" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref }}
+        continue-on-error: true

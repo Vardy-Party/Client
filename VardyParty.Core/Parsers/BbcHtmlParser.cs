@@ -341,13 +341,50 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         
             int? minute = null;
             string minuteStatus = string.Empty;
+            int? aggHomeScore = null;
+            int? aggAwayScore = null;
+            
+            // Extract aggregate score if present - search in raw HTML near progress container
+            if (hasProgressContainer && containerIdx >= 0)
+            {
+                int aggSearchEnd = progressContainerEnd > containerIdx ? progressContainerEnd : Math.Min(containerIdx + 2000, end);
+                int aggSearchLen = aggSearchEnd - containerIdx;
+                if (aggSearchLen > 0 && aggSearchLen < 5000)
+                {
+                    var aggBlock = html.Substring(containerIdx, aggSearchLen);
+                    var aggMatch = Regex.Match(aggBlock, @"\(Agg\s+(?<h>\d+)\s*-\s*(?<a>\d+)\)", RegexOptions.IgnoreCase);
+                    if (aggMatch.Success)
+                    {
+                        aggHomeScore = TryParseInt(aggMatch.Groups["h"].Value);
+                        aggAwayScore = TryParseInt(aggMatch.Groups["a"].Value);
+                    }
+                    else
+                    {
+                        var aggMatch2 = Regex.Match(aggBlock, @"Aggregate\s+score[^<]*(?<h>\d+)\s*,[^<]*(?<a>\d+)", RegexOptions.IgnoreCase);
+                        if (aggMatch2.Success)
+                        {
+                            aggHomeScore = TryParseInt(aggMatch2.Groups["h"].Value);
+                            aggAwayScore = TryParseInt(aggMatch2.Groups["a"].Value);
+                        }
+                    }
+                }
+            }
+            
             if (!string.IsNullOrEmpty(progressInner))
             {
-                var injPlus = Regex.Match(progressInner, @"(?<m>\d+)\s*\+\s*(?<e>\d+)", RegexOptions.IgnoreCase);
+                // First try: match injury time pattern with apostrophe before plus: 90'+8
+                var injPlus = Regex.Match(progressInner, @"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                
+                // If no apostrophe variant, try without apostrophe: 90+8
+                if (!injPlus.Success)
+                {
+                    injPlus = Regex.Match(progressInner, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                }
+                
                 if (injPlus.Success)
                 {
-                    var m = TryParseInt(injPlus.Groups["m"].Value) ?? 0;
-                    var e = TryParseInt(injPlus.Groups["e"].Value) ?? 0;
+                    var m = TryParseInt(injPlus.Groups[1].Value) ?? 0;
+                    var e = TryParseInt(injPlus.Groups[2].Value) ?? 0;
                     minute = m * 100 + e;
                     minuteStatus = $"{m}+{e}'";
                 }
@@ -357,6 +394,49 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     if (!mMatch.Success) mMatch = Regex.Match(progressInner, @"(?<m>\d+)\s*minutes", RegexOptions.IgnoreCase);
                     if (mMatch.Success) minute = TryParseInt(mMatch.Groups["m"].Value);
                     if (minute.HasValue) minuteStatus = $"{minute}'";
+                }
+            }
+            
+            // If minute not found in progressInner, search raw HTML for nested div patterns
+            // Handles: <div class="StyledPeriod"><div>69&#x27;</div></div>
+            if (!minute.HasValue && hasProgressContainer && containerIdx >= 0 && containerIdx < end)
+            {
+                int minSearchEnd = Math.Min(containerIdx + 2000, end);
+                int minSearchLen = minSearchEnd - containerIdx;
+                if (minSearchLen > 0)
+                {
+                    // First, try to find injury time pattern in the container block
+                    int containerBlockLen = minSearchLen;
+                    var containerBlock = html.Substring(containerIdx, containerBlockLen);
+                    var injMatch = Regex.Match(containerBlock, @"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                    if (!injMatch.Success)
+                    {
+                        injMatch = Regex.Match(containerBlock, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                    }
+                    
+                    if (injMatch.Success)
+                    {
+                        var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
+                        var e = TryParseInt(injMatch.Groups[2].Value) ?? 0;
+                        minute = m * 100 + e;
+                        minuteStatus = $"{m}+{e}'";
+                    }
+                    else
+                    {
+                        // Fallback to StyledPeriod single-digit pattern
+                        int styledIdx = html.IndexOf("StyledPeriod", containerIdx, minSearchLen, StringComparison.OrdinalIgnoreCase);
+                        if (styledIdx >= containerIdx)
+                        {
+                            int periodEnd = Math.Min(styledIdx + 200, html.Length);
+                            var periodBlock = html.Substring(styledIdx, periodEnd - styledIdx);
+                            var minMatch = Regex.Match(periodBlock, @"<div[^>]*>(\d+)(?:&#x27;|&#39;|')</div>", RegexOptions.IgnoreCase);
+                            if (minMatch.Success)
+                            {
+                                minute = TryParseInt(minMatch.Groups[1].Value);
+                                if (minute.HasValue) minuteStatus = $"{minute}'";
+                            }
+                        }
+                    }
                 }
             }
 
@@ -555,6 +635,42 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
             if (eventStatusMap.TryGetValue(id, out var statusMap))
             {
+                 // If we haven't found a minute yet, try to parse it from periodLabel
+                 if (!minute.HasValue && !string.IsNullOrEmpty(statusMap.periodLabel))
+                 {
+                     var periodText = statusMap.periodLabel;
+                     // Try to parse injury time format: "90+8'" or "90+8"
+                     var injMatch = Regex.Match(periodText, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                     if (injMatch.Success)
+                     {
+                         var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
+                         var e = TryParseInt(injMatch.Groups[2].Value) ?? 0;
+                         minute = m * 100 + e;
+                         minuteStatus = $"{m}+{e}'";
+                         isInProgress = true;
+                         hasProgress = true;
+                     }
+                     else
+                     {
+                         // Try to parse simple minute format: "68'" or "68 minutes"
+                         var minMatch = Regex.Match(periodText, @"(\d+)\s*'", RegexOptions.IgnoreCase);
+                         if (!minMatch.Success)
+                         {
+                             minMatch = Regex.Match(periodText, @"(\d+)\s*minutes?", RegexOptions.IgnoreCase);
+                         }
+                         if (minMatch.Success)
+                         {
+                             minute = TryParseInt(minMatch.Groups[1].Value);
+                             if (minute.HasValue)
+                             {
+                                 minuteStatus = $"{minute}'";
+                                 isInProgress = true;
+                                 hasProgress = true;
+                             }
+                         }
+                     }
+                 }
+                 
                  if (string.IsNullOrEmpty(status) || status.Equals("", StringComparison.OrdinalIgnoreCase))
                  {
                      status = statusMap.status;
@@ -598,7 +714,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 // else string.Empty loop init
             }
 
-            list.Add(new BbcFixture(home, away, DateTime.MinValue, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals));
+            list.Add(new BbcFixture(home, away, DateTime.MinValue, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals, aggHomeScore, aggAwayScore));
         }
     }
 
