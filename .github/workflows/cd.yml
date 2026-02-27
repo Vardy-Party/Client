@@ -754,7 +754,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
@@ -788,7 +788,6 @@ jobs:
                 - fontconfig-config
                 - fonts-dejavu-core
                 - libicu74
-                - dotnet-runtime-deps-10.0
               prime:
                 - -usr/share/doc
                 - -usr/share/man
@@ -798,7 +797,7 @@ jobs:
               command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
               environment:
-                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/lib
+                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu
               plugs:
                 - network
                 - network-bind
@@ -990,7 +989,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
@@ -1024,7 +1023,6 @@ jobs:
                 - fontconfig-config
                 - fonts-dejavu-core
                 - libicu74
-                - dotnet-runtime-deps-10.0
               prime:
                 - -usr/share/doc
                 - -usr/share/man
@@ -1034,7 +1032,7 @@ jobs:
               command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
               environment:
-                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/lib
+                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu
               plugs:
                 - network
                 - network-bind
