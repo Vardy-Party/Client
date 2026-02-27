@@ -143,9 +143,7 @@
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
-        <Content Include="Resources\Images\Leagues\**\*.*"
-                 Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
-                 CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
         
         <!-- Android TV Banner -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
@@ -164,23 +162,23 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.3" />
         <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.20" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.41" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
-        <PackageReference Include="QRCoder" Version="1.4.3" />
+        <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
-      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.8.0.11" />
-      <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.11.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.4.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.9.0" />
+      <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.15.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.1" />
     </ItemGroup>
 
     <ItemGroup>
