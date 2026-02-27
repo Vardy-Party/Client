@@ -768,12 +768,12 @@ jobs:
                 - vlc-plugin-access-extra
                 - vlc-l10n
                 - vlc-data
-                - libavcodec58
-                - libavformat58
-                - libavutil56
-                - libswscale5
-                - libswresample3
-                - libpostproc55
+                - libavcodec60
+                - libavformat60
+                - libavutil58
+                - libswscale7
+                - libswresample4
+                - libpostproc57
                 - libtheora0
                 - libopus0
                 - libvorbis0a
@@ -1006,12 +1006,12 @@ jobs:
                 - vlc-plugin-access-extra
                 - vlc-l10n
                 - vlc-data
-                - libavcodec58
-                - libavformat58
-                - libavutil56
-                - libswscale5
-                - libswresample3
-                - libpostproc55
+                - libavcodec60
+                - libavformat60
+                - libavutil58
+                - libswscale7
+                - libswresample4
+                - libpostproc57
                 - libtheora0
                 - libopus0
                 - libvorbis0a
