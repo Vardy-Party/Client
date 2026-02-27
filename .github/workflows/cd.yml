@@ -787,7 +787,7 @@ jobs:
                 - libxft2
                 - fontconfig-config
                 - fonts-dejavu-core
-                - libicu74
+                - dotnet-runtime-deps-10.0
               prime:
                 - -usr/share/doc
                 - -usr/share/man
@@ -1022,7 +1022,7 @@ jobs:
                 - libxft2
                 - fontconfig-config
                 - fonts-dejavu-core
-                - libicu74
+                - dotnet-runtime-deps-10.0
               prime:
                 - -usr/share/doc
                 - -usr/share/man
