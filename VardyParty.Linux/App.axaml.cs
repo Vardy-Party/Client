@@ -1,14 +1,12 @@
+using System.Net;
+using System.Reflection;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using LibVLCSharp.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
-using System.Reflection;
 using VardyParty.Configuration;
 using VardyParty.Handlers;
 using VardyParty.Health;
@@ -19,10 +17,11 @@ using VardyParty.Parsers;
 using VardyParty.Providers;
 using VardyParty.Resolvers;
 using VardyParty.Services;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace VardyParty.Linux;
 
-public partial class App : Application
+public class App : Application
 {
     private const string LinuxUserSecretsId = "543d9e88-b60c-4397-bc9d-c4614b8b1dcb";
     public IServiceProvider? Services { get; private set; }
@@ -34,28 +33,27 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // On Linux, LibVLCSharp requires libvlc libraries to be in /usr/lib
-        // or accessible via LD_LIBRARY_PATH (configured in snapcraft.yaml)
-        // Do NOT pass a custom path - LibVLCSharp doesn't support it on Linux
-        LibVLCSharp.Shared.Core.Initialize();
+        // Initialize LibVLCSharp - requires libvlc from system
+        // On Linux with classic confinement, this will use system-installed VLC
+        Core.Initialize();
 
         var appSettingsPath = ResolveAppSettingsPath();
         var appSettingsDirectory = Path.GetDirectoryName(appSettingsPath)!;
         var appSettingsFileName = Path.GetFileName(appSettingsPath);
 
         var allowUserSecrets = new ConfigurationBuilder()
-            .AddJsonFile(appSettingsPath, optional: false, reloadOnChange: false)
+            .AddJsonFile(appSettingsPath, false, false)
             .Build()
             .GetValue("AllowUserSecrets", false);
 
         var configurationBuilder = new ConfigurationBuilder()
             .SetBasePath(appSettingsDirectory)
-            .AddJsonFile(appSettingsFileName, optional: false, reloadOnChange: true)
+            .AddJsonFile(appSettingsFileName, false, true)
             .AddEnvironmentVariables();
 
         if (allowUserSecrets)
         {
-            configurationBuilder.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
+            configurationBuilder.AddUserSecrets(Assembly.GetExecutingAssembly(), true);
 
             var userSecretsPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -64,7 +62,7 @@ public partial class App : Application
                 LinuxUserSecretsId,
                 "secrets.json");
 
-            configurationBuilder.AddJsonFile(userSecretsPath, optional: true, reloadOnChange: true);
+            configurationBuilder.AddJsonFile(userSecretsPath, true, true);
         }
 
         var configuration = configurationBuilder.Build();
@@ -114,7 +112,6 @@ public partial class App : Application
 
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>();
-
         services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>();
 
@@ -142,9 +139,7 @@ public partial class App : Application
         Services = services.BuildServiceProvider();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
             desktop.MainWindow = Services.GetRequiredService<MainWindow>();
-        }
 
         base.OnFrameworkInitializationCompleted();
     }
@@ -163,12 +158,8 @@ public partial class App : Application
         };
 
         foreach (var candidate in candidates)
-        {
             if (File.Exists(candidate))
-            {
                 return candidate;
-            }
-        }
 
         throw new FileNotFoundException($"Could not find appsettings.json. Checked: {string.Join(", ", candidates)}");
     }

@@ -729,7 +729,7 @@ jobs:
           summary: Vardy Party Linux client
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
-          confinement: devmode
+          confinement: classic
           platforms:
             amd64:
 
@@ -965,7 +965,7 @@ jobs:
           summary: Vardy Party Linux client
           description: Vardy Party desktop client packaged as a Snap.
           grade: devel
-          confinement: devmode
+          confinement: classic
           platforms:
             arm64:
 
