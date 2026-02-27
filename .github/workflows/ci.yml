@@ -13,6 +13,8 @@ on:
   pull_request:
     branches:
       - main
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       run_linux_runtime_smoke:

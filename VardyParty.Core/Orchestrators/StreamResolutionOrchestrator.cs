@@ -1,6 +1,5 @@
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
-using VardyParty.Health;
 using VardyParty.Models;
 using VardyParty.Providers;
 using VardyParty.Services;
@@ -18,16 +17,19 @@ public class StreamResolutionOrchestrator(
     INativeVideoPlayerService nativeVideoPlayer,
     ILogger<StreamResolutionOrchestrator> logger) : IStreamResolutionOrchestrator
 {
-    private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
-        new(new StreamResolutionProgress());
+    private const int HealthyStreamsThreshold = 2;
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
-    private int _totalStreams;
-    private int _streamsTested;
+    private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
+        new(new StreamResolutionProgress());
+
+    private bool _hasBufferingOccurred;
     private int _healthyStreamCount;
     private bool _isResolving;
     private string _status = string.Empty;
-    private bool _hasBufferingOccurred;
+    private int _streamsTested;
+
+    private int _totalStreams;
 
     public IObservable<StreamResolutionProgress> ProgressUpdated => _progressSubject;
 
@@ -41,8 +43,9 @@ public class StreamResolutionOrchestrator(
         PublishProgress();
 
         var outcome = new StreamResolutionOutcome();
-        bool hasPlayedFirstStream = false;
+        var hasPlayedFirstStream = false;
         var streamCount = 0;
+        Task<PlaybackResult?>? playbackTask = null;
 
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
@@ -57,23 +60,37 @@ public class StreamResolutionOrchestrator(
         }
 
         await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
-            orderedStreams,
-            batchSize: 3,
-            cancellationToken: cancellationToken,
-            onTotalStreamsKnown: totalCount =>
-            {
-                _totalStreams = totalCount;
-                PublishProgress();
-            }))
+                           orderedStreams,
+                           3,
+                           cancellationToken,
+                           totalCount =>
+                           {
+                               _totalStreams = totalCount;
+                               PublishProgress();
+                           }))
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Check if playback was closed by user
+            if (playbackTask != null && playbackTask.IsCompleted)
+            {
+                var playbackResult = await playbackTask;
+                if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    outcome.UserClosed = true;
+                    outcome.PlaybackResult = playbackResult;
+                    return outcome;
+                }
+            }
+
             streamCount++;
             _streamsTested++;
             PublishProgress();
 
             if (enrichedStream.Status == StreamResolutionStatus.Failed)
             {
-                _ = ReportHealthAsync(game, enrichedStream.Stream.Url, "failed", enrichedStream.ErrorMessage, cancellationToken);
+                _ = ReportHealthAsync(game, enrichedStream.Stream.Url, "failed", enrichedStream.ErrorMessage,
+                    cancellationToken);
             }
             else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
             {
@@ -89,7 +106,7 @@ public class StreamResolutionOrchestrator(
             _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
             PublishProgress();
 
-            if (_healthyStreamCount >= 2)
+            if (_healthyStreamCount >= HealthyStreamsThreshold)
             {
                 selectionCoordinator.PauseTesting();
                 _status = "Testing paused";
@@ -100,19 +117,25 @@ public class StreamResolutionOrchestrator(
             if (!hasPlayedFirstStream)
             {
                 hasPlayedFirstStream = true;
-                var playbackResult = await PlayStreamAsync(game, enrichedStream, cancellationToken);
-                outcome.PlaybackResult = playbackResult;
+                // Start playback without awaiting so stream testing can continue
+                playbackTask = PlayStreamAsync(game, enrichedStream, cancellationToken);
+            }
+        }
 
-                if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    outcome.UserClosed = true;
-                    return outcome;
-                }
+        // Wait for playback to complete if it was started
+        if (playbackTask != null)
+        {
+            var playbackResult = await playbackTask;
+            outcome.PlaybackResult = playbackResult;
 
-                if (playbackResult != null && !playbackResult.Success)
-                {
-                    await HandlePlaybackFailureAsync(game, enrichedStream, playbackResult, cancellationToken);
-                }
+            if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                outcome.UserClosed = true;
+            }
+            else if (playbackResult != null && !playbackResult.Success)
+            {
+                await HandlePlaybackFailureAsync(game, streamSwitchingService.GetCurrentStream()!, playbackResult,
+                    cancellationToken);
             }
         }
 
@@ -125,7 +148,8 @@ public class StreamResolutionOrchestrator(
 
         _isResolving = false;
         PublishProgress();
-        logger.LogInformation("[StreamResolution] Completed. Total={Total}, Tested={Tested}, Healthy={Healthy}", streamCount, _streamsTested, _healthyStreamCount);
+        logger.LogInformation("[StreamResolution] Completed. Total={Total}, Tested={Tested}, Healthy={Healthy}",
+            streamCount, _streamsTested, _healthyStreamCount);
         return outcome;
     }
 
@@ -139,7 +163,8 @@ public class StreamResolutionOrchestrator(
         _progressSubject.OnNext(new StreamResolutionProgress());
     }
 
-    private Task ReportHealthAsync(Game game, string? streamUrl, string status, string? error, CancellationToken cancellationToken)
+    private Task ReportHealthAsync(Game game, string? streamUrl, string status, string? error,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(streamUrl))
         {
@@ -158,11 +183,12 @@ public class StreamResolutionOrchestrator(
         return streamHealthService.ReportHealthAsync(game.ApiLeague, game.Home, game.Away, report, cancellationToken);
     }
 
-    private async Task<PlaybackResult?> PlayStreamAsync(Game game, EnrichedStream enrichedStream, CancellationToken cancellationToken)
+    private async Task<PlaybackResult?> PlayStreamAsync(Game game, EnrichedStream enrichedStream,
+        CancellationToken cancellationToken)
     {
         // Use the M3U8 response cached from health check phase if available
         string? m3u8Url = null;
-        
+
         if (!string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url))
         {
             logger.LogInformation("[StreamResolution] Reusing M3U8 from health check (token-based, used immediately)");
@@ -185,16 +211,18 @@ public class StreamResolutionOrchestrator(
 
         var title = $"{game.DisplayHome} vs {game.DisplayAway}";
         using var playbackCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        
+
         // Reset buffering flag and subscribe to buffering events
         _hasBufferingOccurred = false;
         EventHandler<bool>? bufferingHandler = (sender, isBuffering) =>
         {
             if (isBuffering)
+            {
                 _hasBufferingOccurred = true;
+            }
         };
         nativeVideoPlayer.BufferingStateChanged += bufferingHandler;
-        
+
         var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream.Url, playbackCts.Token);
         try
         {
@@ -202,7 +230,7 @@ public class StreamResolutionOrchestrator(
                 m3u8Url,
                 enrichedStream.Stream.Url,
                 title,
-                onNextStreamRequested: () => HandleNextStreamRequestedAsync(game, cancellationToken));
+                () => HandleNextStreamRequestedAsync(game, cancellationToken));
         }
         finally
         {
@@ -222,23 +250,23 @@ public class StreamResolutionOrchestrator(
     {
         try
         {
-            bool hasReportedMetadata = false;
-            
+            var hasReportedMetadata = false;
+
             // Wait for player to initialize and extract metadata
             // Windows MediaPlayer fires NaturalVideoSizeChanged after video decodes (~1-2s)
             await Task.Delay(TimeSpan.FromMilliseconds(2500), cancellationToken);
-            
+
             // Get real metrics from the player service after playback has started
             var initialMetrics = nativeVideoPlayer.GetCurrentMetrics();
             _ = streamHealthReporter.ReportPlaybackStartedAsync(streamUrl, null, initialMetrics, cancellationToken);
             hasReportedMetadata = initialMetrics?.Resolution.HasValue == true;
-            
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(PlaybackHealthInterval, cancellationToken);
-                
+
                 var metrics = nativeVideoPlayer.GetCurrentMetrics();
-                
+
                 // Report periodic metrics without duplicating metadata
                 _ = streamHealthReporter.ReportPlaybackMetricsAsync(streamUrl, null, metrics, cancellationToken);
             }
@@ -262,7 +290,7 @@ public class StreamResolutionOrchestrator(
 
             // Try to get current metrics from the native video player (includes video metadata)
             var playerMetrics = nativeVideoPlayer.GetCurrentMetrics();
-            
+
             var metrics = new PlaybackMetrics
             {
                 BitrateKbps = bitrate,
@@ -270,12 +298,12 @@ public class StreamResolutionOrchestrator(
                 IsBuffering = _hasBufferingOccurred,
                 VideoCodec = playerMetrics?.VideoCodec, // Get from player (extracted from format)
                 AudioCodec = playerMetrics?.AudioCodec, // Get from player (extracted from format)
-                Framerate = playerMetrics?.Framerate     // Get from player (extracted from format)
+                Framerate = playerMetrics?.Framerate // Get from player (extracted from format)
             };
-            
+
             // Clear buffering flag after reporting
             _hasBufferingOccurred = false;
-            
+
             return metrics;
         }
         catch
@@ -300,7 +328,8 @@ public class StreamResolutionOrchestrator(
 
         if (string.IsNullOrEmpty(resolved))
         {
-            logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}", nextStream.Stream.Channel);
+            logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
+                nextStream.Stream.Channel);
             return;
         }
 
