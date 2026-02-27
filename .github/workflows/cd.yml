@@ -795,6 +795,8 @@ jobs:
             vardyparty:
               command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
+              environment:
+                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/lib
               plugs:
                 - network
                 - network-bind
@@ -1027,6 +1029,8 @@ jobs:
             vardyparty:
               command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
+              environment:
+                LD_LIBRARY_PATH: $SNAP/usr/lib:$SNAP/lib
               plugs:
                 - network
                 - network-bind
