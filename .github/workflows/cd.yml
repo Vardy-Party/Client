@@ -753,7 +753,27 @@ jobs:
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
               stage-packages:
                 - libvlc5
+                - libvlccore9
                 - vlc-plugin-base
+                - vlc-plugin-video-splitter
+                - vlc-plugin-video-output
+                - vlc-plugin-misc
+                - vlc-plugin-access-extra
+                - vlc-l10n
+                - vlc-data
+                - libavcodec58
+                - libavformat58
+                - libavutil56
+                - libswscale5
+                - libswresample3
+                - libpostproc55
+                - libtheora0
+                - libopus0
+                - libvorbis0a
+                - libvorbisenc2
+                - libflac8
+                - libjack-jackd2-0
+                - libpulse0
                 - libice6
                 - libsm6
                 - libx11-6
@@ -766,10 +786,13 @@ jobs:
                 - libxft2
                 - fontconfig-config
                 - fonts-dejavu-core
+              prime:
+                - -usr/share/doc
+                - -usr/share/man
 
           apps:
             vardyparty:
-              command: VardyParty
+              command: bash -c 'export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH && exec VardyParty'
               desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
@@ -961,7 +984,27 @@ jobs:
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
               stage-packages:
                 - libvlc5
+                - libvlccore9
                 - vlc-plugin-base
+                - vlc-plugin-video-splitter
+                - vlc-plugin-video-output
+                - vlc-plugin-misc
+                - vlc-plugin-access-extra
+                - vlc-l10n
+                - vlc-data
+                - libavcodec58
+                - libavformat58
+                - libavutil56
+                - libswscale5
+                - libswresample3
+                - libpostproc55
+                - libtheora0
+                - libopus0
+                - libvorbis0a
+                - libvorbisenc2
+                - libflac8
+                - libjack-jackd2-0
+                - libpulse0
                 - libice6
                 - libsm6
                 - libx11-6
@@ -974,10 +1017,13 @@ jobs:
                 - libxft2
                 - fontconfig-config
                 - fonts-dejavu-core
+              prime:
+                - -usr/share/doc
+                - -usr/share/man
 
           apps:
             vardyparty:
-              command: VardyParty
+              command: bash -c 'export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH && exec VardyParty'
               desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
