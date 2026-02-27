@@ -751,6 +751,13 @@ jobs:
                 Categories=AudioVideo;Video;
                 DESKTOP
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                mkdir -p "$CRAFT_PART_INSTALL/bin"
+                cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
+                #!/bin/bash
+                export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH
+                exec $SNAP/VardyParty "$@"
+                WRAPPER
+                chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:
                 - libvlc5
                 - libvlccore9
@@ -792,7 +799,7 @@ jobs:
 
           apps:
             vardyparty:
-              command: bash -c 'export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH && exec VardyParty'
+              command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
@@ -982,6 +989,13 @@ jobs:
                 Categories=AudioVideo;Video;
                 DESKTOP
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                mkdir -p "$CRAFT_PART_INSTALL/bin"
+                cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
+                #!/bin/bash
+                export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH
+                exec $SNAP/VardyParty "$@"
+                WRAPPER
+                chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:
                 - libvlc5
                 - libvlccore9
@@ -1023,7 +1037,7 @@ jobs:
 
           apps:
             vardyparty:
-              command: bash -c 'export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH && exec VardyParty'
+              command: bin/vardyparty-wrapper
               desktop: meta/gui/vardyparty.desktop
               plugs:
                 - network
