@@ -26,6 +26,7 @@
         <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+		<MauiXamlInflator>SourceGen</MauiXamlInflator>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -142,9 +143,7 @@
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
-        <Content Include="Resources\Images\Leagues\**\*.*"
-                 Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
-                 CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
         
         <!-- Android TV Banner -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
@@ -163,23 +162,34 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.3" />
         <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.20" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.41" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
-        <PackageReference Include="QRCoder" Version="1.4.3" />
+        <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
-      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.8.0" />
-      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.8.0.11" />
-      <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.11.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.4.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.9.0" />
+      <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.15.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.1" />
+      <!-- Explicit AndroidX Lifecycle packages to resolve version conflicts -->
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModelSavedState" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Runtime.Ktx" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Process" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel.Ktx" Version="2.10.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState" Version="1.4.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState.SavedState.Ktx" Version="1.4.0.1" />
     </ItemGroup>
 
     <ItemGroup>
@@ -288,6 +298,19 @@
         </PropertyGroup>
         <Message Text="Updating Package.appxmanifest version to $(WindowsVersion)" Importance="high" />
         <Exec Command="powershell -NoProfile -Command &quot;(Get-Content '$(ManifestPath)') -replace 'Version=&quot;[\d.]+&quot;', 'Version=&quot;$(WindowsVersion)&quot;' | Set-Content '$(ManifestPath)'&quot;" />
+    </Target>
+
+    <!-- Local Development: Patch appsettings.json with user secrets for Android builds -->
+    <!-- Usage: dotnet build -f net10.0-android -p:PatchAppSettings=true -->
+    <!-- This patches the SOURCE appsettings.json BEFORE build so it gets embedded into APK -->
+    <!-- WARNING: This modifies the source file. Revert with: git restore VardyParty\appsettings.json -->
+    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net10.0-android' AND '$(PatchAppSettings)' == 'true'">
+        <PropertyGroup>
+            <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
+            <UserSecretsId>$(UserSecretsId)</UserSecretsId>
+        </PropertyGroup>
+        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE build (for embedding into APK)" Importance="high" />
+        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings-android.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
     </Target>
 
 </Project>
