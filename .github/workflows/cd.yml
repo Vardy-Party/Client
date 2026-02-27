@@ -754,7 +754,8 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu"
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/x86_64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
+                export VLC_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/vlc/plugins"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
@@ -989,7 +990,8 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu"
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu:$SNAP/usr/lib/aarch64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
+                export VLC_PLUGIN_PATH="$SNAP/usr/lib/aarch64-linux-gnu/vlc/plugins"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
