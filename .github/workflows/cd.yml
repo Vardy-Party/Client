@@ -754,7 +754,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
@@ -986,7 +986,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                export LD_LIBRARY_PATH=$SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET:$SNAP/usr/lib:$LD_LIBRARY_PATH
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
