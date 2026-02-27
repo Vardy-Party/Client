@@ -1057,10 +1057,10 @@ jobs:
       - name: Compute shared release tag
         id: release_tag
         run: |
-          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
-          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' VardyParty/VardyParty.csproj | head -n 1)
+          APP_DISPLAY_VERSION=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          APP_BUILD_VERSION=$(sed -n 's:.*<ApplicationVersion>\([^<]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
           if [ -z "$APP_DISPLAY_VERSION" ] || [ -z "$APP_BUILD_VERSION" ]; then
-            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in VardyParty/VardyParty.csproj"
+            echo "ERROR: ApplicationDisplayVersion/ApplicationVersion missing in Version.props"
             exit 1
           fi
           echo "tag=${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}" >> "$GITHUB_OUTPUT"
