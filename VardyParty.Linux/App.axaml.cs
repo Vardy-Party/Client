@@ -34,27 +34,10 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // In snap environment, libvlc is in /snap/vardyparty/current/usr/lib
-        // In regular Linux, libvlc is in /usr/lib
-        string? libvlcPath = null;
-        
-        // Check if running in snap
-        string? snapPath = Environment.GetEnvironmentVariable("SNAP");
-        if (!string.IsNullOrEmpty(snapPath))
-        {
-            // Inside snap - libvlc is in $SNAP/usr/lib
-            libvlcPath = Path.Combine(snapPath, "usr", "lib");
-        }
-        
-        if (!string.IsNullOrEmpty(libvlcPath) && Directory.Exists(libvlcPath))
-        {
-            LibVLCSharp.Shared.Core.Initialize(libvlcPath);
-        }
-        else
-        {
-            // Fallback to default system paths
-            LibVLCSharp.Shared.Core.Initialize();
-        }
+        // On Linux, LibVLCSharp requires libvlc libraries to be in /usr/lib
+        // or accessible via LD_LIBRARY_PATH (configured in snapcraft.yaml)
+        // Do NOT pass a custom path - LibVLCSharp doesn't support it on Linux
+        LibVLCSharp.Shared.Core.Initialize();
 
         var appSettingsPath = ResolveAppSettingsPath();
         var appSettingsDirectory = Path.GetDirectoryName(appSettingsPath)!;
