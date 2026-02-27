@@ -754,19 +754,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                ARCH=$(uname -m)
-                case "$ARCH" in
-                  x86_64)
-                    TRIPLET="x86_64-linux-gnu"
-                    ;;
-                  aarch64)
-                    TRIPLET="aarch64-linux-gnu"
-                    ;;
-                  *)
-                    TRIPLET="x86_64-linux-gnu"
-                    ;;
-                esac
-                export LD_LIBRARY_PATH=$SNAP/usr/lib/$TRIPLET:$SNAP/usr/lib:$SNAP/lib/$TRIPLET:$SNAP/lib:$LD_LIBRARY_PATH
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
@@ -998,19 +986,7 @@ jobs:
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
-                ARCH=$(uname -m)
-                case "$ARCH" in
-                  x86_64)
-                    TRIPLET="x86_64-linux-gnu"
-                    ;;
-                  aarch64)
-                    TRIPLET="aarch64-linux-gnu"
-                    ;;
-                  *)
-                    TRIPLET="x86_64-linux-gnu"
-                    ;;
-                esac
-                export LD_LIBRARY_PATH=$SNAP/usr/lib/$TRIPLET:$SNAP/usr/lib:$SNAP/lib/$TRIPLET:$SNAP/lib:$LD_LIBRARY_PATH
+                export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/lib:$LD_LIBRARY_PATH"
                 exec $SNAP/VardyParty "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
