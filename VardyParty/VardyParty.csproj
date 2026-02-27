@@ -300,4 +300,17 @@
         <Exec Command="powershell -NoProfile -Command &quot;(Get-Content '$(ManifestPath)') -replace 'Version=&quot;[\d.]+&quot;', 'Version=&quot;$(WindowsVersion)&quot;' | Set-Content '$(ManifestPath)'&quot;" />
     </Target>
 
+    <!-- Local Development: Patch appsettings.json with user secrets for Android builds -->
+    <!-- Usage: dotnet build -f net10.0-android -p:PatchAppSettings=true -->
+    <!-- This patches the SOURCE appsettings.json BEFORE build so it gets embedded into APK -->
+    <!-- WARNING: This modifies the source file. Revert with: git restore VardyParty\appsettings.json -->
+    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net10.0-android' AND '$(PatchAppSettings)' == 'true'">
+        <PropertyGroup>
+            <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
+            <UserSecretsId>$(UserSecretsId)</UserSecretsId>
+        </PropertyGroup>
+        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE build (for embedding into APK)" Importance="high" />
+        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings-android.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+    </Target>
+
 </Project>
