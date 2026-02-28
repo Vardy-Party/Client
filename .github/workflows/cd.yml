@@ -18,6 +18,11 @@ on:
         description: 'CI Run ID to download artifacts from (required for feature branches)'
         required: false
         default: ''
+      produce_release_assets:
+        description: 'When true (on Main only), publish GitHub Release assets (artifacts are always uploaded).'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -125,16 +130,71 @@ jobs:
             exit 1
           }
         shell: powershell
+      - name: Verify PFX password for signing
+        run: |
+          $certPath = "${{ github.workspace }}\VardyParty\certs\vardyparty.pfx"
+          if (-not (Test-Path $certPath)) {
+            Write-Host "ERROR: PFX file not found at $certPath"
+            exit 1
+          }
+
+          try {
+            $pfx = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+            $pfx.Import(
+              $certPath,
+              "${{ secrets.WINDOWS_CERT_PASSWORD }}",
+              [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+            )
+
+            if (-not $pfx.HasPrivateKey) {
+              Write-Host "ERROR: PFX loaded but no private key is present"
+              exit 1
+            }
+
+            Write-Host "PFX password verified successfully"
+            Write-Host "Thumbprint: $($pfx.Thumbprint)"
+          }
+          catch {
+            Write-Host "ERROR: Failed to load PFX with provided password. $($_.Exception.Message)"
+            exit 1
+          }
+        shell: powershell
       - name: Publish Windows app
+        env:
+          MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
-          $msixPath = Get-ChildItem -Path "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages" -Filter "*.msix" -Recurse | Select-Object -First 1
+          $searchRoots = @(
+            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/AppPackages"
+          )
+
+          $msixPath = $null
+          foreach ($root in $searchRoots) {
+            if (Test-Path $root) {
+              $candidate = Get-ChildItem -Path $root -Filter "*.msix" -Recurse -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+              if ($candidate) {
+                $msixPath = $candidate
+                break
+              }
+            }
+          }
+
           if ($msixPath) {
             Copy-Item $msixPath.FullName "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix"
-            Write-Host "MSIX found: $($msixPath.Name)"
+            Write-Host "MSIX found: $($msixPath.FullName)"
           } else {
-            Write-Host "No MSIX file found!"
+            Write-Host "No MSIX file found in expected locations."
+            foreach ($root in $searchRoots) {
+              Write-Host "Checked: $root (exists: $(Test-Path $root))"
+            }
+            Write-Host "Listing VardyParty/AppPackages (if exists):"
+            if (Test-Path "VardyParty/AppPackages") {
+              Get-ChildItem -Path "VardyParty/AppPackages" -Recurse | ForEach-Object { Write-Host $_.FullName }
+            }
             exit 1
           }
         shell: powershell
@@ -166,25 +226,41 @@ jobs:
       - name: Copy AppxManifest and create integrity manifest
         run: |
           $artifactsDir = "windows-artifacts"
-          $manifestPath = "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages"
-          
-          # Copy AppxManifest.xml
-          Get-ChildItem -Path $manifestPath -Filter "AppxManifest.xml" -Recurse | ForEach-Object {
-            Copy-Item $_.FullName "$artifactsDir/AppxManifest.xml" -Force
+          $searchRoots = @(
+            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/AppPackages"
+          )
+
+          $manifestCopied = $false
+          foreach ($root in $searchRoots) {
+            if (Test-Path $root) {
+              $manifest = Get-ChildItem -Path $root -Filter "AppxManifest.xml" -Recurse -File |
+                Select-Object -First 1
+              if ($manifest) {
+                Copy-Item $manifest.FullName "$artifactsDir/AppxManifest.xml" -Force
+                Write-Host "Copied AppxManifest from $($manifest.FullName)"
+                $manifestCopied = $true
+                break
+              }
+            }
           }
-          
+
+          if (-not $manifestCopied) {
+            Write-Host "Warning: AppxManifest.xml not found in expected AppPackages locations"
+          }
+
           # Create integrity manifest with SHA256 hashes
           $hashManifest = @()
           $hashManifest += "# VardyParty Windows Package Integrity Manifest"
           $hashManifest += "# Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
           $hashManifest += ""
-          
+
           Get-ChildItem -Path $artifactsDir -File | ForEach-Object {
             $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
             $hashManifest += "$($_.Name): $hash"
             Write-Host "SHA256($($_.Name)): $hash"
           }
-          
+
           $hashManifest | Out-File -FilePath "$artifactsDir/INTEGRITY.txt" -Encoding UTF8
           Write-Host "Integrity manifest created"
         shell: powershell
@@ -207,7 +283,7 @@ jobs:
           path: ./windows-artifacts
           retention-days: 30
       - name: Publish Windows package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -391,7 +467,7 @@ jobs:
           path: ./android-package-artifacts
           retention-days: 30
       - name: Publish Android package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -501,7 +577,7 @@ jobs:
           path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
       - name: Publish iOS package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -610,7 +686,7 @@ jobs:
           path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
       - name: Publish macOS package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -846,7 +922,7 @@ jobs:
           path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
           retention-days: 30
       - name: Publish Linux x64 package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.display }}-b${{ steps.snap_version.outputs.build }}"
@@ -1082,7 +1158,7 @@ jobs:
           path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
           retention-days: 30
       - name: Publish Linux ARM64 package as Release asset
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.display }}-b${{ steps.snap_version.outputs.build }}"
@@ -1107,7 +1183,7 @@ jobs:
       - package-macos
       - package-linux-x64
       - package-linux-arm64
-    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
     steps:
       - uses: actions/checkout@v4
       - name: Compute shared release tag
