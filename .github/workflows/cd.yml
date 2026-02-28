@@ -19,7 +19,7 @@ on:
         required: false
         default: ''
       produce_release_assets:
-        description: 'When true, publish GitHub Release assets (artifacts are always uploaded).'
+        description: 'When true (on Main only), publish GitHub Release assets (artifacts are always uploaded).'
         required: false
         default: false
         type: boolean
