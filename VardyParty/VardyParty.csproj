@@ -217,7 +217,8 @@
     <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
     <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
-    <GenerateTestArtifacts>True</GenerateTestArtifacts>
+    <GenerateTestArtifacts Condition="'$(Configuration)' == 'Debug'">True</GenerateTestArtifacts>
+    <GenerateTestArtifacts Condition="'$(Configuration)' != 'Debug'">False</GenerateTestArtifacts>
     <AppInstallerUri>bin\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
