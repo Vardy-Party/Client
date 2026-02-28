@@ -601,9 +601,9 @@ jobs:
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
             --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIRED_ROLE_CLAIM_TYPE }}" \
-            --arg requiredRole "${{ secrets.AUTH0_REQUIRED_ROLE }}" \
-            --arg headlessBaseUrl "${{ secrets.API_HEADLESS_BASE_URL }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
             '(.Auth0 //= {})
              | (.Api //= {})
              | .Auth0.Domain = $domain
