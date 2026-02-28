@@ -965,7 +965,7 @@ jobs:
             --arg scope "${{ secrets.AUTH0_SCOPE }}" \
             --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
-            --arg postLogoutRedirectUri="${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
             --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
             --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
