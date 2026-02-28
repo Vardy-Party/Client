@@ -125,7 +125,38 @@ jobs:
             exit 1
           }
         shell: powershell
+      - name: Verify PFX password for signing
+        run: |
+          $certPath = "${{ github.workspace }}\VardyParty\certs\vardyparty.pfx"
+          if (-not (Test-Path $certPath)) {
+            Write-Host "ERROR: PFX file not found at $certPath"
+            exit 1
+          }
+
+          try {
+            $pfx = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+            $pfx.Import(
+              $certPath,
+              "${{ secrets.WINDOWS_CERT_PASSWORD }}",
+              [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+            )
+
+            if (-not $pfx.HasPrivateKey) {
+              Write-Host "ERROR: PFX loaded but no private key is present"
+              exit 1
+            }
+
+            Write-Host "PFX password verified successfully"
+            Write-Host "Thumbprint: $($pfx.Thumbprint)"
+          }
+          catch {
+            Write-Host "ERROR: Failed to load PFX with provided password. $($_.Exception.Message)"
+            exit 1
+          }
+        shell: powershell
       - name: Publish Windows app
+        env:
+          MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
@@ -570,9 +601,9 @@ jobs:
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
             --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
-            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIRED_ROLE_CLAIM_TYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIRED_ROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESS_BASE_URL }}" \
             '(.Auth0 //= {})
              | (.Api //= {})
              | .Auth0.Domain = $domain
@@ -894,7 +925,7 @@ jobs:
             --arg scope "${{ secrets.AUTH0_SCOPE }}" \
             --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
-            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
+            --arg postLogoutRedirectUri="${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
             --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
             --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
