@@ -27,6 +27,7 @@ public static class LeagueLogoMapper
         {
             _ when Is("DFB Pokal") => "images/leagues/DFB_2025-logo_brandlogos.net_635b47.svg",
             _ when Is("Olympic") => "images/leagues/milano-cortina-2026-logo-brandlogos.net_wa7r7kszb.svg",
+            _ when Is("Coupe de France") => "images/leagues/Coupe_de_France-logo.svg",
             _ when Is("Copa del Rey") => "images/leagues/serie-a-logo-brandlogos.net_hklrxdbdu.svg",
             _ when Is("La Liga 2") || Is("Segunda") || Is("laliga-hypermotion") => "images/leagues/laliga-hypermotion-logo-brandlogos.net_dn0w6izjc.svg",
             _ when Is("La Liga") || Is("laliga") => "images/leagues/la-liga-2023-logo-brandlogos.net_fi7yd18xl.svg",
