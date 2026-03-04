@@ -1,0 +1,1 @@
+dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c:Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true  -p:AndroidKeyStore=false -p:PatchAppSettings=true
