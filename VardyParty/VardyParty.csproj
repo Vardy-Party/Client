@@ -26,7 +26,7 @@
         <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
-		<MauiXamlInflator>SourceGen</MauiXamlInflator>
+        <MauiXamlInflator>SourceGen</MauiXamlInflator>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -218,7 +218,8 @@
     <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
     <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
-    <GenerateTestArtifacts>True</GenerateTestArtifacts>
+    <GenerateTestArtifacts Condition="'$(Configuration)' == 'Debug'">True</GenerateTestArtifacts>
+    <GenerateTestArtifacts Condition="'$(Configuration)' != 'Debug'">False</GenerateTestArtifacts>
     <AppInstallerUri>bin\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
@@ -271,10 +272,13 @@
     </PropertyGroup>
 
     <!-- MSIX packaging defaults for Windows. Password must be provided via environment variable MSIX_CERT_PASSWORD or via publish command. -->
+    <!-- Only sign if certificate file exists (allows unsigned CI builds, signed CD builds) -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
-      <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
-      <PackageCertificateKeyFile>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</PackageCertificateKeyFile>
+      <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
+      <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
+      <AppxPackageSigningEnabled Condition="!Exists('$(CertificateFilePath)')">false</AppxPackageSigningEnabled>
+      <PackageCertificateKeyFile Condition="Exists('$(CertificateFilePath)')">$(CertificateFilePath)</PackageCertificateKeyFile>
       <PackageCertificatePassword>$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
     </PropertyGroup>
 
