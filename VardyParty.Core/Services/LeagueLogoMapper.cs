@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using VardyParty.Models;
 
 namespace VardyParty.Services;
@@ -6,8 +7,6 @@ public static class LeagueLogoMapper
 {
     public static string GetLogoForLeague(Game game)
     {
-        if (game == null) return string.Empty;
-
         var name = !string.IsNullOrEmpty(game.BBCLeague) ? game.BBCLeague :
                   !string.IsNullOrEmpty(game.League) ? game.League :
                   string.Empty;
@@ -15,19 +14,19 @@ public static class LeagueLogoMapper
         return GetLogoForLeague(name);
     }
 
-    public static string GetLogoForLeague(string? league)
+    [SuppressMessage("ReSharper", "StringLiteralTypo")]
+    private static string GetLogoForLeague(string? league)
     {
         if (string.IsNullOrWhiteSpace(league)) return string.Empty;
         var name = league.Trim();
-
-        // Check if name contains key phrases (loose matching for UI strings)
-        bool Is(string target) => name.Contains(target, System.StringComparison.OrdinalIgnoreCase);
 
         return name switch
         {
             _ when Is("DFB Pokal") => "images/leagues/DFB_2025-logo_brandlogos.net_635b47.svg",
             _ when Is("Olympic") => "images/leagues/milano-cortina-2026-logo-brandlogos.net_wa7r7kszb.svg",
             _ when Is("Coupe de France") => "images/leagues/Coupe_de_France-logo.svg",
+            _ when Is("MLS") || Is("Major League Soccer") || Is("US Major League Soccer") => "images/leagues/MLS-logo-Brandlogos.net.svg",
+            _ when Is("Japan J1 League") || Is("J1 League") || Is("J.League") => "images/leagues/J.League.svg",
             _ when Is("Copa del Rey") => "images/leagues/serie-a-logo-brandlogos.net_hklrxdbdu.svg",
             _ when Is("La Liga 2") || Is("Segunda") || Is("laliga-hypermotion") => "images/leagues/laliga-hypermotion-logo-brandlogos.net_dn0w6izjc.svg",
             _ when Is("La Liga") || Is("laliga") => "images/leagues/la-liga-2023-logo-brandlogos.net_fi7yd18xl.svg",
@@ -56,5 +55,8 @@ public static class LeagueLogoMapper
             _ when Is("UEFA Conference League") || Is("Conference League") || Is("Europa Conference League") => "images/leagues/uefa-europa-conference-league-logo-75E25sU4_brandlogos.net.svg",
             _ => string.Empty
         };
+
+        // Check if name contains key phrases (loose matching for UI strings)
+        bool Is(string target) => name.Contains(target, StringComparison.OrdinalIgnoreCase);
     }
 }
