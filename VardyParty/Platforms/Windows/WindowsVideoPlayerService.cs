@@ -78,6 +78,7 @@ namespace VardyParty.Platforms.Windows
                 var cleanupInvoked = false;
                 var currentPlaybackUrl = m3u8Url;
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
                 IDisposable? healthyStreamsSubscription = null;
                 IDisposable? currentIndexSubscription = null;
                 Microsoft.UI.Dispatching.DispatcherQueueTimer? streamInfoHideTimer = null;
@@ -145,21 +146,70 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 }
 
-                // Control panel (buttons)
-                var controlPanel = new Microsoft.UI.Xaml.Controls.StackPanel
+                // Close button (top-right)
+                var closeButton = new WinButton
                 {
-                    Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
-                    HorizontalAlignment = WinHorizontalAlignment.Left,
+                    Content = "X",
+                    HorizontalAlignment = WinHorizontalAlignment.Right,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(10),
-                    Spacing = 10
+                    Margin = new WinThickness(0, 12, 12, 0),
+                    Width = 32,
+                    Height = 32,
+                    Padding = new WinThickness(0),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
                 };
 
-                var closeButton = new WinButton { Content = "Close" };
-                var infoButton = new WinButton { Content = "i" };
+                // Bottom-left hamburger button and menu
+                var menuButton = new WinButton
+                {
+                    Content = "☰",
+                    HorizontalAlignment = WinHorizontalAlignment.Left,
+                    VerticalAlignment = WinVerticalAlignment.Bottom,
+                    Margin = new WinThickness(14, 0, 0, 14),
+                    Width = 42,
+                    Height = 42,
+                    Opacity = 0,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.65 },
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
+                };
 
-                controlPanel.Children.Add(closeButton);
-                controlPanel.Children.Add(infoButton);
+                var menuPanel = new Microsoft.UI.Xaml.Controls.StackPanel
+                {
+                    Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
+                    HorizontalAlignment = WinHorizontalAlignment.Left,
+                    VerticalAlignment = WinVerticalAlignment.Bottom,
+                    Margin = new WinThickness(14, 0, 0, 64),
+                    Spacing = 8,
+                    Padding = new WinThickness(10),
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.85 },
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6)
+                };
+
+                var reportStreamButton = new WinButton { Content = "Report stream" };
+                var videoInfoButton = new WinButton { Content = "Video info" };
+                var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    Text = "Reporting stream...",
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange),
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    FontSize = 12
+                };
+
+                menuPanel.Children.Add(reportStreamButton);
+                menuPanel.Children.Add(videoInfoButton);
+                menuPanel.Children.Add(reportStatusText);
+
+                // Full-screen click-away surface for menu/info dismiss
+                var dismissSurface = new Microsoft.UI.Xaml.Controls.Border
+                {
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                    VerticalAlignment = WinVerticalAlignment.Stretch,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                };
 
                 // Info Overlay
                 var infoPanel = new Microsoft.UI.Xaml.Controls.Grid
@@ -330,12 +380,70 @@ namespace VardyParty.Platforms.Windows
                         tcs.TrySetResult(PlaybackResult.SuccessResult("User closed video player"));
                     }
                 };
-                infoButton.Click += (s, e) => 
-                { 
-                    infoPanel.Visibility = infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible 
-                        ? Microsoft.UI.Xaml.Visibility.Collapsed 
+
+                void RefreshDismissSurface()
+                {
+                    dismissSurface.Visibility =
+                        menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible ||
+                        infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                            ? Microsoft.UI.Xaml.Visibility.Visible
+                            : Microsoft.UI.Xaml.Visibility.Collapsed;
+                }
+
+                menuButton.Click += (_, __) =>
+                {
+                    menuPanel.Visibility = menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                        ? Microsoft.UI.Xaml.Visibility.Collapsed
                         : Microsoft.UI.Xaml.Visibility.Visible;
+                    RefreshDismissSurface();
+                };
+
+                videoInfoButton.Click += (_, __) =>
+                {
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                     UpdateInfo();
+                    RefreshDismissSurface();
+                };
+
+                reportStreamButton.Click += async (_, __) =>
+                {
+                    reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                    reportStatusText.Text = "Reporting stream...";
+
+                    try
+                    {
+                        if (streamResolutionOrchestrator != null)
+                        {
+                            await streamResolutionOrchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
+                            reportStatusText.Text = "Stream reported";
+                        }
+                        else
+                        {
+                            reportStatusText.Text = "Report unavailable";
+                        }
+                    }
+                    catch
+                    {
+                        reportStatusText.Text = "Report failed";
+                    }
+
+                    await Task.Delay(900);
+                    reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    RefreshDismissSurface();
+                };
+
+                dismissSurface.PointerPressed += (_, __) =>
+                {
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    RefreshDismissSurface();
+                };
+
+                infoPanel.PointerPressed += (_, e) =>
+                {
+                    e.Handled = true;
                 };
 
                 mediaEndedHandler = (s, e) => { Restore(); tcs.TrySetResult(PlaybackResult.Completed("Stream ended.", false)); };
@@ -474,10 +582,13 @@ namespace VardyParty.Platforms.Windows
 
                 var grid = new WinGrid();
                 grid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
-                grid.Children.Add(mediaPlayerElement);
-                grid.Children.Add(controlPanel);
+                // Don't add mediaPlayerElement here yet - defer until source is initialized
+                grid.Children.Add(dismissSurface);
                 grid.Children.Add(infoPanel);
                 grid.Children.Add(streamInfoPanel);
+                grid.Children.Add(menuPanel);
+                grid.Children.Add(menuButton);
+                grid.Children.Add(closeButton);
                 grid.Children.Add(nextButton);
 
                 nextButton.Click += async (s, e) =>
@@ -495,6 +606,28 @@ namespace VardyParty.Platforms.Windows
                     grid.PointerEntered += (s, e) => nextButton.Opacity = 1;
                     grid.PointerExited += (s, e) => nextButton.Opacity = 0;
                 }
+
+                grid.PointerMoved += (s, e) =>
+                {
+                    try
+                    {
+                        var p = e.GetCurrentPoint(grid).Position;
+                        var inBottomLeftQuadrant = p.X <= grid.ActualWidth / 2 && p.Y >= grid.ActualHeight / 2;
+
+                        if (menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                        {
+                            menuButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                            menuButton.Opacity = 1;
+                            return;
+                        }
+
+                        menuButton.Visibility = inBottomLeftQuadrant
+                            ? Microsoft.UI.Xaml.Visibility.Visible
+                            : Microsoft.UI.Xaml.Visibility.Collapsed;
+                        menuButton.Opacity = inBottomLeftQuadrant ? 1 : 0;
+                    }
+                    catch { }
+                };
 
                 // Ensure we restore and cleanup if the window is closed externally
                 try
@@ -698,27 +831,42 @@ namespace VardyParty.Platforms.Windows
                         // Ensure UI updates happen on the main thread
                         MainThread.BeginInvokeOnMainThread(() =>
                         {
-                            mediaPlayer.Source = playbackItem;
-                            _currentPlaybackItem = playbackItem;
-                            
-                            // Extract metadata immediately when source is set so orchestrator can get it after 2.5s
-                            if (mediaPlayer.Source is MediaPlaybackItem item)
+                            try
                             {
-                                ExtractVideoMetadata(item, mediaPlayer);
-                                // Update bitrate from adaptive source during playback
-                                UpdateBitrateFromAdaptiveSource(item);
+                                mediaPlayer.Source = playbackItem;
+                                _currentPlaybackItem = playbackItem;
+
+                                // Add mediaPlayerElement to grid now that source is set
+                                if (!grid.Children.Contains(mediaPlayerElement))
+                                {
+                                    grid.Children.Insert(0, mediaPlayerElement); // Insert at index 0 to be behind other elements
+                                }
+
+                                // Extract metadata immediately when source is set so orchestrator can get it after 2.5s
+                                if (mediaPlayer.Source is MediaPlaybackItem item)
+                                {
+                                    ExtractVideoMetadata(item, mediaPlayer);
+                                    // Update bitrate from adaptive source during playback
+                                    UpdateBitrateFromAdaptiveSource(item);
+                                }
+
+                                currentPlaybackUrl = url;
+
+                                // Ensure the grid is visible and hit testable
+                                grid.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                                grid.IsHitTestVisible = true;
+
+                                nativeWindow.Content = grid;
+
+                                // Force layout update
+                                nativeWindow.Activate();
                             }
-
-                            currentPlaybackUrl = url;
-
-                            // Ensure the grid is visible and hit testable
-                            grid.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                            grid.IsHitTestVisible = true;
-
-                            nativeWindow.Content = grid;
-
-                            // Force layout update
-                            nativeWindow.Activate();
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[Windows] Failed to attach playback source: {ex.GetType().Name} - {ex.Message}");
+                                Restore();
+                                tcs.TrySetResult(PlaybackResult.Completed($"Failed to attach playback source: {ex.Message}", true));
+                            }
                         });
 
                         // Do not set success result here. We wait for user close or media events;
@@ -726,6 +874,7 @@ namespace VardyParty.Platforms.Windows
                     catch (Exception ex)
                     {
                         Restore();
+                        System.Diagnostics.Debug.WriteLine($"[Windows] Failed to start playback: {ex.GetType().Name} - {ex.Message}");
                         tcs.TrySetResult(PlaybackResult.Completed($"Failed to start playback: {ex.Message}", true));
                     }
                 }

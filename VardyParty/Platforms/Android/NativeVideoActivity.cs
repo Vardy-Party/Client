@@ -203,6 +203,13 @@ namespace VardyParty.Platforms.Android
         private System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? _inMemoryManifestMap;
         private string _playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
         private VardyParty.Models.PlayerOverlayInfo? _lastOverlayInfo;
+        private global::Android.Widget.ImageButton? _menuButton;
+        private LinearLayout? _menuPanel;
+        private global::Android.Views.View? _menuBackdrop;
+        private TextView? _reportStatusView;
+        private bool _isMenuVisible;
+        private bool _isInfoVisible;
+        private bool _isTvDevice;
         private const int PlayerStateIdle = 1;
         private const int PlayerStateBuffering = 2;
         private const int PlayerStateReady = 3;
@@ -217,6 +224,8 @@ namespace VardyParty.Platforms.Android
 
             // Allow activity factory to inject services for constructor-like DI
             try { AndroidActivityFactory.Inject(this); } catch { }
+
+            _isTvDevice = MauiProgram.IsTv;
 
             // Services are injected by AndroidActivityFactory during activity creation; no fallback here.
 
@@ -323,6 +332,117 @@ namespace VardyParty.Platforms.Android
             _overlayHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _overlayHideRunnable = new Java.Lang.Runnable(() => HideOverlayAnimated());
 
+            _menuBackdrop = new global::Android.Views.View(this)
+            {
+                Visibility = global::Android.Views.ViewStates.Gone,
+                Clickable = true
+            };
+            _menuBackdrop.SetBackgroundColor(global::Android.Graphics.Color.Transparent);
+            _menuBackdrop.Click += (_, __) =>
+            {
+                HideMenu();
+                HideInfoOverlay();
+            };
+            root.AddView(_menuBackdrop, new FrameLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent));
+
+            _menuPanel = new LinearLayout(this)
+            {
+                Orientation = Orientation.Vertical,
+                Visibility = global::Android.Views.ViewStates.Gone,
+                Clickable = true,
+                Focusable = true
+            };
+            _menuPanel.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
+            _menuPanel.SetPadding((int)(12 * density), (int)(12 * density), (int)(12 * density), (int)(12 * density));
+
+            var reportButton = new Button(this) { Text = "Report stream" };
+            var videoInfoButton = new Button(this) { Text = "Video info" };
+
+            _reportStatusView = new TextView(this)
+            {
+                Text = "Reporting stream...",
+                Visibility = global::Android.Views.ViewStates.Gone
+            };
+            _reportStatusView.SetTextColor(global::Android.Graphics.Color.ParseColor("#FFB300"));
+
+            reportButton.Click += async (_, __) =>
+            {
+                if (_reportStatusView != null)
+                {
+                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Visible;
+                    _reportStatusView.Text = "Reporting stream...";
+                }
+
+                try
+                {
+                    var orchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
+                    if (orchestrator != null)
+                    {
+                        await orchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
+                        if (_reportStatusView != null)
+                        {
+                            _reportStatusView.Text = "Stream reported";
+                        }
+                    }
+                }
+                catch
+                {
+                    if (_reportStatusView != null)
+                    {
+                        _reportStatusView.Text = "Report failed";
+                    }
+                }
+
+                await Task.Delay(900);
+                if (_reportStatusView != null)
+                {
+                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
+                }
+                HideMenu();
+            };
+
+            videoInfoButton.Click += (_, __) =>
+            {
+                HideMenu();
+                ShowInfoOverlay();
+            };
+
+            _menuPanel.AddView(reportButton);
+            _menuPanel.AddView(videoInfoButton);
+            _menuPanel.AddView(_reportStatusView);
+
+            var menuPanelParams = new FrameLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.Bottom | global::Android.Views.GravityFlags.Left,
+                LeftMargin = (int)(16 * density),
+                BottomMargin = (int)(16 * density)
+            };
+            root.AddView(_menuPanel, menuPanelParams);
+
+            _menuButton = new global::Android.Widget.ImageButton(this)
+            {
+                Visibility = _isTvDevice ? global::Android.Views.ViewStates.Gone : global::Android.Views.ViewStates.Visible
+            };
+            _menuButton.SetImageResource(global::Android.Resource.Drawable.IcMenuMore);
+            _menuButton.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#AA000000"));
+            _menuButton.Click += (_, __) =>
+            {
+                if (_isMenuVisible) HideMenu();
+                else ShowMenu();
+            };
+
+            var menuButtonParams = new FrameLayout.LayoutParams((int)(44 * density), (int)(44 * density))
+            {
+                Gravity = global::Android.Views.GravityFlags.Bottom | global::Android.Views.GravityFlags.Left,
+                LeftMargin = (int)(16 * density),
+                BottomMargin = (int)(16 * density)
+            };
+            root.AddView(_menuButton, menuButtonParams);
+
             SetContentView(root);
 
             if (!string.IsNullOrEmpty(_m3u8Url))
@@ -331,96 +451,7 @@ namespace VardyParty.Platforms.Android
                 SwitchToStreamUrl(_m3u8Url);
             }
 
-            // Initially show overlay briefly then hide
-            ShowOverlayAnimated();
-            ScheduleHideOverlay();
-
-            // Subscribe to switching updates
-            if (_switching != null)
-            {
-                _healthySub = _switching.HealthyStreamsUpdated.Subscribe(list =>
-                {
-                    try
-                    {
-                        var total = list?.Count ?? 0;
-                        _logger?.LogInformation("[NativeVideoActivity] HealthyStreamsUpdated total={Total}", total);
-                        // Update Android overlay via AndroidVideoPlayerService and local overlay
-                        var current = _switching.GetCurrentStream();
-                        var overlay = new VardyParty.Models.PlayerOverlayInfo
-                        {
-                            Index = _switching.GetCurrentStreamIndex(),
-                            Total = list?.Count ?? 0,
-                            Channel = current?.Stream?.Channel,
-                            BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
-                            Resolution = current?.Stream?.Resolution ?? current?.Health?.Resolution,
-                            M3u8Url = current?.ResolvedM3U8Url ?? _m3u8Url,
-                            RefererUrl = _refererUrl,
-                            BufferPercent = _player?.BufferedPercentage,
-                            FrameRate = current?.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                            VideoCodec = MapCodecToFriendlyName(current?.Health?.VideoCodec),
-                            AudioCodec = MapCodecToFriendlyName(current?.Health?.AudioCodec),
-                            AspectRatio = BuildAspect(current?.Stream?.Resolution ?? current?.Health?.Resolution),
-                            Title = current?.Stream?.Channel
-                        };
-                        VardyParty.Platforms.Android.AndroidVideoPlayerService.SetOverlayInfo(overlay);
-                        RunOnUiThread(() => UpdateOverlayText(overlay));
-                    }
-                    catch { }
-                });
-
-                _indexSub = _switching.CurrentStreamIndexChanged.Subscribe(idx =>
-                {
-                    try
-                    {
-                        var current = _switching.GetCurrentStream();
-                        var url = current?.ResolvedM3U8Url;
-                        var svcIndex = _switching.GetCurrentStreamIndex();
-                        _logger?.LogInformation("[NativeVideoActivity] CurrentStreamIndexChanged idx={Idx} svcIndex={SvcIndex}", idx, svcIndex);
-
-                        if (!string.IsNullOrEmpty(url))
-                        {
-                            // Defensive checks
-                            if (_isPreparing)
-                            {
-                                _logger?.LogInformation("[NativeVideoActivity] Skipping switch while preparing");
-                                return;
-                            }
-                            if (!SwitchingDecision.CanSwitch(_m3u8Url, url ?? string.Empty, _isPreparing))
-                            {
-                                _logger?.LogInformation("[NativeVideoActivity] Decision: cannot switch to {Url} (preparing={Preparing}, current={Current})", url, _isPreparing, _m3u8Url);
-                                return;
-                            }
-
-                            _logger?.LogInformation("[NativeVideoActivity] Switching to URL: {Url}", url);
-                            SwitchToStreamUrl(url);
-
-                            // Also update overlay info with enriched metadata
-                            var cur2 = _switching.GetCurrentStream();
-                            var overlay2 = new VardyParty.Models.PlayerOverlayInfo
-                            {
-                                Index = _switching.GetCurrentStreamIndex(),
-                                Total = _switching.GetHealthyStreams().Count,
-                                Channel = cur2?.Stream?.Channel,
-                                BitrateKbps = cur2?.Stream?.BitrateKbps ?? cur2?.Health?.Bitrate,
-                                Resolution = cur2?.Stream?.Resolution ?? cur2?.Health?.Resolution,
-                                M3u8Url = cur2?.ResolvedM3U8Url ?? _m3u8Url,
-                                RefererUrl = _refererUrl,
-                                BufferPercent = _player?.BufferedPercentage,
-                                FrameRate = cur2?.Health?.FrameRate != null ? (double?)cur2.Health.FrameRate : null,
-                                VideoCodec = MapCodecToFriendlyName(cur2?.Health?.VideoCodec),
-                                AudioCodec = MapCodecToFriendlyName(cur2?.Health?.AudioCodec),
-                                AspectRatio = BuildAspect(cur2?.Stream?.Resolution ?? cur2?.Health?.Resolution),
-                                Title = cur2?.Stream?.Channel
-                            };
-                            VardyParty.Platforms.Android.AndroidVideoPlayerService.SetOverlayInfo(overlay2);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger?.LogError(ex, "Error in CurrentStreamIndexChanged subscription");
-                    }
-                });
-            }
+            HideOverlayAnimated();
         }
 
         private static IStreamHealthReporter? ResolveHealthReporter()
@@ -679,7 +710,7 @@ namespace VardyParty.Platforms.Android
             if (_resBrView != null) _resBrView.Text = string.Join("\n", lines);
 
             // Control whether updating overlay should show it. If suppressed (e.g. switching via Right while overlay hidden),
-            // update texts but do not reveal the overlay. Otherwise show and schedule hide as normal.
+            // update texts but do not reveal the overlay.
             if (!_suppressOverlayShow)
             {
                 if (_isBuffering)
@@ -687,8 +718,12 @@ namespace VardyParty.Platforms.Android
                     HideOverlayAnimated();
                     return;
                 }
-                ShowOverlayAnimated();
-                if (!_overlayLocked) ScheduleHideOverlay();
+
+                if (_isInfoVisible)
+                {
+                    ShowOverlayAnimated();
+                    if (!_overlayLocked) ScheduleHideOverlay();
+                }
             }
             else
             {
@@ -982,6 +1017,44 @@ namespace VardyParty.Platforms.Android
             catch { }
         }
 
+        private void ShowMenu()
+        {
+            _isMenuVisible = true;
+            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Visible;
+            UpdateBackdropVisibility();
+        }
+
+        private void HideMenu()
+        {
+            _isMenuVisible = false;
+            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Gone;
+            UpdateBackdropVisibility();
+        }
+
+        private void ShowInfoOverlay()
+        {
+            _isInfoVisible = true;
+            _overlayLocked = true;
+            ShowOverlayAnimated();
+            UpdateBackdropVisibility();
+        }
+
+        private void HideInfoOverlay()
+        {
+            _isInfoVisible = false;
+            _overlayLocked = false;
+            HideOverlayAnimated();
+            UpdateBackdropVisibility();
+        }
+
+        private void UpdateBackdropVisibility()
+        {
+            if (_menuBackdrop == null) return;
+            _menuBackdrop.Visibility = (_isMenuVisible || _isInfoVisible) && !_isTvDevice
+                ? global::Android.Views.ViewStates.Visible
+                : global::Android.Views.ViewStates.Gone;
+        }
+
         public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent e)
         {
             try
@@ -990,32 +1063,43 @@ namespace VardyParty.Platforms.Android
                 {
                     case global::Android.Views.Keycode.DpadCenter:
                     case global::Android.Views.Keycode.Enter:
-                        // Toggle overlay lock/visibility
-                        _overlayLocked = !_overlayLocked;
-                        if (_overlayLocked)
+                        if (_isTvDevice)
                         {
-                            ShowOverlayAnimated();
-                            // cancel auto-hide while locked
-                            _overlayHandler?.RemoveCallbacks(_overlayHideRunnable);
+                            if (_isMenuVisible)
+                            {
+                                HideMenu();
+                                return true;
+                            }
+
+                            if (_isInfoVisible)
+                            {
+                                HideInfoOverlay();
+                                return true;
+                            }
+
+                            ShowMenu();
+                            return true;
+                        }
+
+                        if (_isInfoVisible)
+                        {
+                            HideInfoOverlay();
                         }
                         else
                         {
-                            // unlocked -> hide immediately
-                            HideOverlayAnimated();
+                            ShowInfoOverlay();
                         }
                         return true;
 
                     case global::Android.Views.Keycode.DpadRight:
-                        // If overlay is visible, switch to next stream and keep overlay visible.
-                        // If overlay is hidden, switch to next stream but do not auto-show overlay.
                         try
                         {
                             bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
                             if (!wasVisible)
                             {
-                                // suppress showing overlay for this update
                                 _suppressOverlayShow = true;
                             }
+
                             if (_switching != null)
                             {
                                 var requestTask = VardyParty.Platforms.Android.AndroidVideoPlayerService.RequestNextStream();
@@ -1028,26 +1112,11 @@ namespace VardyParty.Platforms.Android
                                     _switching.SwitchToNextStream();
                                 }
                             }
-                            // show toast to indicate stream switched (include index/total when available)
-                            try
-                            {
-                                var ctx = this;
-                                // Fetch current index/total if available
-                                string idx = string.Empty;
-                                try
-                                {
-                                    var cur = _switching?.GetCurrentStreamIndex() ?? 0; // 1-based
-                                    var tot = _switching?.GetHealthyStreams().Count ?? 0;
-                                    if (tot > 0)
-                                        idx = $" ({cur}/{tot})";
-                                }
-                                catch { }
-                                Toast.MakeText(ctx, $"Switched to next stream{idx}", ToastLength.Short)?.Show();
-                            }
-                            catch { }
+
+                            try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
+
                             if (wasVisible)
                             {
-                                // ensure overlay remains visible and reset hide timer
                                 ShowOverlayAnimated();
                                 if (!_overlayLocked) ScheduleHideOverlay();
                             }
@@ -1056,7 +1125,18 @@ namespace VardyParty.Platforms.Android
                         return true;
 
                     case global::Android.Views.Keycode.Back:
-                        // Stop health checking when backing out and report playback result so Home can resume
+                        if (_isMenuVisible)
+                        {
+                            HideMenu();
+                            return true;
+                        }
+
+                        if (_isInfoVisible)
+                        {
+                            HideInfoOverlay();
+                            return true;
+                        }
+
                         try { _switching?.Cleanup(); } catch { }
                         try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "User closed video player" }); } catch { }
                         Finish();
