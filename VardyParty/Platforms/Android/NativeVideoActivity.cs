@@ -357,8 +357,8 @@ namespace VardyParty.Platforms.Android
             _menuPanel.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
             _menuPanel.SetPadding((int)(12 * density), (int)(12 * density), (int)(12 * density), (int)(12 * density));
 
-            var reportButton = new Button(this) { Text = "Report stream" };
-            var videoInfoButton = new Button(this) { Text = "Video info" };
+            var reportButton = new global::Android.Widget.Button(this) { Text = "Report stream" };
+            var videoInfoButton = new global::Android.Widget.Button(this) { Text = "Video info" };
 
             _reportStatusView = new TextView(this)
             {
