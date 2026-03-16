@@ -40,7 +40,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
       - name: Download Windows build artifact
@@ -313,7 +313,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Setup Java
@@ -501,7 +501,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
@@ -613,7 +613,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
@@ -725,7 +725,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Download Linux x64 build artifact
         uses: actions/download-artifact@v4
         with:
@@ -964,7 +964,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Download Linux ARM64 build artifact
         uses: actions/download-artifact@v4
         with:
