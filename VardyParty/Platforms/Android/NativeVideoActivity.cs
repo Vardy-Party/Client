@@ -207,6 +207,7 @@ namespace VardyParty.Platforms.Android
         private LinearLayout? _menuPanel;
         private global::Android.Views.View? _menuBackdrop;
         private TextView? _reportStatusView;
+        private global::Android.Widget.Button? _reportButton;
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
@@ -358,6 +359,7 @@ namespace VardyParty.Platforms.Android
             _menuPanel.SetPadding((int)(12 * density), (int)(12 * density), (int)(12 * density), (int)(12 * density));
 
             var reportButton = new global::Android.Widget.Button(this) { Text = "Report stream" };
+            _reportButton = reportButton;
             var videoInfoButton = new global::Android.Widget.Button(this) { Text = "Video info" };
 
             _reportStatusView = new TextView(this)
@@ -1021,6 +1023,7 @@ namespace VardyParty.Platforms.Android
         {
             _isMenuVisible = true;
             if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Visible;
+            _reportButton?.Post(() => _reportButton.RequestFocus());
             UpdateBackdropVisibility();
         }
 

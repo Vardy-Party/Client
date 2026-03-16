@@ -1,4 +1,4 @@
-﻿@page "/"
+@page "/"
 @inject IEnrichedGameService GameService
 @inject NavigationManager Navigation
 @inject SelectionState Selection
@@ -31,6 +31,11 @@
             </div>
         </div>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(localServiceWarning))
+    {
+        <div class="local-service-warning">@localServiceWarning</div>
+    }
 
     @if (!isAuthenticated)
     {
@@ -114,10 +119,6 @@
         </div>
     }
 
-    @if (!string.IsNullOrWhiteSpace(localServiceWarning))
-    {
-        <div class="local-service-warning">@localServiceWarning</div>
-    }
 </div>
 
 <!-- Stream Resolution Progress Indicator -->
