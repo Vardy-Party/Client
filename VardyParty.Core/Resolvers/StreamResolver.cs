@@ -1,8 +1,5 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
 using VardyParty.Health;
 using VardyParty.Models;
 using VardyParty.Services;
@@ -11,16 +8,10 @@ using Stream = VardyParty.Models.Stream;
 namespace VardyParty.Resolvers;
 
 public class StreamResolver(
-    HttpClient httpClient,
     IStreamHealthChecker healthChecker,
-    IOptions<APISettings> apiSettings,
-    IOptions<GamesApiSettings> gamesApiSettings,
+    ILocalLanPlayService localLanPlayService,
     ILogger<StreamResolver> logger) : IStreamResolver
 {
-    private readonly string _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
-
-    private readonly TimeSpan _m3U8CallTimeout =
-        TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);
     public async IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
         List<Stream> streams,
         int batchSize = 3,
@@ -128,7 +119,7 @@ public class StreamResolver(
             if (string.IsNullOrEmpty(m3u8Url))
             {
                 enriched.Status = StreamResolutionStatus.Failed;
-                enriched.ErrorMessage = "No m3u8 URL returned from API";
+                enriched.ErrorMessage = "No m3u8 URL returned from local LAN play service";
                 logger.LogWarning("[StreamResolver] Failed to get m3u8 URL for {Channel}: {Error}",
                     stream.Channel, enriched.ErrorMessage);
                 return enriched;
@@ -175,24 +166,11 @@ public class StreamResolver(
 
     private async Task<string?> GetM3U8UrlInternalAsync(string streamUrl, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(_baseUrl))
-            return null;
-
-        var url = $"{_baseUrl}/play/{Uri.EscapeDataString(streamUrl)}";
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(_m3U8CallTimeout);
-
-            logger.LogInformation("[StreamResolver] Fetching M3U8 from {Url}", streamUrl);
-            var response = await httpClient.GetAsync(url, cts.Token);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync(cts.Token);
-            var result = JsonSerializer.Deserialize<M3U8Response>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            logger.LogInformation("[StreamResolver] M3U8 fetched for {Url}", streamUrl);
-
+            logger.LogInformation("[StreamResolver] Fetching M3U8 from local LAN service for source {Url}", streamUrl);
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl, cancellationToken);
+            logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", streamUrl);
             return result?.Url;
         }
         catch (Exception ex)

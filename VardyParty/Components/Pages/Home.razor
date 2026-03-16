@@ -7,6 +7,7 @@
 @inject IServiceProvider ServiceProvider
 @inject IAuthLoginService AuthLoginService
 @inject IAuthTokenProvider AuthTokenProvider
+@inject ILocalLanServiceAvailabilityMonitor LocalLanServiceAvailabilityMonitor
 @using Microsoft.Extensions.Logging
 @using QRCoder
 @using VardyParty.Models
@@ -112,6 +113,11 @@
             }
         </div>
     }
+
+    @if (!string.IsNullOrWhiteSpace(localServiceWarning))
+    {
+        <div class="local-service-warning">@localServiceWarning</div>
+    }
 </div>
 
 <!-- Stream Resolution Progress Indicator -->
@@ -192,6 +198,7 @@
     private bool focusPending = true;
     private IDisposable? _gamesSubscription;
     private IDisposable? _errorSubscription;
+    private IDisposable? _localLanWarningSubscription;
     private CancellationTokenSource? _streamResolutionCts;
     private IOverlayCloseService? _overlayCloseService;
     private CancellationTokenSource? _authCts;
@@ -201,6 +208,7 @@
     private AuthDeviceCode? deviceCode;
     private string? deviceQrDataUri;
     private string? deviceQrTarget;
+    private string? localServiceWarning;
 
     private readonly HashSet<string> _ignoredLeagues = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -279,6 +287,8 @@
         {
         }
 #endif
+
+        _localLanWarningSubscription = LocalLanServiceAvailabilityMonitor.WarningStream.Subscribe(OnLocalLanWarningUpdated);
     }
 
 
@@ -434,6 +444,8 @@
         _gamesSubscription = null;
         _errorSubscription?.Dispose();
         _errorSubscription = null;
+        _localLanWarningSubscription?.Dispose();
+        _localLanWarningSubscription = null;
         _progressSubscription?.Dispose();
         _progressSubscription = null;
         StreamResolutionOrchestrator.Reset();
@@ -750,12 +762,19 @@
         _errorSubscription = GameService.ErrorStream.Subscribe(OnErrorUpdated);
     }
 
+    private void OnLocalLanWarningUpdated(string? warning)
+    {
+        localServiceWarning = warning;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
     public void Dispose()
     {
         Logger.LogInformation("[Home] Disposing");
 
         _gamesSubscription?.Dispose();
         _errorSubscription?.Dispose();
+        _localLanWarningSubscription?.Dispose();
         _progressSubscription?.Dispose();
         StreamResolutionOrchestrator.Reset();
         if (_overlayCloseService != null)

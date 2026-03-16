@@ -105,8 +105,9 @@ public class App : Application
         services.AddTransient<Auth0ApiTokenHandler>();
         services.AddTransient<M3U8HttpHandler>();
 
-        services.AddHttpClient<IStreamResolver, StreamResolver>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
+        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
+        services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
+        services.AddSingleton<IStreamResolver, StreamResolver>();
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
 
@@ -137,6 +138,7 @@ public class App : Application
         services.AddTransient<MainWindow>();
 
         Services = services.BuildServiceProvider();
+        Services.GetService<ILocalLanServiceAvailabilityMonitor>()?.Start();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             desktop.MainWindow = Services.GetRequiredService<MainWindow>();

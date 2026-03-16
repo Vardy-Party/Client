@@ -189,9 +189,9 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddTransient<Auth0ApiTokenHandler>();
 
-        builder.Services.AddHttpClient<IStreamResolver, StreamResolver>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
+        builder.Services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
+        builder.Services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
+        builder.Services.AddSingleton<IStreamResolver, StreamResolver>();
 
         builder.Services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
         builder.Services.AddHttpClient<IStreamHealthService, StreamHealthService>()
@@ -237,6 +237,9 @@ public static class MauiProgram
 
         // Ensure session id is created at app startup
         _ = app.Services.GetService<ISessionIdProvider>();
+
+        // Start LAN local-service availability monitoring at startup.
+        app.Services.GetService<ILocalLanServiceAvailabilityMonitor>()?.Start();
 
         return app;
     }

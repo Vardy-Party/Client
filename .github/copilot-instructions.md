@@ -2,6 +2,7 @@
 
 ## Project Guidelines
 - User wants CI/CD to merge generated settings into existing appsettings.json instead of overwriting it.
+- When introducing shared local-service code, use `VardyParty.LocalService.Client` (not `LocalService.Shared`).
 
 ## Streaming Guidelines
 - Do not auto-report a stream as bad when user requests the next stream.

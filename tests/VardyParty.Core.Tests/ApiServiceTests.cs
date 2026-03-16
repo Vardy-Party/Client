@@ -24,7 +24,7 @@ namespace VardyParty.Core.Tests
         {
             var apiGames = new Dictionary<string, List<Game>>
             {
-                { "SomeLeague", new List<Game> { new Game { Home = "H", Away = "A" } } }
+                { "SomeLeague", [new Game { Home = "H", Away = "A" }] }
             };
             
             var json = JsonSerializer.Serialize(apiGames);
@@ -38,12 +38,12 @@ namespace VardyParty.Core.Tests
                     .With(g => g.MaxRetries, 0)
                     .Create();
 
-
             var streamResolver = new Mock<IStreamResolver>();
             var streamDeduplicator = new Mock<IStreamDeduplicator>();
+            var localLanPlayService = new Mock<ILocalLanPlayService>();
 
             var api = new ApiService(client, NullLogger<ApiService>.Instance, streamResolver.Object,
-                streamDeduplicator.Object, Options.Create(gameApiSettings), Options.Create(apiSettings));
+                streamDeduplicator.Object, localLanPlayService .Object, Options.Create(gameApiSettings), Options.Create(apiSettings));
 
             var all = await api.GetAllGamesAsync(forceRefresh: true);
 

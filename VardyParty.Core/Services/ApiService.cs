@@ -17,14 +17,12 @@ public class ApiService(
     ILogger<ApiService> logger,
     IStreamResolver streamResolver,
     IStreamDeduplicator streamDeduplicator,
+    ILocalLanPlayService localLanPlayService,
     IOptions<GamesApiSettings> gamesApiSettings,
     IOptions<APISettings> apiSettings) : IApiService
 {
     private readonly string _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
     private readonly TimeSpan _callTimeout = TimeSpan.FromSeconds(gamesApiSettings.Value?.CallTimeoutSeconds ?? 45);
-
-    private readonly TimeSpan _m3u8CallTimeout =
-        TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);
 
     private readonly int _maxRetries = gamesApiSettings.Value?.MaxRetries ?? 2;
 
@@ -47,15 +45,18 @@ public class ApiService(
 
     public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl)
     {
-        var url = $"{_baseUrl}/play/{Uri.EscapeDataString(streamUrl)}";
         try
         {
-            using var cts = new CancellationTokenSource(_m3u8CallTimeout);
-            logger.LogInformation("[Api] Fetching M3U8 From {Url}", streamUrl);
-            var response = await httpClient.GetAsync(url, cts.Token);
-            response.EnsureSuccessStatusCode();
-            var result = await response.Content.ReadFromJsonAsync<M3U8Response>(cts.Token);
-            logger.LogInformation("[Api] M3U8 fetched for {Url}", streamUrl);
+            logger.LogInformation("[Api] Fetching M3U8 from local LAN service for source {Url}", streamUrl);
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl);
+            if (!string.IsNullOrEmpty(result?.Url))
+            {
+                logger.LogInformation("[Api] M3U8 fetched for {Url}", streamUrl);
+            }
+            else
+            {
+                logger.LogWarning("[Api] Local LAN service returned no m3u8 URL for {Url}", streamUrl);
+            }
             return result;
         }
         catch (Exception ex)
