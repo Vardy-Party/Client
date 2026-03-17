@@ -47,7 +47,14 @@ namespace VardyParty.Platforms.Windows
             return _currentMetrics;
         }
 
-        public Task<PlaybackResult> PlayVideoAsync(string m3u8Url, string refererUrl, string title, Func<Task>? onNextStreamRequested = null)
+        public Task<PlaybackResult> PlayVideoAsync(
+            string m3u8Url,
+            string refererUrl,
+            string title,
+            Func<Task>? onNextStreamRequested = null,
+            string? league = null,
+            string? homeTeam = null,
+            string? awayTeam = null)
         {
             var tcs = new TaskCompletionSource<PlaybackResult>();
 
@@ -81,10 +88,18 @@ namespace VardyParty.Platforms.Windows
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
                 IDisposable? healthyStreamsSubscription = null;
                 IDisposable? currentIndexSubscription = null;
+                IDisposable? gamesSubscription = null;
                 Microsoft.UI.Dispatching.DispatcherQueueTimer? streamInfoHideTimer = null;
+                Microsoft.UI.Dispatching.DispatcherQueueTimer? scoresTickerScrollTimer = null;
                 TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? streamInfoHideHandler = null;
+                TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? scoresTickerScrollHandler = null;
                 int lastStreamTotal = -1;
                 int lastStreamIndex = -1;
+                bool isScoresTickerVisible = false;
+                var scoresTickerRawText = string.Empty;
+                var scoresTickerOffset = 0;
+                Dictionary<string, List<Game>>? latestGamesByLeague = null;
+                var gamesLock = new object();
 
                 TypedEventHandler<MediaPlaybackSession, object>? playbackStateChangedHandler = null;
                 TypedEventHandler<MediaPlaybackSession, object>? naturalVideoSizeChangedHandler = null;
@@ -111,7 +126,9 @@ namespace VardyParty.Platforms.Windows
                     {
                         try { healthyStreamsSubscription?.Dispose(); } catch { }
                         try { currentIndexSubscription?.Dispose(); } catch { }
+                        try { gamesSubscription?.Dispose(); } catch { }
                         try { streamInfoHideTimer?.Stop(); } catch { }
+                        try { scoresTickerScrollTimer?.Stop(); } catch { }
                         if (naturalVideoSizeChangedHandler != null)
                             mediaPlayer.PlaybackSession.NaturalVideoSizeChanged -= naturalVideoSizeChangedHandler;
                         if (playbackStateChangedHandler != null)
@@ -190,6 +207,7 @@ namespace VardyParty.Platforms.Windows
 
                 var reportStreamButton = new WinButton { Content = "Report stream" };
                 var videoInfoButton = new WinButton { Content = "Video info" };
+                var sameLeagueTickerButton = new WinButton { Content = "Same-league live scores" };
                 var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Text = "Reporting stream...",
@@ -200,7 +218,25 @@ namespace VardyParty.Platforms.Windows
 
                 menuPanel.Children.Add(reportStreamButton);
                 menuPanel.Children.Add(videoInfoButton);
+                menuPanel.Children.Add(sameLeagueTickerButton);
                 menuPanel.Children.Add(reportStatusText);
+
+                var scoresTickerBorder = new Microsoft.UI.Xaml.Controls.Border
+                {
+                    HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                    VerticalAlignment = WinVerticalAlignment.Bottom,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.80 },
+                    Padding = new WinThickness(12, 6, 12, 6),
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                };
+                var scoresTickerText = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
+                    FontSize = 13,
+                    TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap
+                };
+                scoresTickerBorder.Child = scoresTickerText;
 
                 // Full-screen click-away surface for menu/info dismiss
                 var dismissSurface = new Microsoft.UI.Xaml.Controls.Border
@@ -360,6 +396,123 @@ namespace VardyParty.Platforms.Windows
                     });
                 }
 
+                string BuildSameLeagueTickerText()
+                {
+                    Dictionary<string, List<Game>>? snapshot;
+                    lock (gamesLock)
+                    {
+                        snapshot = latestGamesByLeague == null
+                            ? null
+                            : latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value.ToList());
+                    }
+
+                    if (snapshot == null || snapshot.Count == 0)
+                    {
+                        return "In-play games: No same-league live scores available.";
+                    }
+
+                    bool SameTeam(string left, string right) =>
+                        string.Equals((left ?? string.Empty).Trim(), (right ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
+
+                    bool IsCurrentGame(Game g)
+                    {
+                        var gh = g.DisplayHome;
+                        var ga = g.DisplayAway;
+                        return (SameTeam(gh, homeTeam ?? string.Empty) && SameTeam(ga, awayTeam ?? string.Empty))
+                            || (SameTeam(gh, awayTeam ?? string.Empty) && SameTeam(ga, homeTeam ?? string.Empty));
+                    }
+
+                    bool IsSameLeague(Game g)
+                    {
+                        if (string.IsNullOrWhiteSpace(league)) return true;
+                        return string.Equals((g.DisplayLeague ?? string.Empty).Trim(), league.Trim(), StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    bool IsInPlay(Game g)
+                    {
+                        if (g.IsFinished || g.IsPostponed) return false;
+                        return g.IsInProgress || g.IsHalfTime || g.Minute.HasValue;
+                    }
+
+                    string FormatScore(Game g) => $"{(g.HomeScore?.ToString() ?? "-")}-{(g.AwayScore?.ToString() ?? "-")}";
+                    string FormatStatus(Game g)
+                    {
+                        var st = g.DisplayStatusText();
+                        return string.IsNullOrWhiteSpace(st) ? "Live" : st;
+                    }
+
+                    var lines = snapshot.Values
+                        .SelectMany(v => v)
+                        .Where(IsSameLeague)
+                        .Where(IsInPlay)
+                        .Where(g => !IsCurrentGame(g))
+                        .OrderByDescending(g => g.LiveMinuteForOrdering)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => $"{g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({FormatStatus(g)})")
+                        .ToList();
+
+                    var header = string.IsNullOrWhiteSpace(league) ? "In-play" : $"In-play {league}";
+                    return lines.Count == 0
+                        ? $"{header}: No other live games right now."
+                        : $"{header}: {string.Join("   •   ", lines)}";
+                }
+
+                void EnsureTickerTimer()
+                {
+                    scoresTickerScrollTimer ??= scoresTickerText.DispatcherQueue.CreateTimer();
+                    scoresTickerScrollTimer.Interval = TimeSpan.FromMilliseconds(170);
+                    if (scoresTickerScrollHandler == null)
+                    {
+                        scoresTickerScrollHandler = (_, __) =>
+                        {
+                            if (!isScoresTickerVisible || string.IsNullOrEmpty(scoresTickerRawText)) return;
+                            if (scoresTickerRawText.Length < 2)
+                            {
+                                scoresTickerText.Text = scoresTickerRawText;
+                                return;
+                            }
+
+                            scoresTickerOffset = (scoresTickerOffset + 1) % scoresTickerRawText.Length;
+                            var visible = scoresTickerRawText.Substring(scoresTickerOffset) + scoresTickerRawText.Substring(0, scoresTickerOffset);
+                            scoresTickerText.Text = visible;
+                        };
+                        scoresTickerScrollTimer.Tick += scoresTickerScrollHandler;
+                    }
+                }
+
+                void RefreshTickerText(bool resetOffset)
+                {
+                    scoresTickerRawText = BuildSameLeagueTickerText();
+                    if (scoresTickerRawText.Length < 5)
+                    {
+                        scoresTickerRawText += "     ";
+                    }
+
+                    scoresTickerRawText += "     ";
+                    if (resetOffset) scoresTickerOffset = 0;
+                    var visible = scoresTickerRawText.Substring(scoresTickerOffset) + scoresTickerRawText.Substring(0, scoresTickerOffset);
+                    scoresTickerText.Text = visible;
+                }
+
+                void ToggleScoresTicker()
+                {
+                    isScoresTickerVisible = !isScoresTickerVisible;
+                    scoresTickerBorder.Visibility = isScoresTickerVisible
+                        ? Microsoft.UI.Xaml.Visibility.Visible
+                        : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                    if (isScoresTickerVisible)
+                    {
+                        EnsureTickerTimer();
+                        RefreshTickerText(resetOffset: true);
+                        scoresTickerScrollTimer?.Start();
+                    }
+                    else
+                    {
+                        scoresTickerScrollTimer?.Stop();
+                    }
+                }
+
                 // Event Handlers
                 closeButton.Click += (s, e) => 
                 { 
@@ -403,6 +556,13 @@ namespace VardyParty.Platforms.Windows
                     menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                     UpdateInfo();
+                    RefreshDismissSurface();
+                };
+
+                sameLeagueTickerButton.Click += (_, __) =>
+                {
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    ToggleScoresTicker();
                     RefreshDismissSurface();
                 };
 
@@ -586,6 +746,7 @@ namespace VardyParty.Platforms.Windows
                 grid.Children.Add(dismissSurface);
                 grid.Children.Add(infoPanel);
                 grid.Children.Add(streamInfoPanel);
+                grid.Children.Add(scoresTickerBorder);
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
                 grid.Children.Add(closeButton);
@@ -907,6 +1068,28 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
+
+                try
+                {
+                    var enriched = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IEnrichedGameService)) as VardyParty.Services.IEnrichedGameService;
+                    if (enriched != null)
+                    {
+                        gamesSubscription = enriched.GamesStream.Subscribe(dict =>
+                        {
+                            if (dict == null) return;
+                            lock (gamesLock)
+                            {
+                                latestGamesByLeague = dict.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
+                            }
+
+                            if (isScoresTickerVisible)
+                            {
+                                MainThread.BeginInvokeOnMainThread(() => RefreshTickerText(resetOffset: false));
+                            }
+                        });
+                    }
+                }
+                catch { }
 
                 _ = StartPlaybackAsync(m3u8Url);
             });

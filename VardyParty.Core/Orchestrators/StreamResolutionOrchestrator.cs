@@ -245,7 +245,10 @@ public class StreamResolutionOrchestrator(
                 m3u8Url,
                 enrichedStream.Stream.Url,
                 title,
-                () => HandleNextStreamRequestedAsync(game, cancellationToken));
+                () => HandleNextStreamRequestedAsync(game, cancellationToken),
+                game.DisplayLeague,
+                game.DisplayHome,
+                game.DisplayAway);
         }
         finally
         {

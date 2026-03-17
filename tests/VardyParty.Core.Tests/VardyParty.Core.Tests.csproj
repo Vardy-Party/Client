@@ -11,6 +11,7 @@
     <None Remove="Resources\RawFullTimeAggregateGame.html" />
     <None Remove="Resources\RawFullTimeGame.html" />
     <None Remove="Resources\RawInProgressIssue.html" />
+    <None Remove="Resources\ChampionsLeagueLeg2WithAggregateScores.html" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Resources\ParseHtml_ExtractsTeamLogos_Lazio_Como.html">
@@ -26,6 +27,9 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\RawInProgressIssue.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\ChampionsLeagueLeg2WithAggregateScores.html">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

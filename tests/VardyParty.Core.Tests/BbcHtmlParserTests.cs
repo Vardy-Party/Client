@@ -459,6 +459,35 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
+    public void ParseHtml_ChampionsLeagueLeg2WithAggregateScores_ExtractsExpectedAggregateScores()
+    {
+        var html = GetResxValue("ChampionsLeagueLeg2WithAggregateScores");
+        var fixtures = CreateParser().ParseHtml(html);
+
+        Assert.NotEmpty(fixtures);
+
+        void AssertAggregate(string home, string away, int expectedAggregateHome, int expectedAggregateAway)
+        {
+            var fixture = fixtures.FirstOrDefault(f =>
+                string.Equals(f.Home, home, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(f.Away, away, StringComparison.OrdinalIgnoreCase));
+
+            Assert.NotNull(fixture);
+            Assert.Equal(expectedAggregateHome, fixture.AggregateHomeScore);
+            Assert.Equal(expectedAggregateAway, fixture.AggregateAwayScore);
+
+            // Aggregate score should be present alongside current game score.
+            Assert.True(fixture.HomeScore.HasValue);
+            Assert.True(fixture.AwayScore.HasValue);
+        }
+
+        AssertAggregate("Sporting CP", "Bodø / Glimt", 5, 3);
+        AssertAggregate("Arsenal", "Bayer Leverkusen", 2, 1);
+        AssertAggregate("Chelsea", "Paris Saint-Germain", 2, 7);
+        AssertAggregate("Manchester City", "Real Madrid", 0, 4);
+    }
+
+    [Fact]
     public void ParseHtml_WithAetPenaltiesFixture_IsCorrect()
     {
         var html = GetResxValue("RawAetPenaltiesGame");

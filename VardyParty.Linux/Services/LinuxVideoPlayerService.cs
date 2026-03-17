@@ -98,7 +98,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         string m3u8Url,
         string refererUrl,
         string title,
-        Func<Task>? onNextStreamRequested = null)
+        Func<Task>? onNextStreamRequested = null,
+        string? league = null,
+        string? homeTeam = null,
+        string? awayTeam = null)
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Playing video: {Title}", title);
         _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", m3u8Url);

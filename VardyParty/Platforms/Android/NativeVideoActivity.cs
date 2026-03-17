@@ -1,6 +1,7 @@
 #if ANDROID
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Android.App;
 using Android.Content;
 using Android.OS;
@@ -199,6 +200,12 @@ namespace VardyParty.Platforms.Android
         private bool _isPreparing;
         private IDisposable? _healthySub;
         private IDisposable? _indexSub;
+        private IDisposable? _gamesSub;
+        private readonly object _gamesLock = new();
+        private Dictionary<string, List<Game>>? _latestGamesByLeague;
+        private string _currentLeague = string.Empty;
+        private string _currentHomeTeam = string.Empty;
+        private string _currentAwayTeam = string.Empty;
         private bool _manifestFallbackAttempted;
         private System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? _inMemoryManifestMap;
         private string _playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
@@ -208,6 +215,9 @@ namespace VardyParty.Platforms.Android
         private global::Android.Views.View? _menuBackdrop;
         private TextView? _reportStatusView;
         private global::Android.Widget.Button? _reportButton;
+        private LinearLayout? _scoresTickerContainer;
+        private TextView? _scoresTickerText;
+        private bool _isScoresTickerVisible;
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
@@ -234,6 +244,9 @@ namespace VardyParty.Platforms.Android
             // Game title (prefer BBC display names) passed from caller route
             _gameTitle = Intent?.GetStringExtra("TITLE") ?? string.Empty;
             _refererUrl = Intent?.GetStringExtra("REFERER_URL") ?? string.Empty;
+            _currentLeague = Intent?.GetStringExtra("LEAGUE") ?? string.Empty;
+            _currentHomeTeam = Intent?.GetStringExtra("HOME_TEAM") ?? string.Empty;
+            _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;
 
             // Basic UI: PlayerView with overlay
             _player = new ExoPlayerBuilder(this).Build();
@@ -361,6 +374,7 @@ namespace VardyParty.Platforms.Android
             var reportButton = new global::Android.Widget.Button(this) { Text = "Report stream" };
             _reportButton = reportButton;
             var videoInfoButton = new global::Android.Widget.Button(this) { Text = "Video info" };
+            var inPlayScoresButton = new global::Android.Widget.Button(this) { Text = "Same-league live scores" };
 
             _reportStatusView = new TextView(this)
             {
@@ -368,6 +382,37 @@ namespace VardyParty.Platforms.Android
                 Visibility = global::Android.Views.ViewStates.Gone
             };
             _reportStatusView.SetTextColor(global::Android.Graphics.Color.ParseColor("#FFB300"));
+
+            _scoresTickerContainer = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal,
+                Visibility = global::Android.Views.ViewStates.Gone
+            };
+            _scoresTickerContainer.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#CC101010"));
+            _scoresTickerContainer.SetPadding((int)(8 * density), (int)(6 * density), (int)(8 * density), (int)(6 * density));
+
+            _scoresTickerText = new TextView(this)
+            {
+                Text = string.Empty,
+                Selected = true
+            };
+            _scoresTickerText.SetSingleLine(true);
+            _scoresTickerText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.Marquee;
+            _scoresTickerText.SetMarqueeRepeatLimit(-1);
+            _scoresTickerText.Focusable = true;
+            _scoresTickerText.SetTextColor(global::Android.Graphics.Color.ParseColor("#FFDD55"));
+            _scoresTickerText.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 13f * fontScaleCap);
+            _scoresTickerContainer.AddView(_scoresTickerText, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+
+            var tickerParams = new FrameLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.Bottom
+            };
+            root.AddView(_scoresTickerContainer, tickerParams);
 
             reportButton.Click += async (_, __) =>
             {
@@ -411,8 +456,15 @@ namespace VardyParty.Platforms.Android
                 ShowInfoOverlay();
             };
 
+            inPlayScoresButton.Click += (_, __) =>
+            {
+                HideMenu();
+                ToggleSameLeagueScoresTicker();
+            };
+
             _menuPanel.AddView(reportButton);
             _menuPanel.AddView(videoInfoButton);
+            _menuPanel.AddView(inPlayScoresButton);
             _menuPanel.AddView(_reportStatusView);
 
             var menuPanelParams = new FrameLayout.LayoutParams(
@@ -446,6 +498,8 @@ namespace VardyParty.Platforms.Android
             root.AddView(_menuButton, menuButtonParams);
 
             SetContentView(root);
+
+            SubscribeToGamesSnapshot();
 
             if (!string.IsNullOrEmpty(_m3u8Url))
             {
@@ -538,21 +592,152 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        protected override void OnDestroy()
+        private void SubscribeToGamesSnapshot()
         {
-            try { _healthySub?.Dispose(); } catch { }
-            try { _indexSub?.Dispose(); } catch { }
-            try { _overlayHandler?.RemoveCallbacks(_overlayHideRunnable); } catch { }
-            try { _healthReportTimer?.Dispose(); } catch { }
-
-            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = true, Message = "Player closed" }); } catch { }
-
-            if (_player != null)
+            try
             {
-                _player.Release();
-                _player = null;
+                var enriched = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IEnrichedGameService)) as IEnrichedGameService;
+                if (enriched == null)
+                {
+                    return;
+                }
+
+                _gamesSub = enriched.GamesStream.Subscribe(dict =>
+                {
+                    if (dict == null) return;
+                    lock (_gamesLock)
+                    {
+                        _latestGamesByLeague = dict.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
+                    }
+
+                    if (_isScoresTickerVisible)
+                    {
+                        RunOnUiThread(UpdateScoresTickerText);
+                    }
+                });
             }
-            base.OnDestroy();
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Unable to subscribe to enriched games stream");
+            }
+        }
+
+        private List<string> BuildSameLeagueInPlayScoreLines()
+        {
+            Dictionary<string, List<Game>>? snapshot;
+            lock (_gamesLock)
+            {
+                snapshot = _latestGamesByLeague == null
+                    ? null
+                    : _latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value.ToList());
+            }
+
+            if (snapshot == null || snapshot.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            bool SameTeam(string left, string right) =>
+                string.Equals((left ?? string.Empty).Trim(), (right ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
+
+            bool IsCurrentGame(Game game)
+            {
+                var home = game.DisplayHome;
+                var away = game.DisplayAway;
+
+                return (SameTeam(home, _currentHomeTeam) && SameTeam(away, _currentAwayTeam))
+                    || (SameTeam(home, _currentAwayTeam) && SameTeam(away, _currentHomeTeam));
+            }
+
+            bool IsSameLeague(Game game)
+            {
+                if (string.IsNullOrWhiteSpace(_currentLeague)) return true;
+                var league = game.DisplayLeague;
+                return string.Equals(league?.Trim(), _currentLeague.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsInPlay(Game game)
+            {
+                if (game.IsFinished || game.IsPostponed) return false;
+                return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
+            }
+
+            string FormatScore(Game game)
+            {
+                var homeScore = game.HomeScore?.ToString() ?? "-";
+                var awayScore = game.AwayScore?.ToString() ?? "-";
+                return $"{homeScore}-{awayScore}";
+            }
+
+            string FormatStatus(Game game)
+            {
+                var status = game.DisplayStatusText();
+                return string.IsNullOrWhiteSpace(status) ? "Live" : status;
+            }
+
+            return snapshot.Values
+                .SelectMany(g => g)
+                .Where(IsSameLeague)
+                .Where(IsInPlay)
+                .Where(g => !IsCurrentGame(g))
+                .OrderByDescending(g => g.LiveMinuteForOrdering)
+                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"{g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({FormatStatus(g)})")
+                .ToList();
+        }
+
+        private void ShowSameLeagueInPlayDialog()
+        {
+            try
+            {
+                var lines = BuildSameLeagueInPlayScoreLines();
+                var title = string.IsNullOrWhiteSpace(_currentLeague)
+                    ? "In-play games"
+                    : $"In-play: {_currentLeague}";
+
+                var message = lines.Count == 0
+                    ? "No other in-play games in this league right now."
+                    : string.Join("  •  ", lines);
+
+                if (_scoresTickerText != null)
+                {
+                    _scoresTickerText.Text = $"{title}: {message}";
+                    _scoresTickerText.Selected = true;
+                    _scoresTickerText.RequestFocus();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to build same-league ticker text");
+            }
+        }
+
+        private void UpdateScoresTickerText()
+        {
+            ShowSameLeagueInPlayDialog();
+        }
+
+        private void ToggleSameLeagueScoresTicker()
+        {
+            try
+            {
+                _isScoresTickerVisible = !_isScoresTickerVisible;
+                if (_scoresTickerContainer != null)
+                {
+                    _scoresTickerContainer.Visibility = _isScoresTickerVisible
+                        ? global::Android.Views.ViewStates.Visible
+                        : global::Android.Views.ViewStates.Gone;
+                }
+
+                if (_isScoresTickerVisible)
+                {
+                    UpdateScoresTickerText();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to toggle same-league ticker");
+            }
         }
 
         private void HideSystemUI()
@@ -1137,6 +1322,12 @@ namespace VardyParty.Platforms.Android
                         if (_isInfoVisible)
                         {
                             HideInfoOverlay();
+                            return true;
+                        }
+
+                        if (_isScoresTickerVisible)
+                        {
+                            ToggleSameLeagueScoresTicker();
                             return true;
                         }
 

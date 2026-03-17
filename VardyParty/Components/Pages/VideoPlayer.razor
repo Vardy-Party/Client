@@ -170,7 +170,14 @@
                 videoStatus = "Connecting and buffering...";
                 StateHasChanged();
 
-                var playbackTask = NativeVideoPlayer.PlayVideoAsync(m3u8Url, decodedStreamUrl, title);
+                var playbackTask = NativeVideoPlayer.PlayVideoAsync(
+                    m3u8Url,
+                    decodedStreamUrl,
+                    title,
+                    null,
+                    League,
+                    HomeTeam,
+                    AwayTeam);
 
                 // Hide loading while native player is active
                 isLoading = false;
