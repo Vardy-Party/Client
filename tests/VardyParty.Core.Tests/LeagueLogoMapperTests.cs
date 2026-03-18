@@ -12,6 +12,8 @@ namespace VardyParty.Core.Tests
         [InlineData("La Liga", "la-liga-2023-logo")]
         [InlineData("Serie A", "serie-a-logo")]
         [InlineData("Copa del Rey", "serie-a-logo")]
+        [InlineData("Copa De La Reina", "Copa-De-La-Reina-RFEF")]
+        [InlineData("Copa de la Reina", "Copa-De-La-Reina-RFEF")]
         [InlineData("Spanish Supercopa", "Supercopa_de_Espa~na-logo")]
         [InlineData("Unknown League", "")] // should return empty for unknown leagues
         public void GetLogoForLeague_ReturnsExpectedPathFragment(string league, string expectedFragment)
@@ -35,6 +37,8 @@ namespace VardyParty.Core.Tests
         [InlineData("La Liga", "la-liga-2023-logo")]
         [InlineData("Serie A", "serie-a-logo")]
         [InlineData("Copa del Rey", "serie-a-logo")]
+        [InlineData("Copa De La Reina", "Copa-De-La-Reina-RFEF")]
+        [InlineData("Copa de la Reina", "Copa-De-La-Reina-RFEF")]
         [InlineData("Spanish Supercopa", "Supercopa_de_Espa~na-logo")]
         [InlineData("Unknown League", "")] // should return empty for unknown leagues
         public void GetLogoForLeague_ReturnsExpectedPathFragmentWithBBCLeague(string league, string expectedFragment)
