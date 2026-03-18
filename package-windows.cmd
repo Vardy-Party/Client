@@ -1,1 +1,1 @@
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-windows10.0.19041.0 -c:Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+dotnet publish .\VardyParty\VardyParty.csproj -f net10.0-windows10.0.19041.0 -c:Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
