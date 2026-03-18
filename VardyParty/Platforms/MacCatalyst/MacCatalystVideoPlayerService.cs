@@ -24,7 +24,14 @@ namespace VardyParty.Platforms.MacCatalyst
             return _currentMetrics;
         }
 
-        public Task<PlaybackResult> PlayVideoAsync(string m3u8Url, string refererUrl, string title, Func<Task>? onNextStreamRequested = null)
+        public Task<PlaybackResult> PlayVideoAsync(
+            string m3u8Url,
+            string refererUrl,
+            string title,
+            Func<Task>? onNextStreamRequested = null,
+            string? league = null,
+            string? homeTeam = null,
+            string? awayTeam = null)
         {
             var tcs = new TaskCompletionSource<PlaybackResult>();
 
