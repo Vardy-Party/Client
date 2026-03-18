@@ -1,7 +1,7 @@
 name: CD - Package & Release
 
 env:
-  DOTNET_VERSION: "9.0.x"
+  DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id }}
