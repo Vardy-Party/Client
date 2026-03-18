@@ -215,6 +215,7 @@ namespace VardyParty.Platforms.Android
         private global::Android.Views.View? _menuBackdrop;
         private TextView? _reportStatusView;
         private global::Android.Widget.Button? _reportButton;
+        private global::Android.Widget.Button? _videoInfoButton;
         private LinearLayout? _scoresTickerContainer;
         private TextView? _scoresTickerText;
         private bool _isScoresTickerVisible;
@@ -373,8 +374,9 @@ namespace VardyParty.Platforms.Android
 
             var reportButton = new global::Android.Widget.Button(this) { Text = "Report stream" };
             _reportButton = reportButton;
-            var videoInfoButton = new global::Android.Widget.Button(this) { Text = "Video info" };
-            var inPlayScoresButton = new global::Android.Widget.Button(this) { Text = "Same-league live scores" };
+            var videoInfoButton = new global::Android.Widget.Button(this) { Text = "Video Info" };
+            _videoInfoButton = videoInfoButton;
+            var inPlayScoresButton = new global::Android.Widget.Button(this) { Text = "Scores" };
 
             _reportStatusView = new TextView(this)
             {
@@ -383,88 +385,36 @@ namespace VardyParty.Platforms.Android
             };
             _reportStatusView.SetTextColor(global::Android.Graphics.Color.ParseColor("#FFB300"));
 
-            _scoresTickerContainer = new LinearLayout(this)
+            void ApplyTvMenuFocusStyling(global::Android.Widget.Button button)
             {
-                Orientation = Orientation.Horizontal,
-                Visibility = global::Android.Views.ViewStates.Gone
-            };
-            _scoresTickerContainer.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#CC101010"));
-            _scoresTickerContainer.SetPadding((int)(8 * density), (int)(6 * density), (int)(8 * density), (int)(6 * density));
+                if (!_isTvDevice) return;
 
-            _scoresTickerText = new TextView(this)
-            {
-                Text = string.Empty,
-                Selected = true
-            };
-            _scoresTickerText.SetSingleLine(true);
-            _scoresTickerText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.Marquee;
-            _scoresTickerText.SetMarqueeRepeatLimit(-1);
-            _scoresTickerText.Focusable = true;
-            _scoresTickerText.SetTextColor(global::Android.Graphics.Color.ParseColor("#FFDD55"));
-            _scoresTickerText.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 13f * fontScaleCap);
-            _scoresTickerContainer.AddView(_scoresTickerText, new LinearLayout.LayoutParams(
-                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
-
-            var tickerParams = new FrameLayout.LayoutParams(
-                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
-            {
-                Gravity = global::Android.Views.GravityFlags.Bottom
-            };
-            root.AddView(_scoresTickerContainer, tickerParams);
-
-            reportButton.Click += async (_, __) =>
-            {
-                if (_reportStatusView != null)
+                button.Focusable = true;
+                button.FocusableInTouchMode = true;
+                button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#202020"));
+                button.SetTextColor(global::Android.Graphics.Color.White);
+                button.SetOnFocusChangeListener(new FocusChangeStyler((_, hasFocus) =>
                 {
-                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Visible;
-                    _reportStatusView.Text = "Reporting stream...";
-                }
-
-                try
-                {
-                    var orchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
-                    if (orchestrator != null)
+                    if (hasFocus)
                     {
-                        await orchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
-                        if (_reportStatusView != null)
-                        {
-                            _reportStatusView.Text = "Stream reported";
-                        }
+                        button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#4A9EFF"));
+                        button.SetTextColor(global::Android.Graphics.Color.Black);
                     }
-                }
-                catch
-                {
-                    if (_reportStatusView != null)
+                    else
                     {
-                        _reportStatusView.Text = "Report failed";
+                        button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#202020"));
+                        button.SetTextColor(global::Android.Graphics.Color.White);
                     }
-                }
+                }));
+            }
 
-                await Task.Delay(900);
-                if (_reportStatusView != null)
-                {
-                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
-                }
-                HideMenu();
-            };
+            ApplyTvMenuFocusStyling(videoInfoButton);
+            ApplyTvMenuFocusStyling(inPlayScoresButton);
+            ApplyTvMenuFocusStyling(reportButton);
 
-            videoInfoButton.Click += (_, __) =>
-            {
-                HideMenu();
-                ShowInfoOverlay();
-            };
-
-            inPlayScoresButton.Click += (_, __) =>
-            {
-                HideMenu();
-                ToggleSameLeagueScoresTicker();
-            };
-
-            _menuPanel.AddView(reportButton);
             _menuPanel.AddView(videoInfoButton);
             _menuPanel.AddView(inPlayScoresButton);
+            _menuPanel.AddView(reportButton);
             _menuPanel.AddView(_reportStatusView);
 
             var menuPanelParams = new FrameLayout.LayoutParams(
@@ -1208,7 +1158,7 @@ namespace VardyParty.Platforms.Android
         {
             _isMenuVisible = true;
             if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Visible;
-            _reportButton?.Post(() => _reportButton.RequestFocus());
+            _videoInfoButton?.Post(() => _videoInfoButton.RequestFocus());
             UpdateBackdropVisibility();
         }
 
@@ -1497,6 +1447,21 @@ namespace VardyParty.Platforms.Android
             public override void OnScaleEnd(global::Android.Views.ScaleGestureDetector? detector)
             {
                 global::Android.Util.Log.Info("VardyParty", $"[Zoom] Pinch complete. Final scale: {_scaleFactor:F2}x");
+            }
+        }
+
+        private class FocusChangeStyler : Java.Lang.Object, global::Android.Views.View.IOnFocusChangeListener
+        {
+            private readonly Action<global::Android.Views.View?, bool> _onFocusChanged;
+
+            public FocusChangeStyler(Action<global::Android.Views.View?, bool> onFocusChanged)
+            {
+                _onFocusChanged = onFocusChanged;
+            }
+
+            public void OnFocusChange(global::Android.Views.View? v, bool hasFocus)
+            {
+                _onFocusChanged(v, hasFocus);
             }
         }
 

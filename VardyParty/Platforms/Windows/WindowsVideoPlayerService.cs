@@ -90,14 +90,15 @@ namespace VardyParty.Platforms.Windows
                 IDisposable? currentIndexSubscription = null;
                 IDisposable? gamesSubscription = null;
                 Microsoft.UI.Dispatching.DispatcherQueueTimer? streamInfoHideTimer = null;
-                Microsoft.UI.Dispatching.DispatcherQueueTimer? scoresTickerScrollTimer = null;
+                Microsoft.UI.Dispatching.DispatcherQueueTimer? scoresTickerScrollTimer = null as Microsoft.UI.Dispatching.DispatcherQueueTimer;
                 TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? streamInfoHideHandler = null;
                 TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? scoresTickerScrollHandler = null;
                 int lastStreamTotal = -1;
                 int lastStreamIndex = -1;
                 bool isScoresTickerVisible = false;
                 var scoresTickerRawText = string.Empty;
-                var scoresTickerOffset = 0;
+                double scoresTickerOffsetPx = 0;
+                const double tickerSpeedPerTickPx = 1.25;
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
 
@@ -205,9 +206,9 @@ namespace VardyParty.Platforms.Windows
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6)
                 };
 
+                var videoInfoButton = new WinButton { Content = "Video Info" };
+                var sameLeagueTickerButton = new WinButton { Content = "Scores" };
                 var reportStreamButton = new WinButton { Content = "Report stream" };
-                var videoInfoButton = new WinButton { Content = "Video info" };
-                var sameLeagueTickerButton = new WinButton { Content = "Same-league live scores" };
                 var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Text = "Reporting stream...",
@@ -216,9 +217,9 @@ namespace VardyParty.Platforms.Windows
                     FontSize = 12
                 };
 
-                menuPanel.Children.Add(reportStreamButton);
                 menuPanel.Children.Add(videoInfoButton);
                 menuPanel.Children.Add(sameLeagueTickerButton);
+                menuPanel.Children.Add(reportStreamButton);
                 menuPanel.Children.Add(reportStatusText);
 
                 var scoresTickerBorder = new Microsoft.UI.Xaml.Controls.Border
@@ -226,17 +227,34 @@ namespace VardyParty.Platforms.Windows
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
                     VerticalAlignment = WinVerticalAlignment.Bottom,
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.80 },
-                    Padding = new WinThickness(12, 6, 12, 6),
-                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                    Padding = new WinThickness(0, 6, 0, 6),
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    IsHitTestVisible = false
+                };
+                var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Grid
+                {
+                    HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                    VerticalAlignment = WinVerticalAlignment.Center,
+                    Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry()
                 };
                 var scoresTickerText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
                     FontSize = 13,
                     TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
-                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
+                    HorizontalAlignment = WinHorizontalAlignment.Left,
+                    RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform()
                 };
-                scoresTickerBorder.Child = scoresTickerText;
+                scoresTickerViewport.SizeChanged += (_, __) =>
+                {
+                    if (scoresTickerViewport.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
+                    {
+                        rg.Rect = new global::Windows.Foundation.Rect(0, 0, scoresTickerViewport.ActualWidth, scoresTickerViewport.ActualHeight);
+                    }
+                };
+                scoresTickerViewport.Children.Add(scoresTickerText);
+                scoresTickerBorder.Child = scoresTickerViewport;
 
                 // Full-screen click-away surface for menu/info dismiss
                 var dismissSurface = new Microsoft.UI.Xaml.Controls.Border
@@ -355,7 +373,7 @@ namespace VardyParty.Platforms.Windows
                         sb.AppendLine($"Video Codec: {vCodec}");
                         sb.AppendLine($"Audio Codec: {aCodec}");
                         
-                        if (!string.IsNullOrEmpty(title))
+
                         if (!string.IsNullOrEmpty(title))
                             sb.AppendLine($"{title}");
 
@@ -460,21 +478,34 @@ namespace VardyParty.Platforms.Windows
                 void EnsureTickerTimer()
                 {
                     scoresTickerScrollTimer ??= scoresTickerText.DispatcherQueue.CreateTimer();
-                    scoresTickerScrollTimer.Interval = TimeSpan.FromMilliseconds(170);
+                    scoresTickerScrollTimer.Interval = TimeSpan.FromMilliseconds(16);
                     if (scoresTickerScrollHandler == null)
                     {
                         scoresTickerScrollHandler = (_, __) =>
                         {
                             if (!isScoresTickerVisible || string.IsNullOrEmpty(scoresTickerRawText)) return;
-                            if (scoresTickerRawText.Length < 2)
+
+                            var viewportWidth = scoresTickerViewport.ActualWidth;
+                            if (viewportWidth <= 0) return;
+
+                            var transform = scoresTickerText.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
+                            if (transform == null) return;
+
+                            var textWidth = scoresTickerText.ActualWidth;
+                            if (textWidth <= 0)
                             {
-                                scoresTickerText.Text = scoresTickerRawText;
-                                return;
+                                scoresTickerText.Measure(new global::Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                                textWidth = scoresTickerText.DesiredSize.Width;
+                                if (textWidth <= 0) return;
                             }
 
-                            scoresTickerOffset = (scoresTickerOffset + 1) % scoresTickerRawText.Length;
-                            var visible = scoresTickerRawText.Substring(scoresTickerOffset) + scoresTickerRawText.Substring(0, scoresTickerOffset);
-                            scoresTickerText.Text = visible;
+                            scoresTickerOffsetPx -= tickerSpeedPerTickPx;
+                            if (scoresTickerOffsetPx <= -textWidth)
+                            {
+                                scoresTickerOffsetPx = viewportWidth;
+                            }
+
+                            transform.X = scoresTickerOffsetPx;
                         };
                         scoresTickerScrollTimer.Tick += scoresTickerScrollHandler;
                     }
@@ -488,10 +519,18 @@ namespace VardyParty.Platforms.Windows
                         scoresTickerRawText += "     ";
                     }
 
-                    scoresTickerRawText += "     ";
-                    if (resetOffset) scoresTickerOffset = 0;
-                    var visible = scoresTickerRawText.Substring(scoresTickerOffset) + scoresTickerRawText.Substring(0, scoresTickerOffset);
-                    scoresTickerText.Text = visible;
+                    scoresTickerText.Text = scoresTickerRawText + "     ";
+
+                    if (resetOffset)
+                    {
+                        var viewportWidth = scoresTickerViewport.ActualWidth;
+                        scoresTickerOffsetPx = viewportWidth > 0 ? viewportWidth : 0;
+                    }
+
+                    if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform transform)
+                    {
+                        transform.X = scoresTickerOffsetPx;
+                    }
                 }
 
                 void ToggleScoresTicker()
