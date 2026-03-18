@@ -412,6 +412,49 @@ namespace VardyParty.Platforms.Android
             ApplyTvMenuFocusStyling(inPlayScoresButton);
             ApplyTvMenuFocusStyling(reportButton);
 
+            videoInfoButton.Click += (_, __) =>
+            {
+                HideMenu();
+                ShowInfoOverlay();
+            };
+
+            inPlayScoresButton.Click += (_, __) =>
+            {
+                HideMenu();
+                ToggleSameLeagueScoresTicker();
+            };
+
+            reportButton.Click += async (_, __) =>
+            {
+                if (_reportStatusView != null)
+                {
+                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Visible;
+                    _reportStatusView.Text = "Reporting stream...";
+                }
+
+                try
+                {
+                    var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
+                    if (streamResolutionOrchestrator != null)
+                    {
+                        await streamResolutionOrchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
+                        if (_reportStatusView != null) _reportStatusView.Text = "Stream reported";
+                    }
+                    else if (_reportStatusView != null)
+                    {
+                        _reportStatusView.Text = "Report unavailable";
+                    }
+                }
+                catch
+                {
+                    if (_reportStatusView != null) _reportStatusView.Text = "Report failed";
+                }
+
+                try { await Task.Delay(900); } catch { }
+                if (_reportStatusView != null) _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
+                HideMenu();
+            };
+
             _menuPanel.AddView(videoInfoButton);
             _menuPanel.AddView(inPlayScoresButton);
             _menuPanel.AddView(reportButton);
@@ -1154,6 +1197,29 @@ namespace VardyParty.Platforms.Android
             catch { }
         }
 
+        private bool TryActivateFocusedMenuItem()
+        {
+            if (!_isMenuVisible || _menuPanel == null) return false;
+
+            var focusedView = CurrentFocus;
+            if (focusedView is not global::Android.Views.View view) return false;
+            if (view is not global::Android.Widget.Button button) return false;
+
+            var parent = view.Parent;
+            while (parent != null)
+            {
+                if (ReferenceEquals(parent, _menuPanel))
+                {
+                    button.PerformClick();
+                    return true;
+                }
+
+                parent = (parent as global::Android.Views.View)?.Parent;
+            }
+
+            return false;
+        }
+
         private void ShowMenu()
         {
             _isMenuVisible = true;
@@ -1205,6 +1271,11 @@ namespace VardyParty.Platforms.Android
                         {
                             if (_isMenuVisible)
                             {
+                                if (TryActivateFocusedMenuItem())
+                                {
+                                    return true;
+                                }
+
                                 HideMenu();
                                 return true;
                             }
