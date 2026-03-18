@@ -393,9 +393,9 @@ namespace VardyParty.Platforms.Android
                 button.FocusableInTouchMode = true;
                 button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#202020"));
                 button.SetTextColor(global::Android.Graphics.Color.White);
-                button.SetOnFocusChangeListener(new FocusChangeStyler((_, hasFocus) =>
+                button.FocusChange += (_, args) =>
                 {
-                    if (hasFocus)
+                    if (args.HasFocus)
                     {
                         button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#4A9EFF"));
                         button.SetTextColor(global::Android.Graphics.Color.Black);
@@ -405,7 +405,7 @@ namespace VardyParty.Platforms.Android
                         button.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#202020"));
                         button.SetTextColor(global::Android.Graphics.Color.White);
                     }
-                }));
+                };
             }
 
             ApplyTvMenuFocusStyling(videoInfoButton);
@@ -1190,7 +1190,7 @@ namespace VardyParty.Platforms.Android
             if (_menuBackdrop == null) return;
             _menuBackdrop.Visibility = (_isMenuVisible || _isInfoVisible) && !_isTvDevice
                 ? global::Android.Views.ViewStates.Visible
-                : global::Android.Views.ViewStates.Gone;
+                : global::Android.Views.ViewGroup.LayoutParams.WrapContent;
         }
 
         public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent e)
@@ -1447,21 +1447,6 @@ namespace VardyParty.Platforms.Android
             public override void OnScaleEnd(global::Android.Views.ScaleGestureDetector? detector)
             {
                 global::Android.Util.Log.Info("VardyParty", $"[Zoom] Pinch complete. Final scale: {_scaleFactor:F2}x");
-            }
-        }
-
-        private class FocusChangeStyler : Java.Lang.Object, global::Android.Views.View.IOnFocusChangeListener
-        {
-            private readonly Action<global::Android.Views.View?, bool> _onFocusChanged;
-
-            public FocusChangeStyler(Action<global::Android.Views.View?, bool> onFocusChanged)
-            {
-                _onFocusChanged = onFocusChanged;
-            }
-
-            public void OnFocusChange(global::Android.Views.View? v, bool hasFocus)
-            {
-                _onFocusChanged(v, hasFocus);
             }
         }
 
