@@ -421,3 +421,84 @@ h1 {
     font-size: 14px;
     line-height: 1.35;
 }
+
+.header-right {
+    display: flex;
+    align-items: center;
+}
+
+.header-auth-button {
+    background: transparent;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 14px;
+}
+
+.header-auth-button:focus,
+.header-auth-button:focus-visible {
+    outline: 3px solid #4a9eff;
+    outline-offset: 3px;
+    border-color: #4a9eff;
+    background: rgba(74, 158, 255, 0.18);
+    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.35);
+}
+
+.auth-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(74,158,255,0.04));
+    width: min(960px, calc(100vw - 48px));
+    margin: 24px auto;
+    box-sizing: border-box;
+}
+
+.auth-hero-inner {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+}
+
+.auth-device {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.auth-device > div {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.qr-image {
+    width: min(220px, 70vw);
+    height: auto;
+    max-width: 100%;
+}
+
+.auth-device p {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+/* TV / large-screen tuning */
+@media (min-width: 1280px) {
+    .auth-hero {
+        width: min(1080px, calc(100vw - 80px));
+        margin-top: 20px;
+    }
+
+    .qr-image {
+        width: 240px;
+    }
+}

@@ -107,7 +107,7 @@
             {
                 var game = games[i];
                 var isSelected = IsSelected(game);
-                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 1));
+                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 0));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard Game="game"
@@ -511,7 +511,7 @@
 
     protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (focusPending)
+        if (focusPending && isAuthenticated && games.Count > 0)
         {
             focusPending = false;
         }
@@ -572,6 +572,7 @@
             games.AddRange(leagueGames);
         }
 
+        EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
         InvokeAsync(StateHasChanged);
@@ -591,9 +592,34 @@
         games.Clear();
         games.AddRange(updatedGames.Where(g => !_ignoredLeagues.Contains(g.League))); // still filter ignored leagues if present
 
+        EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
         InvokeAsync(StateHasChanged);
+    }
+
+    private void EnsureInitialSelection()
+    {
+        if (games.Count == 0)
+        {
+            Selection.CurrentGame = null;
+            return;
+        }
+
+        if (Selection.CurrentGame == null)
+        {
+            Selection.CurrentGame = games[0];
+            return;
+        }
+
+        var existing = games.Any(g =>
+            string.Equals(g.Home, Selection.CurrentGame.Home, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(g.Away, Selection.CurrentGame.Away, StringComparison.OrdinalIgnoreCase));
+
+        if (!existing)
+        {
+            Selection.CurrentGame = games[0];
+        }
     }
 
     private void OnErrorUpdated(string? error)
