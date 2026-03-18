@@ -163,17 +163,16 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
-
-                // Close button (top-right)
+                // Close button (top-right, offset below native window chrome)
                 var closeButton = new WinButton
                 {
-                    Content = "X",
+                    Content = "Close",
                     HorizontalAlignment = WinHorizontalAlignment.Right,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(0, 12, 12, 0),
-                    Width = 32,
+                    Margin = new WinThickness(0, 48, 12, 0),
+                    Width = 72,
                     Height = 32,
-                    Padding = new WinThickness(0),
+                    Padding = new WinThickness(8, 0, 8, 0),
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
                 };
@@ -1257,3 +1256,5 @@ namespace VardyParty.Platforms.Windows
         }
     }
 }
+
+
