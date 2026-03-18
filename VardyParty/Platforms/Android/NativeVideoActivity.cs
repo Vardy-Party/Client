@@ -1190,7 +1190,7 @@ namespace VardyParty.Platforms.Android
             if (_menuBackdrop == null) return;
             _menuBackdrop.Visibility = (_isMenuVisible || _isInfoVisible) && !_isTvDevice
                 ? global::Android.Views.ViewStates.Visible
-                : global::Android.Views.ViewGroup.LayoutParams.WrapContent;
+                : global::Android.Views.ViewStates.Gone;
         }
 
         public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent e)
