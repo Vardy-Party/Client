@@ -43,14 +43,15 @@
                     <span class="score-divider">-</span>
                     <span class="score-compact">@Game.AwayScore</span>
                 </div>
-                @if (HasAggregateScore)
-                {
-                    <div class="aggregate-score">Agg @Game.AggregateHomeScore-@Game.AggregateAwayScore</div>
-                }
             }
             else
             {
                 <span class="vs-compact">VS</span>
+            }
+
+            @if (HasAggregateScore)
+            {
+                <div class="aggregate-score">Agg @Game.AggregateHomeScore-@Game.AggregateAwayScore</div>
             }
         </div>
 

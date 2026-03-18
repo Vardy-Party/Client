@@ -6,6 +6,7 @@
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="Resources\ChampionsLeagueLeg2BeforeStart.html" />
     <None Remove="Resources\ParseHtml_ExtractsTeamLogos_Lazio_Como.html" />
     <None Remove="Resources\RawAetPenaltiesGame.html" />
     <None Remove="Resources\RawFullTimeAggregateGame.html" />
@@ -14,6 +15,9 @@
     <None Remove="Resources\ChampionsLeagueLeg2WithAggregateScores.html" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Resources\ChampionsLeagueLeg2BeforeStart.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Content Include="Resources\ParseHtml_ExtractsTeamLogos_Lazio_Como.html">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

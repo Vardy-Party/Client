@@ -483,10 +483,15 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 progressInner.IndexOf("Half time", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 RangeContains(">HT<") ||
                 RangeContains("Half time"));
-            var hasLive = hasProgressContainer && (
-                progressInner.IndexOf("in progress", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                progressInner.IndexOf("Live", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                RangeContains("Live"));
+
+            var hasExplicitInProgress = hasProgressContainer &&
+                progressInner.IndexOf("in progress", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            // Treat as live only when the period text itself is exactly "Live".
+            var hasLiveKeyword = hasProgressContainer &&
+                progressInner.Trim().Equals("Live", StringComparison.OrdinalIgnoreCase);
+
+            var hasLive = hasProgressContainer && (hasExplicitInProgress || hasLiveKeyword);
 
             var isPostponed = hasProgressContainer && progressInner.IndexOf("Postponed", StringComparison.OrdinalIgnoreCase) >= 0;
 
