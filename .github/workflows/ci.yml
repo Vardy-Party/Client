@@ -1,7 +1,7 @@
 name: CI - Build & Test
 
 env:
-  DOTNET_VERSION: "10.0.x"
+  DOTNET_VERSION: "9.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
   TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
