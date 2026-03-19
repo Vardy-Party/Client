@@ -359,6 +359,11 @@ jobs:
     steps:
       - name: Check CI status
         run: |
+          if [[ "${{ needs.test.result }}" == "skipped" || "${{ needs.code-quality.result }}" == "skipped" ]]; then
+            echo "Tasks skipped"
+            exit 1
+          fi
+
           if [[ "${{ needs.test.result }}" == "failure" || \
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \
