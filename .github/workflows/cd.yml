@@ -405,7 +405,7 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64;android-arm;android-x86;android-x64
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64;android-arm;android-x86;android-x64 -r android-arm64;android-arm;android-x86;android-x64
       - name: Verify APK Signature
         continue-on-error: true
         run: |
@@ -708,6 +708,8 @@ jobs:
           PACKAGE_FILE=$(ls ./VardyParty-macos-v*-b*.tar.gz | head -1)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
           else
             gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
           fi
@@ -745,15 +747,13 @@ jobs:
           echo "$BASE_JSON" | jq \
             --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
             --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
-            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
-            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
             --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
             --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
             --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
-            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
+            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
+            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
             '(.Auth0 //= {})
              | (.Api //= {})
              | .Auth0.Domain = $domain
@@ -837,11 +837,13 @@ jobs:
                 Comment=Vardy Party Linux client
                 Exec=vardyparty
                 Icon=${SNAP}/meta/gui/vardyparty.svg
-                Terminal=false
+                Exec=vardyparty
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                mkdir -p "$CRAFT_PART_INSTALL/bin"
+                cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
