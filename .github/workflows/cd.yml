@@ -323,8 +323,6 @@ jobs:
         run: dotnet workload update
       - name: Install missing Android packs
         run: dotnet workload install maui-android --skip-manifest-update --ignore-failed-sources
-      - name: Install all MAUI packs
-        run: dotnet workload install maui --skip-manifest-update --ignore-failed-sources
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
