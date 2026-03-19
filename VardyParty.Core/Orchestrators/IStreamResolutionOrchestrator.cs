@@ -8,5 +8,7 @@ public interface IStreamResolutionOrchestrator
 
     Task<StreamResolutionOutcome> StartAsync(Game game, CancellationToken cancellationToken = default);
 
+    Task ReportCurrentStreamAsBadAsync(string? reason = null, CancellationToken cancellationToken = default);
+
     void Reset();
 }

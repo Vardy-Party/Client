@@ -28,6 +28,7 @@ public static class LeagueLogoMapper
             _ when Is("MLS") || Is("Major League Soccer") || Is("US Major League Soccer") => "images/leagues/MLS-logo-Brandlogos.net.svg",
             _ when Is("Japan J1 League") || Is("J1 League") || Is("J.League") => "images/leagues/J.League.svg",
             _ when Is("Copa del Rey") => "images/leagues/serie-a-logo-brandlogos.net_hklrxdbdu.svg",
+            _ when Is("Copa De La Reina") || Is("Copa de la Reina") => "images/leagues/Copa-De-La-Reina-RFEF.svg",
             _ when Is("La Liga 2") || Is("Segunda") || Is("laliga-hypermotion") => "images/leagues/laliga-hypermotion-logo-brandlogos.net_dn0w6izjc.svg",
             _ when Is("La Liga") || Is("laliga") => "images/leagues/la-liga-2023-logo-brandlogos.net_fi7yd18xl.svg",
             _ when Is("Serie A") => "images/leagues/serie-a-logo-brandlogos.net_hklrxdbdu.svg",

@@ -400,5 +400,44 @@ namespace VardyParty.Core.Tests
             Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/inter-milan.209b8285b0.svg", g.HomeBadgeUrl);
             Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5be7ff54ce.svg", g.AwayBadgeUrl);
         }
+
+        [Fact]
+        public void ExactMatch_EnrichesAggregateScores()
+        {
+            var games = new List<Game> { new Game { Home = "Team A", Away = "Team B" } };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture(
+                    "Team A",
+                    "Team B",
+                    DateTime.UtcNow,
+                    "FT",
+                    true,
+                    false,
+                    false,
+                    null,
+                    1,
+                    0,
+                    "",
+                    "",
+                    "League",
+                    true,
+                    false,
+                    "",
+                    null,
+                    null,
+                    5,
+                    3)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "League");
+
+            var g = games.First();
+            Assert.Equal(5, g.AggregateHomeScore);
+            Assert.Equal(3, g.AggregateAwayScore);
+            Assert.Equal(1, g.HomeScore);
+            Assert.Equal(0, g.AwayScore);
+        }
     }
 }

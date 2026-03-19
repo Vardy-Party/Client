@@ -163,6 +163,21 @@ public class StreamResolutionOrchestrator(
         _progressSubject.OnNext(new StreamResolutionProgress());
     }
 
+    public Task ReportCurrentStreamAsBadAsync(string? reason = null, CancellationToken cancellationToken = default)
+    {
+        var currentStream = streamSwitchingService.GetCurrentStream();
+        if (currentStream == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return streamHealthReporter.ReportBadStreamAsync(
+            currentStream.Stream.Url,
+            currentStream.Stream.Url,
+            reason,
+            cancellationToken);
+    }
+
     private Task ReportHealthAsync(Game game, string? streamUrl, string status, string? error,
         CancellationToken cancellationToken)
     {
@@ -230,7 +245,10 @@ public class StreamResolutionOrchestrator(
                 m3u8Url,
                 enrichedStream.Stream.Url,
                 title,
-                () => HandleNextStreamRequestedAsync(game, cancellationToken));
+                () => HandleNextStreamRequestedAsync(game, cancellationToken),
+                game.DisplayLeague,
+                game.DisplayHome,
+                game.DisplayAway);
         }
         finally
         {
@@ -318,8 +336,13 @@ public class StreamResolutionOrchestrator(
         if (nextStream == null)
         {
             logger.LogInformation("[StreamResolution] No next stream available");
+            _status = "No next stream available";
+            PublishProgress();
             return;
         }
+
+        _status = "Switch requested - resolving stream URL...";
+        PublishProgress();
 
         var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
             nextStream.Stream,
@@ -330,6 +353,8 @@ public class StreamResolutionOrchestrator(
         {
             logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
                 nextStream.Stream.Channel);
+            _status = "Switch failed - could not resolve stream URL";
+            PublishProgress();
             return;
         }
 
@@ -338,6 +363,8 @@ public class StreamResolutionOrchestrator(
         if (streamSwitchingService.SwitchToNextStream())
         {
             logger.LogInformation("[StreamResolution] Switched to next stream");
+            _status = "Switched to next stream";
+            PublishProgress();
         }
     }
 

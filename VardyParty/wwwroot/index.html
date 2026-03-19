@@ -32,23 +32,86 @@
     <div id="app"></div>
 
     <div id="blazor-error-ui" data-nosnippet>
-        An unhandled error has occurred.
+        <span>An unhandled error has occurred.</span>
         <a href="." class="reload">Reload</a>
         <span class="dismiss">🗙</span>
+        <pre id="blazor-error-detail" class="blazor-error-detail"></pre>
     </div>
 
     <script src="_framework/blazor.webview.js" autostart="false"></script>
     <script>
-        // Enhanced error logging for Android debugging
+        let lastConsoleErrorText = '';
+
+        function toErrorText(value) {
+            try {
+                if (!value) return '';
+                if (typeof value === 'string') return value;
+                if (value instanceof Error) {
+                    return value.stack || (value.name + ': ' + value.message);
+                }
+                return JSON.stringify(value, null, 2);
+            } catch {
+                return String(value);
+            }
+        }
+
+        function argsToText(args) {
+            return Array.from(args || []).map(toErrorText).filter(Boolean).join('\n');
+        }
+
+        function showBlazorErrorDetail(text) {
+            const detail = document.getElementById('blazor-error-detail');
+            if (!detail) return;
+            detail.textContent = text || '';
+            if (text && text.trim().length > 0) {
+                detail.style.display = 'block';
+            }
+        }
+
+        // Mirror console.error into banner details to capture framework-level failures
+        const originalConsoleError = console.error?.bind(console);
+        console.error = function(...args) {
+            const text = argsToText(args);
+            if (text) {
+                lastConsoleErrorText = text;
+                showBlazorErrorDetail(text);
+            }
+            if (originalConsoleError) {
+                originalConsoleError(...args);
+            }
+        };
+
+        // Enhanced error logging for Android/Windows debugging
         window.addEventListener('error', function(e) {
-            console.error('[GLOBAL ERROR]', e.message, e.filename, e.lineno, e.colno, e.error);
-            document.getElementById('blazor-error-ui').style.display = 'block';
+            const text = [
+                e?.message || 'window.error',
+                e?.filename ? `file: ${e.filename}:${e.lineno || 0}:${e.colno || 0}` : '',
+                toErrorText(e?.error)
+            ].filter(Boolean).join('\n');
+
+            console.error('[GLOBAL ERROR]', text);
+            showBlazorErrorDetail(text);
         });
         
         window.addEventListener('unhandledrejection', function(e) {
-            console.error('[UNHANDLED PROMISE]', e.reason);
-            document.getElementById('blazor-error-ui').style.display = 'block';
+            const text = toErrorText(e?.reason);
+            console.error('[UNHANDLED PROMISE]', text);
+            showBlazorErrorDetail(text);
         });
+
+        // If framework shows the banner without firing global events, display last known console error
+        const errorUi = document.getElementById('blazor-error-ui');
+        if (errorUi) {
+            const observer = new MutationObserver(() => {
+                const shown = getComputedStyle(errorUi).display !== 'none';
+                const detail = document.getElementById('blazor-error-detail');
+                const hasDetail = detail && detail.textContent && detail.textContent.trim().length > 0;
+                if (shown && !hasDetail && lastConsoleErrorText) {
+                    showBlazorErrorDetail(lastConsoleErrorText);
+                }
+            });
+            observer.observe(errorUi, { attributes: true, attributeFilter: ['style', 'class'] });
+        }
 
         console.log('[INDEX.HTML] Page loaded, Blazor script should be available');
         console.log('[INDEX.HTML] typeof Blazor:', typeof Blazor);

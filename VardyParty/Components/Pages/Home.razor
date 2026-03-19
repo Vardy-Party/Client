@@ -1,4 +1,4 @@
-﻿@page "/"
+@page "/"
 @inject IEnrichedGameService GameService
 @inject NavigationManager Navigation
 @inject SelectionState Selection
@@ -7,6 +7,7 @@
 @inject IServiceProvider ServiceProvider
 @inject IAuthLoginService AuthLoginService
 @inject IAuthTokenProvider AuthTokenProvider
+@inject ILocalLanServiceAvailabilityMonitor LocalLanServiceAvailabilityMonitor
 @using Microsoft.Extensions.Logging
 @using QRCoder
 @using VardyParty.Models
@@ -20,7 +21,7 @@
         <div class="page-header-inner">
             <div class="header-brand">
                 <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" style="display:inline-block;vertical-align:middle;"/>
-                <h1 class="header-title" style="display:inline-block;vertical-align:middle;margin-left:8px;">Vardy Party</h1>
+                <div class="header-title" role="heading" aria-level="1" style="display:inline-block;vertical-align:middle;margin-left:8px;">Vardy Party</div>
             </div>
             <div class="header-right">
                 @if (isAuthenticated)
@@ -30,6 +31,11 @@
             </div>
         </div>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(localServiceWarning))
+    {
+        <div class="local-service-warning">@localServiceWarning</div>
+    }
 
     @if (!isAuthenticated)
     {
@@ -101,7 +107,7 @@
             {
                 var game = games[i];
                 var isSelected = IsSelected(game);
-                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 1));
+                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 0));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard Game="game"
@@ -112,6 +118,7 @@
             }
         </div>
     }
+
 </div>
 
 <!-- Stream Resolution Progress Indicator -->
@@ -192,6 +199,7 @@
     private bool focusPending = true;
     private IDisposable? _gamesSubscription;
     private IDisposable? _errorSubscription;
+    private IDisposable? _localLanWarningSubscription;
     private CancellationTokenSource? _streamResolutionCts;
     private IOverlayCloseService? _overlayCloseService;
     private CancellationTokenSource? _authCts;
@@ -201,6 +209,7 @@
     private AuthDeviceCode? deviceCode;
     private string? deviceQrDataUri;
     private string? deviceQrTarget;
+    private string? localServiceWarning;
 
     private readonly HashSet<string> _ignoredLeagues = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -279,6 +288,8 @@
         {
         }
 #endif
+
+        _localLanWarningSubscription = LocalLanServiceAvailabilityMonitor.WarningStream.Subscribe(OnLocalLanWarningUpdated);
     }
 
 
@@ -434,6 +445,8 @@
         _gamesSubscription = null;
         _errorSubscription?.Dispose();
         _errorSubscription = null;
+        _localLanWarningSubscription?.Dispose();
+        _localLanWarningSubscription = null;
         _progressSubscription?.Dispose();
         _progressSubscription = null;
         StreamResolutionOrchestrator.Reset();
@@ -498,7 +511,7 @@
 
     protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (focusPending)
+        if (focusPending && isAuthenticated && games.Count > 0)
         {
             focusPending = false;
         }
@@ -559,6 +572,7 @@
             games.AddRange(leagueGames);
         }
 
+        EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
         InvokeAsync(StateHasChanged);
@@ -578,9 +592,34 @@
         games.Clear();
         games.AddRange(updatedGames.Where(g => !_ignoredLeagues.Contains(g.League))); // still filter ignored leagues if present
 
+        EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
         InvokeAsync(StateHasChanged);
+    }
+
+    private void EnsureInitialSelection()
+    {
+        if (games.Count == 0)
+        {
+            Selection.CurrentGame = null;
+            return;
+        }
+
+        if (Selection.CurrentGame == null)
+        {
+            Selection.CurrentGame = games[0];
+            return;
+        }
+
+        var existing = games.Any(g =>
+            string.Equals(g.Home, Selection.CurrentGame.Home, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(g.Away, Selection.CurrentGame.Away, StringComparison.OrdinalIgnoreCase));
+
+        if (!existing)
+        {
+            Selection.CurrentGame = games[0];
+        }
     }
 
     private void OnErrorUpdated(string? error)
@@ -750,12 +789,19 @@
         _errorSubscription = GameService.ErrorStream.Subscribe(OnErrorUpdated);
     }
 
+    private void OnLocalLanWarningUpdated(string? warning)
+    {
+        localServiceWarning = warning;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
     public void Dispose()
     {
         Logger.LogInformation("[Home] Disposing");
 
         _gamesSubscription?.Dispose();
         _errorSubscription?.Dispose();
+        _localLanWarningSubscription?.Dispose();
         _progressSubscription?.Dispose();
         StreamResolutionOrchestrator.Reset();
         if (_overlayCloseService != null)
