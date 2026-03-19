@@ -126,10 +126,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      # - name: Restore dependencies 
-      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Restore dependencies 
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:AndroidKeyStore=false
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:AndroidKeyStore=false --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -161,10 +161,10 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
-      # - name: Restore dependencies
-      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -196,10 +196,10 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
-      # - name: Restore dependencies
-      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -229,12 +229,12 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Skip Linux runtime dependencies for CI compile
         run: echo "Skipping apt install; Linux runtime packages are not required for dotnet restore/build."
-      # - name: Restore VardyParty.Linux dependencies
-      #   run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      - name: Restore VardyParty.Linux dependencies
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
       - name: Build Linux app (x64)
-        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
       - name: Build Linux app (ARM64)
-        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64 --no-restore
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
