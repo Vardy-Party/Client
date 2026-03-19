@@ -331,6 +331,10 @@ jobs:
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Restore core dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj --ignore-failed-sources
+      - name: Restore app dependencies
+        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Extract app version metadata
         id: app_version
         run: |
