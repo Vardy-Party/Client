@@ -190,7 +190,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -f net10.0-ios -r iossimulator-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-ios -r iossimulator-x64
       - name: Build iOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios -r iossimulator-x64 --no-restore
       - name: Upload artifact
@@ -228,7 +228,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -f net10.0-maccatalyst -r maccatalyst-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
       - name: Build macOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst -r maccatalyst-x64 --no-restore
       - name: Upload artifact
