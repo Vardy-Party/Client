@@ -319,22 +319,16 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
-      - name: Update workload manifests
-        run: dotnet workload update
-      - name: Install missing Android packs
-        run: dotnet workload install maui-android --skip-manifest-update --ignore-failed-sources
+      - name: Restore core dependencies
+        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj --ignore-failed-sources
+      - name: Restore app dependencies
+        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-android
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
-      - name: Restore core dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj --ignore-failed-sources
-      - name: Restore app dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Extract app version metadata
         id: app_version
         run: |
