@@ -151,10 +151,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore dependencies 
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-android -r android-arm64
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:AndroidKeyStore=false --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -r android-arm64 -p:AndroidKeyStore=false --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
