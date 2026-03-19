@@ -63,10 +63,10 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
-      - name: Restore dependencies
-        run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
+      # - name: Restore dependencies
+      #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Run StyleCop analyzers
-        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
         continue-on-error: true
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
