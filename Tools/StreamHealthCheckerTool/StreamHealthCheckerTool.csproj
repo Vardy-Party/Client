@@ -6,7 +6,6 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
-		<UseMonoRuntime>false</UseMonoRuntime>
 	</PropertyGroup>
 
 	<ItemGroup>
