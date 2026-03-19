@@ -22,7 +22,7 @@ on:
       run_linux_runtime_smoke:
         description: "Run optional Linux runtime smoke test (installs VLC deps)"
         required: false
-        default: "false"
+        default: "true"
 
 jobs:
   resolve-flags:
@@ -228,9 +228,9 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-arm64
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst -r maccatalyst-x64 --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst -r maccatalyst-arm64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
