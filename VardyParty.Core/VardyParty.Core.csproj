@@ -11,6 +11,7 @@
 		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
 		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
 		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+		<UseMonoRuntime>false</UseMonoRuntime>
 	</PropertyGroup>
 
 	<ItemGroup>

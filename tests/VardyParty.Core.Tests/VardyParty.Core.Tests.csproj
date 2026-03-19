@@ -4,6 +4,7 @@
 		<IsPackable>false</IsPackable>
 		<Nullable>enable</Nullable>
 		<PlatformTarget>x64</PlatformTarget>
+		<UseMonoRuntime>false</UseMonoRuntime>
 	</PropertyGroup>
 	<ItemGroup>
 		<None Remove="Resources\ChampionsLeagueLeg2BeforeStart.html" />
