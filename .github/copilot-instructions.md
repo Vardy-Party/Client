@@ -2,6 +2,7 @@
 
 ## Project Guidelines
 - User wants CI/CD to merge generated settings into existing appsettings.json instead of overwriting it.
+- User prefers CI skip controls to be top-level YAML variables in workflow files rather than workflow_dispatch inputs.
 - When introducing shared local-service code, use `VardyParty.LocalService.Client` (not `LocalService.Shared`).
 
 ## Streaming Guidelines
