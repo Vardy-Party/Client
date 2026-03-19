@@ -3,9 +3,8 @@
     <Import Project="..\Version.props" />
 
     <PropertyGroup>
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
@@ -230,7 +229,7 @@
     <JloArch Include="armeabi-v7a;arm64-v8a;x86;x86_64" />
   </ItemGroup>
 
-  <Target Name="CreateJloPlaceholders" BeforeTargets="PrepareForBuild">
+  <Target Name="CreateJloPlaceholders" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <ItemGroup>
       <JloPaths Include="@(JloArch->'$(BaseIntermediateOutputPath)android\assets\%(Identity)\$(JloFileName)')" />
     </ItemGroup>
@@ -285,7 +284,7 @@
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'net10.0-android'">
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     </PropertyGroup>
 
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
