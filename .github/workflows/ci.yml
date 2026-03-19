@@ -126,14 +126,8 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore dependencies (android-arm64)
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}  -r android-arm64
-      - name: Restore dependencies (android-arm)
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}  -r android-arm
-      - name: Restore dependencies (android-x64)
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}  -r android-x64
-      - name: Restore dependencies (android-x86)
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}  -r android-x86
+      - name: Restore dependencies 
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Android app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:AndroidKeyStore=false --no-restore
       - name: Upload artifact
