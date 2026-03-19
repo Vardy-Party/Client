@@ -319,8 +319,6 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
-      - name: Restore core dependencies
-        run: dotnet restore VardyParty.Core/VardyParty.Core.csproj --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Download Android build artifact
@@ -456,9 +454,11 @@ jobs:
           ARTIFACTS_DIR="android-package-artifacts"
           mkdir -p "$ARTIFACTS_DIR"
           
-          # Copy only the first APK (all are binary-identical)
-          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
-          cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
+          # Copy all ABI APKs with ABI suffix in filename
+          for APK_FILE in $(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f); do
+            ABI=$(echo "$APK_FILE" | grep -oE 'android-(arm64|arm|x86|x64)' | sed 's/android-//')
+            cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-${ABI}-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
+          done
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
