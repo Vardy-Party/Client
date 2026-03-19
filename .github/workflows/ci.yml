@@ -40,10 +40,10 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      - name: Restore dependencies
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
+      # - name: Restore dependencies
+      #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Build test project
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release --no-restore
+        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release
       - name: Run unit tests
         run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet test {} -c Release --no-build --verbosity normal
 
@@ -88,8 +88,8 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
+      # - name: Restore dependencies
+      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
       - name: Build Windows app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
@@ -126,10 +126,10 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      # - name: Restore dependencies
+      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore -p:AndroidKeyStore=false
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:AndroidKeyStore=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -161,8 +161,8 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      # - name: Restore dependencies
+      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build iOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios
       - name: Upload artifact
@@ -196,8 +196,8 @@ jobs:
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      # - name: Restore dependencies
+      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build macOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
       - name: Upload artifact
@@ -229,12 +229,12 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Skip Linux runtime dependencies for CI compile
         run: echo "Skipping apt install; Linux runtime packages are not required for dotnet restore/build."
-      - name: Restore VardyParty.Linux dependencies
-        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      # - name: Restore VardyParty.Linux dependencies
+      #   run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
       - name: Build Linux app (x64)
-        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --no-restore
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64
       - name: Build Linux app (ARM64)
-        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64 --no-restore
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-arm64
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         with:
@@ -278,10 +278,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvlc-dev vlc xvfb
-      - name: Restore Linux project
-        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+      # - name: Restore Linux project
+      #   run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
       - name: Publish Linux app (x64)
-        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --self-contained false --no-restore
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -r linux-x64 --self-contained false
       - name: Runtime smoke test (xvfb)
         run: |
           set +e
