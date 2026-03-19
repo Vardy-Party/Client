@@ -9,10 +9,10 @@
   -->
   <PropertyGroup>
     <!-- Internal build counter - auto-incremented on every GitHub Actions build -->
-    <ApplicationVersion>79</ApplicationVersion>
+    <ApplicationVersion>80</ApplicationVersion>
     
     <!-- User-facing semantic version - bumped minor on main branch merges -->
-    <ApplicationDisplayVersion>1.7.46</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>1.7.47</ApplicationDisplayVersion>
     
     <!-- Product name for versioning -->
     <Product>VardyParty</Product>
