@@ -88,8 +88,8 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
-      # - name: Restore dependencies
-      #   run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
       - name: Build Windows app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
