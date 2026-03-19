@@ -87,7 +87,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-windows --skip-manifest-update
+        run: dotnet workload install maui-windows maui-android --skip-manifest-update
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Build Windows app
