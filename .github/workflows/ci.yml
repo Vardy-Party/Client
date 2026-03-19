@@ -25,10 +25,24 @@ on:
         default: "false"
 
 jobs:
+  resolve-flags:
+    name: Resolve CI Flags
+    runs-on: ubuntu-latest
+    outputs:
+      skip_unittests: ${{ steps.flags.outputs.skip_unittests }}
+      skip_codequality: ${{ steps.flags.outputs.skip_codequality }}
+    steps:
+      - id: flags
+        shell: bash
+        run: |
+          echo "skip_unittests=${SKIP_UNITTESTS}" >> "$GITHUB_OUTPUT"
+          echo "skip_codequality=${SKIP_CODEQUALITY}" >> "$GITHUB_OUTPUT"
+
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
-    if: ${{ env.SKIP_UNITTESTS != 'true' }}
+    needs: resolve-flags
+    if: ${{ needs.resolve-flags.outputs.skip_unittests != 'true' }}
     steps:
       - uses: actions/checkout@v4
       - name: Display version info
@@ -53,8 +67,10 @@ jobs:
   code-quality:
     name: Code Quality
     runs-on: ubuntu-latest
-    needs: test
-    if: ${{ env.SKIP_CODEQUALITY != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    needs:
+      - resolve-flags
+      - test
+    if: ${{ needs.resolve-flags.outputs.skip_codequality != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -79,9 +95,10 @@ jobs:
     name: Build Windows
     runs-on: windows-latest
     needs:
+      - resolve-flags
       - test
       - code-quality
-    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && env.SKIP_UNITTESTS == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && env.SKIP_CODEQUALITY == 'true')) }}
+    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -114,9 +131,10 @@ jobs:
     name: Build Android
     runs-on: ubuntu-latest
     needs:
+      - resolve-flags
       - test
       - code-quality
-    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && env.SKIP_UNITTESTS == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && env.SKIP_CODEQUALITY == 'true')) }}
+    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -154,9 +172,10 @@ jobs:
     name: Build iOS
     runs-on: macos-26
     needs:
+      - resolve-flags
       - test
       - code-quality
-    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && env.SKIP_UNITTESTS == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && env.SKIP_CODEQUALITY == 'true')) }}
+    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -191,9 +210,10 @@ jobs:
     name: Build macOS
     runs-on: macos-26
     needs:
+      - resolve-flags
       - test
       - code-quality
-    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && env.SKIP_UNITTESTS == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && env.SKIP_CODEQUALITY == 'true')) }}
+    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -228,9 +248,10 @@ jobs:
     name: Build Linux
     runs-on: ubuntu-latest
     needs:
+      - resolve-flags
       - test
       - code-quality
-    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && env.SKIP_UNITTESTS == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && env.SKIP_CODEQUALITY == 'true')) }}
+    if: ${{ (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
