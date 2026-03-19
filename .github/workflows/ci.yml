@@ -5,8 +5,8 @@ env:
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
   TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
-  SKIP_UNITTESTS: "true"
-  SKIP_CODEQUALITY: "true"
+  SKIP_UNITTESTS: "false"
+  SKIP_CODEQUALITY: "false"
 
 on:
   push:
