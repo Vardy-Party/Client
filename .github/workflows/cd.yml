@@ -1228,4 +1228,4 @@ jobs:
           fi
           echo "Release summary for tag: $RELEASE_TAG"
           gh release view "$RELEASE_TAG" --json url,name,tagName,assets --jq '. as $r | "Name: \($r.name)\nTag: \($r.tagName)\nURL: \($r.url)\nAssets:\n" + (if ($r.assets|length)==0 then "- (none)" else ($r.assets | map("- " + .name) | join("\n")) end)'
-        shell: bash        shell: bash
+        shell: bash
