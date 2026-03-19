@@ -154,9 +154,9 @@ jobs:
       - name: Restore core dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-android -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
