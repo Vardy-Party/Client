@@ -10,6 +10,8 @@ public class Game
     // BBC enrichment
     public int? HomeScore { get; set; }
     public int? AwayScore { get; set; }
+    public int? AggregateHomeScore { get; set; }
+    public int? AggregateAwayScore { get; set; }
     public bool IsFinished { get; set; }
     public bool IsInProgress { get; set; }
     public bool IsHalfTime { get; set; }

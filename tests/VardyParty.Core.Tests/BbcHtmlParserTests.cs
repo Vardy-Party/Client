@@ -459,6 +459,35 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
+    public void ParseHtml_ChampionsLeagueLeg2WithAggregateScores_ExtractsExpectedAggregateScores()
+    {
+        var html = GetResxValue("ChampionsLeagueLeg2WithAggregateScores");
+        var fixtures = CreateParser().ParseHtml(html);
+
+        Assert.NotEmpty(fixtures);
+
+        void AssertAggregate(string home, string away, int expectedAggregateHome, int expectedAggregateAway)
+        {
+            var fixture = fixtures.FirstOrDefault(f =>
+                string.Equals(f.Home, home, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(f.Away, away, StringComparison.OrdinalIgnoreCase));
+
+            Assert.NotNull(fixture);
+            Assert.Equal(expectedAggregateHome, fixture.AggregateHomeScore);
+            Assert.Equal(expectedAggregateAway, fixture.AggregateAwayScore);
+
+            // Aggregate score should be present alongside current game score.
+            Assert.True(fixture.HomeScore.HasValue);
+            Assert.True(fixture.AwayScore.HasValue);
+        }
+
+        AssertAggregate("Sporting CP", "Bodø / Glimt", 5, 3);
+        AssertAggregate("Arsenal", "Bayer Leverkusen", 2, 1);
+        AssertAggregate("Chelsea", "Paris Saint-Germain", 2, 7);
+        AssertAggregate("Manchester City", "Real Madrid", 0, 4);
+    }
+
+    [Fact]
     public void ParseHtml_WithAetPenaltiesFixture_IsCorrect()
     {
         var html = GetResxValue("RawAetPenaltiesGame");
@@ -688,5 +717,32 @@ public class BbcHtmlParserTests
         Assert.False(f.IsInProgress);
         Assert.False(f.HasProgress);
         Assert.Equal(string.Empty, f.Status);
+    }
+
+    [Fact]
+    public void ParseHtml_ChampionsLeagueLeg2BeforeStart_ExtractsAggregateScores_WhenGameNotStarted()
+    {
+        var html = GetResxValue("ChampionsLeagueLeg2BeforeStart");
+        var fixtures = CreateParser().ParseHtml(html);
+
+        Assert.NotEmpty(fixtures);
+
+        void AssertPreMatchAggregate(string home, string away, int expectedAggregateHome, int expectedAggregateAway)
+        {
+            var fixture = fixtures.FirstOrDefault(f =>
+                string.Equals(f.Home, home, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(f.Away, away, StringComparison.OrdinalIgnoreCase));
+
+            Assert.NotNull(fixture);
+            Assert.Equal(expectedAggregateHome, fixture.AggregateHomeScore);
+            Assert.Equal(expectedAggregateAway, fixture.AggregateAwayScore);
+            Assert.False(fixture.IsInProgress, $"Expected pre-match fixture but was in progress: {fixture.Home} vs {fixture.Away} (status: {fixture.Status})");
+            Assert.False(fixture.IsFinished, $"Expected pre-match fixture but was finished: {fixture.Home} vs {fixture.Away} (status: {fixture.Status})");
+        }
+
+        AssertPreMatchAggregate("Barcelona", "Newcastle United", 1, 1);
+        AssertPreMatchAggregate("Bayern Munich", "Atalanta", 6, 1);
+        AssertPreMatchAggregate("Liverpool", "Galatasaray", 0, 1);
+        AssertPreMatchAggregate("Tottenham Hotspur", "Atletico Madrid", 2, 5);
     }
 }

@@ -5,6 +5,8 @@ env:
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
   TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
+  SKIP_UNITTESTS: "false"
+  SKIP_CODEQUALITY: "false"
 
 on:
   push:
@@ -20,12 +22,27 @@ on:
       run_linux_runtime_smoke:
         description: "Run optional Linux runtime smoke test (installs VLC deps)"
         required: false
-        default: "false"
+        default: "true"
 
 jobs:
+  resolve-flags:
+    name: Resolve CI Flags
+    runs-on: ubuntu-latest
+    outputs:
+      skip_unittests: ${{ steps.flags.outputs.skip_unittests }}
+      skip_codequality: ${{ steps.flags.outputs.skip_codequality }}
+    steps:
+      - id: flags
+        shell: bash
+        run: |
+          echo "skip_unittests=${SKIP_UNITTESTS}" >> "$GITHUB_OUTPUT"
+          echo "skip_codequality=${SKIP_CODEQUALITY}" >> "$GITHUB_OUTPUT"
+
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
+    needs: resolve-flags
+    if: ${{ needs.resolve-flags.outputs.skip_unittests != 'true' }}
     steps:
       - uses: actions/checkout@v4
       - name: Display version info
@@ -37,30 +54,38 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Restore dependencies
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+      # - name: Restore dependencies
+      #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Build test project
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release --no-restore
+        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release
       - name: Run unit tests
         run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet test {} -c Release --no-build --verbosity normal
 
   code-quality:
     name: Code Quality
     runs-on: ubuntu-latest
-    needs: test
-    if: success()
+    needs:
+      - resolve-flags
+      - test
+    if: ${{ needs.resolve-flags.outputs.skip_codequality != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
-      - name: Restore dependencies
-        run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
+      # - name: Restore dependencies
+      #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Run StyleCop analyzers
-        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release --no-restore /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
+        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
         continue-on-error: true
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
@@ -69,18 +94,24 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-latest
-    needs: code-quality
-    if: needs.code-quality.result == 'success'
+    needs:
+      - resolve-flags
+      - test
+      - code-quality
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui android --skip-manifest-update
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
       - name: Build Windows app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
       - name: Upload artifact
@@ -99,14 +130,20 @@ jobs:
   build-android:
     name: Build Android
     runs-on: ubuntu-latest
-    needs: code-quality
-    if: needs.code-quality.result == 'success'
+    needs:
+      - resolve-flags
+      - test
+      - code-quality
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Setup Java
@@ -114,10 +151,12 @@ jobs:
         with:
           java-version: "17"
           distribution: temurin
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+      - name: Restore core dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+      - name: Restore app dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore -p:AndroidKeyStore=false
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false -p:RunAotCompilation=false -p:PublishTrimmed=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -134,22 +173,30 @@ jobs:
   build-ios:
     name: Build iOS
     runs-on: macos-26
-    needs: code-quality
-    if: needs.code-quality.result == 'success'
+    needs:
+      - resolve-flags
+      - test
+      - code-quality
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      - name: Restore core dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+      - name: Restore app dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-ios -r iossimulator-x64
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios -r iossimulator-x64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -166,22 +213,30 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-26
-    needs: code-quality
-    if: needs.code-quality.result == 'success'
+    needs:
+      - resolve-flags
+      - test
+      - code-quality
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
+      - name: Restore core dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+      - name: Restore app dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst -r maccatalyst-x64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -198,14 +253,20 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
-    needs: code-quality
-    if: needs.code-quality.result == 'success'
+    needs:
+      - resolve-flags
+      - test
+      - code-quality
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Skip Linux runtime dependencies for CI compile
         run: echo "Skipping apt install; Linux runtime packages are not required for dotnet restore/build."
       - name: Restore VardyParty.Linux dependencies
@@ -250,6 +311,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
@@ -297,6 +361,11 @@ jobs:
     steps:
       - name: Check CI status
         run: |
+          if [[ "${{ needs.test.result }}" == "skipped" || "${{ needs.code-quality.result }}" == "skipped" ]]; then
+            echo "Tasks skipped"
+            exit 1
+          fi
+
           if [[ "${{ needs.test.result }}" == "failure" || \
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \

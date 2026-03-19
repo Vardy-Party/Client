@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
@@ -49,6 +50,38 @@ public static class MauiProgram
     // Set by Android startup to indicate whether a usable WebView implementation is present
     public static bool IsWebViewAvailable { get; set; } = false;
 
+    private static HttpClientHandler CreateHeadlessHttpClientHandler(APISettings apiSettings)
+    {
+        var handler = new HttpClientHandler();
+
+        if (!apiSettings.IgnoreSslCertificateErrors)
+        {
+            return handler;
+        }
+
+        if (!Uri.TryCreate(apiSettings.HeadlessBaseUrl, UriKind.Absolute, out var headlessUri) ||
+            string.IsNullOrWhiteSpace(headlessUri.Host))
+        {
+            return handler;
+        }
+
+        var allowedHost = headlessUri.Host;
+
+        handler.ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
+        {
+            if (errors == SslPolicyErrors.None)
+            {
+                return true;
+            }
+
+            var host = request?.RequestUri?.Host;
+            return !string.IsNullOrWhiteSpace(host) &&
+                   string.Equals(host, allowedHost, StringComparison.OrdinalIgnoreCase);
+        };
+
+        return handler;
+    }
+
     public static MauiApp CreateMauiApp()
     {
         var builder = MauiApp.CreateBuilder();
@@ -76,6 +109,8 @@ public static class MauiProgram
         }
         
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
+        var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
+                          ?? throw new InvalidOperationException("Missing Api configuration section.");
 
         // Only add BlazorWebView when the platform actually has a working WebView implementation.
         // For Android TV, runtime checks set IsWebViewAvailable; for other platforms assume available.
@@ -154,38 +189,17 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddTransient<Auth0ApiTokenHandler>();
 
-        builder.Services.AddHttpClient<IStreamResolver, StreamResolver>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() =>
-            {
-                var handler = new HttpClientHandler();
-#if DEBUG
-                handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
-#endif
-                return handler;
-            });
+        builder.Services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
+        builder.Services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
+        builder.Services.AddSingleton<IStreamResolver, StreamResolver>();
 
         builder.Services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
         builder.Services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() =>
-            {
-                var handler = new HttpClientHandler();
-#if DEBUG
-                handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
-#endif
-                return handler;
-            });
+            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
         builder.Services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() =>
-            {
-                var handler = new HttpClientHandler();
-#if DEBUG
-                handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
-#endif
-                return handler;
-            });
+            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
         builder.Services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
@@ -223,6 +237,9 @@ public static class MauiProgram
 
         // Ensure session id is created at app startup
         _ = app.Services.GetService<ISessionIdProvider>();
+
+        // Start LAN local-service availability monitoring at startup.
+        app.Services.GetService<ILocalLanServiceAvailabilityMonitor>()?.Start();
 
         return app;
     }

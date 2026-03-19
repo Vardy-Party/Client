@@ -16,7 +16,14 @@ namespace VardyParty.Platforms.Android
         private static int _totalHealthyStreams;
         private static PlaybackMetrics? _currentMetrics;
 
-        public Task<PlaybackResult> PlayVideoAsync(string m3u8Url, string refererUrl, string title, Func<Task>? onNextStreamRequested = null)
+        public Task<PlaybackResult> PlayVideoAsync(
+            string m3u8Url,
+            string refererUrl,
+            string title,
+            Func<Task>? onNextStreamRequested = null,
+            string? league = null,
+            string? homeTeam = null,
+            string? awayTeam = null)
         {
             try
             {
@@ -31,6 +38,9 @@ namespace VardyParty.Platforms.Android
                 intent.PutExtra("REFERER_URL", refererUrl);
                 // Pass the game title (prefer BBC names) if available
                 intent.PutExtra("TITLE", title);
+                intent.PutExtra("LEAGUE", league ?? string.Empty);
+                intent.PutExtra("HOME_TEAM", homeTeam ?? string.Empty);
+                intent.PutExtra("AWAY_TEAM", awayTeam ?? string.Empty);
                 // Prefer starting the native activity in the current activity/task so back navigation
                 // returns to the app Home page correctly. Fall back to NewTask when no current
                 // activity is available (e.g., background context).

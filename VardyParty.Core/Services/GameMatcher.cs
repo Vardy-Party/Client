@@ -191,6 +191,9 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             g.Start = bbc.KickoffUtc;
         }
 
+        g.AggregateHomeScore = bbc.AggregateHomeScore;
+        g.AggregateAwayScore = bbc.AggregateAwayScore;
+
         if (!bbc.HasProgress)
         {
             g.IsFinished = false;

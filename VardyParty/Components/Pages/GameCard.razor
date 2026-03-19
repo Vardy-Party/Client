@@ -38,13 +38,20 @@
         <div class="score-container">
             @if (HasScore)
             {
-                <span class="score-compact">@Game.HomeScore</span>
-                <span class="score-divider">-</span>
-                <span class="score-compact">@Game.AwayScore</span>
+                <div class="score-main-row">
+                    <span class="score-compact">@Game.HomeScore</span>
+                    <span class="score-divider">-</span>
+                    <span class="score-compact">@Game.AwayScore</span>
+                </div>
             }
             else
             {
                 <span class="vs-compact">VS</span>
+            }
+
+            @if (HasAggregateScore)
+            {
+                <div class="aggregate-score">Agg @Game.AggregateHomeScore-@Game.AggregateAwayScore</div>
             }
         </div>
 
@@ -92,6 +99,7 @@
     private string StartTimeText => FormatGameTime(Game.Start);
 
     private bool HasScore => Game.HomeScore.HasValue || Game.AwayScore.HasValue;
+    private bool HasAggregateScore => Game.AggregateHomeScore.HasValue && Game.AggregateAwayScore.HasValue;
 
     private async Task OnCardClick()
     {

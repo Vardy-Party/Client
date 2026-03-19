@@ -10,7 +10,10 @@ namespace VardyParty.Services
             string m3u8Url, 
             string refererUrl, 
             string title,
-            Func<Task>? onNextStreamRequested = null);
+            Func<Task>? onNextStreamRequested = null,
+            string? league = null,
+            string? homeTeam = null,
+            string? awayTeam = null);
 
         /// <summary>
         /// Get current playback metrics including resolution, framerate, and codec information

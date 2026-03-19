@@ -33,6 +33,13 @@ public class StreamHealthReporter(
         return ReportAsync("working", streamUrl, refererUrl, metrics, null, false, cancellationToken);
     }
 
+    public Task ReportBadStreamAsync(string? streamUrl, string? refererUrl, string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        var userReason = string.IsNullOrWhiteSpace(reason) ? "User reported bad stream" : reason;
+        return ReportAsync("user-report", streamUrl, refererUrl, null, userReason, false, cancellationToken);
+    }
+
     private async Task ReportAsync(
         string status,
         string? streamUrl,
