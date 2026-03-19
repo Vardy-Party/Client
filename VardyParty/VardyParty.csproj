@@ -28,6 +28,7 @@
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
         <MauiXamlInflator>SourceGen</MauiXamlInflator>
+		<UseMonoRuntime>false</UseMonoRuntime>
 
         <!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
