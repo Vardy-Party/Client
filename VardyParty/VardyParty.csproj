@@ -73,6 +73,10 @@
       <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))</BuildTimestamp>
     </PropertyGroup>
 
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
+      <UseMonoRuntime>true</UseMonoRuntime>
+    </PropertyGroup>
+
     <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true'">
       <Exec Command="git rev-parse --short HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true">
@@ -174,7 +178,7 @@
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
       <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.9.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
+      <PackageReference Include="Xamarin AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.9.0" />
