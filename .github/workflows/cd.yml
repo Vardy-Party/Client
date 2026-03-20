@@ -320,8 +320,15 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+      - name: Restore core dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
@@ -406,7 +413,7 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64;android-arm;android-x86;android-x64 -r android-arm64;android-arm;android-x86;android-x64
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
         continue-on-error: true
         run: |
