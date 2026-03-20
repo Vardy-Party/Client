@@ -287,15 +287,14 @@
         <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
     </PropertyGroup>
 
-    <!-- MSIX packaging defaults for Windows. Password must be provided via environment variable MSIX_CERT_PASSWORD or via publish command. -->
-    <!-- Only sign if certificate file exists (allows unsigned CI builds, signed CD builds) -->
+    <!-- MSIX packaging defaults for Windows -->
+    <!-- When PFX exists (CI/CD), use it for signing. Otherwise fall back to local cert store thumbprint (lines above). -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
       <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
-      <AppxPackageSigningEnabled Condition="!Exists('$(CertificateFilePath)')">false</AppxPackageSigningEnabled>
       <PackageCertificateKeyFile Condition="Exists('$(CertificateFilePath)')">$(CertificateFilePath)</PackageCertificateKeyFile>
-      <PackageCertificatePassword>$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
+      <PackageCertificatePassword Condition="Exists('$(CertificateFilePath)')">$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->

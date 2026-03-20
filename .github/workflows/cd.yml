@@ -12,6 +12,7 @@ on:
       - completed
     branches:
       - main
+      - bugfix/broken-local-android-build
   workflow_dispatch:
     inputs:
       ci_run_id:
