@@ -77,6 +77,10 @@
       <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+      <UseMonoRuntime>true</UseMonoRuntime>
+    </PropertyGroup>
+
     <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true'">
       <Exec Command="git rev-parse --short HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true">

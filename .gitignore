@@ -365,3 +365,4 @@ FodyWeavers.xsd
 /certs/vardyparty.keystore
 /browsers
 /nuget.config
+.nuget-local/
