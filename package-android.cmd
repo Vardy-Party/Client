@@ -1,3 +1,1 @@
-dotnet restore .\VardyParty\VardyParty.csproj -p:OS=Linux -p:TargetFramework=net10.0-android -p:RuntimeIdentifiers="android-arm;android-arm64;android-x86;android-x64" -p:UseMonoRuntime=true
-
-dotnet publish .\VardyParty\VardyParty.csproj -f net10.0-android -c Release -p:OS=Linux -p:TargetFramework=net10.0-android -p:RuntimeIdentifiers="android-arm;android-arm64;android-x86;android-x64" -p:AndroidCreatePackagePerAbi=false -p:AndroidPackageFormats=apk -p:UseMonoRuntime=true -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c:Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true  -p:AndroidKeyStore=false -p:PatchAppSettings=true
