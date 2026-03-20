@@ -3,8 +3,15 @@
     <Import Project="..\Version.props" />
 
     <PropertyGroup>
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Visual Studio IDE on Windows: only Windows TFM (fast IDE experience) -->
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Windows CLI, local dev (not CI): all TFMs for local APK + MSIX builds -->
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Windows CI: only Windows TFM (CI installs only maui-windows workload) -->
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- macOS: iOS and macCatalyst -->
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <!-- Linux (CI or local): Android only -->
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
@@ -26,8 +33,8 @@
         <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
-        <MauiXamlInflator>SourceGen</MauiXamlInflator>
-        <UseMonoRuntime>false</UseMonoRuntime>
+		<MauiXamlInflator>SourceGen</MauiXamlInflator>
+		<UseMonoRuntime>false</UseMonoRuntime>
 
 		<!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -74,6 +81,10 @@
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
+      <UseMonoRuntime>true</UseMonoRuntime>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
       <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
@@ -267,24 +278,27 @@
     </Compile>
   </ItemGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release'">
+    <!-- Local dev: sign with certificate from local cert store (not available on CI runners) -->
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release' and '$(CI)' != 'true'">
         <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
         <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
     </PropertyGroup>
-	
+
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
         <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
     </PropertyGroup>
 
-    <!-- MSIX packaging defaults for Windows. Password must be provided via environment variable MSIX_CERT_PASSWORD or via publish command. -->
-    <!-- Only sign if certificate file exists (allows unsigned CI builds, signed CD builds) -->
+    <!-- MSIX packaging defaults for Windows -->
+    <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
+      <!-- PFX exists (CD): override to sign with PFX file -->
       <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
-      <AppxPackageSigningEnabled Condition="!Exists('$(CertificateFilePath)')">false</AppxPackageSigningEnabled>
       <PackageCertificateKeyFile Condition="Exists('$(CertificateFilePath)')">$(CertificateFilePath)</PackageCertificateKeyFile>
-      <PackageCertificatePassword>$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
+      <PackageCertificatePassword Condition="Exists('$(CertificateFilePath)')">$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
+      <!-- CI without PFX: explicitly disable signing so build succeeds unsigned -->
+      <AppxPackageSigningEnabled Condition="!Exists('$(CertificateFilePath)') and '$(CI)' == 'true'">false</AppxPackageSigningEnabled>
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->

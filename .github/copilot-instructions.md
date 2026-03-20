@@ -4,6 +4,7 @@
 - User wants CI/CD to merge generated settings into existing appsettings.json instead of overwriting it.
 - User prefers CI skip controls to be top-level YAML variables in workflow files rather than workflow_dispatch inputs.
 - When introducing shared local-service code, use `VardyParty.LocalService.Client` (not `LocalService.Shared`).
+- User requires no .csproj modifications while troubleshooting local Android CLI build issues; prefer command-only fixes first.
 
 ## Streaming Guidelines
 - Do not auto-report a stream as bad when user requests the next stream.
