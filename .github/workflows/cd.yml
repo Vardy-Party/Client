@@ -209,25 +209,24 @@ jobs:
           $artifactsDir = "windows-artifacts"
           New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
           Copy-Item "VardyParty-windows-v$env:APP_DISPLAY_VERSION-b$env:APP_BUILD_VERSION.msix" "$artifactsDir/" -Force
-          Copy-Item "VardyParty/certs/vardyparty.pfx" "$artifactsDir/vardyparty.pfx" -Force
           Write-Host "Files prepared in $artifactsDir"
         shell: powershell
       - name: Extract public certificate
         run: |
           $artifactsDir = "windows-artifacts"
-          $pfxPath = "$artifactsDir/vardyparty.pfx"
+          $pfxPath = "${{ github.workspace }}\VardyParty\certs\vardyparty.pfx"
           $cerPath = "$artifactsDir/vardyparty.cer"
           $password = ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERT_PASSWORD }}" -Force -AsPlainText
-          
-          # Load the certificate
+
+          # Load the certificate from the original location (NOT copied to artifacts)
           $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
           $cert.Import($pfxPath, $password, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::DefaultKeySet)
-          
-          # Export public certificate
+
+          # Export public certificate only
           $certBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
           [System.IO.File]::WriteAllBytes($cerPath, $certBytes)
-          
-          Write-Host "Public certificate extracted to $cerPath"
+
+          Write-Host "Public certificate extracted to $cerPath (PFX not included in artifacts)"
         shell: powershell
       - name: Copy AppxManifest and create integrity manifest
         run: |
@@ -715,8 +714,6 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls ./VardyParty-macos-v*-b*.tar.gz | head -1)
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
           else
