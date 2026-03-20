@@ -462,11 +462,13 @@ jobs:
           ARTIFACTS_DIR="android-package-artifacts"
           mkdir -p "$ARTIFACTS_DIR"
           
-          # Copy all ABI APKs with ABI suffix in filename
-          for APK_FILE in $(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f); do
-            ABI=$(echo "$APK_FILE" | grep -oE 'android-(arm64|arm|x86|x64)' | sed 's/android-//')
-            cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-${ABI}-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
-          done
+          # Copy universal APK (contains all ABIs)
+          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No signed APK found"
+            exit 1
+          fi
+          cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
