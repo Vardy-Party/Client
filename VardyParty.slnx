@@ -26,10 +26,6 @@
     <File Path="Documents/STREAM_HEALTH_PROTOCOL.md" />
     <File Path="README.md" />
   </Folder>
-  <Folder Name="/Documents/Logs/">
-    <File Path="failing-android-build.log" />
-    <File Path="failing-ios-build.log" />
-  </Folder>
   <Folder Name="/Github Actions/">
     <File Path=".github/CI-CD-SETUP.md" />
     <File Path=".github/workflows/auto-increment-build-version.yml" />
