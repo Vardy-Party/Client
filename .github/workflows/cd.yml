@@ -319,8 +319,15 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+      - name: Restore core dependencies
+        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore VardyParty/VardyParty.csproj --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Download Android build artifact
         uses: actions/download-artifact@v4
         with:
@@ -405,7 +412,7 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64;android-arm;android-x86;android-x64 -r android-arm64;android-arm;android-x86;android-x64
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
         continue-on-error: true
         run: |
@@ -454,11 +461,13 @@ jobs:
           ARTIFACTS_DIR="android-package-artifacts"
           mkdir -p "$ARTIFACTS_DIR"
           
-          # Copy all ABI APKs with ABI suffix in filename
-          for APK_FILE in $(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f); do
-            ABI=$(echo "$APK_FILE" | grep -oE 'android-(arm64|arm|x86|x64)' | sed 's/android-//')
-            cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-${ABI}-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
-          done
+          # Copy universal APK (contains all ABIs)
+          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No signed APK found"
+            exit 1
+          fi
+          cp "$APK_FILE" "$ARTIFACTS_DIR/VardyParty-android-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.apk"
           
           # Copy signature verification report
           cp apk-signature-verification.txt "$ARTIFACTS_DIR/"
@@ -747,13 +756,15 @@ jobs:
           echo "$BASE_JSON" | jq \
             --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
             --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
             --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
             --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
             --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
             '(.Auth0 //= {})
              | (.Api //= {})
              | .Auth0.Domain = $domain
@@ -837,13 +848,11 @@ jobs:
                 Comment=Vardy Party Linux client
                 Exec=vardyparty
                 Icon=${SNAP}/meta/gui/vardyparty.svg
-                Exec=vardyparty
+                Terminal=false
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
-                mkdir -p "$CRAFT_PART_INSTALL/bin"
-                cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash

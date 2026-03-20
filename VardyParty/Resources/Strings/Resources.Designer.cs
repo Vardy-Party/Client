@@ -68,7 +68,7 @@ namespace VardyParty.Resources.Strings {
                 return ResourceManager.GetString("NoVideoYet", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Buffering.
         /// </summary>
@@ -77,7 +77,7 @@ namespace VardyParty.Resources.Strings {
                 return ResourceManager.GetString("StatusBuffering", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Ended.
         /// </summary>
@@ -86,7 +86,7 @@ namespace VardyParty.Resources.Strings {
                 return ResourceManager.GetString("StatusEnded", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Idle.
         /// </summary>
@@ -95,7 +95,7 @@ namespace VardyParty.Resources.Strings {
                 return ResourceManager.GetString("StatusIdle", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Status.
         /// </summary>
