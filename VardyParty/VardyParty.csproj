@@ -278,23 +278,27 @@
     </Compile>
   </ItemGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release'">
+    <!-- Local dev: sign with certificate from local cert store (not available on CI runners) -->
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release' and '$(CI)' != 'true'">
         <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
         <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
     </PropertyGroup>
-	
+
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
         <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
     </PropertyGroup>
 
     <!-- MSIX packaging defaults for Windows -->
-    <!-- When PFX exists (CI/CD), use it for signing. Otherwise fall back to local cert store thumbprint (lines above). -->
+    <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
+      <!-- PFX exists (CD): override to sign with PFX file -->
       <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
       <PackageCertificateKeyFile Condition="Exists('$(CertificateFilePath)')">$(CertificateFilePath)</PackageCertificateKeyFile>
       <PackageCertificatePassword Condition="Exists('$(CertificateFilePath)')">$(MSIX_CERT_PASSWORD)</PackageCertificatePassword>
+      <!-- CI without PFX: explicitly disable signing so build succeeds unsigned -->
+      <AppxPackageSigningEnabled Condition="!Exists('$(CertificateFilePath)') and '$(CI)' == 'true'">false</AppxPackageSigningEnabled>
     </PropertyGroup>
 
     <!-- Android-specific overrides (none; using defaults for linker/shrinker) -->
