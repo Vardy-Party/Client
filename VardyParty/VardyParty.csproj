@@ -3,8 +3,9 @@
     <Import Project="..\Version.props" />
 
     <PropertyGroup>
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net10.0-windows10.0.19041.0</TargetFrameworks>
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
@@ -26,8 +27,7 @@
         <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
-        <MauiXamlInflator>SourceGen</MauiXamlInflator>
-        <UseMonoRuntime>false</UseMonoRuntime>
+		<MauiXamlInflator>SourceGen</MauiXamlInflator>
 
 		<!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -71,14 +71,6 @@
 
     <PropertyGroup>
       <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))</BuildTimestamp>
-    </PropertyGroup>
-
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
-      <UseMonoRuntime>true</UseMonoRuntime>
-    </PropertyGroup>
-
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-      <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
     <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
