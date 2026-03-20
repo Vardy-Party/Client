@@ -3,9 +3,15 @@
     <Import Project="..\Version.props" />
 
     <PropertyGroup>
+        <!-- Visual Studio IDE on Windows: only Windows TFM (fast IDE experience) -->
         <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Windows CLI, local dev (not CI): all TFMs for local APK + MSIX builds -->
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- Windows CI: only Windows TFM (CI installs only maui-windows workload) -->
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <!-- macOS: iOS and macCatalyst -->
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <!-- Linux (CI or local): Android only -->
         <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
@@ -28,6 +34,7 @@
         <FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
         <InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
 		<MauiXamlInflator>SourceGen</MauiXamlInflator>
+		<UseMonoRuntime>false</UseMonoRuntime>
 
 		<!-- Display name -->
         <ApplicationTitle>Vardy Party</ApplicationTitle>
@@ -71,6 +78,14 @@
 
     <PropertyGroup>
       <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))</BuildTimestamp>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
+      <UseMonoRuntime>true</UseMonoRuntime>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+      <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
     <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
