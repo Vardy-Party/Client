@@ -849,13 +849,11 @@ jobs:
                 Comment=Vardy Party Linux client
                 Exec=vardyparty
                 Icon=${SNAP}/meta/gui/vardyparty.svg
-                Exec=vardyparty
+                Terminal=false
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
                 cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
-                mkdir -p "$CRAFT_PART_INSTALL/bin"
-                cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
