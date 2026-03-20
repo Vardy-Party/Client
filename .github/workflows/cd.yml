@@ -748,13 +748,15 @@ jobs:
           echo "$BASE_JSON" | jq \
             --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
             --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
+            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
+            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
             --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
             --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
             --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
             --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
             --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
+            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
+            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
             '(.Auth0 //= {})
              | (.Api //= {})
              | .Auth0.Domain = $domain
