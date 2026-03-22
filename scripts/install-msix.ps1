@@ -4,9 +4,11 @@
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $scriptDir) { $scriptDir = Get-Location }
 
-$CertPath = Join-Path $scriptDir "vardyparty.pfx"
 $CerPath = Join-Path $scriptDir "vardyparty.cer"
-$MsixPath = Join-Path $scriptDir "VardyParty-windows.msix"
+
+# Find MSIX by pattern — filename includes version/build number
+$MsixFile = Get-ChildItem -Path $scriptDir -Filter "VardyParty-windows*.msix" -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$MsixPath = if ($MsixFile) { $MsixFile.FullName } else { $null }
 
 function Test-AdminRights {
   $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -24,26 +26,21 @@ if (-not (Test-AdminRights)) {
   exit 1
 }
 
-if (-not (Test-Path $CertPath)) {
-  Write-Host "ERROR: Certificate not found at $CertPath"
+if (-not (Test-Path $CerPath)) {
+  Write-Host "ERROR: Public certificate file not found at $CerPath"
   Read-Host -Prompt "Press Enter to continue"
   exit 1
 }
 
-if (-not (Test-Path $MsixPath)) {
-  Write-Host "ERROR: MSIX not found at $MsixPath"
+if (-not $MsixPath) {
+  Write-Host "ERROR: No VardyParty-windows*.msix found in $scriptDir"
   Read-Host -Prompt "Press Enter to continue"
   exit 1
 }
+Write-Host "Found MSIX: $(Split-Path $MsixPath -Leaf)"
 
 Write-Host "Installing Certificate to System Stores..."
 try {
-  if (-not (Test-Path $CerPath)) {
-    Write-Host "ERROR: Public certificate file not found at $CerPath"
-    Read-Host -Prompt "Press Enter to continue"
-    exit 1
-  }
-  
   # Import to LocalMachine Root for MSIX trust (requires admin)
   $cert = Import-Certificate -FilePath $CerPath -CertStoreLocation "Cert:\LocalMachine\Root"
   Write-Host "Certificate imported to Trusted Root Certification Authorities"

@@ -230,7 +230,7 @@
     <DefaultLanguage>en</DefaultLanguage>
     <GenerateAppInstallerFile>False</GenerateAppInstallerFile>
     <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
-    <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
+    <PackageCertificateThumbprint>288C22050831E54B0553CC6932F67FC809879A22</PackageCertificateThumbprint>
     <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
     <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
@@ -281,7 +281,7 @@
     <!-- Local dev: sign with certificate from local cert store (not available on CI runners) -->
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(Configuration)' == 'Release' and '$(CI)' != 'true'">
         <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
-        <PackageCertificateThumbprint>40E7931497A25051012C0900254BF238437EF60D</PackageCertificateThumbprint>
+        <PackageCertificateThumbprint>288C22050831E54B0553CC6932F67FC809879A22</PackageCertificateThumbprint>
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
