@@ -133,7 +133,6 @@ namespace VardyParty.Platforms.Android
                 try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); } catch { }
             }
         }
-        // No changes made to the file.
 
         // Support post-construction injection for true constructor-like DI via activity factory / lifecycle hook
         public void InjectServices(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger)
@@ -172,7 +171,17 @@ namespace VardyParty.Platforms.Android
             catch { return null; }
         }
 
+        private static IStreamHealthReporter? ResolveHealthReporter()
+        {
+            try
+            {
+                return VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamHealthReporter)) as IStreamHealthReporter;
+            }
+            catch { return null; }
+        }
+
         private IExoPlayer? _player;
+        private InternalPlayerListener? _playerListener;
         private PlayerView? _playerView;
         private TextView? _titleView;
         private TextView? _statusView;
@@ -222,6 +231,7 @@ namespace VardyParty.Platforms.Android
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
+        private bool _playbackResultReported;
         private const int PlayerStateIdle = 1;
         private const int PlayerStateBuffering = 2;
         private const int PlayerStateReady = 3;
@@ -252,6 +262,7 @@ namespace VardyParty.Platforms.Android
             // Basic UI: PlayerView with overlay
             _player = new ExoPlayerBuilder(this).Build();
             _playerView = new PlayerView(this) { Player = _player };
+            _playerListener = new InternalPlayerListener(this);
             // disable built-in controller (remove play/prev/next/seek UI)
             try { _playerView.UseController = false; } catch { }
             
@@ -470,6 +481,38 @@ namespace VardyParty.Platforms.Android
             };
             root.AddView(_menuPanel, menuPanelParams);
 
+            _scoresTickerContainer = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal,
+                Visibility = global::Android.Views.ViewStates.Gone
+            };
+            _scoresTickerContainer.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
+            _scoresTickerContainer.SetPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
+
+            _scoresTickerText = new TextView(this) { Text = string.Empty };
+            _scoresTickerText.SetTextColor(global::Android.Graphics.Color.White);
+            _scoresTickerText.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+            _scoresTickerText.SetSingleLine(true);
+            _scoresTickerText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.Marquee;
+            _scoresTickerText.SetMarqueeRepeatLimit(-1);
+            _scoresTickerText.Selected = true;
+            _scoresTickerText.SetHorizontallyScrolling(true);
+
+            _scoresTickerContainer.AddView(_scoresTickerText, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+
+            var scoresParams = new FrameLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.Bottom,
+                LeftMargin = (int)(16 * density),
+                RightMargin = (int)(16 * density),
+                BottomMargin = _isTvDevice ? (int)(24 * density) : (int)(72 * density)
+            };
+            root.AddView(_scoresTickerContainer, scoresParams);
+
             _menuButton = new global::Android.Widget.ImageButton(this)
             {
                 Visibility = _isTvDevice ? global::Android.Views.ViewStates.Gone : global::Android.Views.ViewStates.Visible
@@ -493,6 +536,7 @@ namespace VardyParty.Platforms.Android
             SetContentView(root);
 
             SubscribeToGamesSnapshot();
+            SubscribeToStreamSwitching();
 
             if (!string.IsNullOrEmpty(_m3u8Url))
             {
@@ -503,13 +547,113 @@ namespace VardyParty.Platforms.Android
             HideOverlayAnimated();
         }
 
-        private static IStreamHealthReporter? ResolveHealthReporter()
+        private void SubscribeToStreamSwitching()
         {
             try
             {
-                return VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamHealthReporter)) as IStreamHealthReporter;
+                if (_switching == null)
+                {
+                    return;
+                }
+
+                _healthySub = _switching.HealthyStreamsUpdated.Subscribe(_ =>
+                {
+                    try { RunOnUiThread(UpdateOverlayFromCurrentStream); } catch { }
+                });
+
+                _indexSub = _switching.CurrentStreamIndexChanged.Subscribe(_ =>
+                {
+                    try
+                    {
+                        RunOnUiThread(() =>
+                        {
+                            UpdateOverlayFromCurrentStream();
+                            TrySwitchToCurrentStream();
+                        });
+                    }
+                    catch { }
+                });
+
+                UpdateOverlayFromCurrentStream();
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to subscribe to stream switching");
+            }
+        }
+
+        private void UpdateOverlayFromCurrentStream()
+        {
+            try
+            {
+                var info = BuildOverlayInfoFromCurrentStream();
+                if (info == null)
+                {
+                    return;
+                }
+
+                AndroidVideoPlayerService.SetOverlayInfo(info);
+                UpdateOverlayText(info);
+            }
+            catch { }
+        }
+
+        private PlayerOverlayInfo? BuildOverlayInfoFromCurrentStream()
+        {
+            try
+            {
+                var current = _switching?.GetCurrentStream();
+                if (current == null)
+                {
+                    return null;
+                }
+
+                return new PlayerOverlayInfo
+                {
+                    Index = _switching?.GetCurrentStreamIndex() ?? 0,
+                    Total = _switching?.GetHealthyStreams().Count ?? 0,
+                    Channel = current.Stream?.Channel,
+                    BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
+                    Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
+                    M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
+                    RefererUrl = _refererUrl,
+                    BufferPercent = _player?.BufferedPercentage,
+                    FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
+                    VideoCodec = MapCodecToFriendlyName(current.Health?.VideoCodec),
+                    AudioCodec = MapCodecToFriendlyName(current.Health?.AudioCodec),
+                    AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                    Title = current.Stream?.Channel
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void TrySwitchToCurrentStream()
+        {
+            try
+            {
+                var current = _switching?.GetCurrentStream();
+                var url = current?.ResolvedM3U8Url;
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    return;
+                }
+
+                if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _logger?.LogInformation("[NativeVideoActivity] Switching player to current stream URL {Url}", url);
+                SwitchToStreamUrl(url);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed switching to current stream URL");
+            }
         }
 
         public void SwitchToStreamUrl(string m3u8Url)
@@ -548,7 +692,11 @@ namespace VardyParty.Platforms.Android
                             _player.SetMediaSource(mediaSource2);
                             _player.Prepare();
                             _player.PlayWhenReady = true;
-                            _player.AddListener(new InternalPlayerListener(this));
+                            if (_playerListener != null)
+                            {
+                                _player.RemoveListener(_playerListener);
+                                _player.AddListener(_playerListener);
+                            }
                             _logger?.LogInformation("[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory)", m3u8Url);
                             return;
                         }
@@ -568,7 +716,11 @@ namespace VardyParty.Platforms.Android
                         _player.PlayWhenReady = true;
 
                         // Listen for state change to clear preparing flag
-                        _player.AddListener(new InternalPlayerListener(this));
+                        if (_playerListener != null)
+                        {
+                            _player.RemoveListener(_playerListener);
+                            _player.AddListener(_playerListener);
+                        }
 
                         _logger?.LogInformation("[NativeVideoActivity] Requested player to switch to {Url}", m3u8Url);
                     }
@@ -585,154 +737,83 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private void SubscribeToGamesSnapshot()
+        private void StopAndReleasePlayer(bool release)
         {
             try
             {
-                var enriched = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IEnrichedGameService)) as IEnrichedGameService;
-                if (enriched == null)
-                {
-                    return;
-                }
+                if (_player == null) return;
 
-                _gamesSub = enriched.GamesStream.Subscribe(dict =>
+                try { _player.PlayWhenReady = false; } catch { }
+                try { _player.Pause(); } catch { }
+                try { _player.Stop(); } catch { }
+
+                if (release)
                 {
-                    if (dict == null) return;
-                    lock (_gamesLock)
+                    try
                     {
-                        _latestGamesByLeague = dict.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
+                        if (_playerListener != null)
+                        {
+                            _player.RemoveListener(_playerListener);
+                        }
                     }
+                    catch { }
 
-                    if (_isScoresTickerVisible)
-                    {
-                        RunOnUiThread(UpdateScoresTickerText);
-                    }
-                });
+                    try { _player.Release(); } catch { }
+                    _player = null;
+                    _playerView = null;
+                }
             }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Unable to subscribe to enriched games stream");
-            }
+            catch { }
         }
 
-        private List<string> BuildSameLeagueInPlayScoreLines()
+        private void DisposeSubscriptions()
         {
-            Dictionary<string, List<Game>>? snapshot;
-            lock (_gamesLock)
-            {
-                snapshot = _latestGamesByLeague == null
-                    ? null
-                    : _latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value.ToList());
-            }
-
-            if (snapshot == null || snapshot.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            bool SameTeam(string left, string right) =>
-                string.Equals((left ?? string.Empty).Trim(), (right ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
-
-            bool IsCurrentGame(Game game)
-            {
-                var home = game.DisplayHome;
-                var away = game.DisplayAway;
-
-                return (SameTeam(home, _currentHomeTeam) && SameTeam(away, _currentAwayTeam))
-                    || (SameTeam(home, _currentAwayTeam) && SameTeam(away, _currentHomeTeam));
-            }
-
-            bool IsSameLeague(Game game)
-            {
-                if (string.IsNullOrWhiteSpace(_currentLeague)) return true;
-                var league = game.DisplayLeague;
-                return string.Equals(league?.Trim(), _currentLeague.Trim(), StringComparison.OrdinalIgnoreCase);
-            }
-
-            bool IsInPlay(Game game)
-            {
-                if (game.IsFinished || game.IsPostponed) return false;
-                return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
-            }
-
-            string FormatScore(Game game)
-            {
-                var homeScore = game.HomeScore?.ToString() ?? "-";
-                var awayScore = game.AwayScore?.ToString() ?? "-";
-                return $"{homeScore}-{awayScore}";
-            }
-
-            string FormatStatus(Game game)
-            {
-                var status = game.DisplayStatusText();
-                return string.IsNullOrWhiteSpace(status) ? "Live" : status;
-            }
-
-            return snapshot.Values
-                .SelectMany(g => g)
-                .Where(IsSameLeague)
-                .Where(IsInPlay)
-                .Where(g => !IsCurrentGame(g))
-                .OrderByDescending(g => g.LiveMinuteForOrdering)
-                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(g => $"{g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({FormatStatus(g)})")
-                .ToList();
+            try { _healthySub?.Dispose(); } catch { }
+            _healthySub = null;
+            try { _indexSub?.Dispose(); } catch { }
+            _indexSub = null;
+            try { _gamesSub?.Dispose(); } catch { }
+            _gamesSub = null;
         }
 
-        private void ShowSameLeagueInPlayDialog()
+        private void ReportPlaybackClosed(string message)
+        {
+            if (_playbackResultReported) return;
+            _playbackResultReported = true;
+            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = message }); } catch { }
+        }
+
+        protected override void OnPause()
+        {
+            StopAndReleasePlayer(release: false);
+            base.OnPause();
+        }
+
+        protected override void OnStop()
+        {
+            StopAndReleasePlayer(release: false);
+            base.OnStop();
+        }
+
+        protected override void OnDestroy()
         {
             try
             {
-                var lines = BuildSameLeagueInPlayScoreLines();
-                var title = string.IsNullOrWhiteSpace(_currentLeague)
-                    ? "In-play games"
-                    : $"In-play: {_currentLeague}";
-
-                var message = lines.Count == 0
-                    ? "No other in-play games in this league right now."
-                    : string.Join("  •  ", lines);
-
-                if (_scoresTickerText != null)
-                {
-                    _scoresTickerText.Text = $"{title}: {message}";
-                    _scoresTickerText.Selected = true;
-                    _scoresTickerText.RequestFocus();
-                }
+                _healthReportTimer?.Dispose();
+                _healthReportTimer = null;
+                _overlayHandler?.RemoveCallbacks(_overlayHideRunnable);
+                DisposeSubscriptions();
+                StopAndReleasePlayer(release: true);
+                try { _switching?.Cleanup(); } catch { }
+                ReportPlaybackClosed("Video player closed");
             }
-            catch (Exception ex)
+            finally
             {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to build same-league ticker text");
+                base.OnDestroy();
             }
         }
 
-        private void UpdateScoresTickerText()
-        {
-            ShowSameLeagueInPlayDialog();
-        }
-
-        private void ToggleSameLeagueScoresTicker()
-        {
-            try
-            {
-                _isScoresTickerVisible = !_isScoresTickerVisible;
-                if (_scoresTickerContainer != null)
-                {
-                    _scoresTickerContainer.Visibility = _isScoresTickerVisible
-                        ? global::Android.Views.ViewStates.Visible
-                        : global::Android.Views.ViewStates.Gone;
-                }
-
-                if (_isScoresTickerVisible)
-                {
-                    UpdateScoresTickerText();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to toggle same-league ticker");
-            }
-        }
-
+        // Hide system UI (status bar and navigation bar) for full-screen video experience
         private void HideSystemUI()
         {
             try
@@ -771,6 +852,7 @@ namespace VardyParty.Platforms.Android
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to hide system UI");
             }
         }
+
         private static string? BuildAspect(string? resolution)
         {
             if (string.IsNullOrEmpty(resolution)) return null;
@@ -1259,6 +1341,233 @@ namespace VardyParty.Platforms.Android
                 : global::Android.Views.ViewStates.Gone;
         }
 
+        private void SubscribeToGamesSnapshot()
+        {
+            try
+            {
+                var enriched = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IEnrichedGameService)) as IEnrichedGameService;
+                if (enriched == null) return;
+
+                _gamesSub = enriched.GamesStream.Subscribe(dict =>
+                {
+                    if (dict == null) return;
+                    lock (_gamesLock)
+                    {
+                        _latestGamesByLeague = dict.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
+                    }
+
+                    if (_isScoresTickerVisible)
+                    {
+                        RunOnUiThread(UpdateScoresTickerText);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Unable to subscribe to enriched games stream");
+            }
+        }
+
+        private List<string> BuildSameLeagueInPlayScoreLines()
+        {
+            Dictionary<string, List<Game>>? snapshot;
+            lock (_gamesLock)
+            {
+                snapshot = _latestGamesByLeague == null
+                    ? null
+                    : _latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value.ToList());
+            }
+
+            if (snapshot == null || snapshot.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            bool SameTeam(string left, string right) =>
+                string.Equals((left ?? string.Empty).Trim(), (right ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
+
+            bool IsCurrentGame(Game game)
+            {
+                var home = game.DisplayHome;
+                var away = game.DisplayAway;
+                return (SameTeam(home, _currentHomeTeam) && SameTeam(away, _currentAwayTeam))
+                    || (SameTeam(home, _currentAwayTeam) && SameTeam(away, _currentHomeTeam));
+            }
+
+            bool IsSameLeague(Game game)
+            {
+                if (string.IsNullOrWhiteSpace(_currentLeague)) return true;
+                return string.Equals((game.DisplayLeague ?? string.Empty).Trim(), _currentLeague.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsInPlay(Game game)
+            {
+                if (game.IsFinished || game.IsPostponed) return false;
+                return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
+            }
+
+            string FormatScore(Game game)
+            {
+                var homeScore = game.HomeScore?.ToString() ?? "-";
+                var awayScore = game.AwayScore?.ToString() ?? "-";
+                return $"{homeScore}-{awayScore}";
+            }
+
+            return snapshot.Values
+                .SelectMany(g => g)
+                .Where(IsSameLeague)
+                .Where(IsInPlay)
+                .Where(g => !IsCurrentGame(g))
+                .OrderByDescending(g => g.LiveMinuteForOrdering)
+                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"{g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({g.DisplayStatusText()})")
+                .ToList();
+        }
+
+        private void UpdateScoresTickerText()
+        {
+            try
+            {
+                var lines = BuildSameLeagueInPlayScoreLines();
+                var title = string.IsNullOrWhiteSpace(_currentLeague) ? "In-play games" : $"In-play: {_currentLeague}";
+                var message = lines.Count == 0 ? "No other in-play games in this league right now." : string.Join("  •  ", lines);
+                if (_scoresTickerText != null)
+                {
+                    _scoresTickerText.Text = $"{title}: {message}";
+                    _scoresTickerText.Selected = true;
+                    _scoresTickerText.RequestFocus();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to update same-league ticker text");
+            }
+        }
+
+        private void ToggleSameLeagueScoresTicker()
+        {
+            try
+            {
+                _isScoresTickerVisible = !_isScoresTickerVisible;
+                if (_scoresTickerContainer != null)
+                {
+                    _scoresTickerContainer.Visibility = _isScoresTickerVisible
+                        ? global::Android.Views.ViewStates.Visible
+                        : global::Android.Views.ViewStates.Gone;
+                }
+
+                if (_isScoresTickerVisible)
+                {
+                    UpdateScoresTickerText();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to toggle same-league ticker");
+            }
+        }
+
+        private void SetupPinchZoom(FrameLayout container, PlayerView playerView)
+        {
+            try
+            {
+                playerView.ResizeMode = AspectRatioFrameLayout.ResizeModeFit;
+                var scaleGestureDetector = new global::Android.Views.ScaleGestureDetector(this, new PinchZoomListener(container));
+                var gestureDetector = new global::Android.Views.GestureDetector(this, new DragGestureListener(container));
+                container.SetOnTouchListener(new ZoomAndDragTouchListener(scaleGestureDetector, gestureDetector));
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to setup pinch-zoom");
+            }
+        }
+
+        private class ZoomAndDragTouchListener : Java.Lang.Object, global::Android.Views.View.IOnTouchListener
+        {
+            private readonly global::Android.Views.ScaleGestureDetector _scaleDetector;
+            private readonly global::Android.Views.GestureDetector _gestureDetector;
+
+            public ZoomAndDragTouchListener(
+                global::Android.Views.ScaleGestureDetector scaleDetector,
+                global::Android.Views.GestureDetector gestureDetector)
+            {
+                _scaleDetector = scaleDetector;
+                _gestureDetector = gestureDetector;
+            }
+
+            public bool OnTouch(global::Android.Views.View? v, global::Android.Views.MotionEvent? e)
+            {
+                var scaleHandled = _scaleDetector.OnTouchEvent(e);
+                var dragHandled = _gestureDetector.OnTouchEvent(e);
+                return scaleHandled || dragHandled;
+            }
+        }
+
+        private class DragGestureListener : global::Android.Views.GestureDetector.SimpleOnGestureListener
+        {
+            private readonly FrameLayout _container;
+            private float _translationX;
+            private float _translationY;
+
+            public DragGestureListener(FrameLayout container)
+            {
+                _container = container;
+            }
+
+            public override bool OnScroll(global::Android.Views.MotionEvent? e1, global::Android.Views.MotionEvent? e2, float distanceX, float distanceY)
+            {
+                if (_container.ScaleX <= 1.0f) return false;
+
+                _translationX -= distanceX;
+                _translationY -= distanceY;
+
+                var scale = _container.ScaleX;
+                var maxTranslationX = (_container.Width * (scale - 1f)) / 2f;
+                var maxTranslationY = (_container.Height * (scale - 1f)) / 2f;
+
+                _translationX = Math.Max(-maxTranslationX, Math.Min(_translationX, maxTranslationX));
+                _translationY = Math.Max(-maxTranslationY, Math.Min(_translationY, maxTranslationY));
+
+                _container.TranslationX = _translationX;
+                _container.TranslationY = _translationY;
+                return true;
+            }
+        }
+
+        private class PinchZoomListener : global::Android.Views.ScaleGestureDetector.SimpleOnScaleGestureListener
+        {
+            private readonly FrameLayout _container;
+            private float _scaleFactor = 1.0f;
+            private const float MinScale = 1.0f;
+            private const float MaxScale = 4.0f;
+
+            public PinchZoomListener(FrameLayout container)
+            {
+                _container = container;
+            }
+
+            public override bool OnScale(global::Android.Views.ScaleGestureDetector? detector)
+            {
+                if (detector == null) return false;
+
+                _scaleFactor *= detector.ScaleFactor;
+                _scaleFactor = Math.Max(MinScale, Math.Min(_scaleFactor, MaxScale));
+
+                _container.PivotX = detector.FocusX;
+                _container.PivotY = detector.FocusY;
+                _container.ScaleX = _scaleFactor;
+                _container.ScaleY = _scaleFactor;
+
+                if (_scaleFactor <= 1.01f)
+                {
+                    _container.TranslationX = 0f;
+                    _container.TranslationY = 0f;
+                }
+
+                return true;
+            }
+        }
+
         public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent e)
         {
             try
@@ -1353,7 +1662,7 @@ namespace VardyParty.Platforms.Android
                         }
 
                         try { _switching?.Cleanup(); } catch { }
-                        try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "User closed video player" }); } catch { }
+                        ReportPlaybackClosed("User closed video player");
                         Finish();
                         return true;
                 }
@@ -1363,169 +1672,11 @@ namespace VardyParty.Platforms.Android
             return base.OnKeyDown(keyCode, e);
         }
 
-        public override void OnWindowFocusChanged(bool hasFocus)
-        {
-            base.OnWindowFocusChanged(hasFocus);
-            
-            // Re-hide system UI when window regains focus (e.g., after swiping down status bar)
-            if (hasFocus)
-            {
-                HideSystemUI();
-            }
-        }
-
-        private void SetupPinchZoom(FrameLayout container, PlayerView playerView)
-        {
-            try
-            {
-                // Set PlayerView to fit mode so video maintains aspect ratio
-                playerView.ResizeMode = AspectRatioFrameLayout.ResizeModeFit;
-                
-                // Create gesture detectors for both pinch-zoom and drag-pan
-                var scaleGestureDetector = new global::Android.Views.ScaleGestureDetector(this, new PinchZoomListener(container));
-                var gestureDetector = new global::Android.Views.GestureDetector(this, new DragGestureListener(container));
-                
-                // Attach combined touch listener to the container
-                container.SetOnTouchListener(new ZoomAndDragTouchListener(scaleGestureDetector, gestureDetector, container));
-                
-                _logger?.LogInformation("[NativeVideoActivity] Pinch-to-zoom and drag enabled for Lubo!");
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to setup pinch-zoom");
-            }
-        }
-
-        private class ZoomAndDragTouchListener : Java.Lang.Object, global::Android.Views.View.IOnTouchListener
-        {
-            private readonly global::Android.Views.ScaleGestureDetector _scaleDetector;
-            private readonly global::Android.Views.GestureDetector _gestureDetector;
-            private readonly FrameLayout _container;
-
-            public ZoomAndDragTouchListener(
-                global::Android.Views.ScaleGestureDetector scaleDetector, 
-                global::Android.Views.GestureDetector gestureDetector,
-                FrameLayout container)
-            {
-                _scaleDetector = scaleDetector;
-                _gestureDetector = gestureDetector;
-                _container = container;
-            }
-
-            public bool OnTouch(global::Android.Views.View? v, global::Android.Views.MotionEvent? e)
-            {
-                // Handle scale gestures first (pinch-to-zoom)
-                var scaleHandled = _scaleDetector.OnTouchEvent(e);
-                
-                // Handle drag gestures when not scaling (single finger pan)
-                var dragHandled = _gestureDetector.OnTouchEvent(e);
-                
-                // Consume event if either gesture was handled
-                return scaleHandled || dragHandled;
-            }
-        }
-
-        private class DragGestureListener : global::Android.Views.GestureDetector.SimpleOnGestureListener
-        {
-            private readonly FrameLayout _container;
-            private float _translationX = 0f;
-            private float _translationY = 0f;
-
-            public DragGestureListener(FrameLayout container)
-            {
-                _container = container;
-            }
-
-            public override bool OnScroll(global::Android.Views.MotionEvent? e1, global::Android.Views.MotionEvent? e2, float distanceX, float distanceY)
-            {
-                // Only allow dragging when zoomed in (scale > 1)
-                if (_container.ScaleX <= 1.0f) return false;
-
-                // Calculate new translation
-                _translationX -= distanceX;
-                _translationY -= distanceY;
-
-                // Calculate boundaries based on current scale
-                var scale = _container.ScaleX;
-                var maxTranslationX = (_container.Width * (scale - 1f)) / 2f;
-                var maxTranslationY = (_container.Height * (scale - 1f)) / 2f;
-
-                // Clamp translation to keep video on screen
-                _translationX = Math.Max(-maxTranslationX, Math.Min(_translationX, maxTranslationX));
-                _translationY = Math.Max(-maxTranslationY, Math.Min(_translationY, maxTranslationY));
-
-                // Apply translation
-                _container.TranslationX = _translationX;
-                _container.TranslationY = _translationY;
-
-                global::Android.Util.Log.Debug("VardyParty", $"[Drag] Translation: ({_translationX:F0}, {_translationY:F0})");
-                
-                return true;
-            }
-        }
-
-        private class PinchZoomListener : global::Android.Views.ScaleGestureDetector.SimpleOnScaleGestureListener
-        {
-            private readonly FrameLayout _container;
-            private float _scaleFactor = 1.0f;
-            private const float MinScale = 1.0f;
-            private const float MaxScale = 4.0f;
-
-            public PinchZoomListener(FrameLayout container)
-            {
-                _container = container;
-            }
-
-            public override bool OnScaleBegin(global::Android.Views.ScaleGestureDetector? detector)
-            {
-                global::Android.Util.Log.Debug("VardyParty", "[Zoom] Pinch gesture started");
-                return true;
-            }
-
-            public override bool OnScale(global::Android.Views.ScaleGestureDetector? detector)
-            {
-                if (detector == null) return false;
-
-                float previousScale = _scaleFactor;
-                _scaleFactor *= detector.ScaleFactor;
-                _scaleFactor = Math.Max(MinScale, Math.Min(_scaleFactor, MaxScale));
-
-                // Only apply if scale actually changed
-                if (Math.Abs(previousScale - _scaleFactor) > 0.01f)
-                {
-                    // Set pivot to gesture focus point for natural zoom at pinch center
-                    _container.PivotX = detector.FocusX;
-                    _container.PivotY = detector.FocusY;
-                    
-                    // Apply scale to container
-                    _container.ScaleX = _scaleFactor;
-                    _container.ScaleY = _scaleFactor;
-
-                    global::Android.Util.Log.Debug("VardyParty", $"[Zoom] Scale: {_scaleFactor:F2}x pivot: ({detector.FocusX:F0}, {detector.FocusY:F0})");
-                    
-                    // Reset translation when zooming out to 1x
-                    if (_scaleFactor <= 1.01f)
-                    {
-                        _container.TranslationX = 0f;
-                        _container.TranslationY = 0f;
-                        global::Android.Util.Log.Debug("VardyParty", "[Zoom] Reset to 1x - cleared translation");
-                    }
-                }
-                
-                return true;
-            }
-
-            public override void OnScaleEnd(global::Android.Views.ScaleGestureDetector? detector)
-            {
-                global::Android.Util.Log.Info("VardyParty", $"[Zoom] Pinch complete. Final scale: {_scaleFactor:F2}x");
-            }
-        }
-
         private class InternalPlayerListener : Java.Lang.Object, IPlayerListener
         {
             private readonly NativeVideoActivity _activity;
             private bool _metadataReported = false;
-            
+
             public InternalPlayerListener(NativeVideoActivity activity) => _activity = activity;
 
             public void OnPlaybackStateChanged(int playbackState)
@@ -1553,25 +1704,9 @@ namespace VardyParty.Platforms.Android
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
                     // Update overlay UI now that player is ready
-                    var current = _activity._switching?.GetCurrentStream();
-                    if (current != null)
+                    var info = _activity.BuildOverlayInfoFromCurrentStream();
+                    if (info != null)
                     {
-                        var info = new VardyParty.Models.PlayerOverlayInfo
-                        {
-                            Index = _activity._switching.GetCurrentStreamIndex(),
-                            Total = _activity._switching.GetHealthyStreams().Count,
-                            Channel = current.Stream?.Channel,
-                            BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                            Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                            M3u8Url = current.ResolvedM3U8Url ?? _activity._m3u8Url,
-                            RefererUrl = _activity._refererUrl,
-                            BufferPercent = _activity._player?.BufferedPercentage,
-                            FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                            VideoCodec = MapCodecToFriendlyName(current.Health?.VideoCodec),
-                            AudioCodec = MapCodecToFriendlyName(current.Health?.AudioCodec),
-                            AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                            Title = current.Stream?.Channel
-                        };
                         VardyParty.Platforms.Android.AndroidVideoPlayerService.SetOverlayInfo(info);
                         // capture video size from player if available
                         try
