@@ -1410,7 +1410,16 @@ namespace VardyParty.Platforms.Android
             {
                 var homeScore = game.HomeScore?.ToString() ?? "-";
                 var awayScore = game.AwayScore?.ToString() ?? "-";
-                return $"{homeScore}-{awayScore}";
+
+                var score = $"{homeScore}-{awayScore}";
+                if (game.AggregateHomeScore.HasValue || game.AggregateAwayScore.HasValue)
+                {
+                    var aggregateHome = game.AggregateHomeScore?.ToString() ?? "-";
+                    var aggregateAway = game.AggregateAwayScore?.ToString() ?? "-";
+                    score += $" agg {aggregateHome}-{aggregateAway}";
+                }
+
+                return score;
             }
 
             return snapshot.Values

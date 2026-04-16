@@ -367,3 +367,4 @@ FodyWeavers.xsd
 /browsers
 /nuget.config
 .nuget-local/
+/certs
