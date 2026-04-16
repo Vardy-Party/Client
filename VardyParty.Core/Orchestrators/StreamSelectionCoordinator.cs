@@ -131,11 +131,6 @@ public class StreamSelectionCoordinator(
         var workingCount = _workingIndexes.Count;
         var testedCount = _testedIndexes.Count;
 
-        if (workingCount >= 2)
-        {
-            PauseTesting();
-        }
-
         PublishProgress(isPaused: _paused, streamsTested: testedCount, workingStreams: workingCount);
     }
 

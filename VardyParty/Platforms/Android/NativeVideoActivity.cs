@@ -228,10 +228,12 @@ namespace VardyParty.Platforms.Android
         private LinearLayout? _scoresTickerContainer;
         private TextView? _scoresTickerText;
         private bool _isScoresTickerVisible;
+        private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
         private bool _playbackResultReported;
+        private bool _isAutoSwitchingOnPlaybackError;
         private const int PlayerStateIdle = 1;
         private const int PlayerStateBuffering = 2;
         private const int PlayerStateReady = 3;
@@ -687,8 +689,8 @@ namespace VardyParty.Platforms.Android
                             try { _logger?.LogInformation("[NativeVideoActivity] Playing stream. m3u8={Url} Referer={Referer} UserAgent={UA}", m3u8Url, headers.ContainsKey("Referer") ? headers["Referer"] : string.Empty, headers.ContainsKey("User-Agent") ? headers["User-Agent"] : string.Empty); } catch { }
                             var customFactory = new HeaderInjectingDataSourceFactory(headers);
                             var mediaSourceFactory = new HlsMediaSource.Factory(customFactory);
-                            var mediaItem2 = new MediaItem.Builder().SetUri(m3u8Url).SetMimeType(MimeTypes.ApplicationM3u8).Build();
-                            var mediaSource2 = mediaSourceFactory.CreateMediaSource(mediaItem2);
+                            var mediaSource2 = mediaSourceFactory.CreateMediaSource(
+                                new MediaItem.Builder().SetUri(m3u8Url).SetMimeType(MimeTypes.ApplicationM3u8).Build());
                             _player.SetMediaSource(mediaSource2);
                             _player.Prepare();
                             _player.PlayWhenReady = true;
@@ -1218,6 +1220,41 @@ namespace VardyParty.Platforms.Android
             catch { }
         }
 
+        private void TryAutoSwitchFromPlaybackError(string? error)
+        {
+            try
+            {
+                if (_isAutoSwitchingOnPlaybackError)
+                {
+                    return;
+                }
+
+                _isAutoSwitchingOnPlaybackError = true;
+                _logger?.LogWarning("[NativeVideoActivity] Playback error detected; requesting next stream. Error={Error}", error ?? string.Empty);
+
+                var requestTask = VardyParty.Platforms.Android.AndroidVideoPlayerService.RequestNextStream();
+                if (requestTask != null)
+                {
+                    requestTask.ContinueWith(_ =>
+                    {
+                        try { _isAutoSwitchingOnPlaybackError = false; } catch { }
+                    }, TaskScheduler.Default);
+                }
+                else if (_switching?.SwitchToNextStream() == true)
+                {
+                    _isAutoSwitchingOnPlaybackError = false;
+                }
+                else
+                {
+                    _isAutoSwitchingOnPlaybackError = false;
+                }
+            }
+            catch
+            {
+                _isAutoSwitchingOnPlaybackError = false;
+            }
+        }
+
         private static string? CodecMimeTypeToFriendlyName(string? mimeType, bool isAudio)
         {
             if (string.IsNullOrEmpty(mimeType))
@@ -1406,22 +1443,6 @@ namespace VardyParty.Platforms.Android
                 return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
             }
 
-            string FormatScore(Game game)
-            {
-                var homeScore = game.HomeScore?.ToString() ?? "-";
-                var awayScore = game.AwayScore?.ToString() ?? "-";
-
-                var score = $"{homeScore}-{awayScore}";
-                if (game.AggregateHomeScore.HasValue || game.AggregateAwayScore.HasValue)
-                {
-                    var aggregateHome = game.AggregateHomeScore?.ToString() ?? "-";
-                    var aggregateAway = game.AggregateAwayScore?.ToString() ?? "-";
-                    score += $" agg {aggregateHome}-{aggregateAway}";
-                }
-
-                return score;
-            }
-
             return snapshot.Values
                 .SelectMany(g => g)
                 .Where(IsSameLeague)
@@ -1429,17 +1450,169 @@ namespace VardyParty.Platforms.Android
                 .Where(g => !IsCurrentGame(g))
                 .OrderByDescending(g => g.LiveMinuteForOrdering)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(g => $"{g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({g.DisplayStatusText()})")
+                .Select(FormatTickerLine)
                 .ToList();
+        }
+
+        private List<string> BuildAllLeaguesInPlayScoreLines()
+        {
+            var games = GetGamesSnapshot();
+            if (games.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            return games
+                .Where(IsInPlayGame)
+                .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(g => g.LiveMinuteForOrdering)
+                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"[{g.DisplayLeague}] {FormatTickerLine(g)}")
+                .ToList();
+        }
+
+        private List<string> BuildFinishedScoreLines()
+        {
+            var games = GetGamesSnapshot();
+            if (games.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            return games
+                .Where(g => g.IsFinished)
+                .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(g => g.StartUtcForOrdering)
+                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"[{g.DisplayLeague}] {FormatTickerLine(g)}")
+                .ToList();
+        }
+
+        private List<string> BuildUpcomingScoreLines()
+        {
+            var games = GetGamesSnapshot();
+            if (games.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            return games
+                .Where(IsUpcomingGame)
+                .OrderBy(g => g.StartUtcForOrdering)
+                .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"[{g.DisplayLeague}] {FormatUpcomingLine(g)}")
+                .ToList();
+        }
+
+        private List<Game> GetGamesSnapshot()
+        {
+            lock (_gamesLock)
+            {
+                return _latestGamesByLeague == null
+                    ? new List<Game>()
+                    : _latestGamesByLeague.Values.SelectMany(v => v).ToList();
+            }
+        }
+
+        private static bool IsInPlayGame(Game game)
+        {
+            if (game.IsFinished || game.IsPostponed) return false;
+            return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
+        }
+
+        private static bool IsUpcomingGame(Game game)
+        {
+            if (game.IsFinished || game.IsPostponed) return false;
+            return !game.IsInProgress && !game.IsHalfTime && !game.Minute.HasValue;
+        }
+
+        private static string FormatScore(Game game)
+        {
+            var homeScore = game.HomeScore?.ToString() ?? "-";
+            var awayScore = game.AwayScore?.ToString() ?? "-";
+
+            var score = $"{homeScore}-{awayScore}";
+            if (game.AggregateHomeScore.HasValue || game.AggregateAwayScore.HasValue)
+            {
+                var aggregateHome = game.AggregateHomeScore?.ToString() ?? "-";
+                var aggregateAway = game.AggregateAwayScore?.ToString() ?? "-";
+                score += $" agg {aggregateHome}-{aggregateAway}";
+            }
+
+            return score;
+        }
+
+        private static string FormatTickerLine(Game game)
+        {
+            var status = game.DisplayStatusText();
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                status = game.IsFinished ? "FT" : "Live";
+            }
+
+            return $"{game.DisplayHome} {FormatScore(game)} {game.DisplayAway} ({status})";
+        }
+
+        private static string FormatUpcomingLine(Game game)
+        {
+            var localKickoff = game.Start.Kind == DateTimeKind.Utc ? game.Start.ToLocalTime() : game.Start;
+            var kickoffText = localKickoff == default ? "TBD" : localKickoff.ToString("HH:mm");
+            return $"{kickoffText} {game.DisplayHome} vs {game.DisplayAway}";
+        }
+
+        private void CycleScoresTickerMode()
+        {
+            _scoresTickerMode = _scoresTickerMode switch
+            {
+                ScoresTickerMode.SameLeagueInPlay => ScoresTickerMode.AllLeaguesInPlay,
+                ScoresTickerMode.AllLeaguesInPlay => ScoresTickerMode.AllFinished,
+                ScoresTickerMode.AllFinished => ScoresTickerMode.AllUpcoming,
+                _ => ScoresTickerMode.SameLeagueInPlay
+            };
+
+            if (_isScoresTickerVisible)
+            {
+                UpdateScoresTickerText();
+            }
         }
 
         private void UpdateScoresTickerText()
         {
             try
             {
-                var lines = BuildSameLeagueInPlayScoreLines();
-                var title = string.IsNullOrWhiteSpace(_currentLeague) ? "In-play games" : $"In-play: {_currentLeague}";
-                var message = lines.Count == 0 ? "No other in-play games in this league right now." : string.Join("  •  ", lines);
+                string title;
+                List<string> lines;
+
+                switch (_scoresTickerMode)
+                {
+                    case ScoresTickerMode.AllLeaguesInPlay:
+                        title = "All leagues in-play";
+                        lines = BuildAllLeaguesInPlayScoreLines();
+                        break;
+                    case ScoresTickerMode.AllFinished:
+                        title = "Finished games";
+                        lines = BuildFinishedScoreLines();
+                        break;
+                    case ScoresTickerMode.AllUpcoming:
+                        title = "Upcoming games";
+                        lines = BuildUpcomingScoreLines();
+                        break;
+                    default:
+                        title = string.IsNullOrWhiteSpace(_currentLeague) ? "In-play games" : $"In-play: {_currentLeague}";
+                        lines = BuildSameLeagueInPlayScoreLines();
+                        break;
+                }
+
+                var emptyMessage = _scoresTickerMode switch
+                {
+                    ScoresTickerMode.AllLeaguesInPlay => "No in-play games right now.",
+                    ScoresTickerMode.AllFinished => "No finished games right now.",
+                    ScoresTickerMode.AllUpcoming => "No remaining unstarted games today.",
+                    _ => "No other in-play games in this league right now."
+                };
+
+                var message = lines.Count == 0 ? emptyMessage : string.Join("  •  ", lines);
                 if (_scoresTickerText != null)
                 {
                     _scoresTickerText.Text = $"{title}: {message}";
@@ -1467,6 +1640,7 @@ namespace VardyParty.Platforms.Android
 
                 if (_isScoresTickerVisible)
                 {
+                    _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
                     UpdateScoresTickerText();
                 }
             }
@@ -1651,6 +1825,14 @@ namespace VardyParty.Platforms.Android
                         catch { }
                         return true;
 
+                    case global::Android.Views.Keycode.DpadDown:
+                        if (_isScoresTickerVisible)
+                        {
+                            CycleScoresTickerMode();
+                            return true;
+                        }
+                        break;
+
                     case global::Android.Views.Keycode.Back:
                         if (_isMenuVisible)
                         {
@@ -1709,6 +1891,7 @@ namespace VardyParty.Platforms.Android
                     _activity._isBuffering = false;
                     _activity.HideBufferingIndicator();
                     _activity._isPreparing = false;
+                    _activity._isAutoSwitchingOnPlaybackError = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
@@ -1826,7 +2009,20 @@ namespace VardyParty.Platforms.Android
             public void OnPlayWhenReadyChanged(bool playWhenReady, int reason) { }
             public void OnPlaybackParametersChanged(PlaybackParameters? playbackParameters) { }
             public void OnPlaybackSuppressionReasonChanged(int playbackSuppressionReason) { }
-            public void OnPlayerErrorChanged(PlaybackException? error) { }
+            public void OnPlayerErrorChanged(PlaybackException? error)
+            {
+                try
+                {
+                    var message = error?.Message ?? "Playback error";
+                    _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
+                    _activity._isBuffering = false;
+                    _activity._isPreparing = false;
+                    _activity.HideBufferingIndicator();
+                    _activity.ReportPlaybackError(message);
+                    _activity.TryAutoSwitchFromPlaybackError(message);
+                }
+                catch { }
+            }
             public void OnPlaylistMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
             public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) { }
             public void OnRenderedFirstFrame() { }
@@ -1839,6 +2035,14 @@ namespace VardyParty.Platforms.Android
             public void OnTimelineChanged(Timeline? timeline, int reason) { }
             public void OnVolumeChanged(float volume) { }
         }
+    }
+
+    internal enum ScoresTickerMode
+    {
+        SameLeagueInPlay,
+        AllLeaguesInPlay,
+        AllFinished,
+        AllUpcoming
     }
 }
 #endif
