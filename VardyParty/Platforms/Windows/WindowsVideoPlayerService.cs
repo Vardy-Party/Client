@@ -164,21 +164,7 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
-                // Close button (top-right, offset below native window chrome)
-                var closeButton = new WinButton
-                {
-                    Content = "Close",
-                    HorizontalAlignment = WinHorizontalAlignment.Right,
-                    VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(0, 48, 12, 0),
-                    Width = 72,
-                    Height = 32,
-                    Padding = new WinThickness(8, 0, 8, 0),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
-                };
-
-                // Top-left hamburger button
+                // Top-left hamburger button — sits in the top-left corner just below the title bar
                 var menuButton = new WinButton
                 {
                     Content = "☰",
@@ -194,6 +180,7 @@ namespace VardyParty.Platforms.Windows
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
                 };
 
+                // Menu panel opens downward from the button, indented to match button left edge
                 var menuPanel = new Microsoft.UI.Xaml.Controls.StackPanel
                 {
                     Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
@@ -250,8 +237,8 @@ namespace VardyParty.Platforms.Windows
                 WinGrid.SetColumn(scoresTickerViewport, 0);
                 var scoresTickerText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
-                    FontSize = 13,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    FontSize = 15,
                     TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
                     TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
@@ -260,8 +247,8 @@ namespace VardyParty.Platforms.Windows
                 var tickerCycleButton = new WinButton
                 {
                     Content = "⟳",
-                    FontSize = 14,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
+                    FontSize = 15,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                     BorderThickness = new WinThickness(0),
                     Padding = new WinThickness(8, 0, 8, 0),
@@ -290,12 +277,12 @@ namespace VardyParty.Platforms.Windows
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                 };
 
-                // Info Overlay
+                // Info Overlay — positioned to the right of the menu button to avoid overlap
                 var infoPanel = new Microsoft.UI.Xaml.Controls.Grid
                 {
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(10, 60, 0, 0),
+                    Margin = new WinThickness(70, 48, 0, 0),
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.7 },
                     Padding = new WinThickness(10),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
@@ -319,16 +306,6 @@ namespace VardyParty.Platforms.Windows
                 {
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
-                        try
-                        {
-                            if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
-                            {
-                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
-                                appWindowClosingHandler = null;
-                            }
-                        }
-                        catch { }
-
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
                     });
@@ -671,8 +648,8 @@ namespace VardyParty.Platforms.Windows
 
                     if (resetOffset)
                     {
-                        var viewportWidth = scoresTickerViewport.ActualWidth;
-                        scoresTickerOffsetPx = viewportWidth > 0 ? viewportWidth : 0;
+                        // Start at 0 so text is immediately readable, then scrolls left
+                        scoresTickerOffsetPx = 0;
                     }
 
                     if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform transform)
@@ -996,27 +973,6 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 };
-
-                // Ensure we restore and cleanup if the window is closed externally
-                try
-                {
-                    var window = nativeWindow;
-                    if (window != null)
-                    {
-                        window.Closed += (s, e) =>
-                        {
-                            try
-                            {
-                                var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                                svc?.Cleanup();
-                            }
-                            catch { }
-                            try { Restore(); } catch { }
-                            try { tcs.TrySetResult(PlaybackResult.Completed("Window closed", true)); } catch { }
-                        };
-                    }
-                }
-                catch { }
 
                 void UpdateStreamInfo()
                 {
@@ -1497,52 +1453,3 @@ namespace VardyParty.Platforms.Windows
         AllUpcoming
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
