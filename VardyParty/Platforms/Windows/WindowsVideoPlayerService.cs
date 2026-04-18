@@ -98,7 +98,10 @@ namespace VardyParty.Platforms.Windows
                 bool isScoresTickerVisible = false;
                 var scoresTickerRawText = string.Empty;
                 double scoresTickerOffsetPx = 0;
-                const double tickerSpeedPerTickPx = 1.25;
+                double tickerMeasuredTextWidth = 0;
+                int tickerScrollDelayTicks = 0;
+                const int TickerReadDelayTicks = 180; // ~3 seconds at 60fps before scrolling starts
+                const double tickerSpeedPerTickPx = 1.5;
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
                 var scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
@@ -242,6 +245,9 @@ namespace VardyParty.Platforms.Windows
                     TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
                     TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
+                    VerticalAlignment = WinVerticalAlignment.Center,
+                    // MaxWidth must be unconstrained so Measure() returns the true text width
+                    MaxWidth = double.PositiveInfinity,
                     RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform()
                 };
                 var tickerCycleButton = new WinButton
@@ -616,18 +622,37 @@ namespace VardyParty.Platforms.Windows
                             var transform = scoresTickerText.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
                             if (transform == null) return;
 
-                            var textWidth = scoresTickerText.ActualWidth;
-                            if (textWidth <= 0)
+                            // Measure the true text width (unconstrained) once per text update
+                            if (tickerMeasuredTextWidth <= 0)
                             {
                                 scoresTickerText.Measure(new global::Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-                                textWidth = scoresTickerText.DesiredSize.Width;
-                                if (textWidth <= 0) return;
+                                tickerMeasuredTextWidth = scoresTickerText.DesiredSize.Width;
+                                if (tickerMeasuredTextWidth <= 0) return;
+                            }
+
+                            // Only scroll if text is wider than the viewport
+                            if (tickerMeasuredTextWidth <= viewportWidth)
+                            {
+                                transform.X = 0;
+                                return;
+                            }
+
+                            // Wait for the initial read delay before starting to scroll
+                            if (tickerScrollDelayTicks < TickerReadDelayTicks)
+                            {
+                                tickerScrollDelayTicks++;
+                                transform.X = 0;
+                                return;
                             }
 
                             scoresTickerOffsetPx -= tickerSpeedPerTickPx;
-                            if (scoresTickerOffsetPx <= -textWidth)
+
+                            // When text has fully scrolled off the left, reset to start
+                            // (text is always at X=0 initially so after a full scroll left it wraps back)
+                            if (scoresTickerOffsetPx < -tickerMeasuredTextWidth)
                             {
-                                scoresTickerOffsetPx = viewportWidth;
+                                scoresTickerOffsetPx = 0;
+                                tickerScrollDelayTicks = 0; // re-apply read delay on each loop
                             }
 
                             transform.X = scoresTickerOffsetPx;
@@ -644,12 +669,15 @@ namespace VardyParty.Platforms.Windows
                         scoresTickerRawText += "     ";
                     }
 
-                    scoresTickerText.Text = scoresTickerRawText + "     ";
+                    scoresTickerText.Text = scoresTickerRawText + "   ";
+
+                    // Reset measured width so it is re-measured on the next tick with new text
+                    tickerMeasuredTextWidth = 0;
 
                     if (resetOffset)
                     {
-                        // Start at 0 so text is immediately readable, then scrolls left
                         scoresTickerOffsetPx = 0;
+                        tickerScrollDelayTicks = 0;
                     }
 
                     if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform transform)
