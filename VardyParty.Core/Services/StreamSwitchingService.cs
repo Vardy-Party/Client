@@ -10,6 +10,24 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     private string _league = string.Empty;
     private string _homeTeam = string.Empty;
     private string _awayTeam = string.Empty;
+
+    private static string NormalizeKeyPart(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            return value.Trim();
+
+        // Ignore tokens/query params and fragments for dedupe purposes
+        var builder = new UriBuilder(uri) { Query = string.Empty, Fragment = string.Empty };
+        return builder.Uri.ToString().Trim();
+    }
+
+    private static string BuildDedupKey(EnrichedStream stream)
+    {
+        var normalizedM3u8 = NormalizeKeyPart(stream.ResolvedM3U8Url);
+        var normalizedReferer = NormalizeKeyPart(stream.Referer ?? stream.Stream?.Url);
+        return $"{normalizedM3u8}|{normalizedReferer}";
+    }
     
     private readonly BehaviorSubject<IReadOnlyList<EnrichedStream>> _healthyStreamsSubject = 
         new(new List<EnrichedStream>().AsReadOnly());
@@ -41,6 +59,15 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     {
         lock (_healthyStreams)
         {
+            var incomingKey = BuildDedupKey(stream);
+            var duplicate = _healthyStreams.Any(existing =>
+                string.Equals(BuildDedupKey(existing), incomingKey, StringComparison.OrdinalIgnoreCase));
+
+            if (duplicate)
+            {
+                return;
+            }
+
             _healthyStreams.Add(stream);
             
             // If this is the first stream, set it as current
