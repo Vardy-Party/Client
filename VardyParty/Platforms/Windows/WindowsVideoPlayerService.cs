@@ -13,11 +13,21 @@ using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using VardyParty.Health;
 using VardyParty.Models;
+using System.Runtime.InteropServices;
 
 namespace VardyParty.Platforms.Windows
 {
     public class WindowsVideoPlayerService : INativeVideoPlayerService
     {
+        private const int WM_NCLBUTTONDOWN = 0x00A1;
+        private const int HTCAPTION = 0x0002;
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
         public event EventHandler<bool>? BufferingStateChanged;
 
         private PlaybackMetrics? _currentMetrics;
@@ -114,10 +124,7 @@ namespace VardyParty.Platforms.Windows
                 };
 
                 // Click-drag on video surface moves the window (windowed mode only).
-                // Use incremental deltas (last pointer point -> current pointer point) for smooth movement.
-                bool isWindowDragActive = false;
-                global::Windows.Foundation.Point dragLastPoint = default;
-
+                // Use native OS caption drag for smooth movement.
                 mediaPlayerElement.PointerPressed += (_, e) =>
                 {
                     try
@@ -135,50 +142,17 @@ namespace VardyParty.Platforms.Windows
                             return;
                         }
 
-                        isWindowDragActive = true;
-                        dragLastPoint = point.Position;
-
-                        mediaPlayerElement.CapturePointer(e.Pointer);
-                        e.Handled = true;
+                        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
+                        if (hwnd != IntPtr.Zero)
+                        {
+                            ReleaseCapture();
+                            SendMessage(hwnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                            e.Handled = true;
+                        }
                     }
                     catch { }
                 };
 
-                mediaPlayerElement.PointerMoved += (_, e) =>
-                {
-                    try
-                    {
-                        if (!isWindowDragActive) return;
-
-                        var appWindow = nativeWindow.AppWindow;
-                        if (appWindow == null) return;
-
-                        var p = e.GetCurrentPoint(mediaPlayerElement).Position;
-                        var dx = p.X - dragLastPoint.X;
-                        var dy = p.Y - dragLastPoint.Y;
-
-                        // Incremental move from current window position prevents snap-back/judder.
-                        var currentPos = appWindow.Position;
-                        appWindow.Move(new global::Windows.Graphics.PointInt32(
-                            currentPos.X + (int)Math.Round(dx),
-                            currentPos.Y + (int)Math.Round(dy)));
-
-                        dragLastPoint = p;
-                        e.Handled = true;
-                    }
-                    catch { }
-                };
-
-                void EndWindowDrag(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-                {
-                    if (!isWindowDragActive) return;
-                    isWindowDragActive = false;
-                    try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
-                }
-
-                mediaPlayerElement.PointerReleased += (_, e) => EndWindowDrag(e);
-                mediaPlayerElement.PointerCanceled += (_, e) => EndWindowDrag(e);
-                mediaPlayerElement.PointerCaptureLost += (_, e) => EndWindowDrag(e);
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
                 IDisposable? healthyStreamsSubscription = null;
@@ -269,13 +243,13 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
-                // Top-left hamburger button — sits in the top-left corner just below the title bar
+                // Top-left hamburger button — true top-left anchor
                 var menuButton = new WinButton
                 {
                     Content = "☰",
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(14, 48, 0, 0),
+                    Margin = new WinThickness(12, 12, 0, 0),
                     Width = 42,
                     Height = 42,
                     Opacity = 0,
@@ -291,7 +265,7 @@ namespace VardyParty.Platforms.Windows
                     Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(14, 98, 0, 0),
+                    Margin = new WinThickness(12, 62, 0, 0),
                     MinWidth = 180,
                     Spacing = 2,
                     Padding = new WinThickness(6, 6, 6, 6),
