@@ -231,10 +231,12 @@ namespace VardyParty.Platforms.Windows
                 };
                 scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
                 scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
-                var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Grid
+                // Canvas viewport: unlike Grid, Canvas does NOT constrain child width,
+                // so the TextBlock lays out at its full natural width and the clip handles visibility.
+                var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Canvas
                 {
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
-                    VerticalAlignment = WinVerticalAlignment.Center,
+                    VerticalAlignment = WinVerticalAlignment.Stretch,
                     Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry()
                 };
                 WinGrid.SetColumn(scoresTickerViewport, 0);
@@ -244,11 +246,24 @@ namespace VardyParty.Platforms.Windows
                     FontSize = 15,
                     TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
                     TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
-                    HorizontalAlignment = WinHorizontalAlignment.Left,
-                    VerticalAlignment = WinVerticalAlignment.Center,
-                    // MaxWidth must be unconstrained so Measure() returns the true text width
-                    MaxWidth = double.PositiveInfinity,
                     RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform()
+                };
+                // Position the text at the vertical centre of the canvas
+                scoresTickerText.Loaded += (_, __) =>
+                {
+                    Microsoft.UI.Xaml.Controls.Canvas.SetTop(scoresTickerText,
+                        (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
+                };
+                scoresTickerViewport.SizeChanged += (_, __) =>
+                {
+                    // Keep clip rectangle in sync with viewport bounds
+                    if (scoresTickerViewport.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
+                    {
+                        rg.Rect = new global::Windows.Foundation.Rect(0, 0, scoresTickerViewport.ActualWidth, scoresTickerViewport.ActualHeight);
+                    }
+                    // Re-centre text vertically
+                    Microsoft.UI.Xaml.Controls.Canvas.SetTop(scoresTickerText,
+                        (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
                 };
                 var tickerCycleButton = new WinButton
                 {
@@ -262,13 +277,6 @@ namespace VardyParty.Platforms.Windows
                 };
                 Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(tickerCycleButton, "Switch scores view");
                 WinGrid.SetColumn(tickerCycleButton, 1);
-                scoresTickerViewport.SizeChanged += (_, __) =>
-                {
-                    if (scoresTickerViewport.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
-                    {
-                        rg.Rect = new global::Windows.Foundation.Rect(0, 0, scoresTickerViewport.ActualWidth, scoresTickerViewport.ActualHeight);
-                    }
-                };
                 scoresTickerViewport.Children.Add(scoresTickerText);
                 scoresTickerGrid.Children.Add(scoresTickerViewport);
                 scoresTickerGrid.Children.Add(tickerCycleButton);
@@ -392,7 +400,7 @@ namespace VardyParty.Platforms.Windows
                         sb.AppendLine($"Bitrate: {bitrateText}");
                         sb.AppendLine($"Video Codec: {vCodec}");
                         sb.AppendLine($"Audio Codec: {aCodec}");
-                        
+
 
                         if (!string.IsNullOrEmpty(title))
                             sb.AppendLine($"{title}");
@@ -930,19 +938,20 @@ namespace VardyParty.Platforms.Windows
                 };
                 streamInfoPanel.Children.Add(streamCountText);
 
-                // Next stream button — right edge, vertically centred, icon only
+                // Next stream button — floating right-centre, inset from edge
                 var nextButton = new WinButton
                 {
                     Content = "⏭",
-                    FontSize = 22,
+                    FontSize = 18,
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
-                    BorderThickness = new WinThickness(0),
-                    Padding = new WinThickness(12, 14, 12, 14),
-                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new WinThickness(1),
+                    Padding = new WinThickness(14, 10, 14, 10),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
                     HorizontalAlignment = WinHorizontalAlignment.Right,
                     VerticalAlignment = WinVerticalAlignment.Center,
-                    Margin = new WinThickness(0, 0, 16, 0),
+                    Margin = new WinThickness(0, 0, 48, 0),
                     Opacity = 0,
                     Visibility = onNextStreamRequested != null
                         ? Microsoft.UI.Xaml.Visibility.Visible
