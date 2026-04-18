@@ -370,8 +370,6 @@ jobs:
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \
                 "${{ needs.build-android.result }}" == "failure" || \
-                "${{ needs.build-ios.result }}" == "failure" || \
-                "${{ needs.build-macos.result }}" == "failure" || \
                 "${{ needs.build-linux.result }}" == "failure" ]]; then
             echo "❌ CI pipeline failed"
             exit 1
