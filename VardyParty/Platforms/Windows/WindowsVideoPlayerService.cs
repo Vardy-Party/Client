@@ -84,6 +84,101 @@ namespace VardyParty.Platforms.Windows
                 mediaPlayerElement.SetMediaPlayer(mediaPlayer);
                 var cleanupInvoked = false;
                 var currentPlaybackUrl = m3u8Url;
+
+                static bool IsInteractiveSource(object? source)
+                {
+                    return source is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase
+                        || source is Microsoft.UI.Xaml.Controls.Slider
+                        || source is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
+                        || source is Microsoft.UI.Xaml.Controls.ComboBox
+                        || source is Microsoft.UI.Xaml.Controls.TextBox;
+                }
+
+                // Double-click on video surface toggles fullscreen/windowed.
+                mediaPlayerElement.DoubleTapped += (_, e) =>
+                {
+                    try
+                    {
+                        if (IsInteractiveSource(e.OriginalSource)) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        var isFullScreen = appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
+                        appWindow.SetPresenter(
+                            isFullScreen
+                                ? Microsoft.UI.Windowing.AppWindowPresenterKind.Overlapped
+                                : Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+                    }
+                    catch { }
+                };
+
+                // Click-drag on video surface moves the window (windowed mode only).
+                // Use incremental deltas (last pointer point -> current pointer point) for smooth movement.
+                bool isWindowDragActive = false;
+                global::Windows.Foundation.Point dragLastPoint = default;
+
+                mediaPlayerElement.PointerPressed += (_, e) =>
+                {
+                    try
+                    {
+                        if (IsInteractiveSource(e.OriginalSource)) return;
+
+                        var point = e.GetCurrentPoint(mediaPlayerElement);
+                        if (!point.Properties.IsLeftButtonPressed) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen)
+                        {
+                            return;
+                        }
+
+                        isWindowDragActive = true;
+                        dragLastPoint = point.Position;
+
+                        mediaPlayerElement.CapturePointer(e.Pointer);
+                        e.Handled = true;
+                    }
+                    catch { }
+                };
+
+                mediaPlayerElement.PointerMoved += (_, e) =>
+                {
+                    try
+                    {
+                        if (!isWindowDragActive) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        var p = e.GetCurrentPoint(mediaPlayerElement).Position;
+                        var dx = p.X - dragLastPoint.X;
+                        var dy = p.Y - dragLastPoint.Y;
+
+                        // Incremental move from current window position prevents snap-back/judder.
+                        var currentPos = appWindow.Position;
+                        appWindow.Move(new global::Windows.Graphics.PointInt32(
+                            currentPos.X + (int)Math.Round(dx),
+                            currentPos.Y + (int)Math.Round(dy)));
+
+                        dragLastPoint = p;
+                        e.Handled = true;
+                    }
+                    catch { }
+                };
+
+                void EndWindowDrag(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+                {
+                    if (!isWindowDragActive) return;
+                    isWindowDragActive = false;
+                    try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
+                }
+
+                mediaPlayerElement.PointerReleased += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCanceled += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCaptureLost += (_, e) => EndWindowDrag(e);
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
                 IDisposable? healthyStreamsSubscription = null;
@@ -95,6 +190,7 @@ namespace VardyParty.Platforms.Windows
                 TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? scoresTickerScrollHandler = null;
                 int lastStreamTotal = -1;
                 int lastStreamIndex = -1;
+                string? lastStreamVerticalResolution = null;
                 bool isScoresTickerVisible = false;
                 var scoresTickerRawText = string.Empty;
                 double scoresTickerOffsetPx = 0;
@@ -1082,9 +1178,21 @@ namespace VardyParty.Platforms.Windows
                     VerticalAlignment = WinVerticalAlignment.Center,
                     Margin = new WinThickness(0, 0, 48, 0),
                     Opacity = 0,
-                    Visibility = onNextStreamRequested != null
-                        ? Microsoft.UI.Xaml.Visibility.Visible
-                        : Microsoft.UI.Xaml.Visibility.Collapsed
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                };
+
+                var nextButtonHintText = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    HorizontalAlignment = WinHorizontalAlignment.Right,
+                    VerticalAlignment = WinVerticalAlignment.Center,
+                    Margin = new WinThickness(0, 44, 50, 0),
+                    Text = string.Empty,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Opacity = 0,
+                    IsHitTestVisible = false
                 };
 
                 var grid = new WinGrid();
@@ -1092,11 +1200,12 @@ namespace VardyParty.Platforms.Windows
                 // Don't add mediaPlayerElement here yet - defer until source is initialized
                 grid.Children.Add(dismissSurface);
                 grid.Children.Add(infoPanel);
-                grid.Children.Add(streamInfoPanel);
                 grid.Children.Add(scoresTickerBorder);
+                grid.Children.Add(streamInfoPanel);
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
                 grid.Children.Add(nextButton);
+                grid.Children.Add(nextButtonHintText);
 
                 nextButton.Click += async (s, e) =>
                 {
@@ -1112,10 +1221,33 @@ namespace VardyParty.Platforms.Windows
                 {
                     var nextBgNormal = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A));
                     var nextBgHover  = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0x30, 0x30, 0x30));
-                    grid.PointerEntered += (s, e) => nextButton.Opacity = 1;
-                    grid.PointerExited  += (s, e) => { nextButton.Opacity = 0; nextButton.Background = nextBgNormal; };
-                    nextButton.PointerEntered += (s, e) => nextButton.Background = nextBgHover;
-                    nextButton.PointerExited  += (s, e) => nextButton.Background = nextBgNormal;
+                    grid.PointerEntered += (s, e) =>
+                    {
+                        if (nextButton.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                            nextButton.Opacity = 1;
+                    };
+                    grid.PointerExited  += (s, e) =>
+                    {
+                        nextButton.Opacity = 0;
+                        nextButton.Background = nextBgNormal;
+                        nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        nextButtonHintText.Opacity = 0;
+                    };
+                    nextButton.PointerEntered += (s, e) =>
+                    {
+                        nextButton.Background = nextBgHover;
+                        if (nextButton.Visibility == Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(nextButtonHintText.Text))
+                        {
+                            nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                            nextButtonHintText.Opacity = 1;
+                        }
+                    };
+                    nextButton.PointerExited  += (s, e) =>
+                    {
+                        nextButton.Background = nextBgNormal;
+                        nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        nextButtonHintText.Opacity = 0;
+                    };
                 }
 
                 grid.PointerMoved += (s, e) =>
@@ -1147,21 +1279,60 @@ namespace VardyParty.Platforms.Windows
                     {
                         var total = switchingService.GetHealthyStreams().Count;
                         var index = switchingService.GetCurrentStreamIndex();
+                        var current = switchingService.GetCurrentStream();
+
+                        string? ExtractVerticalResolution(string? resolution)
+                        {
+                            if (string.IsNullOrWhiteSpace(resolution)) return null;
+                            var match = System.Text.RegularExpressions.Regex.Match(resolution, @"(\d{3,4})\s*[xX]\s*(\d{3,4})");
+                            if (match.Success)
+                            {
+                                return $"{match.Groups[2].Value}p";
+                            }
+                            return null;
+                        }
+
+                        var verticalResolution =
+                            ExtractVerticalResolution(current?.Health?.Resolution)
+                            ?? ExtractVerticalResolution(current?.Stream?.Resolution)
+                            ?? (_currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
+
                         var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
+                        var hasResolutionChanged = !string.Equals(lastStreamVerticalResolution ?? string.Empty, verticalResolution ?? string.Empty, StringComparison.Ordinal);
                         lastStreamTotal = total;
                         lastStreamIndex = index;
+                        lastStreamVerticalResolution = verticalResolution;
                         MainThread.BeginInvokeOnMainThread(() =>
                         {
                             if (total > 0)
                             {
-                                streamCountText.Text = $"Stream: {index}/{total}";
+                                streamCountText.Text = string.IsNullOrWhiteSpace(verticalResolution)
+                                    ? $"Stream: {index}/{total}"
+                                    : $"Stream: {index}/{total} ({verticalResolution})";
                             }
                             else
                             {
                                 streamCountText.Text = "Streams: 0";
                             }
 
-                            if (hasChanged)
+                            var canSwitchToAnother = onNextStreamRequested != null && total > 1;
+                            nextButton.Visibility = canSwitchToAnother
+                                ? Microsoft.UI.Xaml.Visibility.Visible
+                                : Microsoft.UI.Xaml.Visibility.Collapsed;
+                            if (!canSwitchToAnother)
+                            {
+                                nextButton.Opacity = 0;
+                                nextButtonHintText.Text = string.Empty;
+                                nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                                nextButtonHintText.Opacity = 0;
+                            }
+                            else
+                            {
+                                nextButtonHintText.Text = $"{index}/{total}";
+                            }
+
+                            var shouldShowStreamOverlay = total > 0 && (hasChanged || hasResolutionChanged);
+                            if (shouldShowStreamOverlay)
                             {
                                 streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                                 streamInfoHideTimer ??= streamInfoPanel.DispatcherQueue.CreateTimer();
