@@ -98,10 +98,15 @@ namespace VardyParty.Platforms.Windows
                 bool isScoresTickerVisible = false;
                 var scoresTickerRawText = string.Empty;
                 double scoresTickerOffsetPx = 0;
-                double tickerMeasuredTextWidth = 0;
+                double tickerMeasuredTextWidth = 0;   // full double-copy text width
+                double tickerLoopWidth = 0;            // width of one loop (single copy + separator)
                 int tickerScrollDelayTicks = 0;
-                const int TickerReadDelayTicks = 180; // ~3 seconds at 60fps before scrolling starts
+                bool tickerUserPaused = false;         // true while user is dragging or hovering after drag
+                int tickerResumeCountdown = 0;         // counts down 60fps ticks after pointer leaves
+                const int TickerReadDelayTicks = 180;  // ~3 seconds at 60fps before scrolling starts
+                const int TickerResumeDelayTicks = 180; // ~3 seconds after pointer-exit before resuming
                 const double tickerSpeedPerTickPx = 1.5;
+                const string TickerSeparator = "   ⚽   "; // delimiter between loop copies
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
                 var scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
@@ -220,7 +225,7 @@ namespace VardyParty.Platforms.Windows
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
                     VerticalAlignment = WinVerticalAlignment.Bottom,
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.80 },
-                    Padding = new WinThickness(0, 6, 0, 6),
+                    Padding = new WinThickness(12, 6, 0, 6),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
                     IsHitTestVisible = true
                 };
@@ -264,6 +269,40 @@ namespace VardyParty.Platforms.Windows
                     // Re-centre text vertically
                     Microsoft.UI.Xaml.Controls.Canvas.SetTop(scoresTickerText,
                         (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
+                };
+
+                // Gesture scroll: pause auto-scroll and let user drag the text
+                scoresTickerViewport.ManipulationMode =
+                    Microsoft.UI.Xaml.Input.ManipulationModes.TranslateX |
+                    Microsoft.UI.Xaml.Input.ManipulationModes.System;
+                scoresTickerViewport.ManipulationDelta += (_, args) =>
+                {
+                    tickerUserPaused = true;
+                    tickerResumeCountdown = 0;
+
+                    if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform t)
+                    {
+                        scoresTickerOffsetPx += args.Delta.Translation.X;
+                        // Clamp within one loop: can't scroll right past start or left past end of single copy
+                        var maxLeft = tickerLoopWidth > 0 ? -tickerLoopWidth : 0.0;
+                        scoresTickerOffsetPx = Math.Clamp(scoresTickerOffsetPx, maxLeft, 0.0);
+                        t.X = scoresTickerOffsetPx;
+                    }
+                };
+
+                // Pointer exit: start the 3-second countdown to resume auto-scroll
+                scoresTickerViewport.PointerExited += (_, __) =>
+                {
+                    if (tickerUserPaused)
+                    {
+                        tickerResumeCountdown = TickerResumeDelayTicks;
+                    }
+                };
+
+                // Pointer entered: cancel resume countdown while user is still hovering
+                scoresTickerViewport.PointerEntered += (_, __) =>
+                {
+                    tickerResumeCountdown = 0;
                 };
                 var tickerCycleButton = new WinButton
                 {
@@ -320,6 +359,18 @@ namespace VardyParty.Platforms.Windows
                 {
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
+                        // Always unhook the closing interceptor on restore so the window
+                        // can be closed normally after playback ends via any code path
+                        try
+                        {
+                            if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
+                            {
+                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                                appWindowClosingHandler = null;
+                            }
+                        }
+                        catch { }
+
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
                     });
@@ -630,18 +681,38 @@ namespace VardyParty.Platforms.Windows
                             var transform = scoresTickerText.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
                             if (transform == null) return;
 
-                            // Measure the true text width (unconstrained) once per text update
-                            if (tickerMeasuredTextWidth <= 0)
+                            // Measure full double-copy width and single-loop width once per text update
+                            if (tickerMeasuredTextWidth <= 0 || tickerLoopWidth <= 0)
                             {
                                 scoresTickerText.Measure(new global::Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-                                tickerMeasuredTextWidth = scoresTickerText.DesiredSize.Width;
-                                if (tickerMeasuredTextWidth <= 0) return;
+                                var fullWidth = scoresTickerText.DesiredSize.Width;
+                                if (fullWidth <= 0) return;
+                                tickerMeasuredTextWidth = fullWidth;
+                                tickerLoopWidth = fullWidth / 2.0; // two identical copies
                             }
 
-                            // Only scroll if text is wider than the viewport
-                            if (tickerMeasuredTextWidth <= viewportWidth)
+                            // Only scroll if a single copy is wider than the viewport
+                            if (tickerLoopWidth <= viewportWidth)
                             {
                                 transform.X = 0;
+                                return;
+                            }
+
+                            // Handle resume countdown after user gesture / pointer-exit
+                            if (tickerUserPaused)
+                            {
+                                if (tickerResumeCountdown > 0)
+                                {
+                                    tickerResumeCountdown--;
+                                }
+                                else if (tickerResumeCountdown == 0)
+                                {
+                                    tickerUserPaused = false;
+                                    tickerResumeCountdown = -1;
+                                    scoresTickerOffsetPx = 0;
+                                    tickerScrollDelayTicks = 0;
+                                    transform.X = 0;
+                                }
                                 return;
                             }
 
@@ -655,12 +726,12 @@ namespace VardyParty.Platforms.Windows
 
                             scoresTickerOffsetPx -= tickerSpeedPerTickPx;
 
-                            // When text has fully scrolled off the left, reset to start
-                            // (text is always at X=0 initially so after a full scroll left it wraps back)
-                            if (scoresTickerOffsetPx < -tickerMeasuredTextWidth)
+                            // Seamless wrap: once first copy has fully scrolled out, subtract
+                            // one loop width so the second copy snaps into the first copy's place
+                            if (scoresTickerOffsetPx <= -tickerLoopWidth)
                             {
-                                scoresTickerOffsetPx = 0;
-                                tickerScrollDelayTicks = 0; // re-apply read delay on each loop
+                                scoresTickerOffsetPx += tickerLoopWidth;
+                                // No delay reset — continuous flow, no pause between loops
                             }
 
                             transform.X = scoresTickerOffsetPx;
@@ -672,20 +743,22 @@ namespace VardyParty.Platforms.Windows
                 void RefreshTickerText(bool resetOffset)
                 {
                     scoresTickerRawText = BuildCurrentModeTickerText();
-                    if (scoresTickerRawText.Length < 5)
-                    {
-                        scoresTickerRawText += "     ";
-                    }
 
-                    scoresTickerText.Text = scoresTickerRawText + "   ";
+                    // Build a double-copy for seamless continuous scrolling:
+                    // "content ⚽ content ⚽ " — we scroll by exactly one loop width then reset
+                    var single = scoresTickerRawText + TickerSeparator;
+                    scoresTickerText.Text = single + single;
 
-                    // Reset measured width so it is re-measured on the next tick with new text
+                    // Reset measured widths so they are re-measured on the next tick with new text
                     tickerMeasuredTextWidth = 0;
+                    tickerLoopWidth = 0;
 
                     if (resetOffset)
                     {
                         scoresTickerOffsetPx = 0;
                         tickerScrollDelayTicks = 0;
+                        tickerUserPaused = false;
+                        tickerResumeCountdown = 0;
                     }
 
                     if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform transform)
