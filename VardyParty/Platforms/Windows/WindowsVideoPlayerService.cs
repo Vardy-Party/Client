@@ -13,11 +13,22 @@ using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using VardyParty.Health;
 using VardyParty.Models;
+using System.Runtime.InteropServices;
 
 namespace VardyParty.Platforms.Windows
 {
     public class WindowsVideoPlayerService : INativeVideoPlayerService
     {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out POINT lpPoint);
+
         public event EventHandler<bool>? BufferingStateChanged;
 
         private PlaybackMetrics? _currentMetrics;
@@ -84,6 +95,112 @@ namespace VardyParty.Platforms.Windows
                 mediaPlayerElement.SetMediaPlayer(mediaPlayer);
                 var cleanupInvoked = false;
                 var currentPlaybackUrl = m3u8Url;
+
+                bool isDraggingWindow = false;
+                POINT dragStartCursor = default;
+                global::Windows.Graphics.PointInt32 dragStartWindowPos = default;
+
+                static bool IsInteractiveSource(object? source)
+                {
+                    return source is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase
+                        || source is Microsoft.UI.Xaml.Controls.Slider
+                        || source is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
+                        || source is Microsoft.UI.Xaml.Controls.ComboBox
+                        || source is Microsoft.UI.Xaml.Controls.TextBox;
+                }
+
+                static bool IsVideoSurfaceHit(object? source, MediaPlayerElement playerElement)
+                {
+                    // Pointer events are already attached to mediaPlayerElement. We only need to reject
+                    // obvious interactive controls so video-surface interactions still work.
+                    return !IsInteractiveSource(source);
+                }
+
+                // Double-click on video surface toggles fullscreen/windowed.
+                mediaPlayerElement.DoubleTapped += (_, e) =>
+                {
+                    try
+                    {
+                        if (!IsVideoSurfaceHit(e.OriginalSource, mediaPlayerElement)) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        var isFullScreen = appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
+                        appWindow.SetPresenter(
+                            isFullScreen
+                                ? Microsoft.UI.Windowing.AppWindowPresenterKind.Overlapped
+                                : Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+                    }
+                    catch { }
+                };
+
+                // Mouse-down drag on the actual video surface moves the window.
+                mediaPlayerElement.PointerPressed += (_, e) =>
+                {
+                    try
+                    {
+                        var point = e.GetCurrentPoint(mediaPlayerElement);
+                        if (!point.Properties.IsLeftButtonPressed) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen) return;
+
+                        if (!IsVideoSurfaceHit(e.OriginalSource, mediaPlayerElement)) return;
+
+                        if (!GetCursorPos(out dragStartCursor)) return;
+                        dragStartWindowPos = appWindow.Position;
+                        isDraggingWindow = true;
+
+                        mediaPlayerElement.CapturePointer(e.Pointer);
+                        e.Handled = true;
+                    }
+                    catch { }
+                };
+
+                mediaPlayerElement.PointerMoved += (_, e) =>
+                {
+                    try
+                    {
+                        if (!isDraggingWindow) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        var point = e.GetCurrentPoint(mediaPlayerElement);
+                        if (!point.Properties.IsLeftButtonPressed)
+                        {
+                            isDraggingWindow = false;
+                            try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
+                            return;
+                        }
+
+                        if (!GetCursorPos(out var currentCursor)) return;
+
+                        var dx = currentCursor.X - dragStartCursor.X;
+                        var dy = currentCursor.Y - dragStartCursor.Y;
+
+                        appWindow.Move(new global::Windows.Graphics.PointInt32(
+                            dragStartWindowPos.X + dx,
+                            dragStartWindowPos.Y + dy));
+
+                        e.Handled = true;
+                    }
+                    catch { }
+                };
+
+                void EndWindowDrag(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+                {
+                    if (!isDraggingWindow) return;
+                    isDraggingWindow = false;
+                    try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
+                }
+
+                mediaPlayerElement.PointerReleased += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCanceled += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCaptureLost += (_, e) => EndWindowDrag(e);
+
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
                 IDisposable? healthyStreamsSubscription = null;
@@ -95,12 +212,22 @@ namespace VardyParty.Platforms.Windows
                 TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? scoresTickerScrollHandler = null;
                 int lastStreamTotal = -1;
                 int lastStreamIndex = -1;
+                string? lastStreamVerticalResolution = null;
                 bool isScoresTickerVisible = false;
                 var scoresTickerRawText = string.Empty;
                 double scoresTickerOffsetPx = 0;
-                const double tickerSpeedPerTickPx = 1.25;
+                double tickerMeasuredTextWidth = 0;   // full double-copy text width
+                double tickerLoopWidth = 0;            // width of one loop (single copy + separator)
+                int tickerScrollDelayTicks = 0;
+                bool tickerUserPaused = false;         // true while user is dragging or hovering after drag
+                int tickerResumeCountdown = 0;         // counts down 60fps ticks after pointer leaves
+                const int TickerReadDelayTicks = 180;  // ~3 seconds at 60fps before scrolling starts
+                const int TickerResumeDelayTicks = 180; // ~3 seconds after pointer-exit before resuming
+                const double tickerSpeedPerTickPx = 1.5;
+                const string TickerSeparator = "   ⚽   "; // delimiter between loop copies
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
+                var scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
 
                 TypedEventHandler<MediaPlaybackSession, object>? playbackStateChangedHandler = null;
                 TypedEventHandler<MediaPlaybackSession, object>? naturalVideoSizeChangedHandler = null;
@@ -109,6 +236,7 @@ namespace VardyParty.Platforms.Windows
                 TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs>? mediaFailedHandler = null;
                 
                 bool metadataReported = false;
+                bool isPointerInGrid = false;
                 IStreamHealthReporter? _healthReporter = null;
                 
                 // Resolve health reporter
@@ -163,61 +291,72 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
-                // Close button (top-right, offset below native window chrome)
-                var closeButton = new WinButton
-                {
-                    Content = "Close",
-                    HorizontalAlignment = WinHorizontalAlignment.Right,
-                    VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(0, 48, 12, 0),
-                    Width = 72,
-                    Height = 32,
-                    Padding = new WinThickness(8, 0, 8, 0),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
-                };
-
-                // Bottom-left hamburger button and menu
+                // Top-left hamburger button — true top-left anchor, always visible in player
                 var menuButton = new WinButton
                 {
                     Content = "☰",
                     HorizontalAlignment = WinHorizontalAlignment.Left,
-                    VerticalAlignment = WinVerticalAlignment.Bottom,
-                    Margin = new WinThickness(14, 0, 0, 14),
+                    VerticalAlignment = WinVerticalAlignment.Top,
+                    Margin = new WinThickness(12, 12, 0, 0),
                     Width = 42,
                     Height = 42,
-                    Opacity = 0,
-                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.65 },
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
+                    Opacity = 1,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Visible,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
                 };
 
+                // Menu panel opens downward from the button
                 var menuPanel = new Microsoft.UI.Xaml.Controls.StackPanel
                 {
                     Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
-                    VerticalAlignment = WinVerticalAlignment.Bottom,
-                    Margin = new WinThickness(14, 0, 0, 64),
-                    Spacing = 8,
-                    Padding = new WinThickness(10),
+                    VerticalAlignment = WinVerticalAlignment.Top,
+                    Margin = new WinThickness(12, 62, 0, 0),
+                    MinWidth = 180,
+                    Spacing = 2,
+                    Padding = new WinThickness(6, 6, 6, 6),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.85 },
-                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6)
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xF2, 0x18, 0x18, 0x18)),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new WinThickness(1)
                 };
 
-                var videoInfoButton = new WinButton { Content = "Video Info" };
-                var sameLeagueTickerButton = new WinButton { Content = "Scores" };
-                var reportStreamButton = new WinButton { Content = "Report stream" };
+                WinButton MakeMenuItem(string label)
+                {
+                    var btn = new WinButton
+                    {
+                        Content = label,
+                        HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = WinHorizontalAlignment.Left,
+                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                        BorderThickness = new WinThickness(0),
+                        Padding = new WinThickness(12, 8, 12, 8),
+                        FontSize = 14,
+                        CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
+                    };
+                    return btn;
+                }
+
+                var videoInfoButton       = MakeMenuItem("Video Info");
+                var sameLeagueTickerButton = MakeMenuItem("Scores");
+                var alwaysOnTopButton     = MakeMenuItem("📌 Always on top: Off");
+                var reportStreamButton    = MakeMenuItem("Report stream");
                 var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Text = "Reporting stream...",
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    FontSize = 12
+                    FontSize = 12,
+                    Margin = new WinThickness(12, 2, 12, 4)
                 };
 
                 menuPanel.Children.Add(videoInfoButton);
                 menuPanel.Children.Add(sameLeagueTickerButton);
+                menuPanel.Children.Add(alwaysOnTopButton);
                 menuPanel.Children.Add(reportStreamButton);
                 menuPanel.Children.Add(reportStatusText);
 
@@ -226,34 +365,135 @@ namespace VardyParty.Platforms.Windows
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
                     VerticalAlignment = WinVerticalAlignment.Bottom,
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.80 },
-                    Padding = new WinThickness(0, 6, 0, 6),
+                    Padding = new WinThickness(12, 6, 0, 6),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    IsHitTestVisible = false
+                    IsHitTestVisible = true
                 };
-                var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Grid
+                var scoresTickerGrid = new WinGrid
                 {
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
-                    VerticalAlignment = WinVerticalAlignment.Center,
+                    VerticalAlignment = WinVerticalAlignment.Center
+                };
+                scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+                scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
+                // Canvas viewport: unlike Grid, Canvas does NOT constrain child width,
+                // so the TextBlock lays out at its full natural width and the clip handles visibility.
+                var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Canvas
+                {
+                    HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                    VerticalAlignment = WinVerticalAlignment.Stretch,
                     Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry()
                 };
+                WinGrid.SetColumn(scoresTickerViewport, 0);
                 var scoresTickerText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
-                    FontSize = 13,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    FontSize = 15,
                     TextTrimming = Microsoft.UI.Xaml.TextTrimming.None,
                     TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
-                    HorizontalAlignment = WinHorizontalAlignment.Left,
                     RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform()
+                };
+                // Position the text at the vertical centre of the canvas
+                scoresTickerText.Loaded += (_, __) =>
+                {
+                    Microsoft.UI.Xaml.Controls.Canvas.SetTop(scoresTickerText,
+                        (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
                 };
                 scoresTickerViewport.SizeChanged += (_, __) =>
                 {
+                    // Keep clip rectangle in sync with viewport bounds
                     if (scoresTickerViewport.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
                     {
                         rg.Rect = new global::Windows.Foundation.Rect(0, 0, scoresTickerViewport.ActualWidth, scoresTickerViewport.ActualHeight);
                     }
+                    // Re-centre text vertically
+                    Microsoft.UI.Xaml.Controls.Canvas.SetTop(scoresTickerText,
+                        (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
                 };
+
+                // Gesture scroll: pause auto-scroll and let user drag/swipe the text.
+                // On Windows, two-finger touchpad horizontal scroll arrives as PointerWheelChanged
+                // (horizontal delta), and touch/pen arrives as ManipulationDelta.
+                scoresTickerViewport.ManipulationMode = Microsoft.UI.Xaml.Input.ManipulationModes.TranslateX;
+                // Canvas needs a background to be a hit-test target
+                scoresTickerViewport.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
+                scoresTickerViewport.ManipulationDelta += (_, args) =>
+                {
+                    tickerUserPaused = true;
+                    tickerResumeCountdown = 0;
+
+                    if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform t)
+                    {
+                        scoresTickerOffsetPx += args.Delta.Translation.X;
+                        var maxLeft = tickerLoopWidth > 0 ? -tickerLoopWidth : 0.0;
+                        scoresTickerOffsetPx = Math.Clamp(scoresTickerOffsetPx, maxLeft, 0.0);
+                        t.X = scoresTickerOffsetPx;
+                    }
+                };
+
+                // Two-finger touchpad horizontal scroll (PointerWheelChanged with horizontal delta).
+                // Hook on both the border and the viewport to ensure the event is captured
+                // regardless of which element the pointer is over.
+                void HandleTickerWheel(object? sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs args)
+                {
+                    var props = args.GetCurrentPoint(scoresTickerViewport).Properties;
+
+                    if (!props.IsHorizontalMouseWheel) return;
+
+                    var delta = props.MouseWheelDelta;
+                    if (delta == 0) return;
+
+                    // Only meaningful if text extends beyond viewport
+                    if (tickerLoopWidth <= 0 || tickerLoopWidth <= scoresTickerViewport.ActualWidth) return;
+
+                    // -1 = actively interacting; countdown only starts on PointerExited
+                    tickerUserPaused = true;
+                    tickerResumeCountdown = -1;
+
+                    if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform t)
+                    {
+                        // Positive delta = swiped right = text should move right = offset increases
+                        scoresTickerOffsetPx -= delta / 120.0 * 50.0;
+                        var maxLeft = tickerLoopWidth > 0 ? -tickerLoopWidth : 0.0;
+                        scoresTickerOffsetPx = Math.Clamp(scoresTickerOffsetPx, maxLeft, 0.0);
+                        t.X = scoresTickerOffsetPx;
+                    }
+
+                    args.Handled = true;
+                }
+
+                scoresTickerBorder.PointerWheelChanged += HandleTickerWheel;
+                scoresTickerViewport.PointerWheelChanged += HandleTickerWheel;
+
+                // When pointer leaves the ticker, start the resume countdown
+                scoresTickerBorder.PointerExited += (_, __) =>
+                {
+                    if (tickerUserPaused && tickerResumeCountdown == -1)
+                        tickerResumeCountdown = TickerResumeDelayTicks;
+                };
+                // While pointer is over the ticker, keep the countdown frozen
+                scoresTickerBorder.PointerEntered += (_, __) =>
+                {
+                    if (tickerUserPaused)
+                        tickerResumeCountdown = -1;
+                };
+                var tickerCycleButton = new WinButton
+                {
+                    Content = "⟳",
+                    FontSize = 15,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    BorderThickness = new WinThickness(0),
+                    Padding = new WinThickness(8, 0, 8, 0),
+                    VerticalAlignment = WinVerticalAlignment.Center
+                };
+                Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(tickerCycleButton, "Switch scores view");
+                WinGrid.SetColumn(tickerCycleButton, 1);
                 scoresTickerViewport.Children.Add(scoresTickerText);
-                scoresTickerBorder.Child = scoresTickerViewport;
+                scoresTickerGrid.Children.Add(scoresTickerViewport);
+                scoresTickerGrid.Children.Add(tickerCycleButton);
+                scoresTickerBorder.Child = scoresTickerGrid;
 
                 // Full-screen click-away surface for menu/info dismiss
                 var dismissSurface = new Microsoft.UI.Xaml.Controls.Border
@@ -264,12 +504,12 @@ namespace VardyParty.Platforms.Windows
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                 };
 
-                // Info Overlay
+                // Info Overlay — positioned to the right of the menu button to avoid overlap
                 var infoPanel = new Microsoft.UI.Xaml.Controls.Grid
                 {
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     VerticalAlignment = WinVerticalAlignment.Top,
-                    Margin = new WinThickness(10, 60, 0, 0),
+                    Margin = new WinThickness(70, 48, 0, 0),
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.7 },
                     Padding = new WinThickness(10),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
@@ -287,12 +527,28 @@ namespace VardyParty.Platforms.Windows
                 };
                 infoPanel.Children.Add(infoText);
 
+                TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler = null;
+
+                bool isClosingPlayer = false;
+
                 void Restore()
                 {
+                    // Unhook synchronously so the very next X-press is never cancelled
+                    try
+                    {
+                        if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
+                        {
+                            nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                            appWindowClosingHandler = null;
+                        }
+                    }
+                    catch { }
+
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
+                        isClosingPlayer = false;
                     });
                 }
 
@@ -371,7 +627,7 @@ namespace VardyParty.Platforms.Windows
                         sb.AppendLine($"Bitrate: {bitrateText}");
                         sb.AppendLine($"Video Codec: {vCodec}");
                         sb.AppendLine($"Audio Codec: {aCodec}");
-                        
+
 
                         if (!string.IsNullOrEmpty(title))
                             sb.AppendLine($"{title}");
@@ -451,7 +707,14 @@ namespace VardyParty.Platforms.Windows
                         return g.IsInProgress || g.IsHalfTime || g.Minute.HasValue;
                     }
 
-                    string FormatScore(Game g) => $"{(g.HomeScore?.ToString() ?? "-")}-{(g.AwayScore?.ToString() ?? "-")}";
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
                     string FormatStatus(Game g)
                     {
                         var st = g.DisplayStatusText();
@@ -474,6 +737,110 @@ namespace VardyParty.Platforms.Windows
                         : $"{header}: {string.Join("   •   ", lines)}";
                 }
 
+                string BuildAllLeaguesInPlayTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
+                    string FormatStatus(Game g)
+                    {
+                        var st = g.DisplayStatusText();
+                        return string.IsNullOrWhiteSpace(st) ? "Live" : st;
+                    }
+
+                    var lines = allGames
+                        .Where(g => !g.IsFinished && !g.IsPostponed && (g.IsInProgress || g.IsHalfTime || g.Minute.HasValue))
+                        .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenByDescending(g => g.LiveMinuteForOrdering)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => $"[{g.DisplayLeague}] {g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({FormatStatus(g)})")
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "All leagues in-play: No live games right now."
+                        : $"All leagues in-play: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildFinishedScoresTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
+                    var lines = allGames
+                        .Where(g => g.IsFinished && g.HomeScore.HasValue && g.AwayScore.HasValue)
+                        .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenByDescending(g => g.StartUtcForOrdering)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => $"[{g.DisplayLeague}] {g.DisplayHome} {FormatScore(g)} {g.DisplayAway} (FT)")
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "Finished games: No finished games right now."
+                        : $"Finished games: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildUpcomingTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    var lines = allGames
+                        .Where(g => !g.IsFinished && !g.IsPostponed && !g.IsInProgress && !g.IsHalfTime && !g.Minute.HasValue)
+                        .OrderBy(g => g.StartUtcForOrdering)
+                        .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g =>
+                        {
+                            var local = g.Start.Kind == DateTimeKind.Utc ? g.Start.ToLocalTime() : g.Start;
+                            var ko = local == default ? "TBD" : local.ToString("HH:mm");
+                            return $"[{g.DisplayLeague}] {ko} {g.DisplayHome} vs {g.DisplayAway}";
+                        })
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "Upcoming games: No remaining unstarted games today."
+                        : $"Upcoming games: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildCurrentModeTickerText() => scoresTickerMode switch
+                {
+                    WindowsScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerText(),
+                    WindowsScoresTickerMode.AllFinished      => BuildFinishedScoresTickerText(),
+                    WindowsScoresTickerMode.AllUpcoming      => BuildUpcomingTickerText(),
+                    _                                        => BuildSameLeagueTickerText()
+                };
+
                 void EnsureTickerTimer()
                 {
                     scoresTickerScrollTimer ??= scoresTickerText.DispatcherQueue.CreateTimer();
@@ -490,18 +857,59 @@ namespace VardyParty.Platforms.Windows
                             var transform = scoresTickerText.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
                             if (transform == null) return;
 
-                            var textWidth = scoresTickerText.ActualWidth;
-                            if (textWidth <= 0)
+                            // Measure full double-copy width and single-loop width once per text update
+                            if (tickerMeasuredTextWidth <= 0 || tickerLoopWidth <= 0)
                             {
                                 scoresTickerText.Measure(new global::Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-                                textWidth = scoresTickerText.DesiredSize.Width;
-                                if (textWidth <= 0) return;
+                                var fullWidth = scoresTickerText.DesiredSize.Width;
+                                if (fullWidth <= 0) return;
+                                tickerMeasuredTextWidth = fullWidth;
+                                tickerLoopWidth = fullWidth / 2.0; // two identical copies
+                            }
+
+                            // Only scroll if a single copy is wider than the viewport
+                            if (tickerLoopWidth <= viewportWidth)
+                            {
+                                // Don't reset transform if user is gesturing — let them see what they scrolled to
+                                if (!tickerUserPaused)
+                                    transform.X = 0;
+                                return;
+                            }
+
+                            // Handle resume countdown after user gesture / pointer-exit
+                            if (tickerUserPaused)
+                            {
+                                if (tickerResumeCountdown > 0)
+                                {
+                                    tickerResumeCountdown--;
+                                    if (tickerResumeCountdown == 0)
+                                    {
+                                        // Countdown complete — resume auto-scroll from current position
+                                        tickerUserPaused = false;
+                                        // Ensure read-delay branch does not force a reset to X=0
+                                        tickerScrollDelayTicks = Math.Max(tickerScrollDelayTicks, TickerReadDelayTicks);
+                                    }
+                                }
+                                // tickerResumeCountdown == -1 means actively interacting, no countdown yet
+                                return;
+                            }
+
+                            // Wait for the initial read delay before starting to scroll
+                            if (tickerScrollDelayTicks < TickerReadDelayTicks)
+                            {
+                                tickerScrollDelayTicks++;
+                                transform.X = 0;
+                                return;
                             }
 
                             scoresTickerOffsetPx -= tickerSpeedPerTickPx;
-                            if (scoresTickerOffsetPx <= -textWidth)
+
+                            // Seamless wrap: once first copy has fully scrolled out, subtract
+                            // one loop width so the second copy snaps into the first copy's place
+                            if (scoresTickerOffsetPx <= -tickerLoopWidth)
                             {
-                                scoresTickerOffsetPx = viewportWidth;
+                                scoresTickerOffsetPx += tickerLoopWidth;
+                                // No delay reset — continuous flow, no pause between loops
                             }
 
                             transform.X = scoresTickerOffsetPx;
@@ -512,18 +920,23 @@ namespace VardyParty.Platforms.Windows
 
                 void RefreshTickerText(bool resetOffset)
                 {
-                    scoresTickerRawText = BuildSameLeagueTickerText();
-                    if (scoresTickerRawText.Length < 5)
-                    {
-                        scoresTickerRawText += "     ";
-                    }
+                    scoresTickerRawText = BuildCurrentModeTickerText();
 
-                    scoresTickerText.Text = scoresTickerRawText + "     ";
+                    // Build a double-copy for seamless continuous scrolling:
+                    // "content ⚽ content ⚽ " — we scroll by exactly one loop width then reset
+                    var single = scoresTickerRawText + TickerSeparator;
+                    scoresTickerText.Text = single + single;
+
+                    // Reset measured widths so they are re-measured on the next tick with new text
+                    tickerMeasuredTextWidth = 0;
+                    tickerLoopWidth = 0;
 
                     if (resetOffset)
                     {
-                        var viewportWidth = scoresTickerViewport.ActualWidth;
-                        scoresTickerOffsetPx = viewportWidth > 0 ? viewportWidth : 0;
+                        scoresTickerOffsetPx = 0;
+                        tickerScrollDelayTicks = 0;
+                        tickerUserPaused = false;
+                        tickerResumeCountdown = 0;
                     }
 
                     if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform transform)
@@ -541,6 +954,7 @@ namespace VardyParty.Platforms.Windows
 
                     if (isScoresTickerVisible)
                     {
+                        scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
                         EnsureTickerTimer();
                         RefreshTickerText(resetOffset: true);
                         scoresTickerScrollTimer?.Start();
@@ -551,26 +965,23 @@ namespace VardyParty.Platforms.Windows
                     }
                 }
 
-                // Event Handlers
-                closeButton.Click += (s, e) => 
-                { 
-                    try
+                void CycleScoresTickerMode()
+                {
+                    scoresTickerMode = scoresTickerMode switch
                     {
-                        // Stop health checking when user explicitly closes the native player
-                        try
-                        {
-                            var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                            svc?.Cleanup();
-                        }
-                        catch { }
-                    }
-                    finally
+                        WindowsScoresTickerMode.SameLeagueInPlay => WindowsScoresTickerMode.AllLeaguesInPlay,
+                        WindowsScoresTickerMode.AllLeaguesInPlay => WindowsScoresTickerMode.AllFinished,
+                        WindowsScoresTickerMode.AllFinished      => WindowsScoresTickerMode.AllUpcoming,
+                        _                                        => WindowsScoresTickerMode.SameLeagueInPlay
+                    };
+
+                    if (isScoresTickerVisible)
                     {
-                        Restore(); 
-                        // Signal caller that user closed the player so stream resolution can react
-                        tcs.TrySetResult(PlaybackResult.SuccessResult("User closed video player"));
+                        RefreshTickerText(resetOffset: true);
                     }
-                };
+                }
+
+                tickerCycleButton.Click += (_, __) => CycleScoresTickerMode();
 
                 void RefreshDismissSurface()
                 {
@@ -601,6 +1012,24 @@ namespace VardyParty.Platforms.Windows
                 {
                     menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     ToggleScoresTicker();
+                    RefreshDismissSurface();
+                };
+
+                alwaysOnTopButton.Click += (_, __) =>
+                {
+                    try
+                    {
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow?.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+                        {
+                            presenter.IsAlwaysOnTop = !presenter.IsAlwaysOnTop;
+                            alwaysOnTopButton.Content = presenter.IsAlwaysOnTop
+                                ? "📌 Always on top: On"
+                                : "📌 Always on top: Off";
+                        }
+                    }
+                    catch { }
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     RefreshDismissSurface();
                 };
 
@@ -760,94 +1189,113 @@ namespace VardyParty.Platforms.Windows
                 };
                 streamInfoPanel.Children.Add(streamCountText);
 
-                // Next stream button (right center, appears on hover)
-                var nextButton = new WinButton
+                // Next stream button host (button + x/y hint directly beneath)
+                var nextButtonContainer = new Microsoft.UI.Xaml.Controls.StackPanel
                 {
-                    Content = "Next",
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray),
-                    Padding = new WinThickness(15, 10, 15, 10),
-                    FontSize = 16,
-                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
                     HorizontalAlignment = WinHorizontalAlignment.Right,
                     VerticalAlignment = WinVerticalAlignment.Center,
-                    Margin = new WinThickness(0, 0, 20, 0),
-                    Opacity = 0,
-                    Visibility = onNextStreamRequested != null
-                        ? Microsoft.UI.Xaml.Visibility.Visible
-                        : Microsoft.UI.Xaml.Visibility.Collapsed
+                    Margin = new WinThickness(0, 0, 48, 0),
+                    Spacing = 4,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Opacity = 0
                 };
+
+                // Next stream button — floating right-centre, inset from edge
+                var nextButton = new WinButton
+                {
+                    Content = "⏭",
+                    FontSize = 18,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new WinThickness(1),
+                    Padding = new WinThickness(14, 10, 14, 10),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
+                    HorizontalAlignment = WinHorizontalAlignment.Center,
+                    VerticalAlignment = WinVerticalAlignment.Center
+                };
+
+                var nextButtonHintText = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    HorizontalAlignment = WinHorizontalAlignment.Center,
+                    TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
+                    Text = string.Empty,
+                    Height = 16,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Visible,
+                    Opacity = 0,
+                    IsHitTestVisible = false
+                };
+
+                nextButtonContainer.Children.Add(nextButton);
+                nextButtonContainer.Children.Add(nextButtonHintText);
 
                 var grid = new WinGrid();
                 grid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
                 // Don't add mediaPlayerElement here yet - defer until source is initialized
                 grid.Children.Add(dismissSurface);
                 grid.Children.Add(infoPanel);
-                grid.Children.Add(streamInfoPanel);
                 grid.Children.Add(scoresTickerBorder);
+                grid.Children.Add(streamInfoPanel);
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
-                grid.Children.Add(closeButton);
-                grid.Children.Add(nextButton);
+                grid.Children.Add(nextButtonContainer);
 
                 nextButton.Click += async (s, e) =>
                 {
                     if (onNextStreamRequested != null)
                     {
                         await onNextStreamRequested();
-                        await TrySwitchToCurrentStreamAsync();
+                        await TrySwitchToCurrentStreamAsync(force: true);
                     }
                 };
 
-                // Show/hide Next button on mouse hover
+                // Show/hide Next button on mouse hover, with background feedback
                 if (onNextStreamRequested != null)
                 {
-                    grid.PointerEntered += (s, e) => nextButton.Opacity = 1;
-                    grid.PointerExited += (s, e) => nextButton.Opacity = 0;
+                    var nextBgNormal = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A));
+                    var nextBgHover  = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0x30, 0x30, 0x30));
+                    grid.PointerEntered += (s, e) =>
+                    {
+                        isPointerInGrid = true;
+                        if (nextButtonContainer.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                            nextButtonContainer.Opacity = 1;
+                    };
+                    grid.PointerExited  += (s, e) =>
+                    {
+                        isPointerInGrid = false;
+                        nextButtonContainer.Opacity = 0;
+                        nextButton.Background = nextBgNormal;
+                        nextButtonHintText.Opacity = 0;
+                    };
+                    nextButton.PointerEntered += (s, e) =>
+                    {
+                        nextButton.Background = nextBgHover;
+                        if (nextButtonContainer.Visibility == Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(nextButtonHintText.Text))
+                        {
+                            nextButtonHintText.Opacity = 1;
+                        }
+                    };
+                    nextButton.PointerExited  += (s, e) =>
+                    {
+                        nextButton.Background = nextBgNormal;
+                        nextButtonHintText.Opacity = 0;
+                    };
                 }
 
                 grid.PointerMoved += (s, e) =>
                 {
                     try
                     {
-                        var p = e.GetCurrentPoint(grid).Position;
-                        var inBottomLeftQuadrant = p.X <= grid.ActualWidth / 2 && p.Y >= grid.ActualHeight / 2;
-
-                        if (menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                        {
-                            menuButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                            menuButton.Opacity = 1;
-                            return;
-                        }
-
-                        menuButton.Visibility = inBottomLeftQuadrant
-                            ? Microsoft.UI.Xaml.Visibility.Visible
-                            : Microsoft.UI.Xaml.Visibility.Collapsed;
-                        menuButton.Opacity = inBottomLeftQuadrant ? 1 : 0;
+                        // Menu button remains fixed and visible at top-left.
+                        menuButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                        menuButton.Opacity = 1;
                     }
                     catch { }
                 };
-
-                // Ensure we restore and cleanup if the window is closed externally
-                try
-                {
-                    var window = nativeWindow;
-                    if (window != null)
-                    {
-                        window.Closed += (s, e) =>
-                        {
-                            try
-                            {
-                                var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                                svc?.Cleanup();
-                            }
-                            catch { }
-                            try { Restore(); } catch { }
-                            try { tcs.TrySetResult(PlaybackResult.Completed("Window closed", true)); } catch { }
-                        };
-                    }
-                }
-                catch { }
 
                 void UpdateStreamInfo()
                 {
@@ -856,21 +1304,65 @@ namespace VardyParty.Platforms.Windows
                     {
                         var total = switchingService.GetHealthyStreams().Count;
                         var index = switchingService.GetCurrentStreamIndex();
+                        var current = switchingService.GetCurrentStream();
+
+                        string? ExtractVerticalResolution(string? resolution)
+                        {
+                            if (string.IsNullOrWhiteSpace(resolution)) return null;
+                            var match = System.Text.RegularExpressions.Regex.Match(resolution, @"(\d{3,4})\s*[xX]\s*(\d{3,4})");
+                            if (match.Success)
+                            {
+                                return $"{match.Groups[2].Value}p";
+                            }
+                            return null;
+                        }
+
+                        var verticalResolution =
+                            ExtractVerticalResolution(current?.Health?.Resolution)
+                            ?? ExtractVerticalResolution(current?.Stream?.Resolution)
+                            ?? (_currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
+
                         var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
+                        var hasResolutionChanged = !string.Equals(lastStreamVerticalResolution ?? string.Empty, verticalResolution ?? string.Empty, StringComparison.Ordinal);
                         lastStreamTotal = total;
                         lastStreamIndex = index;
+                        lastStreamVerticalResolution = verticalResolution;
                         MainThread.BeginInvokeOnMainThread(() =>
                         {
                             if (total > 0)
                             {
-                                streamCountText.Text = $"Stream: {index}/{total}";
+                                streamCountText.Text = string.IsNullOrWhiteSpace(verticalResolution)
+                                    ? $"Stream: {index}/{total}"
+                                    : $"Stream: {index}/{total} ({verticalResolution})";
                             }
                             else
                             {
                                 streamCountText.Text = "Streams: 0";
                             }
 
-                            if (hasChanged)
+                            var canSwitchToAnother = onNextStreamRequested != null && total > 1;
+                            nextButtonContainer.Visibility = canSwitchToAnother
+                                ? Microsoft.UI.Xaml.Visibility.Visible
+                                : Microsoft.UI.Xaml.Visibility.Collapsed;
+                            if (!canSwitchToAnother)
+                            {
+                                nextButtonContainer.Opacity = 0;
+                                nextButtonHintText.Text = string.Empty;
+                                nextButtonHintText.Opacity = 0;
+                            }
+                            else
+                            {
+                                nextButtonHintText.Text = $"{index}/{total}";
+                                // If the cursor is already over the player when another stream arrives,
+                                // show the Next button immediately without requiring pointer re-enter.
+                                nextButtonContainer.Opacity = isPointerInGrid ? 1 : 0;
+                            }
+
+                            var shouldShowStreamOverlay = total > 0 &&
+                                (hasChanged
+                                 || hasResolutionChanged
+                                 || (streamInfoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(verticalResolution)));
+                            if (shouldShowStreamOverlay)
                             {
                                 streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                                 streamInfoHideTimer ??= streamInfoPanel.DispatcherQueue.CreateTimer();
@@ -1009,7 +1501,7 @@ namespace VardyParty.Platforms.Windows
                                             catch { }
                                         });
                                     }
-                                    
+            
                                     // Signal error status to Windows Media Player
                                     try
                                     {
@@ -1078,7 +1570,7 @@ namespace VardyParty.Platforms.Windows
                     }
                 }
 
-                async Task TrySwitchToCurrentStreamAsync()
+                async Task TrySwitchToCurrentStreamAsync(bool force = false)
                 {
                     if (switchingService == null) return;
                     try
@@ -1086,7 +1578,7 @@ namespace VardyParty.Platforms.Windows
                         var current = switchingService.GetCurrentStream();
                         var url = current?.ResolvedM3U8Url;
                         if (string.IsNullOrWhiteSpace(url)) return;
-                        if (string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
+                        if (!force && string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
                         await StartPlaybackAsync(url);
                     }
                     catch { }
@@ -1129,10 +1621,86 @@ namespace VardyParty.Platforms.Windows
                 }
                 catch { }
 
+                // Intercept the title-bar X button so it stops playback instead of killing the app
+                try
+                {
+                    if (nativeWindow?.AppWindow != null)
+                    {
+                        appWindowClosingHandler = (_, args) =>
+                        {
+                            if (isClosingPlayer)
+                            {
+                                args.Cancel = true;
+                                return;
+                            }
+
+                            // Unhook synchronously first so subsequent close attempts work normally
+                            try
+                            {
+                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                                appWindowClosingHandler = null;
+                            }
+                            catch { }
+
+                            // Guard: only cancel if our video grid is still the active content.
+                            // If Restore() already ran, content has been swapped — let the close go through.
+                            if (!ReferenceEquals(nativeWindow.Content, grid))
+                                return;
+
+                            isClosingPlayer = true;
+                            args.Cancel = true;
+                            MainThread.BeginInvokeOnMainThread(() =>
+                            {
+                                try
+                                {
+                                    var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                                    svc?.Cleanup();
+                                }
+                                catch { }
+                                try
+                                {
+                                    streamResolutionOrchestrator?.Reset();
+                                }
+                                catch { }
+                                Restore();
+                                tcs.TrySetResult(PlaybackResult.SuccessResult("User closed video player"));
+                            });
+                        };
+                        nativeWindow.AppWindow.Closing += appWindowClosingHandler;
+                    }
+                }
+                catch { }
+
+                // Ensure we restore and cleanup if the window is closed externally
+                try
+                {
+                    var window = nativeWindow;
+                    if (window != null)
+                    {
+                        window.Closed += (s, e) =>
+                        {
+                            try
+                            {
+                                var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                                svc?.Cleanup();
+                            }
+                            catch { }
+                            try { Restore(); } catch { }
+                            try { tcs.TrySetResult(PlaybackResult.Completed("Window closed", true)); } catch { }
+                        };
+                    }
+                }
+                catch { }
+
+
                 _ = StartPlaybackAsync(m3u8Url);
             });
 
             return tcs.Task;
+        }
+
+        public class VardyPartyWindow : MauiWinUIWindow
+        {
         }
 
         private void ExtractVideoMetadata(MediaPlaybackItem mediaItem, MediaPlayer player)
@@ -1255,6 +1823,12 @@ namespace VardyParty.Platforms.Windows
             }
         }
     }
+
+    internal enum WindowsScoresTickerMode
+    {
+        SameLeagueInPlay,
+        AllLeaguesInPlay,
+        AllFinished,
+        AllUpcoming
+    }
 }
-
-

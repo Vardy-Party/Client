@@ -17,7 +17,6 @@ public class StreamResolutionOrchestrator(
     INativeVideoPlayerService nativeVideoPlayer,
     ILogger<StreamResolutionOrchestrator> logger) : IStreamResolutionOrchestrator
 {
-    private const int HealthyStreamsThreshold = 2;
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
@@ -105,14 +104,6 @@ public class StreamResolutionOrchestrator(
             streamSwitchingService.AddHealthyStream(enrichedStream);
             _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
             PublishProgress();
-
-            if (_healthyStreamCount >= HealthyStreamsThreshold)
-            {
-                selectionCoordinator.PauseTesting();
-                _status = "Testing paused";
-                PublishProgress();
-                break;
-            }
 
             if (!hasPlayedFirstStream)
             {
@@ -341,24 +332,34 @@ public class StreamResolutionOrchestrator(
             return;
         }
 
-        _status = "Switch requested - resolving stream URL...";
-        PublishProgress();
-
-        var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
-            nextStream.Stream,
-            $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-            cancellationToken);
-
-        if (string.IsNullOrEmpty(resolved))
+        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
-            logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
-                nextStream.Stream.Channel);
-            _status = "Switch failed - could not resolve stream URL";
+            _status = "Switch requested - resolving stream URL...";
             PublishProgress();
-            return;
-        }
 
-        nextStream.ResolvedM3U8Url = resolved;
+            var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
+                nextStream.Stream,
+                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+                cancellationToken);
+
+            if (string.IsNullOrEmpty(resolved))
+            {
+                logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
+                    nextStream.Stream.Channel);
+                _status = "Switch failed - could not resolve stream URL";
+                PublishProgress();
+                return;
+            }
+
+            nextStream.ResolvedM3U8Url = resolved;
+        }
+        else
+        {
+            logger.LogInformation("[StreamResolution] Reusing queued M3U8 for next stream {Channel}",
+                nextStream.Stream.Channel);
+            _status = "Switch requested - using queued stream";
+            PublishProgress();
+        }
 
         if (streamSwitchingService.SwitchToNextStream())
         {

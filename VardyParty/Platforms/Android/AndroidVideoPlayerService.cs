@@ -86,11 +86,23 @@ namespace VardyParty.Platforms.Android
             }
             catch { }
             _playbackTcs = null;
+            _onNextStreamRequested = null;
         }
 
         internal static async Task RequestNextStream()
         {
-            if (_onNextStreamRequested != null) await _onNextStreamRequested();
+            if (_onNextStreamRequested != null)
+            {
+                await _onNextStreamRequested();
+                return;
+            }
+
+            try
+            {
+                var switching = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                switching?.SwitchToNextStream();
+            }
+            catch { }
         }
 
         internal static void SetStreamInfo(int currentIndex, int totalStreams)
