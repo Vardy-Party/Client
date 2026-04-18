@@ -123,6 +123,10 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 };
 
+                // Drag-to-move is wired on the root grid (later) so it works reliably while
+                // transport controls are visible and child elements may mark pointer events handled.
+                IntPtr hwndForDrag = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
+
                 // Click-drag on video surface moves the window (windowed mode only).
                 // Use native OS caption drag for smooth movement.
                 mediaPlayerElement.PointerPressed += (_, e) =>
@@ -142,13 +146,9 @@ namespace VardyParty.Platforms.Windows
                             return;
                         }
 
-                        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
-                        if (hwnd != IntPtr.Zero)
-                        {
-                            ReleaseCapture();
-                            SendMessage(hwnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
-                            e.Handled = true;
-                        }
+                        ReleaseCapture();
+                        SendMessage(hwndForDrag, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                        e.Handled = true;
                     }
                     catch { }
                 };
@@ -243,7 +243,7 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch { }
                 }
-                // Top-left hamburger button — true top-left anchor
+                // Top-left hamburger button — true top-left anchor, always visible in player
                 var menuButton = new WinButton
                 {
                     Content = "☰",
@@ -252,8 +252,8 @@ namespace VardyParty.Platforms.Windows
                     Margin = new WinThickness(12, 12, 0, 0),
                     Width = 42,
                     Height = 42,
-                    Opacity = 0,
-                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Opacity = 1,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Visible,
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
@@ -1193,6 +1193,32 @@ namespace VardyParty.Platforms.Windows
                 grid.Children.Add(menuButton);
                 grid.Children.Add(nextButtonContainer);
 
+                // Mouse-down then drag on non-interactive video area should move window.
+                // handledEventsToo=true ensures this still works when child elements handle pointer input.
+                var gridPointerPressedHandler = new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e) =>
+                {
+                    try
+                    {
+                        if (IsInteractiveSource(e.OriginalSource)) return;
+
+                        var point = e.GetCurrentPoint(grid);
+                        if (!point.Properties.IsLeftButtonPressed) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen) return;
+
+                        if (hwndForDrag != IntPtr.Zero)
+                        {
+                            ReleaseCapture();
+                            SendMessage(hwndForDrag, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                            e.Handled = true;
+                        }
+                    }
+                    catch { }
+                });
+                grid.AddHandler(Microsoft.UI.Xaml.UIElement.PointerPressedEvent, gridPointerPressedHandler, true);
+
                 nextButton.Click += async (s, e) =>
                 {
                     if (onNextStreamRequested != null)
@@ -1239,20 +1265,9 @@ namespace VardyParty.Platforms.Windows
                 {
                     try
                     {
-                        var p = e.GetCurrentPoint(grid).Position;
-                        var inTopLeftQuadrant = p.X <= grid.ActualWidth / 2 && p.Y <= grid.ActualHeight / 2;
-
-                        if (menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                        {
-                            menuButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                            menuButton.Opacity = 1;
-                            return;
-                        }
-
-                        menuButton.Visibility = inTopLeftQuadrant
-                            ? Microsoft.UI.Xaml.Visibility.Visible
-                            : Microsoft.UI.Xaml.Visibility.Collapsed;
-                        menuButton.Opacity = inTopLeftQuadrant ? 1 : 0;
+                        // Menu button remains fixed and visible at top-left.
+                        menuButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                        menuButton.Opacity = 1;
                     }
                     catch { }
                 };
