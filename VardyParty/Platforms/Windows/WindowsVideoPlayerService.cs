@@ -214,6 +214,7 @@ namespace VardyParty.Platforms.Windows
                 TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs>? mediaFailedHandler = null;
                 
                 bool metadataReported = false;
+                bool isPointerInGrid = false;
                 IStreamHealthReporter? _healthReporter = null;
                 
                 // Resolve health reporter
@@ -1163,6 +1164,18 @@ namespace VardyParty.Platforms.Windows
                 };
                 streamInfoPanel.Children.Add(streamCountText);
 
+                // Next stream button host (button + x/y hint directly beneath)
+                var nextButtonContainer = new Microsoft.UI.Xaml.Controls.StackPanel
+                {
+                    Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
+                    HorizontalAlignment = WinHorizontalAlignment.Right,
+                    VerticalAlignment = WinVerticalAlignment.Center,
+                    Margin = new WinThickness(0, 0, 48, 0),
+                    Spacing = 4,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Opacity = 0
+                };
+
                 // Next stream button — floating right-centre, inset from edge
                 var nextButton = new WinButton
                 {
@@ -1174,11 +1187,8 @@ namespace VardyParty.Platforms.Windows
                     BorderThickness = new WinThickness(1),
                     Padding = new WinThickness(14, 10, 14, 10),
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
-                    HorizontalAlignment = WinHorizontalAlignment.Right,
-                    VerticalAlignment = WinVerticalAlignment.Center,
-                    Margin = new WinThickness(0, 0, 48, 0),
-                    Opacity = 0,
-                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                    HorizontalAlignment = WinHorizontalAlignment.Center,
+                    VerticalAlignment = WinVerticalAlignment.Center
                 };
 
                 var nextButtonHintText = new Microsoft.UI.Xaml.Controls.TextBlock
@@ -1186,14 +1196,16 @@ namespace VardyParty.Platforms.Windows
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    HorizontalAlignment = WinHorizontalAlignment.Right,
-                    VerticalAlignment = WinVerticalAlignment.Center,
-                    Margin = new WinThickness(0, 44, 50, 0),
+                    HorizontalAlignment = WinHorizontalAlignment.Center,
+                    TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
                     Text = string.Empty,
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
                     Opacity = 0,
                     IsHitTestVisible = false
                 };
+
+                nextButtonContainer.Children.Add(nextButton);
+                nextButtonContainer.Children.Add(nextButtonHintText);
 
                 var grid = new WinGrid();
                 grid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
@@ -1204,8 +1216,7 @@ namespace VardyParty.Platforms.Windows
                 grid.Children.Add(streamInfoPanel);
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
-                grid.Children.Add(nextButton);
-                grid.Children.Add(nextButtonHintText);
+                grid.Children.Add(nextButtonContainer);
 
                 nextButton.Click += async (s, e) =>
                 {
@@ -1223,12 +1234,14 @@ namespace VardyParty.Platforms.Windows
                     var nextBgHover  = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0x30, 0x30, 0x30));
                     grid.PointerEntered += (s, e) =>
                     {
-                        if (nextButton.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                            nextButton.Opacity = 1;
+                        isPointerInGrid = true;
+                        if (nextButtonContainer.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                            nextButtonContainer.Opacity = 1;
                     };
                     grid.PointerExited  += (s, e) =>
                     {
-                        nextButton.Opacity = 0;
+                        isPointerInGrid = false;
+                        nextButtonContainer.Opacity = 0;
                         nextButton.Background = nextBgNormal;
                         nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         nextButtonHintText.Opacity = 0;
@@ -1236,7 +1249,7 @@ namespace VardyParty.Platforms.Windows
                     nextButton.PointerEntered += (s, e) =>
                     {
                         nextButton.Background = nextBgHover;
-                        if (nextButton.Visibility == Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(nextButtonHintText.Text))
+                        if (nextButtonContainer.Visibility == Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(nextButtonHintText.Text))
                         {
                             nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                             nextButtonHintText.Opacity = 1;
@@ -1316,12 +1329,12 @@ namespace VardyParty.Platforms.Windows
                             }
 
                             var canSwitchToAnother = onNextStreamRequested != null && total > 1;
-                            nextButton.Visibility = canSwitchToAnother
+                            nextButtonContainer.Visibility = canSwitchToAnother
                                 ? Microsoft.UI.Xaml.Visibility.Visible
                                 : Microsoft.UI.Xaml.Visibility.Collapsed;
                             if (!canSwitchToAnother)
                             {
-                                nextButton.Opacity = 0;
+                                nextButtonContainer.Opacity = 0;
                                 nextButtonHintText.Text = string.Empty;
                                 nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                                 nextButtonHintText.Opacity = 0;
@@ -1329,6 +1342,9 @@ namespace VardyParty.Platforms.Windows
                             else
                             {
                                 nextButtonHintText.Text = $"{index}/{total}";
+                                // If the cursor is already over the player when another stream arrives,
+                                // show the Next button immediately without requiring pointer re-enter.
+                                nextButtonContainer.Opacity = isPointerInGrid ? 1 : 0;
                             }
 
                             var shouldShowStreamOverlay = total > 0 && (hasChanged || hasResolutionChanged);
