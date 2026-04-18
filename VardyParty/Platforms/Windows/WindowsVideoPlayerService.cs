@@ -188,30 +188,51 @@ namespace VardyParty.Platforms.Windows
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
                 };
 
-                // Menu panel opens downward from the button, indented to match button left edge
+                // Menu panel opens downward from the button
                 var menuPanel = new Microsoft.UI.Xaml.Controls.StackPanel
                 {
                     Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     VerticalAlignment = WinVerticalAlignment.Top,
                     Margin = new WinThickness(14, 98, 0, 0),
-                    Spacing = 4,
-                    Padding = new WinThickness(8),
+                    MinWidth = 180,
+                    Spacing = 2,
+                    Padding = new WinThickness(6, 6, 6, 6),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xEE, 0x1A, 0x1A, 0x1A)),
-                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6)
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xF2, 0x18, 0x18, 0x18)),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
+                    BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+                    BorderThickness = new WinThickness(1)
                 };
 
-                var videoInfoButton = new WinButton { Content = "Video Info" };
-                var sameLeagueTickerButton = new WinButton { Content = "Scores" };
-                var alwaysOnTopButton = new WinButton { Content = "📌 Always on top: Off" };
-                var reportStreamButton = new WinButton { Content = "Report stream" };
+                WinButton MakeMenuItem(string label)
+                {
+                    var btn = new WinButton
+                    {
+                        Content = label,
+                        HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = WinHorizontalAlignment.Left,
+                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                        BorderThickness = new WinThickness(0),
+                        Padding = new WinThickness(12, 8, 12, 8),
+                        FontSize = 14,
+                        CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
+                    };
+                    return btn;
+                }
+
+                var videoInfoButton       = MakeMenuItem("Video Info");
+                var sameLeagueTickerButton = MakeMenuItem("Scores");
+                var alwaysOnTopButton     = MakeMenuItem("📌 Always on top: Off");
+                var reportStreamButton    = MakeMenuItem("Report stream");
                 var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Text = "Reporting stream...",
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    FontSize = 12
+                    FontSize = 12,
+                    Margin = new WinThickness(12, 2, 12, 4)
                 };
 
                 menuPanel.Children.Add(videoInfoButton);
@@ -271,10 +292,13 @@ namespace VardyParty.Platforms.Windows
                         (scoresTickerViewport.ActualHeight - scoresTickerText.ActualHeight) / 2);
                 };
 
-                // Gesture scroll: pause auto-scroll and let user drag the text
-                scoresTickerViewport.ManipulationMode =
-                    Microsoft.UI.Xaml.Input.ManipulationModes.TranslateX |
-                    Microsoft.UI.Xaml.Input.ManipulationModes.System;
+                // Gesture scroll: pause auto-scroll and let user drag/swipe the text.
+                // On Windows, two-finger touchpad horizontal scroll arrives as PointerWheelChanged
+                // (horizontal delta), and touch/pen arrives as ManipulationDelta.
+                scoresTickerViewport.ManipulationMode = Microsoft.UI.Xaml.Input.ManipulationModes.TranslateX;
+                // Canvas needs a background to be a hit-test target
+                scoresTickerViewport.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
                 scoresTickerViewport.ManipulationDelta += (_, args) =>
                 {
                     tickerUserPaused = true;
@@ -283,26 +307,57 @@ namespace VardyParty.Platforms.Windows
                     if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform t)
                     {
                         scoresTickerOffsetPx += args.Delta.Translation.X;
-                        // Clamp within one loop: can't scroll right past start or left past end of single copy
                         var maxLeft = tickerLoopWidth > 0 ? -tickerLoopWidth : 0.0;
                         scoresTickerOffsetPx = Math.Clamp(scoresTickerOffsetPx, maxLeft, 0.0);
                         t.X = scoresTickerOffsetPx;
                     }
                 };
 
-                // Pointer exit: start the 3-second countdown to resume auto-scroll
-                scoresTickerViewport.PointerExited += (_, __) =>
+                // Two-finger touchpad horizontal scroll (PointerWheelChanged with horizontal delta).
+                // Hook on both the border and the viewport to ensure the event is captured
+                // regardless of which element the pointer is over.
+                void HandleTickerWheel(object? sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs args)
+                {
+                    var props = args.GetCurrentPoint(scoresTickerViewport).Properties;
+
+                    if (!props.IsHorizontalMouseWheel) return;
+
+                    var delta = props.MouseWheelDelta;
+                    if (delta == 0) return;
+
+                    // Only meaningful if text extends beyond viewport
+                    if (tickerLoopWidth <= 0 || tickerLoopWidth <= scoresTickerViewport.ActualWidth) return;
+
+                    // -1 = actively interacting; countdown only starts on PointerExited
+                    tickerUserPaused = true;
+                    tickerResumeCountdown = -1;
+
+                    if (scoresTickerText.RenderTransform is Microsoft.UI.Xaml.Media.TranslateTransform t)
+                    {
+                        // Positive delta = swiped right = text should move right = offset increases
+                        scoresTickerOffsetPx -= delta / 120.0 * 50.0;
+                        var maxLeft = tickerLoopWidth > 0 ? -tickerLoopWidth : 0.0;
+                        scoresTickerOffsetPx = Math.Clamp(scoresTickerOffsetPx, maxLeft, 0.0);
+                        t.X = scoresTickerOffsetPx;
+                    }
+
+                    args.Handled = true;
+                }
+
+                scoresTickerBorder.PointerWheelChanged += HandleTickerWheel;
+                scoresTickerViewport.PointerWheelChanged += HandleTickerWheel;
+
+                // When pointer leaves the ticker, start the resume countdown
+                scoresTickerBorder.PointerExited += (_, __) =>
+                {
+                    if (tickerUserPaused && tickerResumeCountdown == -1)
+                        tickerResumeCountdown = TickerResumeDelayTicks;
+                };
+                // While pointer is over the ticker, keep the countdown frozen
+                scoresTickerBorder.PointerEntered += (_, __) =>
                 {
                     if (tickerUserPaused)
-                    {
-                        tickerResumeCountdown = TickerResumeDelayTicks;
-                    }
-                };
-
-                // Pointer entered: cancel resume countdown while user is still hovering
-                scoresTickerViewport.PointerEntered += (_, __) =>
-                {
-                    tickerResumeCountdown = 0;
+                        tickerResumeCountdown = -1;
                 };
                 var tickerCycleButton = new WinButton
                 {
@@ -357,20 +412,19 @@ namespace VardyParty.Platforms.Windows
 
                 void Restore()
                 {
+                    // Unhook synchronously so the very next X-press is never cancelled
+                    try
+                    {
+                        if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
+                        {
+                            nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                            appWindowClosingHandler = null;
+                        }
+                    }
+                    catch { }
+
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
-                        // Always unhook the closing interceptor on restore so the window
-                        // can be closed normally after playback ends via any code path
-                        try
-                        {
-                            if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
-                            {
-                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
-                                appWindowClosingHandler = null;
-                            }
-                        }
-                        catch { }
-
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
                     });
@@ -617,7 +671,7 @@ namespace VardyParty.Platforms.Windows
                     }
 
                     var lines = allGames
-                        .Where(g => g.IsFinished)
+                        .Where(g => g.IsFinished && g.HomeScore.HasValue && g.AwayScore.HasValue)
                         .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                         .ThenByDescending(g => g.StartUtcForOrdering)
                         .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -694,7 +748,9 @@ namespace VardyParty.Platforms.Windows
                             // Only scroll if a single copy is wider than the viewport
                             if (tickerLoopWidth <= viewportWidth)
                             {
-                                transform.X = 0;
+                                // Don't reset transform if user is gesturing — let them see what they scrolled to
+                                if (!tickerUserPaused)
+                                    transform.X = 0;
                                 return;
                             }
 
@@ -704,15 +760,15 @@ namespace VardyParty.Platforms.Windows
                                 if (tickerResumeCountdown > 0)
                                 {
                                     tickerResumeCountdown--;
+                                    if (tickerResumeCountdown == 0)
+                                    {
+                                        // Countdown complete — resume auto-scroll from current position
+                                        tickerUserPaused = false;
+                                        // Ensure read-delay branch does not force a reset to X=0
+                                        tickerScrollDelayTicks = Math.Max(tickerScrollDelayTicks, TickerReadDelayTicks);
+                                    }
                                 }
-                                else if (tickerResumeCountdown == 0)
-                                {
-                                    tickerUserPaused = false;
-                                    tickerResumeCountdown = -1;
-                                    scoresTickerOffsetPx = 0;
-                                    tickerScrollDelayTicks = 0;
-                                    transform.X = 0;
-                                }
+                                // tickerResumeCountdown == -1 means actively interacting, no countdown yet
                                 return;
                             }
 
@@ -1378,6 +1434,11 @@ namespace VardyParty.Platforms.Windows
                                 appWindowClosingHandler = null;
                             }
                             catch { }
+
+                            // Guard: only cancel if our video grid is still the active content.
+                            // If Restore() already ran, content has been swapped — let the close go through.
+                            if (!ReferenceEquals(nativeWindow.Content, grid))
+                                return;
 
                             args.Cancel = true;
                             MainThread.BeginInvokeOnMainThread(() =>
