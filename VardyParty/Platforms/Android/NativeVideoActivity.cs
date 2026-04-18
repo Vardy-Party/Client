@@ -1480,7 +1480,7 @@ namespace VardyParty.Platforms.Android
             }
 
             return games
-                .Where(g => g.IsFinished)
+                .Where(g => g.IsFinished && g.HomeScore.HasValue && g.AwayScore.HasValue)
                 .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(g => g.StartUtcForOrdering)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
