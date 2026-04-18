@@ -101,6 +101,7 @@ namespace VardyParty.Platforms.Windows
                 const double tickerSpeedPerTickPx = 1.25;
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
+                var scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
 
                 TypedEventHandler<MediaPlaybackSession, object>? playbackStateChangedHandler = null;
                 TypedEventHandler<MediaPlaybackSession, object>? naturalVideoSizeChangedHandler = null;
@@ -177,36 +178,38 @@ namespace VardyParty.Platforms.Windows
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
                 };
 
-                // Bottom-left hamburger button and menu
+                // Top-left hamburger button
                 var menuButton = new WinButton
                 {
                     Content = "☰",
                     HorizontalAlignment = WinHorizontalAlignment.Left,
-                    VerticalAlignment = WinVerticalAlignment.Bottom,
-                    Margin = new WinThickness(14, 0, 0, 14),
+                    VerticalAlignment = WinVerticalAlignment.Top,
+                    Margin = new WinThickness(14, 48, 0, 0),
                     Width = 42,
                     Height = 42,
                     Opacity = 0,
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.65 },
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4)
                 };
 
                 var menuPanel = new Microsoft.UI.Xaml.Controls.StackPanel
                 {
                     Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
                     HorizontalAlignment = WinHorizontalAlignment.Left,
-                    VerticalAlignment = WinVerticalAlignment.Bottom,
-                    Margin = new WinThickness(14, 0, 0, 64),
-                    Spacing = 8,
-                    Padding = new WinThickness(10),
+                    VerticalAlignment = WinVerticalAlignment.Top,
+                    Margin = new WinThickness(14, 98, 0, 0),
+                    Spacing = 4,
+                    Padding = new WinThickness(8),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.85 },
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xEE, 0x1A, 0x1A, 0x1A)),
                     CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6)
                 };
 
                 var videoInfoButton = new WinButton { Content = "Video Info" };
                 var sameLeagueTickerButton = new WinButton { Content = "Scores" };
+                var alwaysOnTopButton = new WinButton { Content = "📌 Always on top: Off" };
                 var reportStreamButton = new WinButton { Content = "Report stream" };
                 var reportStatusText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
@@ -218,6 +221,7 @@ namespace VardyParty.Platforms.Windows
 
                 menuPanel.Children.Add(videoInfoButton);
                 menuPanel.Children.Add(sameLeagueTickerButton);
+                menuPanel.Children.Add(alwaysOnTopButton);
                 menuPanel.Children.Add(reportStreamButton);
                 menuPanel.Children.Add(reportStatusText);
 
@@ -228,14 +232,22 @@ namespace VardyParty.Platforms.Windows
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.80 },
                     Padding = new WinThickness(0, 6, 0, 6),
                     Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                    IsHitTestVisible = false
+                    IsHitTestVisible = true
                 };
+                var scoresTickerGrid = new WinGrid
+                {
+                    HorizontalAlignment = WinHorizontalAlignment.Stretch,
+                    VerticalAlignment = WinVerticalAlignment.Center
+                };
+                scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+                scoresTickerGrid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
                 var scoresTickerViewport = new Microsoft.UI.Xaml.Controls.Grid
                 {
                     HorizontalAlignment = WinHorizontalAlignment.Stretch,
                     VerticalAlignment = WinVerticalAlignment.Center,
                     Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry()
                 };
+                WinGrid.SetColumn(scoresTickerViewport, 0);
                 var scoresTickerText = new Microsoft.UI.Xaml.Controls.TextBlock
                 {
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
@@ -245,6 +257,18 @@ namespace VardyParty.Platforms.Windows
                     HorizontalAlignment = WinHorizontalAlignment.Left,
                     RenderTransform = new Microsoft.UI.Xaml.Media.TranslateTransform()
                 };
+                var tickerCycleButton = new WinButton
+                {
+                    Content = "⟳",
+                    FontSize = 14,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    BorderThickness = new WinThickness(0),
+                    Padding = new WinThickness(8, 0, 8, 0),
+                    VerticalAlignment = WinVerticalAlignment.Center
+                };
+                Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(tickerCycleButton, "Switch scores view");
+                WinGrid.SetColumn(tickerCycleButton, 1);
                 scoresTickerViewport.SizeChanged += (_, __) =>
                 {
                     if (scoresTickerViewport.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
@@ -253,7 +277,9 @@ namespace VardyParty.Platforms.Windows
                     }
                 };
                 scoresTickerViewport.Children.Add(scoresTickerText);
-                scoresTickerBorder.Child = scoresTickerViewport;
+                scoresTickerGrid.Children.Add(scoresTickerViewport);
+                scoresTickerGrid.Children.Add(tickerCycleButton);
+                scoresTickerBorder.Child = scoresTickerGrid;
 
                 // Full-screen click-away surface for menu/info dismiss
                 var dismissSurface = new Microsoft.UI.Xaml.Controls.Border
@@ -287,10 +313,22 @@ namespace VardyParty.Platforms.Windows
                 };
                 infoPanel.Children.Add(infoText);
 
+                TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler = null;
+
                 void Restore()
                 {
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
+                        try
+                        {
+                            if (nativeWindow?.AppWindow != null && appWindowClosingHandler != null)
+                            {
+                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                                appWindowClosingHandler = null;
+                            }
+                        }
+                        catch { }
+
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
                     });
@@ -451,7 +489,14 @@ namespace VardyParty.Platforms.Windows
                         return g.IsInProgress || g.IsHalfTime || g.Minute.HasValue;
                     }
 
-                    string FormatScore(Game g) => $"{(g.HomeScore?.ToString() ?? "-")}-{(g.AwayScore?.ToString() ?? "-")}";
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
                     string FormatStatus(Game g)
                     {
                         var st = g.DisplayStatusText();
@@ -473,6 +518,110 @@ namespace VardyParty.Platforms.Windows
                         ? $"{header}: No other live games right now."
                         : $"{header}: {string.Join("   •   ", lines)}";
                 }
+
+                string BuildAllLeaguesInPlayTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
+                    string FormatStatus(Game g)
+                    {
+                        var st = g.DisplayStatusText();
+                        return string.IsNullOrWhiteSpace(st) ? "Live" : st;
+                    }
+
+                    var lines = allGames
+                        .Where(g => !g.IsFinished && !g.IsPostponed && (g.IsInProgress || g.IsHalfTime || g.Minute.HasValue))
+                        .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenByDescending(g => g.LiveMinuteForOrdering)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => $"[{g.DisplayLeague}] {g.DisplayHome} {FormatScore(g)} {g.DisplayAway} ({FormatStatus(g)})")
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "All leagues in-play: No live games right now."
+                        : $"All leagues in-play: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildFinishedScoresTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    string FormatScore(Game g)
+                    {
+                        var s = $"{g.HomeScore?.ToString() ?? "-"}-{g.AwayScore?.ToString() ?? "-"}";
+                        if (g.AggregateHomeScore.HasValue || g.AggregateAwayScore.HasValue)
+                            s += $" agg {g.AggregateHomeScore?.ToString() ?? "-"}-{g.AggregateAwayScore?.ToString() ?? "-"}";
+                        return s;
+                    }
+
+                    var lines = allGames
+                        .Where(g => g.IsFinished)
+                        .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenByDescending(g => g.StartUtcForOrdering)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => $"[{g.DisplayLeague}] {g.DisplayHome} {FormatScore(g)} {g.DisplayAway} (FT)")
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "Finished games: No finished games right now."
+                        : $"Finished games: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildUpcomingTickerText()
+                {
+                    List<Game> allGames;
+                    lock (gamesLock)
+                    {
+                        allGames = latestGamesByLeague == null
+                            ? new List<Game>()
+                            : latestGamesByLeague.Values.SelectMany(v => v).ToList();
+                    }
+
+                    var lines = allGames
+                        .Where(g => !g.IsFinished && !g.IsPostponed && !g.IsInProgress && !g.IsHalfTime && !g.Minute.HasValue)
+                        .OrderBy(g => g.StartUtcForOrdering)
+                        .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
+                        .Select(g =>
+                        {
+                            var local = g.Start.Kind == DateTimeKind.Utc ? g.Start.ToLocalTime() : g.Start;
+                            var ko = local == default ? "TBD" : local.ToString("HH:mm");
+                            return $"[{g.DisplayLeague}] {ko} {g.DisplayHome} vs {g.DisplayAway}";
+                        })
+                        .ToList();
+
+                    return lines.Count == 0
+                        ? "Upcoming games: No remaining unstarted games today."
+                        : $"Upcoming games: {string.Join("   •   ", lines)}";
+                }
+
+                string BuildCurrentModeTickerText() => scoresTickerMode switch
+                {
+                    WindowsScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerText(),
+                    WindowsScoresTickerMode.AllFinished      => BuildFinishedScoresTickerText(),
+                    WindowsScoresTickerMode.AllUpcoming      => BuildUpcomingTickerText(),
+                    _                                        => BuildSameLeagueTickerText()
+                };
 
                 void EnsureTickerTimer()
                 {
@@ -512,7 +661,7 @@ namespace VardyParty.Platforms.Windows
 
                 void RefreshTickerText(bool resetOffset)
                 {
-                    scoresTickerRawText = BuildSameLeagueTickerText();
+                    scoresTickerRawText = BuildCurrentModeTickerText();
                     if (scoresTickerRawText.Length < 5)
                     {
                         scoresTickerRawText += "     ";
@@ -541,6 +690,7 @@ namespace VardyParty.Platforms.Windows
 
                     if (isScoresTickerVisible)
                     {
+                        scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
                         EnsureTickerTimer();
                         RefreshTickerText(resetOffset: true);
                         scoresTickerScrollTimer?.Start();
@@ -551,26 +701,23 @@ namespace VardyParty.Platforms.Windows
                     }
                 }
 
-                // Event Handlers
-                closeButton.Click += (s, e) => 
-                { 
-                    try
+                void CycleScoresTickerMode()
+                {
+                    scoresTickerMode = scoresTickerMode switch
                     {
-                        // Stop health checking when user explicitly closes the native player
-                        try
-                        {
-                            var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                            svc?.Cleanup();
-                        }
-                        catch { }
-                    }
-                    finally
+                        WindowsScoresTickerMode.SameLeagueInPlay => WindowsScoresTickerMode.AllLeaguesInPlay,
+                        WindowsScoresTickerMode.AllLeaguesInPlay => WindowsScoresTickerMode.AllFinished,
+                        WindowsScoresTickerMode.AllFinished      => WindowsScoresTickerMode.AllUpcoming,
+                        _                                        => WindowsScoresTickerMode.SameLeagueInPlay
+                    };
+
+                    if (isScoresTickerVisible)
                     {
-                        Restore(); 
-                        // Signal caller that user closed the player so stream resolution can react
-                        tcs.TrySetResult(PlaybackResult.SuccessResult("User closed video player"));
+                        RefreshTickerText(resetOffset: true);
                     }
-                };
+                }
+
+                tickerCycleButton.Click += (_, __) => CycleScoresTickerMode();
 
                 void RefreshDismissSurface()
                 {
@@ -601,6 +748,24 @@ namespace VardyParty.Platforms.Windows
                 {
                     menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     ToggleScoresTicker();
+                    RefreshDismissSurface();
+                };
+
+                alwaysOnTopButton.Click += (_, __) =>
+                {
+                    try
+                    {
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow?.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+                        {
+                            presenter.IsAlwaysOnTop = !presenter.IsAlwaysOnTop;
+                            alwaysOnTopButton.Content = presenter.IsAlwaysOnTop
+                                ? "📌 Always on top: On"
+                                : "📌 Always on top: Off";
+                        }
+                    }
+                    catch { }
+                    menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     RefreshDismissSurface();
                 };
 
@@ -760,18 +925,19 @@ namespace VardyParty.Platforms.Windows
                 };
                 streamInfoPanel.Children.Add(streamCountText);
 
-                // Next stream button (right center, appears on hover)
+                // Next stream button — right edge, vertically centred, icon only
                 var nextButton = new WinButton
                 {
-                    Content = "Next",
+                    Content = "⏭",
+                    FontSize = 22,
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray),
-                    Padding = new WinThickness(15, 10, 15, 10),
-                    FontSize = 16,
-                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A)),
+                    BorderThickness = new WinThickness(0),
+                    Padding = new WinThickness(12, 14, 12, 14),
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6),
                     HorizontalAlignment = WinHorizontalAlignment.Right,
                     VerticalAlignment = WinVerticalAlignment.Center,
-                    Margin = new WinThickness(0, 0, 20, 0),
+                    Margin = new WinThickness(0, 0, 16, 0),
                     Opacity = 0,
                     Visibility = onNextStreamRequested != null
                         ? Microsoft.UI.Xaml.Visibility.Visible
@@ -787,7 +953,6 @@ namespace VardyParty.Platforms.Windows
                 grid.Children.Add(scoresTickerBorder);
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
-                grid.Children.Add(closeButton);
                 grid.Children.Add(nextButton);
 
                 nextButton.Click += async (s, e) =>
@@ -795,15 +960,19 @@ namespace VardyParty.Platforms.Windows
                     if (onNextStreamRequested != null)
                     {
                         await onNextStreamRequested();
-                        await TrySwitchToCurrentStreamAsync();
+                        await TrySwitchToCurrentStreamAsync(force: true);
                     }
                 };
 
-                // Show/hide Next button on mouse hover
+                // Show/hide Next button on mouse hover, with background feedback
                 if (onNextStreamRequested != null)
                 {
+                    var nextBgNormal = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xCC, 0x1A, 0x1A, 0x1A));
+                    var nextBgHover  = new Microsoft.UI.Xaml.Media.SolidColorBrush(global::Windows.UI.Color.FromArgb(0xFF, 0x30, 0x30, 0x30));
                     grid.PointerEntered += (s, e) => nextButton.Opacity = 1;
-                    grid.PointerExited += (s, e) => nextButton.Opacity = 0;
+                    grid.PointerExited  += (s, e) => { nextButton.Opacity = 0; nextButton.Background = nextBgNormal; };
+                    nextButton.PointerEntered += (s, e) => nextButton.Background = nextBgHover;
+                    nextButton.PointerExited  += (s, e) => nextButton.Background = nextBgNormal;
                 }
 
                 grid.PointerMoved += (s, e) =>
@@ -811,7 +980,7 @@ namespace VardyParty.Platforms.Windows
                     try
                     {
                         var p = e.GetCurrentPoint(grid).Position;
-                        var inBottomLeftQuadrant = p.X <= grid.ActualWidth / 2 && p.Y >= grid.ActualHeight / 2;
+                        var inTopLeftQuadrant = p.X <= grid.ActualWidth / 2 && p.Y <= grid.ActualHeight / 2;
 
                         if (menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
                         {
@@ -820,10 +989,10 @@ namespace VardyParty.Platforms.Windows
                             return;
                         }
 
-                        menuButton.Visibility = inBottomLeftQuadrant
+                        menuButton.Visibility = inTopLeftQuadrant
                             ? Microsoft.UI.Xaml.Visibility.Visible
                             : Microsoft.UI.Xaml.Visibility.Collapsed;
-                        menuButton.Opacity = inBottomLeftQuadrant ? 1 : 0;
+                        menuButton.Opacity = inTopLeftQuadrant ? 1 : 0;
                     }
                     catch { }
                 };
@@ -1009,7 +1178,7 @@ namespace VardyParty.Platforms.Windows
                                             catch { }
                                         });
                                     }
-                                    
+            
                                     // Signal error status to Windows Media Player
                                     try
                                     {
@@ -1078,7 +1247,7 @@ namespace VardyParty.Platforms.Windows
                     }
                 }
 
-                async Task TrySwitchToCurrentStreamAsync()
+                async Task TrySwitchToCurrentStreamAsync(bool force = false)
                 {
                     if (switchingService == null) return;
                     try
@@ -1086,7 +1255,7 @@ namespace VardyParty.Platforms.Windows
                         var current = switchingService.GetCurrentStream();
                         var url = current?.ResolvedM3U8Url;
                         if (string.IsNullOrWhiteSpace(url)) return;
-                        if (string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
+                        if (!force && string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
                         await StartPlaybackAsync(url);
                     }
                     catch { }
@@ -1129,10 +1298,74 @@ namespace VardyParty.Platforms.Windows
                 }
                 catch { }
 
+                // Intercept the title-bar X button so it stops playback instead of killing the app
+                try
+                {
+                    if (nativeWindow?.AppWindow != null)
+                    {
+                        appWindowClosingHandler = (_, args) =>
+                        {
+                            // Unhook synchronously first so subsequent close attempts work normally
+                            try
+                            {
+                                nativeWindow.AppWindow.Closing -= appWindowClosingHandler;
+                                appWindowClosingHandler = null;
+                            }
+                            catch { }
+
+                            args.Cancel = true;
+                            MainThread.BeginInvokeOnMainThread(() =>
+                            {
+                                try
+                                {
+                                    var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                                    svc?.Cleanup();
+                                }
+                                catch { }
+                                try
+                                {
+                                    streamResolutionOrchestrator?.Reset();
+                                }
+                                catch { }
+                                Restore();
+                                tcs.TrySetResult(PlaybackResult.SuccessResult("User closed video player"));
+                            });
+                        };
+                        nativeWindow.AppWindow.Closing += appWindowClosingHandler;
+                    }
+                }
+                catch { }
+
+                // Ensure we restore and cleanup if the window is closed externally
+                try
+                {
+                    var window = nativeWindow;
+                    if (window != null)
+                    {
+                        window.Closed += (s, e) =>
+                        {
+                            try
+                            {
+                                var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                                svc?.Cleanup();
+                            }
+                            catch { }
+                            try { Restore(); } catch { }
+                            try { tcs.TrySetResult(PlaybackResult.Completed("Window closed", true)); } catch { }
+                        };
+                    }
+                }
+                catch { }
+
+
                 _ = StartPlaybackAsync(m3u8Url);
             });
 
             return tcs.Task;
+        }
+
+        public class VardyPartyWindow : MauiWinUIWindow
+        {
         }
 
         private void ExtractVideoMetadata(MediaPlaybackItem mediaItem, MediaPlayer player)
@@ -1255,6 +1488,61 @@ namespace VardyParty.Platforms.Windows
             }
         }
     }
+
+    internal enum WindowsScoresTickerMode
+    {
+        SameLeagueInPlay,
+        AllLeaguesInPlay,
+        AllFinished,
+        AllUpcoming
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
