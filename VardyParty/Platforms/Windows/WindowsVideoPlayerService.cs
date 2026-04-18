@@ -94,6 +94,7 @@ namespace VardyParty.Platforms.Windows
                 mediaPlayerElement.SetMediaPlayer(mediaPlayer);
                 var cleanupInvoked = false;
                 var currentPlaybackUrl = m3u8Url;
+                IntPtr hwndForDrag = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
 
                 static bool IsInteractiveSource(object? source)
                 {
@@ -101,7 +102,21 @@ namespace VardyParty.Platforms.Windows
                         || source is Microsoft.UI.Xaml.Controls.Slider
                         || source is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
                         || source is Microsoft.UI.Xaml.Controls.ComboBox
-                        || source is Microsoft.UI.Xaml.Controls.TextBox;
+                        || source is Microsoft.UI.Xaml.Controls.TextBox
+                        || source is Microsoft.UI.Xaml.Controls.MediaTransportControls;
+                }
+
+                static bool IsVideoSurfaceHit(object? source, MediaPlayerElement playerElement)
+                {
+                    var current = source as Microsoft.UI.Xaml.DependencyObject;
+                    while (current != null)
+                    {
+                        if (IsInteractiveSource(current)) return false;
+                        if (ReferenceEquals(current, playerElement)) return true;
+                        current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
+                    }
+
+                    return false;
                 }
 
                 // Double-click on video surface toggles fullscreen/windowed.
@@ -109,7 +124,7 @@ namespace VardyParty.Platforms.Windows
                 {
                     try
                     {
-                        if (IsInteractiveSource(e.OriginalSource)) return;
+                        if (!IsVideoSurfaceHit(e.OriginalSource, mediaPlayerElement)) return;
 
                         var appWindow = nativeWindow.AppWindow;
                         if (appWindow == null) return;
@@ -123,18 +138,11 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 };
 
-                // Drag-to-move is wired on the root grid (later) so it works reliably while
-                // transport controls are visible and child elements may mark pointer events handled.
-                IntPtr hwndForDrag = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
-
-                // Click-drag on video surface moves the window (windowed mode only).
-                // Use native OS caption drag for smooth movement.
+                // Mouse-down then drag on actual video surface moves the window.
                 mediaPlayerElement.PointerPressed += (_, e) =>
                 {
                     try
                     {
-                        if (IsInteractiveSource(e.OriginalSource)) return;
-
                         var point = e.GetCurrentPoint(mediaPlayerElement);
                         if (!point.Properties.IsLeftButtonPressed) return;
 
@@ -145,6 +153,8 @@ namespace VardyParty.Platforms.Windows
                         {
                             return;
                         }
+
+                        if (!IsVideoSurfaceHit(e.OriginalSource, mediaPlayerElement)) return;
 
                         ReleaseCapture();
                         SendMessage(hwndForDrag, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
@@ -1192,32 +1202,6 @@ namespace VardyParty.Platforms.Windows
                 grid.Children.Add(menuPanel);
                 grid.Children.Add(menuButton);
                 grid.Children.Add(nextButtonContainer);
-
-                // Mouse-down then drag on non-interactive video area should move window.
-                // handledEventsToo=true ensures this still works when child elements handle pointer input.
-                var gridPointerPressedHandler = new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e) =>
-                {
-                    try
-                    {
-                        if (IsInteractiveSource(e.OriginalSource)) return;
-
-                        var point = e.GetCurrentPoint(grid);
-                        if (!point.Properties.IsLeftButtonPressed) return;
-
-                        var appWindow = nativeWindow.AppWindow;
-                        if (appWindow == null) return;
-                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen) return;
-
-                        if (hwndForDrag != IntPtr.Zero)
-                        {
-                            ReleaseCapture();
-                            SendMessage(hwndForDrag, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
-                            e.Handled = true;
-                        }
-                    }
-                    catch { }
-                });
-                grid.AddHandler(Microsoft.UI.Xaml.UIElement.PointerPressedEvent, gridPointerPressedHandler, true);
 
                 nextButton.Click += async (s, e) =>
                 {
