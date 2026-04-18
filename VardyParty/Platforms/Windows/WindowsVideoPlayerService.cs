@@ -19,14 +19,15 @@ namespace VardyParty.Platforms.Windows
 {
     public class WindowsVideoPlayerService : INativeVideoPlayerService
     {
-        private const int WM_NCLBUTTONDOWN = 0x00A1;
-        private const int HTCAPTION = 0x0002;
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
 
         [DllImport("user32.dll")]
-        private static extern bool ReleaseCapture();
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        private static extern bool GetCursorPos(out POINT lpPoint);
 
         public event EventHandler<bool>? BufferingStateChanged;
 
@@ -94,7 +95,10 @@ namespace VardyParty.Platforms.Windows
                 mediaPlayerElement.SetMediaPlayer(mediaPlayer);
                 var cleanupInvoked = false;
                 var currentPlaybackUrl = m3u8Url;
-                IntPtr hwndForDrag = WinRT.Interop.WindowNative.GetWindowHandle(nativeWindow);
+
+                bool isDraggingWindow = false;
+                POINT dragStartCursor = default;
+                global::Windows.Graphics.PointInt32 dragStartWindowPos = default;
 
                 static bool IsInteractiveSource(object? source)
                 {
@@ -102,21 +106,14 @@ namespace VardyParty.Platforms.Windows
                         || source is Microsoft.UI.Xaml.Controls.Slider
                         || source is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
                         || source is Microsoft.UI.Xaml.Controls.ComboBox
-                        || source is Microsoft.UI.Xaml.Controls.TextBox
-                        || source is Microsoft.UI.Xaml.Controls.MediaTransportControls;
+                        || source is Microsoft.UI.Xaml.Controls.TextBox;
                 }
 
                 static bool IsVideoSurfaceHit(object? source, MediaPlayerElement playerElement)
                 {
-                    var current = source as Microsoft.UI.Xaml.DependencyObject;
-                    while (current != null)
-                    {
-                        if (IsInteractiveSource(current)) return false;
-                        if (ReferenceEquals(current, playerElement)) return true;
-                        current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
-                    }
-
-                    return false;
+                    // Pointer events are already attached to mediaPlayerElement. We only need to reject
+                    // obvious interactive controls so video-surface interactions still work.
+                    return !IsInteractiveSource(source);
                 }
 
                 // Double-click on video surface toggles fullscreen/windowed.
@@ -138,7 +135,7 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 };
 
-                // Mouse-down then drag on actual video surface moves the window.
+                // Mouse-down drag on the actual video surface moves the window.
                 mediaPlayerElement.PointerPressed += (_, e) =>
                 {
                     try
@@ -148,20 +145,61 @@ namespace VardyParty.Platforms.Windows
 
                         var appWindow = nativeWindow.AppWindow;
                         if (appWindow == null) return;
-
-                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen)
-                        {
-                            return;
-                        }
+                        if (appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen) return;
 
                         if (!IsVideoSurfaceHit(e.OriginalSource, mediaPlayerElement)) return;
 
-                        ReleaseCapture();
-                        SendMessage(hwndForDrag, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                        if (!GetCursorPos(out dragStartCursor)) return;
+                        dragStartWindowPos = appWindow.Position;
+                        isDraggingWindow = true;
+
+                        mediaPlayerElement.CapturePointer(e.Pointer);
                         e.Handled = true;
                     }
                     catch { }
                 };
+
+                mediaPlayerElement.PointerMoved += (_, e) =>
+                {
+                    try
+                    {
+                        if (!isDraggingWindow) return;
+
+                        var appWindow = nativeWindow.AppWindow;
+                        if (appWindow == null) return;
+
+                        var point = e.GetCurrentPoint(mediaPlayerElement);
+                        if (!point.Properties.IsLeftButtonPressed)
+                        {
+                            isDraggingWindow = false;
+                            try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
+                            return;
+                        }
+
+                        if (!GetCursorPos(out var currentCursor)) return;
+
+                        var dx = currentCursor.X - dragStartCursor.X;
+                        var dy = currentCursor.Y - dragStartCursor.Y;
+
+                        appWindow.Move(new global::Windows.Graphics.PointInt32(
+                            dragStartWindowPos.X + dx,
+                            dragStartWindowPos.Y + dy));
+
+                        e.Handled = true;
+                    }
+                    catch { }
+                };
+
+                void EndWindowDrag(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+                {
+                    if (!isDraggingWindow) return;
+                    isDraggingWindow = false;
+                    try { mediaPlayerElement.ReleasePointerCapture(e.Pointer); } catch { }
+                }
+
+                mediaPlayerElement.PointerReleased += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCanceled += (_, e) => EndWindowDrag(e);
+                mediaPlayerElement.PointerCaptureLost += (_, e) => EndWindowDrag(e);
 
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
@@ -491,6 +529,8 @@ namespace VardyParty.Platforms.Windows
 
                 TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler = null;
 
+                bool isClosingPlayer = false;
+
                 void Restore()
                 {
                     // Unhook synchronously so the very next X-press is never cancelled
@@ -508,6 +548,7 @@ namespace VardyParty.Platforms.Windows
                     {
                         CleanupMediaPlayer();
                         nativeWindow.Content = originalContent;
+                        isClosingPlayer = false;
                     });
                 }
 
@@ -1317,7 +1358,10 @@ namespace VardyParty.Platforms.Windows
                                 nextButtonContainer.Opacity = isPointerInGrid ? 1 : 0;
                             }
 
-                            var shouldShowStreamOverlay = total > 0 && (hasChanged || hasResolutionChanged);
+                            var shouldShowStreamOverlay = total > 0 &&
+                                (hasChanged
+                                 || hasResolutionChanged
+                                 || (streamInfoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(verticalResolution)));
                             if (shouldShowStreamOverlay)
                             {
                                 streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
@@ -1584,6 +1628,12 @@ namespace VardyParty.Platforms.Windows
                     {
                         appWindowClosingHandler = (_, args) =>
                         {
+                            if (isClosingPlayer)
+                            {
+                                args.Cancel = true;
+                                return;
+                            }
+
                             // Unhook synchronously first so subsequent close attempts work normally
                             try
                             {
@@ -1597,6 +1647,7 @@ namespace VardyParty.Platforms.Windows
                             if (!ReferenceEquals(nativeWindow.Content, grid))
                                 return;
 
+                            isClosingPlayer = true;
                             args.Cancel = true;
                             MainThread.BeginInvokeOnMainThread(() =>
                             {
