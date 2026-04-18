@@ -1173,7 +1173,8 @@ namespace VardyParty.Platforms.Windows
                     HorizontalAlignment = WinHorizontalAlignment.Center,
                     TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
                     Text = string.Empty,
-                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                    Height = 16,
+                    Visibility = Microsoft.UI.Xaml.Visibility.Visible,
                     Opacity = 0,
                     IsHitTestVisible = false
                 };
@@ -1217,7 +1218,6 @@ namespace VardyParty.Platforms.Windows
                         isPointerInGrid = false;
                         nextButtonContainer.Opacity = 0;
                         nextButton.Background = nextBgNormal;
-                        nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         nextButtonHintText.Opacity = 0;
                     };
                     nextButton.PointerEntered += (s, e) =>
@@ -1225,14 +1225,12 @@ namespace VardyParty.Platforms.Windows
                         nextButton.Background = nextBgHover;
                         if (nextButtonContainer.Visibility == Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(nextButtonHintText.Text))
                         {
-                            nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                             nextButtonHintText.Opacity = 1;
                         }
                     };
                     nextButton.PointerExited  += (s, e) =>
                     {
                         nextButton.Background = nextBgNormal;
-                        nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         nextButtonHintText.Opacity = 0;
                     };
                 }
@@ -1310,7 +1308,6 @@ namespace VardyParty.Platforms.Windows
                             {
                                 nextButtonContainer.Opacity = 0;
                                 nextButtonHintText.Text = string.Empty;
-                                nextButtonHintText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                                 nextButtonHintText.Opacity = 0;
                             }
                             else
