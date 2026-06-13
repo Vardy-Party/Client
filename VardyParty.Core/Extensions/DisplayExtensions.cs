@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using VardyParty.Models;
+using VardyParty.Services;
 
 namespace VardyParty.Extensions
 {
@@ -19,8 +20,18 @@ namespace VardyParty.Extensions
             // Flatten all games across leagues, remove finished games, then apply presentation ordering
             var allGames = source.SelectMany(kvp => kvp.Value ?? new List<Game>()).Where(g => g != null).ToList();
 
-            // Exclude finished games from homepage display
-            var visible = allGames.Where(g => !g.IsFinished).ToList();
+            var now = DateTime.UtcNow;
+
+            // Exclude finished games, stale past kickoffs, and anything outside the look-ahead window.
+            var visible = allGames
+                .Where(g => !g.IsFinished)
+                .Where(g => BbcFixtureSchedule.IsWithinLookAheadWindow(g.StartUtcForOrdering, now))
+                .Where(g => g.IsLiveForOrdering
+                    || g.IsScheduledUpcoming(now)
+                    || g.StartUtcForOrdering == default
+                    || g.StartUtcForOrdering == DateTime.MaxValue
+                    || g.StartUtcForOrdering > now.AddHours(-3))
+                .ToList();
 
             var ordered = visible
                 .OrderBy(g => g.IsOlympicLeague ? 1 : 0)

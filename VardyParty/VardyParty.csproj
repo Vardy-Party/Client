@@ -88,8 +88,8 @@
       <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
-    <!-- GenerateBuildInfo disabled by default; enable by setting RunGenerateBuildInfo=true -->
-    <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true'">
+    <!-- GenerateBuildInfo: always on Debug; Release via RunGenerateBuildInfo=true (CI publish). -->
+    <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true' Or '$(Configuration)' == 'Debug'">
       <Exec Command="git rev-parse --short HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true">
         <Output TaskParameter="ConsoleOutput" PropertyName="GitHashOutput" />
       </Exec>
@@ -312,6 +312,53 @@
 	    <AndroidSigningKeyPass>$(ANDROID_SIGNING_KEY_PASS)</AndroidSigningKeyPass>
 	    <AndroidSigningStorePass>$(ANDROID_SIGNING_STORE_PASS)</AndroidSigningStorePass>
     </PropertyGroup>
+
+    <!-- Loose-register deploys from OutputPath\AppX; incremental builds often refresh win-x64 only. -->
+    <Target Name="SyncWindowsAppXLayout" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0' and Exists('$(OutputPath)AppX')">
+      <PropertyGroup>
+        <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
+        <_AppXRoot>$(_WinOutputRoot)AppX\</_AppXRoot>
+      </PropertyGroup>
+      <ItemGroup>
+        <_AppXBinary Include="$(_WinOutputRoot)*.dll;$(_WinOutputRoot)*.exe;$(_WinOutputRoot)*.json;$(_WinOutputRoot)*.pri" />
+        <_SourceWwwroot Include="$(MSBuildProjectDirectory)\wwwroot\**\*.*" />
+        <_ScopedCssBundle Include="$(IntermediateOutputPath)scopedcss\bundle\*.*" Condition="Exists('$(IntermediateOutputPath)scopedcss\bundle')" />
+        <_AppXWwwroot Include="$(_WinOutputRoot)wwwroot\**\*.*" />
+      </ItemGroup>
+      <Copy SourceFiles="@(_AppXBinary)" DestinationFolder="$(_AppXRoot)" SkipUnchangedFiles="false" />
+      <!-- Source wwwroot + scoped CSS bundle: AppX\wwwroot is not refreshed on incremental builds. -->
+      <Copy SourceFiles="@(_SourceWwwroot)"
+            DestinationFiles="@(_SourceWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="false" />
+      <Copy SourceFiles="@(_SourceWwwroot)"
+            DestinationFiles="@(_SourceWwwroot->'$(_WinOutputRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="false" />
+      <Copy SourceFiles="@(_ScopedCssBundle)"
+            DestinationFolder="$(_AppXRoot)wwwroot"
+            SkipUnchangedFiles="false"
+            Condition="'@(_ScopedCssBundle)' != ''" />
+      <Copy SourceFiles="@(_AppXWwwroot)"
+            DestinationFiles="@(_AppXWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="false" />
+    </Target>
+
+    <!-- Keep MSIX loose-layout wwwroot in sync with league logo assets (AppX folder is not always refreshed on incremental builds). -->
+    <Target Name="SyncLeagueLogosToWindowsWwwroot" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+      <ItemGroup>
+        <_LeagueLogoFile Include="$(MSBuildProjectDirectory)\Resources\Images\Leagues\**\*.*" />
+      </ItemGroup>
+      <PropertyGroup>
+        <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
+      </PropertyGroup>
+      <MakeDir Directories="$(_WinOutputRoot)wwwroot\images\leagues;$(_WinOutputRoot)AppX\wwwroot\images\leagues" />
+      <Copy SourceFiles="@(_LeagueLogoFile)"
+            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true" />
+      <Copy SourceFiles="@(_LeagueLogoFile)"
+            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)AppX\wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true"
+            Condition="Exists('$(_WinOutputRoot)AppX')" />
+    </Target>
 
     <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->
     <Target Name="UpdateWindowsManifestVersion" BeforeTargets="BeforeBuild" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">

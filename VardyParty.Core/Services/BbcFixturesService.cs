@@ -18,10 +18,33 @@ public class BbcFixturesService(
     private readonly TimeSpan _callTimeout = TimeSpan.FromSeconds(bbcFixturesSettings.Value?.CallTimeoutSeconds ?? 30);
     private readonly int _maxRetries = bbcFixturesSettings.Value?.MaxRetries ?? 3;
 
-    public async Task<List<BbcFixture>> GetFixturesAsync(DateTime dateUtc)
+    public Task<List<BbcFixture>> GetRollingWindowFixturesAsync(CancellationToken cancellationToken = default)
     {
-        var date = dateUtc.ToUniversalTime().Date;
-        var url = $"{FixturesUrl}/{date:yyyy-MM-dd}";
+        var pageDates = BbcFixtureSchedule.GetRollingWindowPageDates(DateTime.UtcNow);
+        return GetFixturesForDatesAsync(pageDates, cancellationToken);
+    }
+
+    public async Task<List<BbcFixture>> GetFixturesForDatesAsync(
+        IReadOnlyList<DateOnly> fixturePageDates,
+        CancellationToken cancellationToken = default)
+    {
+        if (fixturePageDates.Count == 0)
+        {
+            return [];
+        }
+
+        var fetchTasks = fixturePageDates
+            .Distinct()
+            .Select(date => GetFixturesAsync(date, cancellationToken))
+            .ToArray();
+
+        var results = await Task.WhenAll(fetchTasks);
+        return MergeFixtures(results);
+    }
+
+    public async Task<List<BbcFixture>> GetFixturesAsync(DateOnly fixturePageDate, CancellationToken cancellationToken = default)
+    {
+        var url = $"{FixturesUrl}/{fixturePageDate:yyyy-MM-dd}";
 
         var attempt = 0;
         var delay = TimeSpan.FromSeconds(1);
@@ -31,19 +54,20 @@ public class BbcFixturesService(
             attempt++;
             try
             {
-                using var cts = new CancellationTokenSource(_callTimeout);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(_callTimeout);
                 var swHttp = Stopwatch.StartNew();
                 var html = await http.GetStringAsync(url, cts.Token);
                 swHttp.Stop();
-                logger.LogInformation("[BBC] HTTP fetch took {Elapsed}ms. Parse start.", swHttp.ElapsedMilliseconds);
+                logger.LogInformation("[BBC] HTTP fetch for {Date} took {Elapsed}ms. Parse start.",
+                    fixturePageDate, swHttp.ElapsedMilliseconds);
 
-                // parse off-thread to avoid UI blocking
                 return await Task.Run(() => bbcHtmlParser.ParseHtml(html, cts.Token), cts.Token);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                logger.LogWarning("[BBC] Operation cancelled / timed out for {Date}", date);
-                return new List<BbcFixture>();
+                logger.LogWarning("[BBC] Operation cancelled / timed out for {Date}", fixturePageDate);
+                return [];
             }
             catch (Exception ex) when (attempt <= _maxRetries)
             {
@@ -51,7 +75,7 @@ public class BbcFixturesService(
                     delay.TotalSeconds);
                 try
                 {
-                    await Task.Delay(delay);
+                    await Task.Delay(delay, cancellationToken);
                 }
                 catch
                 {
@@ -62,8 +86,39 @@ public class BbcFixturesService(
             catch (Exception ex)
             {
                 logger.LogError(ex, "BBC fixtures fetch failed after {Attempt} attempts", attempt);
-                return new List<BbcFixture>();
+                return [];
             }
         }
+    }
+
+    private static List<BbcFixture> MergeFixtures(IEnumerable<List<BbcFixture>> fixtureLists)
+    {
+        var map = new Dictionary<string, BbcFixture>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var fixture in fixtureLists.SelectMany(static list => list))
+        {
+            var key = GameMatcher.BuildFixtureKey(fixture.Home, fixture.Away);
+            if (!map.TryGetValue(key, out var existing) || PreferFixture(fixture, existing))
+            {
+                map[key] = fixture;
+            }
+        }
+
+        return map.Values.ToList();
+    }
+
+    private static bool PreferFixture(BbcFixture candidate, BbcFixture incumbent)
+    {
+        if (candidate.KickoffUtc != DateTime.MinValue && incumbent.KickoffUtc == DateTime.MinValue)
+        {
+            return true;
+        }
+
+        if (candidate.HasProgress && !incumbent.HasProgress)
+        {
+            return true;
+        }
+
+        return false;
     }
 }

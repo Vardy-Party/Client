@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reactive.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,7 +33,7 @@ public class EnrichedGameServiceTests
         };
         apiMock.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>())).ReturnsAsync(games);
 
-        bbcMock.Setup(x => x.GetFixturesAsync(It.IsAny<DateTime>()))
+        bbcMock.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<BbcFixture>());
 
         var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);

@@ -24,5 +24,4 @@ namespace VardyParty.WinUI
 
         protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();
     }
-
 }

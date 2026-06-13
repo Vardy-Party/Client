@@ -10,6 +10,29 @@ using VardyParty.Models;
 
 namespace VardyParty.Services;
 
+/// <summary>
+/// Client-side Local LAN Play Service discovery and resolution.
+/// 
+/// This service discovers and communicates with a separate VardyParty.LocalService instance
+/// running on the local network. It uses UDP broadcast discovery to find the service and then
+/// makes HTTP requests to resolve M3U8 stream URLs.
+/// 
+/// NETWORK ARCHITECTURE:
+/// - Each machine must run VardyParty.LocalService (separate application/service) to be discoverable
+/// - Clients (phone, TV, PC) use this service to discover the local service on the same LAN
+/// - Discovery uses ephemeral UDP sockets (no permanent port bindings)
+/// - Discovery only works on local networks; cross-WAN discovery is not supported
+/// 
+/// CROSS-MACHINE BEHAVIOR:
+/// - On the same LAN: Clients broadcast discover the service successfully (if service is running)
+/// - On different LANs/Networks: Discovery will fail; VardyParty.LocalService must be installed and running on each machine
+/// - The Local Service is NOT automatically installed with the client
+/// 
+/// FAILURE HANDLING:
+/// - Discovery timeouts and failures are logged for troubleshooting
+/// - The service falls back gracefully if discovery fails
+/// - ILocalLanServiceAvailabilityMonitor provides UI warnings when service is unavailable
+/// </summary>
 public class LocalLanPlayService(
     HttpClient httpClient,
     IOptions<GamesApiSettings> gamesApiSettings,
@@ -77,15 +100,22 @@ public class LocalLanPlayService(
             var isOk = response.IsSuccessStatusCode;
             if (!isOk)
             {
-                logger.LogWarning("[LocalLanPlay] Health check failed for {Url} with status {StatusCode}",
+                logger.LogInformation("[LocalLanPlay] Health check failed for {Url} with status {StatusCode}. " +
+                    "Local service may be unavailable or misconfigured.",
                     healthUrl, response.StatusCode);
+            }
+            else
+            {
+                logger.LogDebug("[LocalLanPlay] Health check successful for {Url}", healthUrl);
             }
 
             return isOk;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[LocalLanPlay] Health check request failed for {Url}", healthUrl);
+            logger.LogInformation(ex, "[LocalLanPlay] Health check request failed for {Url}. " +
+                "Unable to connect to discovered local service endpoint.",
+                healthUrl);
             return false;
         }
     }
@@ -99,17 +129,21 @@ public class LocalLanPlayService(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(_m3u8CallTimeout);
 
-            logger.LogInformation("[LocalLanPlay] Resolving stream via local service: {Url}", url);
+            logger.LogDebug("[LocalLanPlay] Resolving stream via local service: {Url}", url);
             var response = await httpClient.GetAsync(url, cts.Token);
             response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadAsStringAsync(cts.Token);
-            return JsonSerializer.Deserialize<M3U8Response>(json,
+            var result = JsonSerializer.Deserialize<M3U8Response>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            logger.LogDebug("[LocalLanPlay] Successfully resolved m3u8 via local service");
+            return result;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[LocalLanPlay] Failed to resolve m3u8 via local service endpoint {BaseUrl}", baseUrl);
+            logger.LogInformation(ex, "[LocalLanPlay] Failed to resolve m3u8 via local service endpoint {BaseUrl}. " +
+                "Stream URL may be inaccessible or service may be temporarily unavailable.",
+                baseUrl);
             return null;
         }
     }
@@ -117,13 +151,20 @@ public class LocalLanPlayService(
     private async Task<string?> ResolveServiceBaseUrlAsync(CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(_cachedBaseUrl) && DateTimeOffset.UtcNow - _cachedBaseUrlAt < DiscoveryCacheTtl)
+        {
+            logger.LogDebug("[LocalLanPlay] Using cached service endpoint: {Endpoint} (expires in {TTL}s)",
+                _cachedBaseUrl, (DiscoveryCacheTtl - (DateTimeOffset.UtcNow - _cachedBaseUrlAt)).TotalSeconds);
             return _cachedBaseUrl;
+        }
 
+        logger.LogDebug("[LocalLanPlay] Cache miss or expired, performing fresh discovery...");
         var discovered = await DiscoverViaUdpAsync(cancellationToken);
         if (!string.IsNullOrWhiteSpace(discovered))
         {
             _cachedBaseUrl = discovered.TrimEnd('/');
             _cachedBaseUrlAt = DateTimeOffset.UtcNow;
+            logger.LogInformation("[LocalLanPlay] Cached discovered service endpoint: {Endpoint} (TTL: {TTL}s)",
+                _cachedBaseUrl, DiscoveryCacheTtl.TotalSeconds);
         }
 
         return _cachedBaseUrl;
@@ -133,6 +174,8 @@ public class LocalLanPlayService(
     {
         try
         {
+            logger.LogDebug("[LocalLanPlay] Starting UDP discovery for local service...");
+
             using var udp = new UdpClient(AddressFamily.InterNetwork);
             udp.EnableBroadcast = true;
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -146,6 +189,8 @@ public class LocalLanPlayService(
 
             var bytes = Encoding.UTF8.GetBytes(probePayload);
             var probePorts = DiscoveryProtocol.DiscoveryPorts;
+            logger.LogDebug("[LocalLanPlay] Sending discovery probes to ports: {Ports}", string.Join(",", probePorts));
+
             foreach (var port in probePorts)
             {
                 try
@@ -197,17 +242,18 @@ public class LocalLanPlayService(
 
                 var host = received.RemoteEndPoint.Address.ToString();
                 var discoveredUrl = $"http://{host}:{httpPort}";
-                logger.LogInformation("[LocalLanPlay] Discovered local service endpoint: {Endpoint}", discoveredUrl);
+                logger.LogInformation("[LocalLanPlay] Successfully discovered local service endpoint: {Endpoint}", discoveredUrl);
                 return discoveredUrl;
             }
 
-            logger.LogWarning("[LocalLanPlay] UDP discovery timed out across ports: {Ports}",
-                string.Join(",", probePorts));
+            logger.LogInformation("[LocalLanPlay] UDP discovery timed out after {Timeout}ms across ports {Ports}. " +
+                "Ensure VardyParty.LocalService is running on a machine on your local network.",
+                DiscoveryTimeout.TotalMilliseconds, string.Join(",", probePorts));
             return null;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "[LocalLanPlay] UDP discovery failed");
+            logger.LogWarning(ex, "[LocalLanPlay] UDP discovery failed with exception. Verify VardyParty.LocalService is installed and running on your network.");
             return null;
         }
     }

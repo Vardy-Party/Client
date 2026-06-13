@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using VardyParty.Extensions;
 using VardyParty.Models;
+using VardyParty.Services;
 using Xunit;
 
 namespace VardyParty.Core.Tests
@@ -67,16 +68,15 @@ namespace VardyParty.Core.Tests
         }
 
         [Fact]
-        public void AetAndPenalties_AreVisible()
+        public void AetAndPenalties_AreVisibleWhenLive()
         {
             var now = DateTime.UtcNow;
-            var aet = Make("AET","Team", now.AddMinutes(-120), isFinished: false, statusText: "After extra time", league: "Cup");
-            var pens = Make("Pens","Team", now.AddMinutes(-125), isFinished: false, statusText: "Penalties 4-3", league: "Cup");
+            var aet = Make("AET","Team", now.AddMinutes(-120), isFinished: false, isInProgress: true, minute: 105, statusText: "After extra time", league: "Cup");
+            var pens = Make("Pens","Team", now.AddMinutes(-125), isFinished: false, isInProgress: true, minute: 120, statusText: "Penalties 4-3", league: "Cup");
 
             var dict = new Dictionary<string, List<Game>> { ["Cup"] = new List<Game> { aet, pens } };
             var ordered = dict.ToDisplay();
 
-            // Both should be present and not filtered out
             Assert.Contains(aet, ordered);
             Assert.Contains(pens, ordered);
         }
@@ -108,6 +108,38 @@ namespace VardyParty.Core.Tests
 
             Assert.Equal(gA, ordered.First());
             Assert.Equal(gB, ordered.Last());
+        }
+
+        [Fact]
+        public void ToDisplay_IncludesLateNightKickoffWithinLookAheadWindow()
+        {
+            var now = DateTime.UtcNow;
+            var kickoff = BbcFixtureSchedule.GetLookAheadEndUtc(now).AddHours(-1);
+            var game = Make("USA", "Paraguay", kickoff, league: "FIFA World Cup");
+
+            var dict = new Dictionary<string, List<Game>> { ["FIFA World Cup"] = [game] };
+
+            Assert.True(BbcFixtureSchedule.IsWithinLookAheadWindow(kickoff, now));
+            Assert.Contains(game, dict.ToDisplay());
+        }
+
+        [Fact]
+        public void ToDisplay_ExcludesStalePastKickoff()
+        {
+            var now = DateTime.UtcNow;
+            var stale = Make("Saudi Arabia", "Laos", now.AddHours(-6), league: "International");
+            var upcoming = Make("Malaga", "Almería", now.AddHours(2), league: "La Liga");
+
+            var dict = new Dictionary<string, List<Game>>
+            {
+                ["International"] = [stale],
+                ["La Liga"] = [upcoming]
+            };
+
+            var ordered = dict.ToDisplay();
+
+            Assert.DoesNotContain(stale, ordered);
+            Assert.Contains(upcoming, ordered);
         }
 
         [Fact]

@@ -1,13 +1,14 @@
 @using VardyParty.Models
+@using VardyParty.Services
 @using Microsoft.AspNetCore.Components
 
 <div class="@CardClass" tabindex="0" @onclick="OnCardClick" @ref="cardRef">
-    @if (!string.IsNullOrEmpty(LeagueLogoUrl))
-    {
-        <div class="league-badge">
+    <div class="league-badge@(string.IsNullOrEmpty(LeagueLogoUrl) ? " league-badge-empty" : string.Empty)">
+        @if (!string.IsNullOrEmpty(LeagueLogoUrl))
+        {
             <img class="inspect-logo" src="@LeagueLogoUrl" alt="League" />
-        </div>
-    }
+        }
+    </div>
 
     <div class="game-status-badge">
         @if (IsGameLive)
@@ -23,47 +24,45 @@
             <span class="status-upcoming">@StartTimeText</span>
         }
     </div>
-    
-    <div class="match-info">
-        <div class="team-compact home">
-            <span class="team-name-compact">@Game.DisplayHome</span>
-            @if (ShowBadges)
-            {
-                <div class="team-logo-compact">
-                    <img class="inspect-logo" src="@Game.HomeBadgeUrl" alt="@Game.DisplayHome" />
-                </div>
-            }
-        </div>
-        
-        <div class="score-container">
-            @if (HasScore)
-            {
-                <div class="score-main-row">
-                    <span class="score-compact">@Game.HomeScore</span>
-                    <span class="score-divider">-</span>
-                    <span class="score-compact">@Game.AwayScore</span>
-                </div>
-            }
-            else
-            {
-                <span class="vs-compact">VS</span>
-            }
 
-            @if (HasAggregateScore)
-            {
-                <div class="aggregate-score">Agg @Game.AggregateHomeScore-@Game.AggregateAwayScore</div>
-            }
-        </div>
+    <div class="team-compact home">
+        <span class="team-name-compact">@Game.DisplayHome</span>
+        @if (ShowBadges)
+        {
+            <div class="@TeamLogoClass">
+                <img class="inspect-logo" src="@Game.HomeBadgeUrl" alt="@Game.DisplayHome" />
+            </div>
+        }
+    </div>
 
-        <div class="team-compact away">
-            @if (ShowBadges)
-            {
-                <div class="team-logo-compact">
-                    <img class="inspect-logo" src="@Game.AwayBadgeUrl" alt="@Game.DisplayAway" />
-                </div>
-            }
-            <span class="team-name-compact">@Game.DisplayAway</span>
-        </div>
+    <div class="score-container">
+        @if (HasScore)
+        {
+            <div class="score-main-row">
+                <span class="score-compact">@Game.HomeScore</span>
+                <span class="score-divider">-</span>
+                <span class="score-compact">@Game.AwayScore</span>
+            </div>
+        }
+        else
+        {
+            <span class="vs-compact">VS</span>
+        }
+
+        @if (HasAggregateScore)
+        {
+            <div class="aggregate-score">Agg @Game.AggregateHomeScore-@Game.AggregateAwayScore</div>
+        }
+    </div>
+
+    <div class="team-compact away">
+        @if (ShowBadges)
+        {
+            <div class="@TeamLogoClass">
+                <img class="inspect-logo" src="@Game.AwayBadgeUrl" alt="@Game.DisplayAway" />
+            </div>
+        }
+        <span class="team-name-compact">@Game.DisplayAway</span>
     </div>
 </div>
 
@@ -80,6 +79,12 @@
 
     private bool ShowBadges => !string.IsNullOrEmpty(Game.HomeBadgeUrl)
                                && !string.IsNullOrEmpty(Game.AwayBadgeUrl);
+
+    private bool IsInternational => InternationalTeamDisplay.IsInternationalGame(Game);
+
+    private string TeamLogoClass => IsInternational
+        ? "team-logo-compact team-flag-compact"
+        : "team-logo-compact";
 
     private bool IsGameLive => Game.Start <= DateTime.UtcNow.AddMinutes(15) && (Game.IsInProgress || Game.IsHalfTime);
 
@@ -124,11 +129,12 @@
     private string FormatGameTime(DateTime startTime)
     {
         var local = startTime.ToLocalTime();
-        if (startTime.Date == DateTime.UtcNow.Date)
+        var today = DateTime.Now.Date;
+        if (local.Date == today)
         {
             return local.ToString("h:mm tt");
         }
-        else if (startTime.Date == DateTime.UtcNow.Date.AddDays(1))
+        else if (local.Date == today.AddDays(1))
         {
             return $"Tomorrow at {local:h:mm tt}";
         }

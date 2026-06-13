@@ -745,4 +745,18 @@ public class BbcHtmlParserTests
         AssertPreMatchAggregate("Liverpool", "Galatasaray", 0, 1);
         AssertPreMatchAggregate("Tottenham Hotspur", "Atletico Madrid", 2, 5);
     }
+
+    [Fact]
+    public void ParseHtml_ChampionsLeagueLeg2BeforeStart_ExtractsKickoffTimes()
+    {
+        var html = GetResxValue("ChampionsLeagueLeg2BeforeStart");
+        var fixtures = CreateParser().ParseHtml(html);
+
+        var barcelona = fixtures.FirstOrDefault(f =>
+            f.Home.Contains("Barcelona", StringComparison.OrdinalIgnoreCase) &&
+            f.Away.Contains("Newcastle", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(barcelona);
+        Assert.Equal(new DateTime(2026, 3, 18, 17, 45, 0, DateTimeKind.Utc), barcelona.KickoffUtc);
+    }
 }
