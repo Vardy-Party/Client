@@ -13,10 +13,17 @@ namespace VardyParty.Core.Tests
         private class StubEnriched : IEnrichedGameService, IDisposable
         {
             private readonly Subject<Dictionary<string, List<Game>>?> _subject = new Subject<Dictionary<string, List<Game>>?>();
+            private Dictionary<string, List<Game>>? _latest;
             public IObservable<Dictionary<string, List<Game>>?> GamesStream => _subject;
             public IObservable<string?> ErrorStream => new Subject<string?>();
 
-            public void Push(Dictionary<string, List<Game>>? dict) => _subject.OnNext(dict);
+            public Dictionary<string, List<Game>>? GetLatestGames() => _latest;
+
+            public void Push(Dictionary<string, List<Game>>? dict)
+            {
+                _latest = dict;
+                _subject.OnNext(dict);
+            }
             public void Dispose() => _subject.Dispose();
         }
 

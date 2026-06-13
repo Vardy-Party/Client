@@ -21,6 +21,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         // UEFA Champions League variations (after normalization)
         { "Kobenhavn", "Copenhagen" },  // Handles: København, FC København, FC Kobenhavn
         { "Internazionale", "Inter Milan" },
+        { "usa", "united states" },
         
         // Add more as needed
     };
@@ -38,7 +39,8 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             return;
         }
 
-        var map = bbcFixtures.ToDictionary(f => Key(f.Home, f.Away), f => f, StringComparer.OrdinalIgnoreCase);
+        var map = BuildFixtureMap(bbcFixtures);
+        var kickoffByKey = BuildKickoffLookup(bbcFixtures);
         // Use ConcurrentDictionary for thread-safe tracking of matched keys
         var matchedKeys = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
@@ -68,7 +70,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             if (map.TryGetValue(gameKey, out var bbc))
             {
                 matchedKeys.TryAdd(gameKey, 0);
-                EnrichGame(g, bbc);
+                EnrichGame(g, bbc, kickoffByKey);
                 return; // Continue to next game
             }
 
@@ -97,7 +99,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                 // Tier 1
                 if (homeScore >= 0.55 && awayScore >= 0.55 && pairScore >= 0.60)
                 {
-                    if (pairScore > t1BestScore)
+                    if (ShouldPreferFixture(b.Fixture, pairScore, t1Fixture, t1BestScore))
                     {
                         t1BestScore = pairScore;
                         t1Fixture = b.Fixture;
@@ -112,7 +114,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                     // Tier 2
                     if (homeScore >= 0.50 && awayScore >= 0.50 && pairScore >= 0.50)
                     {
-                        if (pairScore > t2BestScore)
+                        if (ShouldPreferFixture(b.Fixture, pairScore, t2Fixture, t2BestScore))
                         {
                             t2BestScore = pairScore;
                             t2Fixture = b.Fixture;
@@ -122,7 +124,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                     // Tier 3
                     if ((homeScore >= 0.80 && awayScore >= 0.45) || (awayScore >= 0.80 && homeScore >= 0.45))
                     {
-                        if (pairScore > t3BestScore)
+                        if (ShouldPreferFixture(b.Fixture, pairScore, t3Fixture, t3BestScore))
                         {
                             t3BestScore = pairScore;
                             t3Fixture = b.Fixture;
@@ -137,7 +139,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             if (bestFixture != null)
             {
                 matchedKeys.TryAdd(gameKey, 0);
-                EnrichGame(g, bestFixture);
+                EnrichGame(g, bestFixture, kickoffByKey);
             }
         });
         loopSw.Stop();
@@ -145,7 +147,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         foreach (var g in games)
         {
-            if (!g.IsFinished && g.Minute.HasValue)
+            if (!g.IsFinished && g.Minute is > 0)
             {
                 g.IsInProgress = true;
             }
@@ -156,15 +158,17 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         {
             var startUtc = NormalizeUtc(g.Start, now);
 
-            if (startUtc > now.AddMinutes(5) && !g.IsInProgress && !g.IsHalfTime && !g.IsFinished)
+            if (startUtc > now.AddMinutes(5))
             {
                 g.IsFinished = false;
                 g.IsInProgress = false;
                 g.IsHalfTime = false;
                 g.Minute = null;
                 g.StatusText = string.Empty;
+                continue;
             }
-            else if (startUtc > now.AddHours(-6))
+
+            if (startUtc > now.AddHours(-6))
             {
                 g.IsHalfTime = g.IsHalfTime && startUtc <= now;
                 if (!g.IsInProgress && startUtc > now)
@@ -184,11 +188,86 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         logger.LogInformation("[Matcher] EnrichGames total duration: {Elapsed}ms", sw.ElapsedMilliseconds);
     }
 
-    private static void EnrichGame(Game g, BbcFixture bbc)
+    public static string BuildFixtureKey(string? home, string? away) => Key(home, away);
+
+    private static Dictionary<string, BbcFixture> BuildFixtureMap(IEnumerable<BbcFixture> fixtures)
     {
-        if (bbc.KickoffUtc != DateTime.MinValue)
+        var map = new Dictionary<string, BbcFixture>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fixture in fixtures)
         {
-            g.Start = bbc.KickoffUtc;
+            var key = Key(fixture.Home, fixture.Away);
+            if (!map.TryGetValue(key, out var existing) || PreferFixture(fixture, existing))
+            {
+                map[key] = fixture;
+            }
+        }
+
+        return map;
+    }
+
+    private static Dictionary<string, DateTime> BuildKickoffLookup(IEnumerable<BbcFixture> fixtures)
+    {
+        var lookup = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fixture in fixtures)
+        {
+            if (fixture.KickoffUtc == DateTime.MinValue)
+            {
+                continue;
+            }
+
+            lookup[Key(fixture.Home, fixture.Away)] = fixture.KickoffUtc;
+        }
+
+        return lookup;
+    }
+
+    private static bool PreferFixture(BbcFixture candidate, BbcFixture incumbent)
+    {
+        if (candidate.KickoffUtc != DateTime.MinValue && incumbent.KickoffUtc == DateTime.MinValue)
+        {
+            return true;
+        }
+
+        if (candidate.HasProgress && !incumbent.HasProgress)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldPreferFixture(BbcFixture candidate, double candidateScore, BbcFixture? incumbent, double incumbentScore)
+    {
+        if (incumbent == null || candidateScore > incumbentScore + 0.001)
+        {
+            return true;
+        }
+
+        if (Math.Abs(candidateScore - incumbentScore) <= 0.001
+            && candidate.KickoffUtc != DateTime.MinValue
+            && incumbent.KickoffUtc == DateTime.MinValue)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void EnrichGame(Game g, BbcFixture bbc, IReadOnlyDictionary<string, DateTime> kickoffByKey)
+    {
+        var kickoff = bbc.KickoffUtc;
+        if (kickoff == DateTime.MinValue)
+        {
+            var gameKey = Key(g.Home, g.Away);
+            if (!kickoffByKey.TryGetValue(gameKey, out kickoff))
+            {
+                kickoffByKey.TryGetValue(Key(bbc.Home, bbc.Away), out kickoff);
+            }
+        }
+
+        if (kickoff != DateTime.MinValue)
+        {
+            g.Start = kickoff;
         }
 
         g.AggregateHomeScore = bbc.AggregateHomeScore;
@@ -235,12 +314,106 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         g.BBCHome = bbc.Home ?? string.Empty;
         g.BBCAway = bbc.Away ?? string.Empty;
-        g.BBCLeague = bbc.League ?? string.Empty;
 
-        if (!string.IsNullOrEmpty(bbc.League))
+        var resolvedLeague = ResolveDisplayLeague(g, bbc.League);
+        g.BBCLeague = resolvedLeague;
+        if (!string.IsNullOrEmpty(resolvedLeague))
         {
-            g.League = bbc.League;
+            g.League = resolvedLeague;
         }
+    }
+
+    private static string ResolveDisplayLeague(Game game, string? bbcLeague)
+    {
+        var apiLeague = (game.ApiLeague ?? string.Empty).Trim();
+        var bbc = (bbcLeague ?? string.Empty).Trim();
+
+        if (!string.IsNullOrEmpty(apiLeague)
+            && !string.IsNullOrEmpty(bbc)
+            && !apiLeague.Equals(bbc, StringComparison.OrdinalIgnoreCase)
+            && apiLeague.Contains(bbc, StringComparison.OrdinalIgnoreCase))
+        {
+            return apiLeague;
+        }
+
+        if (IsImportantGamesInternationalFixture(game, apiLeague, bbc))
+        {
+            return "FIFA World Cup";
+        }
+
+        if (!string.IsNullOrEmpty(bbc)
+            && !bbc.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
+        {
+            return bbc;
+        }
+
+        if (!string.IsNullOrEmpty(apiLeague))
+        {
+            return apiLeague;
+        }
+
+        return bbc;
+    }
+
+    private static bool IsImportantGamesInternationalFixture(Game game, string apiLeague, string bbcLeague)
+    {
+        if (!apiLeague.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(bbcLeague)
+            && !bbcLeague.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !LooksLikeClubTeam(game.Home) && !LooksLikeClubTeam(game.Away);
+    }
+
+    private static bool LooksLikeClubTeam(string? teamName)
+    {
+        if (string.IsNullOrWhiteSpace(teamName)) return false;
+
+        var normalized = NormalizeTeamName(teamName);
+        if (string.IsNullOrEmpty(normalized)) return false;
+
+        ReadOnlySpan<string> clubPrefixes =
+        [
+            "real ", "inter ", "ac ", "as ", "atletico ", "borussia ", "bayern ", "dynamo ",
+            "sporting ", "olympiacos ", "ajax ", "psv ", "benfica ", "porto "
+        ];
+
+        foreach (var prefix in clubPrefixes)
+        {
+            if (normalized.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        var padded = $" {normalized} ";
+        ReadOnlySpan<string> clubMarkers =
+        [
+            " fc ", " cf ", " sc ", " afc ", " athletic ",
+            " rovers ", " wanderers ", " albion ", " hotspur ", " county ", " town "
+        ];
+
+        foreach (var marker in clubMarkers)
+        {
+            if (padded.Contains(marker, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        if (normalized.EndsWith(" united", StringComparison.Ordinal)
+            || normalized.EndsWith(" city", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static string BuildStatusText(BbcFixture f)

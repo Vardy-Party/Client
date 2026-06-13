@@ -4,5 +4,7 @@ namespace VardyParty.Services;
 
 public interface IBbcFixturesService
 {
-    Task<List<BbcFixture>> GetFixturesAsync(DateTime dateUtc);
+    Task<List<BbcFixture>> GetFixturesAsync(DateOnly fixturePageDate, CancellationToken cancellationToken = default);
+
+    Task<List<BbcFixture>> GetRollingWindowFixturesAsync(CancellationToken cancellationToken = default);
 }

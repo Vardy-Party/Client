@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,7 +34,8 @@ public class ImportantGamesToPremierLeagueTest
         // BBC fixture in Premier League (for test purposes)
         var bbcFixture = new BbcFixture("Real Madrid", "Barcelona", DateTime.UtcNow, "", false, false, false, null,
             null, null, string.Empty, string.Empty, "Premier League", false);
-        bbcMock.Setup(x => x.GetFixturesAsync(It.IsAny<DateTime>())).ReturnsAsync(new List<BbcFixture> { bbcFixture });
+        bbcMock.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<BbcFixture> { bbcFixture });
 
         var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
         var bbcFixturesSettings = _fixture.Create<BbcFixturesSettings>();

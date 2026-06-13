@@ -25,6 +25,22 @@ namespace VardyParty.Core.Tests
             };
         }
 
+        private EnrichedStream MakeStream(string sourceUrl, string refererUrl, string channel)
+        {
+            return new EnrichedStream
+            {
+                Stream = new Stream
+                {
+                    Url = refererUrl,
+                    Channel = channel,
+                    BitrateKbps = 0
+                },
+                Referer = refererUrl,
+                ResolvedM3U8Url = sourceUrl,
+                Status = StreamResolutionStatus.Healthy
+            };
+        }
+
         [Fact]
         public void Initialize_PublishesNullOverlay()
         {
@@ -98,6 +114,74 @@ namespace VardyParty.Core.Tests
             Assert.Equal("ChannelB", lastOverlay.Channel);
             Assert.Equal(1500, lastOverlay.BitrateKbps);
             Assert.Equal("720p", lastOverlay.Resolution);
+        }
+
+        [Fact]
+        public void AddHealthyStream_DeduplicatesByResolvedM3u8_WhenOnlyTokensDiffer()
+        {
+            var svc = new StreamSwitchingService();
+            svc.Initialize("L", "H", "A");
+
+            var first = MakeStream(
+                "https://cdn.example.com/live/master.m3u8?token=abc123",
+                "https://source.example.com/watch/match?auth=111",
+                "ChannelA");
+
+            var duplicateM3u8 = MakeStream(
+                "https://CDN.example.com/live/master.m3u8?token=xyz789",
+                "https://SOURCE.example.com/watch/match?auth=222",
+                "ChannelB");
+
+            svc.AddHealthyStream(first);
+            svc.AddHealthyStream(duplicateM3u8);
+
+            Assert.Single(svc.GetHealthyStreams());
+            Assert.Equal("ChannelA", svc.GetHealthyStreams()[0].Stream.Channel);
+        }
+
+        [Fact]
+        public void AddHealthyStream_DeduplicatesByResolvedM3u8_WhenOnlyRefererDiffers()
+        {
+            var svc = new StreamSwitchingService();
+            svc.Initialize("L", "H", "A");
+
+            var first = MakeStream(
+                "https://cdn.example.com/live/master.m3u8?token=abc123",
+                "https://source.example.com/watch/match-one?auth=111",
+                "ChannelA");
+
+            var sameM3u8DifferentReferer = MakeStream(
+                "https://cdn.example.com/live/master.m3u8?token=xyz789",
+                "https://source.example.com/watch/match-two?auth=222",
+                "ChannelB");
+
+            svc.AddHealthyStream(first);
+            svc.AddHealthyStream(sameM3u8DifferentReferer);
+
+            Assert.Single(svc.GetHealthyStreams());
+            Assert.Equal("ChannelA", svc.GetHealthyStreams()[0].Stream.Channel);
+        }
+
+        [Fact]
+        public void AddHealthyStream_DoesNotDeduplicate_WhenResolvedM3u8PathDiffers()
+        {
+            var svc = new StreamSwitchingService();
+            svc.Initialize("L", "H", "A");
+
+            var first = MakeStream(
+                "https://cdn.example.com/live/one/master.m3u8?token=abc123",
+                "https://source.example.com/watch/match?auth=111",
+                "ChannelA");
+
+            var differentM3u8 = MakeStream(
+                "https://cdn.example.com/live/two/master.m3u8?token=xyz789",
+                "https://source.example.com/watch/match?auth=222",
+                "ChannelB");
+
+            svc.AddHealthyStream(first);
+            svc.AddHealthyStream(differentM3u8);
+
+            Assert.Equal(2, svc.GetHealthyStreams().Count);
         }
     }
 }

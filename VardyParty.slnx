@@ -48,6 +48,6 @@
     <Build Solution="Debug|*" Project="false" />
   </Project>
   <Project Path="VardyParty/VardyParty.csproj">
-    <Deploy Solution="Debug|*" />
+    <Deploy />
   </Project>
 </Solution>

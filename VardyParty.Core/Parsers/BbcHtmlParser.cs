@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
@@ -7,6 +8,10 @@ namespace VardyParty.Parsers;
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {
     private static readonly int Timeout = 200;
+    private const string EscapedStartDateTimeMarker = "\\\"startDateTime\\\":\\\"";
+    private const string EscapedIdMarker = "\\\"id\\\":\\\"";
+    private const string UnescapedStartDateTimeMarker = "\"startDateTime\":\"";
+    private const string UnescapedIdMarker = "\"id\":\"";
 
     // Simple, robust regex-based parser. Keeps memory footprint low.
     public List<BbcFixture> ParseHtml(string html, CancellationToken cancellationToken = default)
@@ -113,11 +118,13 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             }
         }
 
+        var eventKickoffMap = BuildEventKickoffMap(html);
+
         // --- NEW SERIAL SCANNER ---
         var swSerial = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            ScanHtmlSerial(html, list, eventStatusMap);
+            ScanHtmlSerial(html, list, eventStatusMap, eventKickoffMap);
         }
         catch (Exception ex)
         {
@@ -134,7 +141,79 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         return list;
     }
 
-    private void ScanHtmlSerial(string html, List<BbcFixture> list, Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap)
+    private static Dictionary<string, DateTime> BuildEventKickoffMap(string html)
+    {
+        var map = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(html)) return map;
+
+        ScanKickoffMarkers(html, EscapedStartDateTimeMarker, EscapedIdMarker, '\\', map);
+        ScanKickoffMarkers(html, UnescapedStartDateTimeMarker, UnescapedIdMarker, '"', map);
+        return map;
+    }
+
+    private static void ScanKickoffMarkers(
+        string html,
+        string startDateTimeMarker,
+        string idMarker,
+        char idTerminator,
+        Dictionary<string, DateTime> map)
+    {
+        var pos = 0;
+        while (pos < html.Length)
+        {
+            var startIdx = html.IndexOf(startDateTimeMarker, pos, StringComparison.Ordinal);
+            if (startIdx < 0) break;
+
+            var dtStart = startIdx + startDateTimeMarker.Length;
+            var dtEnd = html.IndexOf(idTerminator, dtStart);
+            if (dtEnd <= dtStart)
+            {
+                pos = startIdx + 1;
+                continue;
+            }
+
+            var dtText = html.Substring(dtStart, dtEnd - dtStart);
+            var searchWindow = Math.Min(4000, startIdx);
+            var idIdx = html.LastIndexOf(idMarker, startIdx, searchWindow);
+            if (idIdx >= 0)
+            {
+                var idStart = idIdx + idMarker.Length;
+                var idEnd = html.IndexOf(idTerminator, idStart);
+                if (idEnd > idStart)
+                {
+                    var id = html.Substring(idStart, idEnd - idStart);
+                    if (id.StartsWith("s-", StringComparison.OrdinalIgnoreCase)
+                        && !map.ContainsKey(id)
+                        && TryParseKickoffUtc(dtText, out var kickoffUtc))
+                    {
+                        map[id] = kickoffUtc;
+                    }
+                }
+            }
+
+            pos = dtEnd + 1;
+        }
+    }
+
+    private static bool TryParseKickoffUtc(string? value, out DateTime kickoffUtc)
+    {
+        kickoffUtc = DateTime.MinValue;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            return false;
+        }
+
+        kickoffUtc = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        return true;
+    }
+
+    private void ScanHtmlSerial(
+        string html,
+        List<BbcFixture> list,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
+        Dictionary<string, DateTime> eventKickoffMap)
     {
         // Single pass scanner
         // We look for "<h2" or "data-event-id=" markers serially
@@ -225,7 +304,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 {
                     var swGame = System.Diagnostics.Stopwatch.StartNew();
                     // Use helper that takes (html, start, end) to avoid substring
-                    ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap);
+                    ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap, eventKickoffMap);
                     swGame.Stop();
                     if (swGame.ElapsedMilliseconds > Timeout)
                     {
@@ -239,7 +318,15 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         }
     }
 
-    private static void ParseGameNative(string html, int start, int end, string id, string currentLeague, List<BbcFixture> list, Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap)
+    private static void ParseGameNative(
+        string html,
+        int start,
+        int end,
+        string id,
+        string currentLeague,
+        List<BbcFixture> list,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
+        Dictionary<string, DateTime> eventKickoffMap)
     {
         // Extract fields using IndexOf within range
         // Helper to find subs
@@ -719,7 +806,11 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 // else string.Empty loop init
             }
 
-            list.Add(new BbcFixture(home, away, DateTime.MinValue, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals, aggHomeScore, aggAwayScore));
+            var kickoffUtc = eventKickoffMap.TryGetValue(id, out var mappedKickoff)
+                ? mappedKickoff
+                : DateTime.MinValue;
+
+            list.Add(new BbcFixture(home, away, kickoffUtc, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals, aggHomeScore, aggAwayScore));
         }
     }
 

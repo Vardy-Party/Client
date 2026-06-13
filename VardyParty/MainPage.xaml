@@ -6,7 +6,7 @@
              x:Class="VardyParty.MainPage"
              BackgroundColor="Black"
              NavigationPage.HasNavigationBar="False"
-             SafeAreaEdges="Container"
+             SafeAreaEdges="None"
              >
 
     <BlazorWebView x:Name="blazorWebView" HostPage="wwwroot/index.html" BackgroundColor="Black">

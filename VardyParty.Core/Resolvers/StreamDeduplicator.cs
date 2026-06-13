@@ -57,22 +57,7 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
         return deduplicated;
     }
 
-    public string ExtractBaseUrl(string url)
-    {
-        if (string.IsNullOrEmpty(url))
-            return url;
-
-        // Find the query string separator
-        var questionMarkIndex = url.IndexOf('?');
-        if (questionMarkIndex < 0)
-        {
-            // No query string, return as-is
-            return url;
-        }
-
-        // Return everything before the '?'
-        return url.Substring(0, questionMarkIndex);
-    }
+    public string ExtractBaseUrl(string url) => StreamUrlNormalizer.NormalizeForDedup(url);
 
     private Models.Stream SelectBestStream(List<Models.Stream> group)
     {

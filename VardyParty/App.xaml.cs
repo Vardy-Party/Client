@@ -14,6 +14,9 @@
             {
                 Console.WriteLine($"[App] CRITICAL ERROR in InitializeComponent: {ex.GetType().Name}: {ex.Message}");
                 Console.WriteLine($"[App] StackTrace: {ex.StackTrace}");
+#if WINDOWS
+                Platforms.Windows.WindowsEventLogger.Fatal("App", "InitializeComponent failed", ex);
+#endif
                 throw;
             }
 
@@ -25,6 +28,9 @@
                 if (e.ExceptionObject is Exception ex)
                 {
                     Console.WriteLine($"[AppDomain] StackTrace: {ex.StackTrace}");
+#if WINDOWS
+                    Platforms.Windows.WindowsEventLogger.Fatal("AppDomain", "Unhandled exception", ex);
+#endif
                 }
             };
 
@@ -32,6 +38,9 @@
             {
                 Console.WriteLine($"[Task Exception] {e.Exception}");
                 Console.WriteLine($"[Task] StackTrace: {e.Exception.StackTrace}");
+#if WINDOWS
+                Platforms.Windows.WindowsEventLogger.Error("TaskScheduler", "Unobserved task exception", e.Exception);
+#endif
                 e.SetObserved();
             };
         }
@@ -43,9 +52,10 @@
                 Console.WriteLine("[App] CreateWindow - start");
                 var mainPage = new MainPage();
                 Console.WriteLine("[App] CreateWindow - MainPage created");
-                var navPage = new NavigationPage(mainPage);
-                Console.WriteLine("[App] CreateWindow - NavigationPage created");
-                var window = new Window(navPage) { Title = "VardyParty" };
+                var window = new Window(mainPage)
+                {
+                    Title = string.Empty,
+                };
                 Console.WriteLine("[App] CreateWindow - window created successfully");
                 return window;
             }

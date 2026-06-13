@@ -115,6 +115,22 @@ public class Game
         }
     }
 
+    public bool IsScheduledUpcoming(DateTime nowUtc)
+    {
+        if (IsPostponed) return false;
+
+        var startUtc = StartUtcForOrdering;
+        if (startUtc == default || startUtc == DateTime.MaxValue) return false;
+
+        // Trust a future kickoff over stale in-play/finished flags from the API.
+        if (startUtc > nowUtc.AddMinutes(5)) return true;
+
+        if (startUtc <= nowUtc.AddMinutes(1)) return false;
+        if (IsInProgress || IsHalfTime || Minute is > 0) return false;
+
+        return !IsFinished && !IsLiveForOrdering;
+    }
+
     public string DisplayStatusText()
     {
         if (IsFinished) return "FT";
