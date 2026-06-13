@@ -481,7 +481,7 @@ namespace VardyParty.Platforms.Android
             {
                 Gravity = global::Android.Views.GravityFlags.Bottom | global::Android.Views.GravityFlags.Left,
                 LeftMargin = (int)(16 * density),
-                BottomMargin = (int)(16 * density)
+                BottomMargin = (int)((16 + 44 + 8) * density)
             };
             root.AddView(_menuPanel, menuPanelParams);
 
@@ -517,6 +517,15 @@ namespace VardyParty.Platforms.Android
                 BottomMargin = _isTvDevice ? (int)(24 * density) : (int)(72 * density)
             };
             root.AddView(_scoresTickerContainer, scoresParams);
+
+            _scoresTickerContainer.Clickable = true;
+            _scoresTickerContainer.Click += (_, __) =>
+            {
+                if (!_isTvDevice)
+                {
+                    CycleScoresTickerMode();
+                }
+            };
 
             _menuButton = new global::Android.Widget.ImageButton(this)
             {
@@ -1694,13 +1703,71 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        public void SwipeToNextStream()
+        {
+            try
+            {
+                if (_switching != null)
+                {
+                    bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
+                    if (!wasVisible)
+                    {
+                        _suppressOverlayShow = true;
+                    }
+
+                    _switching.SwitchToNextStream();
+
+                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
+
+                    if (wasVisible)
+                    {
+                        ShowOverlayAnimated();
+                        if (!_overlayLocked) ScheduleHideOverlay();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToNextStream failed");
+            }
+        }
+
+        public void SwipeToPreviousStream()
+        {
+            try
+            {
+                if (_switching != null)
+                {
+                    bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
+                    if (!wasVisible)
+                    {
+                        _suppressOverlayShow = true;
+                    }
+
+                    _switching.SwitchToPreviousStream();
+
+                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
+
+                    if (wasVisible)
+                    {
+                        ShowOverlayAnimated();
+                        if (!_overlayLocked) ScheduleHideOverlay();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToPreviousStream failed");
+            }
+        }
+
         private void SetupPinchZoom(FrameLayout container, PlayerView playerView)
         {
             try
             {
                 playerView.ResizeMode = AspectRatioFrameLayout.ResizeModeFit;
                 var scaleGestureDetector = new global::Android.Views.ScaleGestureDetector(this, new PinchZoomListener(container));
-                var gestureDetector = new global::Android.Views.GestureDetector(this, new DragGestureListener(container));
+                var gestureDetector = new global::Android.Views.GestureDetector(this, new DragGestureListener(this, container));
                 container.SetOnTouchListener(new ZoomAndDragTouchListener(scaleGestureDetector, gestureDetector));
             }
             catch (Exception ex)
@@ -1732,12 +1799,14 @@ namespace VardyParty.Platforms.Android
 
         private class DragGestureListener : global::Android.Views.GestureDetector.SimpleOnGestureListener
         {
+            private readonly NativeVideoActivity _activity;
             private readonly FrameLayout _container;
             private float _translationX;
             private float _translationY;
 
-            public DragGestureListener(FrameLayout container)
+            public DragGestureListener(NativeVideoActivity activity, FrameLayout container)
             {
+                _activity = activity;
                 _container = container;
             }
 
@@ -1758,6 +1827,35 @@ namespace VardyParty.Platforms.Android
                 _container.TranslationX = _translationX;
                 _container.TranslationY = _translationY;
                 return true;
+            }
+
+            private const int SwipeThreshold = 100;
+            private const int SwipeVelocityThreshold = 100;
+
+            public override bool OnFling(global::Android.Views.MotionEvent? e1, global::Android.Views.MotionEvent? e2, float velocityX, float velocityY)
+            {
+                if (e1 == null || e2 == null) return false;
+                if (_container.ScaleX > 1.0f) return false;
+
+                float diffX = e2.GetX() - e1.GetX();
+                float diffY = e2.GetY() - e1.GetY();
+
+                if (Math.Abs(diffX) > Math.Abs(diffY))
+                {
+                    if (Math.Abs(diffX) > SwipeThreshold && Math.Abs(velocityX) > SwipeVelocityThreshold)
+                    {
+                        if (diffX > 0)
+                        {
+                            _activity.RunOnUiThread(() => _activity.SwipeToPreviousStream());
+                        }
+                        else
+                        {
+                            _activity.RunOnUiThread(() => _activity.SwipeToNextStream());
+                        }
+                        return true;
+                    }
+                }
+                return false;
             }
         }
 
