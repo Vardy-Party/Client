@@ -18,6 +18,12 @@ using VardyParty.Platforms.Android;
 using VardyParty.Providers;
 using VardyParty.Resolvers;
 using VardyParty.Services;
+#if WINDOWS
+using Microsoft.Maui.Handlers;
+using Microsoft.Maui.LifecycleEvents;
+using VardyParty.Platforms.Windows;
+using WinUiWindow = Microsoft.UI.Xaml.Window;
+#endif
 
 namespace VardyParty;
 
@@ -88,6 +94,50 @@ public static class MauiProgram
         builder
             .UseMauiApp<App>()
             .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
+
+#if WINDOWS
+        builder.ConfigureLifecycleEvents(events =>
+        {
+            events.AddWindows(windows =>
+            {
+                windows.OnWindowCreated(window => WindowsWindowChrome.ApplyMainWindowChrome(window));
+                windows.OnActivated((window, _) => WindowsWindowChrome.ApplyMainWindowChrome(window));
+            });
+        });
+
+        WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Content), (handler, view, action) =>
+        {
+            if (handler.PlatformView is WinUiWindow nativeWindow)
+            {
+                WindowsWindowChrome.PrepareBeforeMauiConnect(nativeWindow);
+            }
+
+            action?.Invoke(handler, view);
+
+            if (handler.PlatformView is WinUiWindow connectedWindow)
+            {
+                WindowsWindowChrome.ApplyMainWindowChrome(connectedWindow, handler.MauiContext);
+            }
+        });
+
+        WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Title), (handler, view, action) =>
+        {
+            if (handler.PlatformView is WinUiWindow nativeWindow)
+            {
+                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+            }
+        });
+
+        WindowHandler.Mapper.ModifyMapping(nameof(IWindow.TitleBar), (handler, view, action) =>
+        {
+            action?.Invoke(handler, view);
+
+            if (handler.PlatformView is WinUiWindow nativeWindow)
+            {
+                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+            }
+        });
+#endif
         
         // Load appsettings.json from embedded resources (works on all platforms: Android, iOS, macOS, MSIX, etc.)
         try
@@ -223,6 +273,17 @@ public static class MauiProgram
             .AddDebug()
             .AddConsole()
             .SetMinimumLevel(LogLevel.Information);
+
+#if WINDOWS
+        var windowsLogDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "VardyParty",
+            "logs");
+        var windowsFileLogger = new WindowsFileLoggerProvider(windowsLogDir);
+        builder.Logging.AddProvider(windowsFileLogger);
+        WindowsEventLogger.RegisterFilePath(windowsFileLogger.FilePath);
+        WindowsEventLogger.Info("Startup", $"Windows log file: {windowsFileLogger.FilePath}");
+#endif
 
         // Build the app first, then asynchronously warm configuration and other non-critical services off the UI thread.
         var app = builder.Build();

@@ -85,11 +85,40 @@ button {
     box-shadow: 0 6px 20px rgba(0, 48, 144, 0.15);
 }
 
-/* Page Container */
+/* Page shell */
+.app-container,
+.page-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+
+.page-shell {
+    min-height: 100vh;
+    background-color: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+}
+
+.page-body {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 16px 20px 20px;
+    box-sizing: border-box;
+}
+
+.platform-windows .page-body {
+    padding-top: 20px;
+}
+
+/* Legacy alias used by other pages */
 .page-container {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 0 20px 20px;
     min-height: 100vh;
     background-color: var(--bg-primary);
 }
@@ -97,13 +126,15 @@ button {
 /* Page Header */
 .page-header {
     display: block;
-    /* bleed header to edges by negating page container padding (20px) */
-    margin: -20px -20px 0 -20px; /* remove bottom gap so header sits flush with top and sides */
+    width: 100%;
+    margin: 0;
     padding: 0;
     background: linear-gradient(180deg, var(--primary-blue-dark), rgba(45,125,210,0.85));
     color: white;
     border-bottom: 1px solid rgba(0,0,0,0.15);
+    box-sizing: border-box;
 }
+
 .header-brand {
     position: absolute;
     left: 50%;
@@ -116,11 +147,15 @@ button {
     align-items: center;
     justify-content: center; /* center the logo+title group */
     width: 100%;
-    max-width: 1400px;
-    margin: 0 auto;
+    margin: 0;
     gap: 12px;
-    padding: 20px 16px; /* vertical padding inside header band */
+    padding: 16px 20px;
     min-height: 68px; /* ensure header tall enough for logo + title */
+    box-sizing: border-box;
+}
+
+.platform-windows .page-header-inner {
+    padding-right: 150px;
 }
 
 .header-left {
@@ -155,11 +190,32 @@ button {
 
 .header-right {
     position: absolute;
-    right: 16px;
+    right: 20px;
     top: 50%;
     transform: translateY(-50%);
     display: flex;
     align-items: center;
+}
+
+.platform-windows .header-auth-button {
+    margin-top: 20px;
+}
+
+.header-build-info {
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    max-width: min(30vw, 320px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    line-height: 1.2;
+    opacity: 0.9;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.92);
+    pointer-events: none;
 }
 
 .page-header h1 {
@@ -412,7 +468,16 @@ button {
 
 @media (max-width: 600px) {
     .page-header-inner {
-        padding: 0; /* vertical padding inside header band */
-        min-height: 38px; /* ensure header tall enough for logo + title */
+        padding: 12px 16px;
+        min-height: 52px;
+    }
+
+    .platform-windows .page-header-inner {
+        padding-right: 120px;
+    }
+
+    .header-build-info {
+        left: 16px;
+        display: none;
     }
 }

@@ -20,8 +20,10 @@ public static class LeagueLogoMapper
         if (string.IsNullOrWhiteSpace(league)) return string.Empty;
         var name = league.Trim();
 
-        return name switch
+        var path = name switch
         {
+            _ when IsExact("Lebanese Premier League") => "images/leagues/lebanese-premier-league.png",
+            _ when IsExact("FIFA World Cup") || IsExact("World Cup") => "images/leagues/fifa-world-cup-2026.svg",
             _ when Is("DFB Pokal") => "images/leagues/DFB_2025-logo_brandlogos.net_635b47.svg",
             _ when Is("Olympic") => "images/leagues/milano-cortina-2026-logo-brandlogos.net_wa7r7kszb.svg",
             _ when Is("Coupe de France") => "images/leagues/Coupe_de_France-logo.svg",
@@ -38,7 +40,7 @@ public static class LeagueLogoMapper
             _ when Is("Saudi Pro League") || Is("Saudi Arabian League") => "images/leagues/saudi-pro-league-logo-brandlogos.net_tik3d950d.svg",
             _ when Is("Primeiralia") || Is("Primeiraliga") || Is("Primeira Liga") || Is("Primeira") => "images/leagues/liga-portugal-logo-brandlogos.net_2b7dby3qh.svg",
             _ when Is("EFL Trophy") || Is("English Football League Trophy") || Is("EFL Vertu Trophy") || Is("Vertu Trophy") => "images/leagues/EFL_vertu_Trophy_lpgp.svg",
-            _ when Is("Premier League") => "images/leagues/premier-league-logo-brandlogos.net_8gx2ul0qq.svg",
+            _ when IsExact("Premier League") => "images/leagues/premier-league-logo-brandlogos.net_8gx2ul0qq.svg",
             _ when Is("Championship") => "images/leagues/EFL_Championship-VM8vCs3X_brandlogos.net.svg",
             _ when Is("League 1") || Is("League One") => "images/leagues/EFL_League_One-OpT6pjxfV_brandlogos.net.svg",
             _ when Is("League 2") || Is("League Two") => "images/leagues/EFL_League_Two-O9RxRtxBf_brandlogos.net.svg",
@@ -57,7 +59,9 @@ public static class LeagueLogoMapper
             _ => string.Empty
         };
 
-        // Check if name contains key phrases (loose matching for UI strings)
+        return string.IsNullOrEmpty(path) ? string.Empty : $"/{path.TrimStart('/')}";
+
         bool Is(string target) => name.Contains(target, StringComparison.OrdinalIgnoreCase);
+        bool IsExact(string target) => name.Equals(target, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -5,4 +5,11 @@
     xmlns:maui="using:Microsoft.Maui"
     xmlns:local="using:VardyParty.WinUI">
 
+    <Application.Resources>
+        <!-- Replace MAUI's default app title row (shows Window.Title) with nothing. -->
+        <DataTemplate x:Key="MauiAppTitleBarContainerTemplate">
+            <Grid HorizontalAlignment="Stretch" Height="0" />
+        </DataTemplate>
+    </Application.Resources>
+
 </maui:MauiWinUIApplication>

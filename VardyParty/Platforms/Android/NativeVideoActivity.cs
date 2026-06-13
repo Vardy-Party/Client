@@ -292,7 +292,7 @@ namespace VardyParty.Platforms.Android
             float smallSp = 10f * fontScaleCap;
 
             int paddingDp = (int)(8 * density);
-            int outerLeftDp = (int)(20 * density);
+            int outerRightDp = (int)(20 * density);
             int outerTopDp = (int)(20 * density);
 
             // Title will show the game (Home vs Away) at top
@@ -300,6 +300,7 @@ namespace VardyParty.Platforms.Android
             _titleView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, titleSp);
             _titleView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
             _titleView.SetTextColor(global::Android.Graphics.Color.White);
+            ConfigureEmojiFriendlyTextView(_titleView);
 
             // Reduced body fonts for tighter layout
             _statusView = new TextView(this);
@@ -337,8 +338,9 @@ namespace VardyParty.Platforms.Android
 
             var overlayParams = new FrameLayout.LayoutParams(global::Android.Views.ViewGroup.LayoutParams.WrapContent, global::Android.Views.ViewGroup.LayoutParams.WrapContent)
             {
-                Gravity = global::Android.Views.GravityFlags.Top | global::Android.Views.GravityFlags.Left,
-                LeftMargin = outerLeftDp,
+                // Top-right keeps broadcaster score bugs (usually top-left) visible on TV feeds.
+                Gravity = global::Android.Views.GravityFlags.Top | global::Android.Views.GravityFlags.Right,
+                RightMargin = outerRightDp,
                 TopMargin = outerTopDp
             };
             root.AddView(linear, overlayParams);
@@ -494,6 +496,7 @@ namespace VardyParty.Platforms.Android
             _scoresTickerText = new TextView(this) { Text = string.Empty };
             _scoresTickerText.SetTextColor(global::Android.Graphics.Color.White);
             _scoresTickerText.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+            ConfigureEmojiFriendlyTextView(_scoresTickerText);
             _scoresTickerText.SetSingleLine(true);
             _scoresTickerText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.Marquee;
             _scoresTickerText.SetMarqueeRepeatLimit(-1);
@@ -938,8 +941,7 @@ namespace VardyParty.Platforms.Android
             }
             catch { }
 
-            // Show game title at top (prefer _gameTitle provided by route, fallback to stream title)
-            if (_titleView != null) _titleView.Text = string.IsNullOrEmpty(_gameTitle) ? channel : _gameTitle;
+            if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channel);
             if (_statusView != null) _statusView.Text = statusLine;
             if (_indexView != null) _indexView.Text = indexLine;
             if (_qualityView != null) _qualityView.Text = qualityLabel;
@@ -965,7 +967,7 @@ namespace VardyParty.Platforms.Android
             var codecLineParts = new List<string>();
             if (!string.IsNullOrEmpty(info.VideoCodec)) codecLineParts.Add($"Video: {info.VideoCodec}");
             if (!string.IsNullOrEmpty(info.AudioCodec)) codecLineParts.Add($"Audio: {info.AudioCodec}");
-            if (codecLineParts.Count > 0) lines.Add(string.Join(" • ", codecLineParts));
+            if (codecLineParts.Count > 0) lines.Add(string.Join(" / ", codecLineParts));
 
             // m3u8 and referer each on their own lines
             if (!string.IsNullOrEmpty(m3u8)) lines.Add(m3u8);
@@ -1551,14 +1553,56 @@ namespace VardyParty.Platforms.Android
                 status = game.IsFinished ? "FT" : "Live";
             }
 
-            return $"{game.DisplayHome} {FormatScore(game)} {game.DisplayAway} ({status})";
+            var international = InternationalTeamDisplay.IsInternationalGame(game);
+            var home = FormatTeamForDisplay(game.DisplayHome, international);
+            var away = FormatTeamForDisplay(game.DisplayAway, international);
+            return $"{home} {FormatScore(game)} {away} ({status})";
         }
 
         private static string FormatUpcomingLine(Game game)
         {
             var localKickoff = game.Start.Kind == DateTimeKind.Utc ? game.Start.ToLocalTime() : game.Start;
             var kickoffText = localKickoff == default ? "TBD" : localKickoff.ToString("HH:mm");
-            return $"{kickoffText} {game.DisplayHome} vs {game.DisplayAway}";
+            var international = InternationalTeamDisplay.IsInternationalGame(game);
+            var home = FormatTeamForDisplay(game.DisplayHome, international);
+            var away = FormatTeamForDisplay(game.DisplayAway, international);
+            return $"{kickoffText} {home} vs {away}";
+        }
+
+        private static string FormatTeamForDisplay(string? teamName, bool international)
+        {
+            return InternationalTeamDisplay.FormatTeamName(teamName, international);
+        }
+
+        private string BuildOverlayGameTitle(string fallbackChannel)
+        {
+            if (!string.IsNullOrWhiteSpace(_currentHomeTeam) && !string.IsNullOrWhiteSpace(_currentAwayTeam))
+            {
+                var international = InternationalTeamDisplay.IsInternationalMatch(
+                    _currentLeague, _currentHomeTeam, _currentAwayTeam);
+                var home = FormatTeamForDisplay(_currentHomeTeam, international);
+                var away = FormatTeamForDisplay(_currentAwayTeam, international);
+                return InternationalTeamDisplay.FormatMatchTitle(home, away, international: false);
+            }
+
+            return string.IsNullOrEmpty(_gameTitle) ? fallbackChannel : _gameTitle;
+        }
+
+        private static void ConfigureEmojiFriendlyTextView(TextView? textView)
+        {
+            if (textView == null) return;
+
+            try
+            {
+                var typeface = global::Android.Graphics.Typeface.Create("sans-serif", global::Android.Graphics.TypefaceStyle.Normal);
+                if (typeface != null)
+                {
+                    textView.SetTypeface(typeface, global::Android.Graphics.TypefaceStyle.Normal);
+                }
+            }
+            catch
+            {
+            }
         }
 
         private void CycleScoresTickerMode()
@@ -1612,7 +1656,7 @@ namespace VardyParty.Platforms.Android
                     _ => "No other in-play games in this league right now."
                 };
 
-                var message = lines.Count == 0 ? emptyMessage : string.Join("  •  ", lines);
+                var message = lines.Count == 0 ? emptyMessage : string.Join(InternationalTeamDisplay.TickerSeparator, lines);
                 if (_scoresTickerText != null)
                 {
                     _scoresTickerText.Text = $"{title}: {message}";

@@ -439,5 +439,191 @@ namespace VardyParty.Core.Tests
             Assert.Equal(1, g.HomeScore);
             Assert.Equal(0, g.AwayScore);
         }
+
+        [Fact]
+        public void FuzzyMatch_Usa_Matches_UnitedStates()
+        {
+            var apiWrongStart = new DateTime(2026, 6, 12, 0, 0, 0, DateTimeKind.Utc);
+            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc); // 02:00 BST on 13 June
+            var games = new List<Game>
+            {
+                new Game { Home = "USA", Away = "Paraguay", Start = apiWrongStart, ApiLeague = "Important Games", League = "Important Games" }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("United States", "Paraguay", bbcKickoff, "", false, false, false, null,
+                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("United States", g.BBCHome);
+            Assert.Equal("FIFA World Cup", g.BBCLeague);
+            Assert.Equal(bbcKickoff, g.Start);
+        }
+
+        [Fact]
+        public void FutureKickoff_WithStaleMinuteZero_IsScheduledUpcoming()
+        {
+            var now = DateTime.UtcNow;
+            var futureKickoff = now.AddHours(2);
+            var games = new List<Game>
+            {
+                new Game
+                {
+                    Home = "USA",
+                    Away = "Paraguay",
+                    Start = futureKickoff,
+                    Minute = 0,
+                    IsInProgress = true,
+                    IsFinished = true,
+                    League = "FIFA World Cup"
+                }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("United States", "Paraguay", futureKickoff, "", false, false, false, null,
+                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.False(g.IsInProgress);
+            Assert.False(g.IsFinished);
+            Assert.Null(g.Minute);
+            Assert.True(g.IsScheduledUpcoming(now));
+        }
+
+        [Fact]
+        public void IsScheduledUpcoming_FutureKickoff_IgnoresStaleInProgressFlag()
+        {
+            var now = DateTime.UtcNow;
+            var futureKickoff = now.AddHours(2);
+            var game = new Game
+            {
+                Home = "USA",
+                Away = "Paraguay",
+                Start = futureKickoff,
+                IsInProgress = true,
+                IsFinished = true,
+                Minute = 0,
+                League = "FIFA World Cup"
+            };
+
+            Assert.True(game.IsScheduledUpcoming(now));
+        }
+
+        [Fact]
+        public void ExactMatch_Usa_ResolvesKickoffFromDuplicateBbcVariant()
+        {
+            var apiWrongStart = new DateTime(2026, 6, 12, 0, 0, 0, DateTimeKind.Utc);
+            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc); // 02:00 BST on 13 June
+            var games = new List<Game>
+            {
+                new Game { Home = "USA", Away = "Paraguay", Start = apiWrongStart, ApiLeague = "Important Games", League = "Important Games" }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("USA", "Paraguay", DateTime.MinValue, "", false, false, false, null,
+                    null, null, string.Empty, string.Empty, "Important Games", false),
+                new BbcFixture("United States", "Paraguay", bbcKickoff, "", false, false, false, null,
+                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal(bbcKickoff, g.Start);
+            Assert.Equal("United States", g.BBCHome);
+        }
+
+        [Fact]
+        public void ImportantGames_InternationalFixture_MapsToFifaWorldCup()
+        {
+            var games = new List<Game>
+            {
+                new Game
+                {
+                    Home = "Canada",
+                    Away = "Bosnia and Herzegovina",
+                    ApiLeague = "Important Games",
+                    League = "Important Games",
+                    Start = DateTime.UtcNow
+                }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Canada", "Bosnia and Herzegovina", DateTime.UtcNow, "", false, false, false, null,
+                    null, null, "home.svg", "away.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("FIFA World Cup", g.BBCLeague);
+            Assert.Equal("FIFA World Cup", g.League);
+        }
+
+        [Fact]
+        public void ImportantGames_ClubFixture_KeepsBbcLeague()
+        {
+            var games = new List<Game>
+            {
+                new Game
+                {
+                    Home = "Real Madrid",
+                    Away = "Barcelona",
+                    ApiLeague = "Important Games",
+                    League = "Important Games",
+                    Start = DateTime.UtcNow
+                }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Real Madrid", "Barcelona", DateTime.UtcNow, "", false, false, false, null,
+                    null, null, "home.svg", "away.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("Important Games", g.BBCLeague);
+            Assert.Equal("Important Games", g.League);
+        }
+
+        [Fact]
+        public void LebanesePremierLeague_KeepsApiLeague_WhenBbcWouldBeLessSpecific()
+        {
+            var games = new List<Game>
+            {
+                new Game
+                {
+                    Home = "Al Nejmeh",
+                    Away = "Al Ahed",
+                    ApiLeague = "Lebanese Premier League",
+                    League = "Lebanese Premier League",
+                    Start = DateTime.UtcNow
+                }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Al Nejmeh", "Al Ahed", DateTime.UtcNow, "", false, false, false, null,
+                    null, null, string.Empty, string.Empty, "Premier League", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Lebanese Premier League");
+
+            var g = games.First();
+            Assert.Equal("Lebanese Premier League", g.BBCLeague);
+            Assert.Equal("Lebanese Premier League", g.League);
+        }
     }
 }

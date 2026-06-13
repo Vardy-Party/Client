@@ -1,10 +1,25 @@
-﻿using Microsoft.Maui.Controls;
+﻿using Microsoft.AspNetCore.Components.WebView.Maui;
+using Microsoft.Maui.Controls;
+#if WINDOWS
+using VardyParty.Platforms.Windows;
+using WinUiWindow = Microsoft.UI.Xaml.Window;
+#endif
 
 namespace VardyParty
 {
     public partial class MainPage : ContentPage
     {
         public static MainPage? Instance { get; private set; }
+
+        /// <summary>
+        /// True while the WinUI native player has replaced the MAUI/Blazor window content.
+        /// Blazor must not render during this period or the WebView host can crash.
+        /// </summary>
+        public static bool IsNativePlayerActive { get; private set; }
+
+        public static void SetNativePlayerActive(bool active) => IsNativePlayerActive = active;
+
+        public BlazorWebView? BlazorWebView => blazorWebView;
 
         public MainPage()
         {
@@ -122,6 +137,12 @@ namespace VardyParty
         {
             base.OnAppearing();
             Console.WriteLine("[MainPage] OnAppearing");
+#if WINDOWS
+            if (Window?.Handler?.PlatformView is WinUiWindow nativeWindow)
+            {
+                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, Window.Handler.MauiContext);
+            }
+#endif
         }
 
         public bool TryGoBackInWebView()

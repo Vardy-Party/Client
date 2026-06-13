@@ -43,6 +43,8 @@ public class EnrichedGameService(
     public IObservable<Dictionary<string, List<Game>>?> GamesStream => _subject.AsObservable();
     public IObservable<string?> ErrorStream => _errorSubject.AsObservable();
 
+    public Dictionary<string, List<Game>>? GetLatestGames() => _subject.Value;
+
     public void StartBackgroundPolling()
     {
         Task.Run(async () =>
@@ -108,7 +110,7 @@ public class EnrichedGameService(
         try
         {
             logger.LogInformation("[Enriched] Polling BBC fixtures...");
-            var fixtures = await bbc.GetFixturesAsync(DateTime.UtcNow);
+            var fixtures = await bbc.GetRollingWindowFixturesAsync();
             lock (_stateLock)
             {
                 _latestBbcFixtures = fixtures;
