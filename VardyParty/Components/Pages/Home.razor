@@ -17,7 +17,7 @@
 @using VardyParty.Services
 @implements IDisposable
 
-<div class="page-shell@(OperatingSystem.IsWindows() ? " platform-windows" : string.Empty)">
+<div class="page-shell@(OperatingSystem.IsWindows() ? " platform-windows" : OperatingSystem.IsAndroid() ? " platform-android" : string.Empty)">
     <header class="page-header">
         <div class="page-header-inner">
             @if (buildInfo is not null)
