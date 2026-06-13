@@ -16,9 +16,10 @@ public static class InternationalTeamDisplay
         { "paraguay", "PY" },
         { "bosnia and herzegovina", "BA" },
         { "bosnia-herzegovina", "BA" },
-        { "england", "GB" },
-        { "scotland", "GB" },
-        { "northern ireland", "GB" },
+        { "england", "gb-eng" },
+        { "scotland", "gb-sct" },
+        { "northern ireland", "gb-nir" },
+        { "wales", "gb-wls" },
         { "republic of ireland", "IE" },
         { "ireland", "IE" },
         { "france", "FR" },
@@ -38,6 +39,7 @@ public static class InternationalTeamDisplay
         { "poland", "PL" },
         { "ukraine", "UA" },
         { "turkey", "TR" },
+        { "türkiye", "TR" },
         { "japan", "JP" },
         { "south korea", "KR" },
         { "korea republic", "KR" },
@@ -49,6 +51,7 @@ public static class InternationalTeamDisplay
         { "cameroon", "CM" },
         { "ivory coast", "CI" },
         { "cote d'ivoire", "CI" },
+        { "côte d'ivoire", "CI" },
         { "ecuador", "EC" },
         { "uruguay", "UY" },
         { "colombia", "CO" },
@@ -59,6 +62,7 @@ public static class InternationalTeamDisplay
         { "laos", "LA" },
         { "qatar", "QA" },
         { "iran", "IR" },
+        { "ir iran", "IR" },
         { "tunisia", "TN" },
         { "algeria", "DZ" },
         { "egypt", "EG" },
@@ -73,7 +77,20 @@ public static class InternationalTeamDisplay
         { "greece", "GR" },
         { "slovakia", "SK" },
         { "slovenia", "SI" },
-        { "wales", "GB" },
+        { "iraq", "IQ" },
+        { "jordan", "JO" },
+        { "uzbekistan", "UZ" },
+        { "cabo verde", "CV" },
+        { "cape verde", "CV" },
+        { "congo dr", "CD" },
+        { "dr congo", "CD" },
+        { "democratic republic of the congo", "CD" },
+        { "south africa", "ZA" },
+        { "curaçao", "CW" },
+        { "curacao", "CW" },
+        { "haiti", "HT" },
+        { "panama", "PA" },
+        { "new zealand", "NZ" },
     };
 
     public static bool IsInternationalGame(Game? game)
@@ -121,12 +138,12 @@ public static class InternationalTeamDisplay
     public static bool TryGetIsoCode(string? teamName, out string iso)
     {
         iso = GetIsoCode(teamName) ?? string.Empty;
-        return iso.Length == 2;
+        return iso.Length == 2 || iso.Length == 6;
     }
 
     public static string? GetFlagImageUrl(string? iso)
     {
-        if (string.IsNullOrWhiteSpace(iso) || iso.Length != 2)
+        if (string.IsNullOrWhiteSpace(iso) || (iso.Length != 2 && iso.Length != 6))
         {
             return null;
         }
@@ -194,6 +211,15 @@ public static class InternationalTeamDisplay
     {
         var iso = GetIsoCode(teamName);
         if (string.IsNullOrEmpty(iso)) return null;
+
+        if (iso.Equals("gb-eng", StringComparison.OrdinalIgnoreCase))
+            return "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f";
+        if (iso.Equals("gb-sct", StringComparison.OrdinalIgnoreCase))
+            return "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f";
+        if (iso.Equals("gb-wls", StringComparison.OrdinalIgnoreCase))
+            return "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc77\udb40\udc6c\udb40\udc73\udb40\udc7f";
+        if (iso.Equals("gb-nir", StringComparison.OrdinalIgnoreCase))
+            return IsoToFlagEmoji("GB");
 
         if (iso.StartsWith("GB-", StringComparison.OrdinalIgnoreCase))
         {
