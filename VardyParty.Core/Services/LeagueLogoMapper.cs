@@ -41,6 +41,7 @@ public static class LeagueLogoMapper
             _ when Is("Primeiralia") || Is("Primeiraliga") || Is("Primeira Liga") || Is("Primeira") => "images/leagues/liga-portugal-logo-brandlogos.net_2b7dby3qh.svg",
             _ when Is("EFL Trophy") || Is("English Football League Trophy") || Is("EFL Vertu Trophy") || Is("Vertu Trophy") => "images/leagues/EFL_vertu_Trophy_lpgp.svg",
             _ when IsExact("Premier League") => "images/leagues/premier-league-logo-brandlogos.net_8gx2ul0qq.svg",
+            _ when Is("USL Championship") => "images/leagues/USL_Championship-logo.svg",
             _ when Is("Championship") => "images/leagues/EFL_Championship-VM8vCs3X_brandlogos.net.svg",
             _ when Is("League 1") || Is("League One") => "images/leagues/EFL_League_One-OpT6pjxfV_brandlogos.net.svg",
             _ when Is("League 2") || Is("League Two") => "images/leagues/EFL_League_Two-O9RxRtxBf_brandlogos.net.svg",
@@ -56,6 +57,7 @@ public static class LeagueLogoMapper
             _ when Is("UEFA Champions League") || Is("Champions League") => "images/leagues/uefa-champions-league-logo-brandlogos.net_iyyz8y0dw.svg",
             _ when Is("UEFA Europa League") || Is("Europa League") => "images/leagues/uefa-europa-league-2024-logo-brandlogos.net_j9ualbg4k.svg",
             _ when Is("UEFA Conference League") || Is("Conference League") || Is("Europa Conference League") => "images/leagues/uefa-europa-conference-league-logo-75E25sU4_brandlogos.net.svg",
+            _ when Is("GFF League") => "images/leagues/gambia_gambia-national-team.football-logos.cc.svg",
             _ => string.Empty
         };
 
