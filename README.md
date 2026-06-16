@@ -67,3 +67,4 @@ VardyParty.Core/             # Shared business logic library
 - Reactive programming (`IObservable` / `IObserver`) for tournament updates and progress
 - Platform abstraction via `INativeVideoPlayerService`
 - Orchestrator pattern for stream resolution workflow
+
