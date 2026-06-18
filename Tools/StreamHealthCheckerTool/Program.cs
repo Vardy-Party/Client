@@ -35,12 +35,12 @@ internal class Program
         var serviceProvider = services.BuildServiceProvider();
 
         services
-            .BindConfiguration<APISettings>("Api")
-            .BindConfiguration<GamesApiSettings>("GamesApi")
-            .BindConfiguration<StreamHealthSettings>("StreamHealth")
-            .BindConfiguration<Auth0Settings>("Auth0")
-            .BindConfiguration<BbcFixturesSettings>("BbcFixtures")
-            .BindConfiguration<ApiTokenSettings>("ApiToken");
+            .BindConfiguration<APISettings>(APISettings.SectionName)
+            .BindConfiguration<GamesApiSettings>(GamesApiSettings.SectionName)
+            .BindConfiguration<StreamHealthSettings>(StreamHealthSettings.SectionName)
+            .BindConfiguration<Auth0Settings>(Auth0Settings.SectionName)
+            .BindConfiguration<BbcFixturesSettings>(BbcFixturesSettings.SectionName)
+            .BindConfiguration<ApiTokenSettings>(ApiTokenSettings.SectionName);
 
         var apiService = serviceProvider.GetRequiredService<IApiService>();
         var checker = serviceProvider.GetRequiredService<IStreamHealthChecker>();
