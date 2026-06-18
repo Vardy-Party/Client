@@ -599,6 +599,74 @@ namespace VardyParty.Core.Tests
         }
 
         [Fact]
+        public void FuzzyMatch_KoreaRepublic_Matches_SouthKorea()
+        {
+            var kickoff = new DateTime(2026, 6, 18, 23, 0, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                new Game { Home = "Mexico", Away = "Korea Republic", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Mexico", "South Korea", kickoff, "", false, false, false, null,
+                    null, null, "mexico.svg", "south-korea.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("Mexico", g.BBCHome);
+            Assert.Equal("South Korea", g.BBCAway);
+            Assert.Equal("FIFA World Cup", g.BBCLeague);
+        }
+
+        [Fact]
+        public void FuzzyMatch_IvoryCoast_Matches_CoteDIvoire()
+        {
+            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                new Game { Home = "Ivory Coast", Away = "Ecuador", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Côte d'Ivoire", "Ecuador", kickoff, "", false, false, false, null,
+                    null, null, "ivory-coast.svg", "ecuador.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("Côte d'Ivoire", g.BBCHome);
+            Assert.Equal("Ecuador", g.BBCAway);
+            Assert.Equal("FIFA World Cup", g.BBCLeague);
+        }
+
+        [Fact]
+        public void FuzzyMatch_IvoryCoast_Matches_CoteDIvoire_WithoutDiacritics()
+        {
+            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                new Game { Home = "Ivory Coast", Away = "Ecuador", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
+            };
+            var bbc = new List<BbcFixture>
+            {
+                new BbcFixture("Cote d'Ivoire", "Ecuador", kickoff, "", false, false, false, null,
+                    null, null, "ivory-coast.svg", "ecuador.svg", "Important Games", false)
+            };
+
+            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            matcher.EnrichGames(games, bbc, "Important Games");
+
+            var g = games.First();
+            Assert.Equal("Cote d'Ivoire", g.BBCHome);
+            Assert.Equal("Ecuador", g.BBCAway);
+        }
+
+        [Fact]
         public void LebanesePremierLeague_KeepsApiLeague_WhenBbcWouldBeLessSpecific()
         {
             var games = new List<Game>

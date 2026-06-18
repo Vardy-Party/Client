@@ -22,8 +22,8 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         { "Kobenhavn", "Copenhagen" },  // Handles: København, FC København, FC Kobenhavn
         { "Internazionale", "Inter Milan" },
         { "usa", "united states" },
-        
-        // Add more as needed
+        { "korea republic", "south korea" },
+        { "ivory coast", "cote d'ivoire" },
     };
 
     public void EnrichGames(List<Game> games, List<BbcFixture> bbcFixtures, string leagueLabel)
