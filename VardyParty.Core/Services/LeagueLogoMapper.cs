@@ -27,6 +27,7 @@ public static class LeagueLogoMapper
             _ when Is("DFB Pokal") => "images/leagues/DFB_2025-logo_brandlogos.net_635b47.svg",
             _ when Is("Olympic") => "images/leagues/milano-cortina-2026-logo-brandlogos.net_wa7r7kszb.svg",
             _ when Is("Coupe de France") => "images/leagues/Coupe_de_France-logo.svg",
+            _ when Is("MLS Next Pro") => "images/leagues/mls-next-pro.svg",
             _ when Is("MLS") || Is("Major League Soccer") || Is("US Major League Soccer") => "images/leagues/MLS-logo-Brandlogos.net.svg",
             _ when Is("Japan J1 League") || Is("J1 League") || Is("J.League") => "images/leagues/J.League.svg",
             _ when Is("Copa del Rey") => "images/leagues/serie-a-logo-brandlogos.net_hklrxdbdu.svg",
@@ -58,6 +59,7 @@ public static class LeagueLogoMapper
             _ when Is("UEFA Europa League") || Is("Europa League") => "images/leagues/uefa-europa-league-2024-logo-brandlogos.net_j9ualbg4k.svg",
             _ when Is("UEFA Conference League") || Is("Conference League") || Is("Europa Conference League") => "images/leagues/uefa-europa-conference-league-logo-75E25sU4_brandlogos.net.svg",
             _ when Is("GFF League") => "images/leagues/gambia_gambia-national-team.football-logos.cc.svg",
+            _ when Is("Northern Super League")=> "images/leagues/Northern_Super_League.svg",
             _ => string.Empty
         };
 
