@@ -7,6 +7,7 @@ using LibVLCSharp.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty;
 using VardyParty.Configuration;
 using VardyParty.Handlers;
 using VardyParty.Health;
@@ -65,6 +66,22 @@ public class App : Application
             configurationBuilder.AddJsonFile(userSecretsPath, true, true);
         }
 
+#if DEBUG
+        var previewBaseUrl = new ConfigurationBuilder()
+            .SetBasePath(appSettingsDirectory)
+            .AddJsonFile(appSettingsFileName, false, true)
+            .Build()
+            .GetSection("Api")["HeadlessBaseUrl-Preview"];
+        if (!string.IsNullOrWhiteSpace(previewBaseUrl))
+        {
+            configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Api:HeadlessBaseUrl"] = previewBaseUrl
+            });
+            Console.WriteLine($"[App] DEBUG: Using preview API at {previewBaseUrl}");
+        }
+#endif
+
         var configuration = configurationBuilder.Build();
 
         var services = new ServiceCollection();
@@ -114,7 +131,13 @@ public class App : Application
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>();
         services.AddHttpClient<IApiService, ApiService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
+            .ConfigureHttpClient(client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    VardyPartyClientApiVersion.HeaderName,
+                    VardyPartyClientApiVersion.DefaultHeaderValue);
+            });
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler

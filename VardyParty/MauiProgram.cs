@@ -1,9 +1,10 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using VardyParty;
 using VardyParty.Components.Pages;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
@@ -159,6 +160,17 @@ public static class MauiProgram
         }
         
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
+#if DEBUG
+        var previewBaseUrl = builder.Configuration["Api:HeadlessBaseUrl-Preview"];
+        if (!string.IsNullOrWhiteSpace(previewBaseUrl))
+        {
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Api:HeadlessBaseUrl"] = previewBaseUrl
+            });
+            Console.WriteLine($"[MauiProgram] DEBUG: Using preview API at {previewBaseUrl}");
+        }
+#endif
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
                           ?? throw new InvalidOperationException("Missing Api configuration section.");
 
@@ -249,7 +261,13 @@ public static class MauiProgram
             .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
         builder.Services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
+            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings))
+            .ConfigureHttpClient(client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    VardyPartyClientApiVersion.HeaderName,
+                    VardyPartyClientApiVersion.DefaultHeaderValue);
+            });
         builder.Services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {

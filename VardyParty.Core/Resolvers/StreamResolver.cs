@@ -79,7 +79,7 @@ public class StreamResolver(
         {
             logger.LogInformation("[StreamResolver] Resolving m3u8 URL for single stream: {Channel}", stream.Channel);
 
-            var m3u8Url = await GetM3U8UrlInternalAsync(stream.Url, cancellationToken);
+            var m3u8Url = await GetM3U8UrlInternalAsync(stream, cancellationToken);
 
             if (!string.IsNullOrEmpty(m3u8Url))
             {
@@ -110,11 +110,19 @@ public class StreamResolver(
     {
         var enriched = new EnrichedStream { Stream = stream, Status = StreamResolutionStatus.Pending };
 
+        if (stream.IsCountdown)
+        {
+            enriched.Status = StreamResolutionStatus.Failed;
+            enriched.ErrorMessage = "Stream page is in countdown (not started yet)";
+            logger.LogInformation("[StreamResolver] Skipping {Channel}: countdown active on stream page", stream.Channel);
+            return enriched;
+        }
+
         try
         {
             // Step 1: Resolve m3u8 URL
             logger.LogInformation("[StreamResolver] Resolving m3u8 for {Channel}", stream.Channel);
-            var m3u8Url = await GetM3U8UrlInternalAsync(stream.Url, cancellationToken);
+            var m3u8Url = await GetM3U8UrlInternalAsync(stream, cancellationToken);
 
             if (string.IsNullOrEmpty(m3u8Url))
             {
@@ -164,18 +172,37 @@ public class StreamResolver(
         }
     }
 
-    private async Task<string?> GetM3U8UrlInternalAsync(string streamUrl, CancellationToken cancellationToken)
+    private static string? GetPlayerStreamName(Stream stream)
+    {
+        if (!stream.RequiresV2StreamSelection || stream.IsCountdown)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(stream.PlayerStream))
+        {
+            return stream.PlayerStream.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(stream.Channel) ? null : stream.Channel.Trim();
+    }
+
+    private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)
     {
         try
         {
-            logger.LogInformation("[StreamResolver] Fetching M3U8 from local LAN service for source {Url}", streamUrl);
-            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl, cancellationToken);
-            logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", streamUrl);
+            var playerStreamName = GetPlayerStreamName(stream);
+            logger.LogInformation(
+                "[StreamResolver] Fetching M3U8 from local LAN service for source {Url}{StreamSuffix}",
+                stream.Url,
+                playerStreamName is null ? "" : $" (stream={playerStreamName})");
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(stream.Url, playerStreamName, cancellationToken);
+            logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", stream.Url);
             return result?.Url;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "[StreamResolver] Failed to fetch M3U8 for {Url}", streamUrl);
+            logger.LogError(ex, "[StreamResolver] Failed to fetch M3U8 for {Url}", stream.Url);
             return null;
         }
     }

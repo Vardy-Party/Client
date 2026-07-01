@@ -46,6 +46,17 @@ public class LocalLanPlayService(
 
     private string? _cachedBaseUrl;
     private DateTimeOffset _cachedBaseUrlAt = DateTimeOffset.MinValue;
+    private string[] _cachedCapabilities = [];
+    private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
+
+    public async Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        return SupportsPlayStreamQuery(_cachedCapabilities);
+    }
+
+    private static bool SupportsPlayStreamQuery(IEnumerable<string> capabilities) =>
+        capabilities.Any(c => string.Equals(c, "play.stream", StringComparison.OrdinalIgnoreCase));
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
     {
@@ -64,7 +75,13 @@ public class LocalLanPlayService(
         return await CheckHealthAsync(baseUrl, cancellationToken);
     }
 
-    public async Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default)
+    public Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
+        ResolveM3U8UrlAsync(streamUrl, playerStreamName: null, cancellationToken);
+
+    public async Task<M3U8Response?> ResolveM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(streamUrl))
             return null;
@@ -76,7 +93,18 @@ public class LocalLanPlayService(
             return null;
         }
 
-        var resolved = await CallPlayEndpointAsync(baseUrl, streamUrl, cancellationToken);
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        var effectiveStreamName = SupportsPlayStreamQuery(_cachedCapabilities)
+            ? playerStreamName
+            : null;
+        if (!string.IsNullOrWhiteSpace(playerStreamName) && effectiveStreamName is null)
+        {
+            logger.LogDebug(
+                "[LocalLanPlay] Local service does not advertise play.stream; resolving without stream query param for {Url}",
+                streamUrl);
+        }
+
+        var resolved = await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
         if (resolved != null)
             return resolved;
 
@@ -85,7 +113,68 @@ public class LocalLanPlayService(
         if (string.IsNullOrWhiteSpace(baseUrl))
             return null;
 
-        return await CallPlayEndpointAsync(baseUrl, streamUrl, cancellationToken);
+        return await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+    }
+
+    private async Task RefreshCapabilitiesIfNeededAsync(CancellationToken cancellationToken)
+    {
+        if (_capabilitiesCachedAt != DateTimeOffset.MinValue
+            && DateTimeOffset.UtcNow - _capabilitiesCachedAt < DiscoveryCacheTtl
+            && _cachedCapabilities.Length > 0)
+        {
+            return;
+        }
+
+        var baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _cachedCapabilities = [];
+            _capabilitiesCachedAt = DateTimeOffset.UtcNow;
+            return;
+        }
+
+        _cachedCapabilities = await FetchCapabilitiesFromHealthAsync(baseUrl, cancellationToken);
+        _capabilitiesCachedAt = DateTimeOffset.UtcNow;
+    }
+
+    private async Task<string[]> FetchCapabilitiesFromHealthAsync(string baseUrl, CancellationToken cancellationToken)
+    {
+        var healthUrl = $"{baseUrl.TrimEnd('/')}/health";
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+            var response = await httpClient.GetAsync(healthUrl, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return [];
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cts.Token);
+            using var doc = JsonDocument.Parse(json);
+            return ParseCapabilities(doc.RootElement);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[LocalLanPlay] Failed to read capabilities from {Url}", healthUrl);
+            return [];
+        }
+    }
+
+    private static string[] ParseCapabilities(JsonElement root)
+    {
+        if (!root.TryGetProperty("capabilities", out var capabilitiesElement)
+            || capabilitiesElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return capabilitiesElement.EnumerateArray()
+            .Select(element => element.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToArray();
     }
 
     private async Task<bool> CheckHealthAsync(string baseUrl, CancellationToken cancellationToken)
@@ -107,6 +196,10 @@ public class LocalLanPlayService(
             else
             {
                 logger.LogDebug("[LocalLanPlay] Health check successful for {Url}", healthUrl);
+                var json = await response.Content.ReadAsStringAsync(cts.Token);
+                using var doc = JsonDocument.Parse(json);
+                _cachedCapabilities = ParseCapabilities(doc.RootElement);
+                _capabilitiesCachedAt = DateTimeOffset.UtcNow;
             }
 
             return isOk;
@@ -120,9 +213,17 @@ public class LocalLanPlayService(
         }
     }
 
-    private async Task<M3U8Response?> CallPlayEndpointAsync(string baseUrl, string streamUrl, CancellationToken cancellationToken)
+    private async Task<M3U8Response?> CallPlayEndpointAsync(
+        string baseUrl,
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken)
     {
         var url = $"{baseUrl.TrimEnd('/')}/play/{Uri.EscapeDataString(streamUrl)}";
+        if (!string.IsNullOrWhiteSpace(playerStreamName))
+        {
+            url += $"?stream={Uri.EscapeDataString(playerStreamName.Trim())}";
+        }
 
         try
         {
@@ -242,6 +343,8 @@ public class LocalLanPlayService(
 
                 var host = received.RemoteEndPoint.Address.ToString();
                 var discoveredUrl = $"http://{host}:{httpPort}";
+                _cachedCapabilities = ParseCapabilities(root);
+                _capabilitiesCachedAt = DateTimeOffset.UtcNow;
                 logger.LogInformation("[LocalLanPlay] Successfully discovered local service endpoint: {Endpoint}", discoveredUrl);
                 return discoveredUrl;
             }
@@ -262,5 +365,7 @@ public class LocalLanPlayService(
     {
         _cachedBaseUrl = null;
         _cachedBaseUrlAt = DateTimeOffset.MinValue;
+        _cachedCapabilities = [];
+        _capabilitiesCachedAt = DateTimeOffset.MinValue;
     }
 }

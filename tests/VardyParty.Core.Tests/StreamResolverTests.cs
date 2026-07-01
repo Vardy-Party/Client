@@ -43,7 +43,7 @@ public class StreamResolverTests
         const string m3u8Url = "http://m3u8.com/playlist.m3u8?token=abc";
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response { Url = m3u8Url });
 
         _healthCheckerMock
@@ -81,7 +81,7 @@ public class StreamResolverTests
             .ToList();
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response { Url = "http://m3u8.com/playlist.m3u8" });
 
         _healthCheckerMock
@@ -107,7 +107,7 @@ public class StreamResolverTests
         var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((M3U8Response?)null);
 
         // Act
@@ -132,7 +132,7 @@ public class StreamResolverTests
         const string m3u8Url = "http://m3u8.com/playlist.m3u8";
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response { Url = m3u8Url });
 
         _healthCheckerMock
@@ -158,7 +158,7 @@ public class StreamResolverTests
         var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((M3U8Response?)null);
 
         // Act
@@ -177,7 +177,7 @@ public class StreamResolverTests
         const string m3u8Url = "http://m3u8.com/playlist.m3u8";
 
         _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response { Url = m3u8Url });
 
         // Act

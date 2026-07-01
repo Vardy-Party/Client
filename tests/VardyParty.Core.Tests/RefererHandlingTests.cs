@@ -41,7 +41,7 @@ public class RefererHandlingTests
         var healthChecker = new CapturingHealthChecker();
         var localLanPlayService = new Mock<ILocalLanPlayService>();
         localLanPlayService
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response { Url = "https://cdn.test/playlist.m3u8" });
 
         var resolver =

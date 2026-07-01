@@ -45,10 +45,17 @@ public class ApiService(
 
     public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl)
     {
+        return await GetM3U8UrlAsync(streamUrl, playerStreamName: null);
+    }
+
+    public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName)
+    {
         try
         {
-            logger.LogInformation("[Api] Fetching M3U8 from local LAN service for source {Url}", streamUrl);
-            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl);
+            logger.LogInformation("[Api] Fetching M3U8 from local LAN service for source {Url}{StreamSuffix}",
+                streamUrl,
+                string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName})");
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl, playerStreamName);
             if (!string.IsNullOrEmpty(result?.Url))
             {
                 logger.LogInformation("[Api] M3U8 fetched for {Url}", streamUrl);
@@ -74,7 +81,10 @@ public class ApiService(
         try
         {
             logger.LogInformation("[Api] Resolving m3u8 for playback: {Channel}", stream.Channel);
-            var m3u8Response = await GetM3U8UrlAsync(stream.Url);
+            var playerStreamName = stream.RequiresV2StreamSelection && !stream.IsCountdown
+                ? (string.IsNullOrWhiteSpace(stream.PlayerStream) ? stream.Channel : stream.PlayerStream)
+                : null;
+            var m3u8Response = await GetM3U8UrlAsync(stream.Url, playerStreamName);
 
             if (m3u8Response != null && !string.IsNullOrEmpty(m3u8Response.Url))
             {
