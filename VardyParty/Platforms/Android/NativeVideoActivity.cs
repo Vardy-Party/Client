@@ -186,6 +186,7 @@ namespace VardyParty.Platforms.Android
         private TextView? _titleView;
         private TextView? _statusView;
         private TextView? _indexView;
+        private TextView? _sourceBadgeView;
         private TextView? _qualityView;
         private TextView? _resBrView;
         private global::Android.Views.View? _overlayContainer;
@@ -312,6 +313,14 @@ namespace VardyParty.Platforms.Android
             _indexView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _indexView.SetTextColor(global::Android.Graphics.Color.White);
 
+            _sourceBadgeView = new TextView(this)
+            {
+                Visibility = global::Android.Views.ViewStates.Gone
+            };
+            _sourceBadgeView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, smallSp);
+            _sourceBadgeView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
+            _sourceBadgeView.SetPadding((int)(6 * density), (int)(1 * density), (int)(6 * density), (int)(1 * density));
+
             _qualityView = new TextView(this);
             _qualityView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _qualityView.SetTextColor(global::Android.Graphics.Color.White);
@@ -331,6 +340,7 @@ namespace VardyParty.Platforms.Android
             linear.AddView(_titleView);
             linear.AddView(_statusView);
             linear.AddView(_indexView);
+            linear.AddView(_sourceBadgeView);
             linear.AddView(_qualityView);
             linear.AddView(_resBrView);
             linear.Alpha = 0.95f;
@@ -867,6 +877,34 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private void ApplySourceBadge(string? label)
+        {
+            if (_sourceBadgeView == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
+                return;
+            }
+
+            _sourceBadgeView.Text = label;
+            if (string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase))
+            {
+                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#1e3a5f"));
+                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#93c5fd"));
+            }
+            else
+            {
+                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#3b0764"));
+                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#d8b4fe"));
+            }
+
+            _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Visible;
+        }
+
         private static string? BuildAspect(string? resolution)
         {
             if (string.IsNullOrEmpty(resolution)) return null;
@@ -886,6 +924,7 @@ namespace VardyParty.Platforms.Android
                 if (_titleView != null) _titleView.Text = string.Empty;
                 if (_statusView != null) _statusView.Text = string.Empty;
                 if (_indexView != null) _indexView.Text = string.Empty;
+                if (_sourceBadgeView != null) _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
                 if (_qualityView != null) _qualityView.Text = string.Empty;
                 if (_resBrView != null) _resBrView.Text = string.Empty;
                 return;
@@ -953,6 +992,7 @@ namespace VardyParty.Platforms.Android
             if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channel);
             if (_statusView != null) _statusView.Text = statusLine;
             if (_indexView != null) _indexView.Text = indexLine;
+            ApplySourceBadge(_switching?.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
             if (_qualityView != null) _qualityView.Text = qualityLabel;
             // Build lines: resolution (+fr), bitrate, buffer each on its own line
             var lines = new List<string>();
@@ -1181,7 +1221,7 @@ namespace VardyParty.Platforms.Android
                         _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
                     }
 
-                    await _healthReporter.ReportPlaybackMetricsAsync(_m3u8Url, _refererUrl, metrics);
+                    await _healthReporter.ReportPlaybackMetricsAsync(_m3u8Url, _refererUrl, metrics: metrics);
                 }
                 catch { }
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -1198,7 +1238,7 @@ namespace VardyParty.Platforms.Android
                     _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
                 }
 
-                _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics);
+                _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics: metrics);
             }
             catch { }
         }
@@ -1215,7 +1255,7 @@ namespace VardyParty.Platforms.Android
                     _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
                 }
 
-                _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics);
+                _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics: metrics);
             }
             catch { }
         }
@@ -1226,7 +1266,7 @@ namespace VardyParty.Platforms.Android
             try
             {
                 _metricsWindow.AddError();
-                _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error);
+                _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error: error);
             }
             catch { }
         }

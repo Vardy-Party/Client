@@ -262,7 +262,7 @@ internal static class WindowsWindowDragHelper
 
                   function canDrag(el) {
                     if (!el) return false;
-                    if (el.closest('button,a,input,textarea,select,label,.game-card,.header-auth-button,[role="button"]')) {
+                    if (el.closest('button,a,input,textarea,select,label,.game-card,.header-auth-button,[role="button"],.flyout-menu,.menu-backdrop,.app-menu-root,.league-filter-list,.no-drag')) {
                       return false;
                     }
                     return !!el.closest('.page-shell,.auth-hero,#app');

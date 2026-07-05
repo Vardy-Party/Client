@@ -2,6 +2,7 @@ using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
+using VardyParty.Resolvers;
 using VardyParty.Services;
 using StreamModel = VardyParty.Models.Stream;
 
@@ -19,7 +20,7 @@ public class StreamSelectionCoordinator(
     private readonly Queue<int> _pendingIndexes = new();
     private readonly HashSet<int> _testedIndexes = new();
     private readonly HashSet<int> _workingIndexes = new();
-    private readonly Dictionary<string, int> _streamIndexByUrl = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _streamIndexByKey = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _paused;
     private int _totalStreams;
@@ -37,8 +38,10 @@ public class StreamSelectionCoordinator(
             return;
         }
 
-        _totalStreams = streamsResponse.Streams.Count;
-        BuildCandidates(streamsResponse.Streams);
+        var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
+            V2StreamExpander.Expand(streamsResponse.Streams));
+        _totalStreams = expandedStreams.Count;
+        BuildCandidates(expandedStreams);
 
         List<int> testOrder = new();
         try
@@ -158,10 +161,10 @@ public class StreamSelectionCoordinator(
         index = -1;
         if (string.IsNullOrWhiteSpace(streamUrlOrReferer)) return false;
 
-        var normalized = NormalizeStreamUrl(streamUrlOrReferer);
-        if (_streamIndexByUrl.TryGetValue(normalized, out index)) return true;
+        var normalized = StreamHealthIdentity.NormalizeStreamUrl(streamUrlOrReferer);
+        if (_streamIndexByKey.TryGetValue(normalized, out index)) return true;
 
-        return _streamIndexByUrl.TryGetValue(streamUrlOrReferer, out index);
+        return _streamIndexByKey.TryGetValue(streamUrlOrReferer, out index);
     }
 
     public void Reset()
@@ -172,7 +175,7 @@ public class StreamSelectionCoordinator(
         _pendingIndexes.Clear();
         _testedIndexes.Clear();
         _workingIndexes.Clear();
-        _streamIndexByUrl.Clear();
+        _streamIndexByKey.Clear();
         PublishProgress();
     }
 
@@ -181,7 +184,8 @@ public class StreamSelectionCoordinator(
         for (var i = 0; i < streams.Count; i++)
         {
             var stream = streams[i];
-            var normalized = NormalizeStreamUrl(stream.Url);
+            var normalized = StreamHealthIdentity.NormalizeStreamUrl(stream.Url);
+            var streamKey = StreamHealthIdentity.BuildStreamKey(stream.Url, StreamHealthIdentity.GetStreamName(stream));
             var candidate = new StreamSelectionCandidate
             {
                 Index = i,
@@ -190,14 +194,19 @@ public class StreamSelectionCoordinator(
             };
 
             _candidates.Add(candidate);
+            if (!string.IsNullOrWhiteSpace(streamKey))
+            {
+                _streamIndexByKey[streamKey] = i;
+            }
+
             if (!string.IsNullOrWhiteSpace(normalized))
             {
-                _streamIndexByUrl[normalized] = i;
+                _streamIndexByKey[normalized] = i;
             }
 
             if (!string.IsNullOrWhiteSpace(stream.Url))
             {
-                _streamIndexByUrl[stream.Url] = i;
+                _streamIndexByKey[stream.Url] = i;
             }
         }
     }
@@ -216,19 +225,7 @@ public class StreamSelectionCoordinator(
         
         foreach (var recommendedItem in recommendations.Recommended)
         {
-            // Get URL from the recommendation item
-            var recommendedUrl = recommendedItem.Url;
-            if (string.IsNullOrWhiteSpace(recommendedUrl)) continue;
-
-            if (!_streamIndexByUrl.TryGetValue(recommendedUrl, out var index))
-            {
-                var normalized = NormalizeStreamUrl(recommendedUrl);
-                if (!string.IsNullOrWhiteSpace(normalized))
-                {
-                    _streamIndexByUrl.TryGetValue(normalized, out index);
-                }
-            }
-
+            var index = ResolveRecommendationIndex(recommendedItem.Url, recommendedItem.StreamName);
             if (index < 0 || index >= totalStreams || !seen.Add(index))
             {
                 continue;
@@ -245,7 +242,39 @@ public class StreamSelectionCoordinator(
             }
         }
 
-        return ordered;
+        return StreamCatalogSourceOrderer.OrderIndexesFbBeforeMp(
+            ordered,
+            index => _candidates.First(c => c.Index == index).Stream);
+    }
+
+    private int ResolveRecommendationIndex(string recommendedUrl, string? recommendedStreamName)
+    {
+        if (!string.IsNullOrWhiteSpace(recommendedStreamName))
+        {
+            var compositeKey = StreamHealthIdentity.BuildStreamKey(recommendedUrl, recommendedStreamName);
+            if (_streamIndexByKey.TryGetValue(compositeKey, out var compositeIndex))
+            {
+                return compositeIndex;
+            }
+
+            var normalizedComposite = StreamHealthIdentity.BuildStreamKey(
+                StreamHealthIdentity.NormalizeStreamUrl(recommendedUrl),
+                recommendedStreamName);
+            if (_streamIndexByKey.TryGetValue(normalizedComposite, out compositeIndex))
+            {
+                return compositeIndex;
+            }
+        }
+
+        if (_streamIndexByKey.TryGetValue(recommendedUrl, out var index))
+        {
+            return index;
+        }
+
+        var normalized = StreamHealthIdentity.NormalizeStreamUrl(recommendedUrl);
+        return !string.IsNullOrWhiteSpace(normalized) && _streamIndexByKey.TryGetValue(normalized, out index)
+            ? index
+            : -1;
     }
 
     private void PublishProgress(
@@ -265,17 +294,5 @@ public class StreamSelectionCoordinator(
         };
 
         _progressSubject.OnNext(next);
-    }
-
-    private static string NormalizeStreamUrl(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return uri.GetLeftPart(UriPartial.Path);
-        }
-
-        var queryIndex = url.IndexOf('?');
-        return queryIndex >= 0 ? url[..queryIndex] : url;
     }
 }

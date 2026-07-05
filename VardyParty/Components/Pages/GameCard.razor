@@ -1,8 +1,15 @@
 @using VardyParty.Models
 @using VardyParty.Services
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
 
-<div class="@CardClass" tabindex="0" @onclick="OnCardClick" @ref="cardRef">
+<div class="@CardClass"
+     tabindex="0"
+     role="button"
+     aria-pressed="@IsSelected"
+     @onclick="OnCardClick"
+     @onkeydown="OnCardKeyDown"
+     @ref="cardRef">
     <div class="league-badge@(string.IsNullOrEmpty(LeagueLogoUrl) ? " league-badge-empty" : string.Empty)">
         @if (!string.IsNullOrEmpty(LeagueLogoUrl))
         {
@@ -111,6 +118,14 @@
         if (OnClick.HasDelegate)
         {
             await OnClick.InvokeAsync(Game);
+        }
+    }
+
+    private async Task OnCardKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar")
+        {
+            await OnCardClick();
         }
     }
 

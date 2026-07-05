@@ -67,18 +67,25 @@ public class App : Application
         }
 
 #if DEBUG
-        var previewBaseUrl = new ConfigurationBuilder()
+        var apiConfig = new ConfigurationBuilder()
             .SetBasePath(appSettingsDirectory)
             .AddJsonFile(appSettingsFileName, false, true)
             .Build()
-            .GetSection("Api")["HeadlessBaseUrl-Preview"];
-        if (!string.IsNullOrWhiteSpace(previewBaseUrl))
+            .GetSection("Api");
+        var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
+        var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
+        {
+            "preview" => apiConfig["HeadlessBaseUrl-Preview"],
+            "production" or "prod" => apiConfig["HeadlessBaseUrl"],
+            _ => apiConfig["HeadlessBaseUrl-Local"],
+        };
+        if (!string.IsNullOrWhiteSpace(debugBaseUrl))
         {
             configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Api:HeadlessBaseUrl"] = previewBaseUrl
+                ["Api:HeadlessBaseUrl"] = debugBaseUrl
             });
-            Console.WriteLine($"[App] DEBUG: Using preview API at {previewBaseUrl}");
+            Console.WriteLine($"[App] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "local"})");
         }
 #endif
 
@@ -110,6 +117,8 @@ public class App : Application
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
         services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
         services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
+        services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
+        services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();

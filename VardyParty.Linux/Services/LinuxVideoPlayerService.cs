@@ -101,7 +101,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         Func<Task>? onNextStreamRequested = null,
         string? league = null,
         string? homeTeam = null,
-        string? awayTeam = null)
+        string? awayTeam = null,
+        IReadOnlyDictionary<string, string>? requestHeaders = null)
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Playing video: {Title}", title);
         _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", m3u8Url);

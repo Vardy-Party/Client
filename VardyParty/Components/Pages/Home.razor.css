@@ -14,6 +14,7 @@
 
 .page-header {
     flex: 0 0 auto;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.28);
 }
 
 .header-brand {
@@ -94,8 +95,92 @@ h1 {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 50px;
-    gap: 20px;
+    padding: 50px 24px;
+    gap: 12px;
+    text-align: center;
+}
+
+.empty-state-muted {
+    min-height: 0;
+    padding: 0;
+}
+
+.empty-state-title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.empty-state-text {
+    margin: 0;
+    max-width: 420px;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+.state-icon {
+    font-size: 40px;
+    line-height: 1;
+    margin-bottom: 4px;
+}
+
+.state-icon-loading {
+    width: 44px;
+    height: 44px;
+    border: 3px solid rgba(74, 158, 255, 0.2);
+    border-top-color: var(--primary-blue);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+
+.state-icon-auth {
+    font-size: 36px;
+}
+
+.auth-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.schedule-section {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 8px 20px 24px;
+    box-sizing: border-box;
+}
+
+.schedule-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 0 2px;
+}
+
+.schedule-title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
+}
+
+.schedule-count {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 4px 10px;
+    white-space: nowrap;
 }
 
 .status-message {
@@ -128,10 +213,8 @@ h1 {
 .games-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 15px;
-    padding: 16px 20px 20px;
-    max-width: 1200px;
-    margin: 0 auto;
+    gap: 12px;
+    padding: 0;
     width: 100%;
 }
 
@@ -434,9 +517,11 @@ h1 {
     flex-direction: column;
     align-items: center;
     gap: 16px;
-    padding: 16px;
-    border-radius: 8px;
-    background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(74,158,255,0.04));
+    padding: 28px 24px;
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(74, 158, 255, 0.08), rgba(123, 90, 255, 0.06));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
     width: min(960px, calc(100vw - 48px));
     margin: 24px auto;
     box-sizing: border-box;

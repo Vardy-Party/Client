@@ -44,26 +44,15 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Processing batch {BatchNumber} with {Count} streams",
                 i / batchSize + 1, batch.Count);
 
-            // Resolve and test each stream in the batch in parallel
+            // Resolve streams in parallel but yield in input order so catalog priority is preserved.
             var tasks = batch.Select(stream => ResolveAndTestStreamAsync(stream, cancellationToken)).ToList();
+            var results = await Task.WhenAll(tasks);
 
-            // As each completes, yield it immediately (not waiting for whole batch)
-            var completed = new HashSet<Task>();
-            while (completed.Count < tasks.Count)
+            foreach (var enriched in results)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var nextCompleted = await Task.WhenAny(tasks.Except(completed).ToList());
-                completed.Add(nextCompleted);
-
-                // Get the result and yield it
-                if (nextCompleted is Task<EnrichedStream> task)
-                {
-                    var enriched = await task;
-                    logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
-                        enriched.Stream.Channel, enriched.Status);
-                    yield return enriched;
-                }
+                logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
+                    enriched.Stream.Channel, enriched.Status);
+                yield return enriched;
             }
         }
 
@@ -122,7 +111,8 @@ public class StreamResolver(
         {
             // Step 1: Resolve m3u8 URL
             logger.LogInformation("[StreamResolver] Resolving m3u8 for {Channel}", stream.Channel);
-            var m3u8Url = await GetM3U8UrlInternalAsync(stream, cancellationToken);
+            var m3u8Response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
+            var m3u8Url = m3u8Response?.Url;
 
             if (string.IsNullOrEmpty(m3u8Url))
             {
@@ -135,7 +125,8 @@ public class StreamResolver(
 
             enriched.ResolvedM3U8Url = m3u8Url;
             enriched.Status = StreamResolutionStatus.Resolved;
-            enriched.Referer = stream.Url;
+            enriched.RequestHeaders = m3u8Response?.RequestHeaders;
+            enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
             // Step 2: Test health and extract metadata
@@ -144,17 +135,23 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
             var health = await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken);
             enriched.Health = health;
-            enriched.Status = health.Status == StreamHealthStatus.Healthy
-                ? StreamResolutionStatus.Healthy
-                : StreamResolutionStatus.Failed;
-
-            if (enriched.Status == StreamResolutionStatus.Healthy)
+            if (health.Status == StreamHealthStatus.Healthy)
             {
+                enriched.Status = StreamResolutionStatus.Healthy;
                 logger.LogInformation("[StreamResolver] Stream {Channel} is healthy: {Quality}",
                     stream.Channel, health.GetQualityLabel());
             }
+            else if (health.Status is StreamHealthStatus.SegmentUnreachable or StreamHealthStatus.ManifestUnreachable)
+            {
+                // LocalService already resolved a live m3u8 via Playwright; client CDN probes often fail HEAD/referrer checks.
+                enriched.Status = StreamResolutionStatus.Healthy;
+                logger.LogWarning(
+                    "[StreamResolver] Health probe reported {Status} for {Channel}; trusting LocalService m3u8 for playback",
+                    health.Status, stream.Channel);
+            }
             else
             {
+                enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = $"Health check failed: {health.Status}";
                 logger.LogWarning("[StreamResolver] Stream {Channel} failed health check: {Status}",
                     stream.Channel, health.Status);
@@ -189,6 +186,12 @@ public class StreamResolver(
 
     private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)
     {
+        var response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
+        return response?.Url;
+    }
+
+    private async Task<M3U8Response?> ResolveM3U8ResponseInternalAsync(Stream stream, CancellationToken cancellationToken)
+    {
         try
         {
             var playerStreamName = GetPlayerStreamName(stream);
@@ -198,12 +201,37 @@ public class StreamResolver(
                 playerStreamName is null ? "" : $" (stream={playerStreamName})");
             var result = await localLanPlayService.ResolveM3U8UrlAsync(stream.Url, playerStreamName, cancellationToken);
             logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", stream.Url);
-            return result?.Url;
+            return result;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "[StreamResolver] Failed to fetch M3U8 for {Url}", stream.Url);
             return null;
         }
+    }
+
+    private static string ResolveReferer(M3U8Response? response, string fallbackUrl)
+    {
+        var capturedReferer = GetHeaderValue(response?.RequestHeaders, "referer");
+        return string.IsNullOrWhiteSpace(capturedReferer) ? fallbackUrl : capturedReferer;
+    }
+
+    private static string? GetHeaderValue(IReadOnlyDictionary<string, string>? headers, string headerName)
+    {
+        if (headers is null || headers.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var pair in headers)
+        {
+            if (pair.Key.Equals(headerName, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
     }
 }

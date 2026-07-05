@@ -18,6 +18,7 @@ using VardyParty.Platforms.Android;
 #endif
 using VardyParty.Providers;
 using VardyParty.Resolvers;
+using VardyParty.MauiServices;
 using VardyParty.Services;
 #if WINDOWS
 using Microsoft.Maui.Handlers;
@@ -91,6 +92,9 @@ public static class MauiProgram
 
     public static MauiApp CreateMauiApp()
     {
+#if WINDOWS
+        WindowsEventLogger.Info("MauiProgram", "CreateMauiApp starting");
+#endif
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
@@ -161,14 +165,21 @@ public static class MauiProgram
         
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
 #if DEBUG
-        var previewBaseUrl = builder.Configuration["Api:HeadlessBaseUrl-Preview"];
-        if (!string.IsNullOrWhiteSpace(previewBaseUrl))
+        // Default to local wrangler for dev; set VARDYPARTY_DEBUG_API=preview to hit preview workers.
+        var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
+        var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
+        {
+            "preview" => builder.Configuration["Api:HeadlessBaseUrl-Preview"],
+            "production" or "prod" => builder.Configuration["Api:HeadlessBaseUrl"],
+            _ => builder.Configuration["Api:HeadlessBaseUrl-Local"],
+        };
+        if (!string.IsNullOrWhiteSpace(debugBaseUrl))
         {
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Api:HeadlessBaseUrl"] = previewBaseUrl
+                ["Api:HeadlessBaseUrl"] = debugBaseUrl
             });
-            Console.WriteLine($"[MauiProgram] DEBUG: Using preview API at {previewBaseUrl}");
+            Console.WriteLine($"[MauiProgram] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "local"})");
         }
 #endif
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
@@ -233,6 +244,8 @@ public static class MauiProgram
             .AddSingleton<IBbcHtmlParser, BbcHtmlParser>()
             .AddSingleton<IStreamDeduplicator, StreamDeduplicator>()
             .AddSingleton<IEnrichedGameService, EnrichedGameService>()
+            .AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>()
+            .AddSingleton<ILeagueFilterService, LeagueFilterService>()
             .AddSingleton<IHomePagePresentationService, HomePagePresentationService>()
             .AddSingleton<IStreamSwitchingService, StreamSwitchingService>()
             .AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>()

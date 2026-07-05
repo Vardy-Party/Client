@@ -9,41 +9,55 @@ public class StreamHealthReporter(
     ISessionIdProvider sessionIdProvider,
     SelectionState selectionState) : IStreamHealthReporter
 {
-    public Task ReportPlaybackStartedAsync(string? streamUrl, string? refererUrl, PlaybackMetrics? metrics = null,
-        CancellationToken cancellationToken = default)
-    {
-        return ReportAsync("working", streamUrl, refererUrl, metrics, null, true, cancellationToken);
-    }
+    public Task ReportPlaybackStartedAsync(
+        string? streamUrl,
+        string? refererUrl,
+        string? streamName = null,
+        PlaybackMetrics? metrics = null,
+        CancellationToken cancellationToken = default) =>
+        ReportAsync("working", streamUrl, refererUrl, streamName, metrics, null, true, cancellationToken);
 
-    public Task ReportBufferingAsync(string? streamUrl, string? refererUrl, PlaybackMetrics? metrics = null,
-        CancellationToken cancellationToken = default)
-    {
-        return ReportAsync("buffering", streamUrl, refererUrl, metrics, null, false, cancellationToken);
-    }
+    public Task ReportBufferingAsync(
+        string? streamUrl,
+        string? refererUrl,
+        string? streamName = null,
+        PlaybackMetrics? metrics = null,
+        CancellationToken cancellationToken = default) =>
+        ReportAsync("buffering", streamUrl, refererUrl, streamName, metrics, null, false, cancellationToken);
 
-    public Task ReportPlaybackErrorAsync(string? streamUrl, string? refererUrl, string? error,
-        CancellationToken cancellationToken = default)
-    {
-        return ReportAsync("failed", streamUrl, refererUrl, null, error, false, cancellationToken);
-    }
+    public Task ReportPlaybackErrorAsync(
+        string? streamUrl,
+        string? refererUrl,
+        string? streamName = null,
+        string? error = null,
+        CancellationToken cancellationToken = default) =>
+        ReportAsync("failed", streamUrl, refererUrl, streamName, null, error, false, cancellationToken);
 
-    public Task ReportPlaybackMetricsAsync(string? streamUrl, string? refererUrl, PlaybackMetrics? metrics = null,
-        CancellationToken cancellationToken = default)
-    {
-        return ReportAsync("working", streamUrl, refererUrl, metrics, null, false, cancellationToken);
-    }
+    public Task ReportPlaybackMetricsAsync(
+        string? streamUrl,
+        string? refererUrl,
+        string? streamName = null,
+        PlaybackMetrics? metrics = null,
+        CancellationToken cancellationToken = default) =>
+        ReportAsync("working", streamUrl, refererUrl, streamName, metrics, null, false, cancellationToken);
 
-    public Task ReportBadStreamAsync(string? streamUrl, string? refererUrl, string? reason = null,
+    public Task ReportBadStreamAsync(
+        string? streamUrl,
+        string? refererUrl,
+        string? streamName = null,
+        string? reason = null,
         CancellationToken cancellationToken = default)
     {
         var userReason = string.IsNullOrWhiteSpace(reason) ? "User reported bad stream" : reason;
-        return ReportAsync("user-report", streamUrl, refererUrl, null, userReason, false, cancellationToken);
+        return ReportAsync("user-report", streamUrl, refererUrl, streamName, null, userReason, false,
+            cancellationToken);
     }
 
     private async Task ReportAsync(
         string status,
         string? streamUrl,
         string? refererUrl,
+        string? streamName,
         PlaybackMetrics? metrics,
         string? error,
         bool includeMetadata,
@@ -58,12 +72,12 @@ public class StreamHealthReporter(
         var report = new StreamHealthReport
         {
             StreamUrl = resolvedStreamUrl,
+            StreamName = string.IsNullOrWhiteSpace(streamName) ? null : streamName.Trim(),
             Status = status,
             Quality = DetectQuality(metrics),
             Bitrate = metrics?.BitrateKbps,
             Buffering = status == "buffering" || metrics?.IsBuffering == true ? true : null,
             Error = error,
-            // Include video metadata ONLY on first playback started report
             Resolution = includeMetadata && metrics?.Resolution.HasValue == true
                 ? $"{metrics.Resolution.Value.Width}x{metrics.Resolution.Value.Height}"
                 : null,
@@ -93,7 +107,7 @@ public class StreamHealthReporter(
 
         if (metrics.IsBuffering) return "poor";
 
-        var (width, height) = metrics.Resolution.Value;
+        var (_, height) = metrics.Resolution.Value;
         if (metrics.BitrateKbps >= 2000 && height >= 720) return "excellent";
         if (metrics.BitrateKbps >= 1000 || height >= 480) return "good";
         return "poor";

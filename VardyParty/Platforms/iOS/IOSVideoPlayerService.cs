@@ -38,7 +38,8 @@ namespace VardyParty.Platforms.iOS
             Func<Task>? onNextStreamRequested = null,
             string? league = null,
             string? homeTeam = null,
-            string? awayTeam = null)
+            string? awayTeam = null,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             var tcs = new TaskCompletionSource<PlaybackResult>();
 

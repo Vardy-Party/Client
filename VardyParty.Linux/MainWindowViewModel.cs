@@ -35,6 +35,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
     private readonly IEnrichedGameService _enrichedGameService;
+    private readonly ILeagueFilterService _leagueFilter;
     private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
     private readonly SelectionState _selectionState;
     private readonly IServiceProvider _serviceProvider;
@@ -61,6 +62,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         IAuthLoginService authLoginService,
         IAuthTokenProvider authTokenProvider,
         IEnrichedGameService enrichedGameService,
+        ILeagueFilterService leagueFilter,
         IStreamResolutionOrchestrator streamResolutionOrchestrator,
         SelectionState selectionState,
         IServiceProvider serviceProvider,
@@ -70,6 +72,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _authLoginService = authLoginService;
         _authTokenProvider = authTokenProvider;
         _enrichedGameService = enrichedGameService;
+        _leagueFilter = leagueFilter;
         _streamResolutionOrchestrator = streamResolutionOrchestrator;
         _selectionState = selectionState;
         _serviceProvider = serviceProvider;
@@ -103,7 +106,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var displayGames = dict.ToDisplay();
+            var displayGames = _leagueFilter.FilterGames(dict.ToDisplay());
             _ = Task.Run(async () =>
             {
                 var items = await BuildDisplayGamesAsync(displayGames);
@@ -279,7 +282,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
             var apiService = _serviceProvider.GetRequiredService<IApiService>();
             var gamesByLeague = await apiService.GetAllGamesAsync(true);
-            var items = await BuildDisplayGamesAsync(gamesByLeague.ToDisplay());
+            var items = await BuildDisplayGamesAsync(_leagueFilter.FilterGames(gamesByLeague.ToDisplay()));
             ApplyDisplayGames(items);
             StatusMessage = $"Loaded {Games.Count} games";
         }

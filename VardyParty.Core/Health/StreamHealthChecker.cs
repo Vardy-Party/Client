@@ -140,28 +140,22 @@ public class StreamHealthChecker(
         string content;
         try
         {
-            // Fetch manifest
-            // We can use a relatively short timeout for fetching headers/content
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.ManifestTimeoutSeconds));
 
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            // Use a browser-like User-Agent to match playback and avoid hosts treating probe requests differently
-            request.Headers.TryAddWithoutValidation("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
-                request.Headers.Referrer = refUri;
-            logger.LogInformation("[StreamHealthChecker] Fetching manifest {Url} with referer {Referer}", url,
-                refererUrl);
-
-            var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            if (!response.IsSuccessStatusCode)
+            content = await FetchManifestContentAsync(url, refererUrl, cts.Token);
+            if (content is null && !string.IsNullOrEmpty(refererUrl))
             {
-                logger.LogWarning("Manifest fetch failed: {StatusCode} for {Url}", response.StatusCode, url);
-                return StreamHealthStatus.ManifestUnreachable;
+                logger.LogInformation(
+                    "[StreamHealthChecker] Manifest fetch with referer failed for {Url}; retrying without referer",
+                    url);
+                content = await FetchManifestContentAsync(url, refererUrl: null, cts.Token);
             }
 
-            content = await response.Content.ReadAsStringAsync(cts.Token);
+            if (content is null)
+            {
+                return StreamHealthStatus.ManifestUnreachable;
+            }
         }
         catch
         {
@@ -242,6 +236,27 @@ public class StreamHealthChecker(
         return relativeUrl;
     }
 
+    private async Task<string?> FetchManifestContentAsync(string url, string? refererUrl, CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
+            request.Headers.Referrer = refUri;
+        logger.LogInformation("[StreamHealthChecker] Fetching manifest {Url} with referer {Referer}", url,
+            refererUrl ?? "(none)");
+
+        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("Manifest fetch failed: {StatusCode} for {Url}", response.StatusCode, url);
+            return null;
+        }
+
+        var content = await response.Content.ReadAsStringAsync(ct);
+        return string.IsNullOrWhiteSpace(content) ? null : content;
+    }
+
     private async Task<StreamHealthStatus> CheckSegmentAsync(string url, string refererUrl, CancellationToken ct)
     {
         try
@@ -249,35 +264,18 @@ public class StreamHealthChecker(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
 
-            // Try HEAD first
-            var request = new HttpRequestMessage(HttpMethod.Head, url);
-            // Use a browser-like User-Agent to match playback
-            request.Headers.TryAddWithoutValidation("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
-                request.Headers.Referrer = refUri;
-            logger.LogInformation("[StreamHealthChecker] Checking segment HEAD {Url} with referer {Referer}", url,
-                refererUrl);
-            var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-
-            if (response.IsSuccessStatusCode) return StreamHealthStatus.Healthy;
-
-            // Some servers don't support HEAD or range properly, mostly HEAD.
-            // If MethodNotAllowed, try GET with range
-            if (response.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed)
+            if (await ProbeSegmentAsync(HttpMethod.Head, url, refererUrl, cts.Token))
             {
-                var getReq = new HttpRequestMessage(HttpMethod.Get, url);
-                getReq.Headers.TryAddWithoutValidation("User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out _))
-                    getReq.Headers.Referrer = new Uri(refererUrl);
-                // Just get first byte to validate existence
-                getReq.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
-                var getResp = await httpClient.SendAsync(getReq, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-                if (getResp.IsSuccessStatusCode) return StreamHealthStatus.Healthy;
+                return StreamHealthStatus.Healthy;
             }
 
-            logger.LogWarning("Segment check failed: {StatusCode} for {Url}", response.StatusCode, url);
+            // Tokenized CDNs often reject HEAD (403/401/405) while ranged GET succeeds.
+            if (await ProbeSegmentAsync(HttpMethod.Get, url, refererUrl, cts.Token, useRange: true))
+            {
+                return StreamHealthStatus.Healthy;
+            }
+
+            logger.LogWarning("Segment check failed for {Url}", url);
             return StreamHealthStatus.SegmentUnreachable;
         }
         catch (Exception ex)
@@ -285,5 +283,33 @@ public class StreamHealthChecker(
             logger.LogWarning(ex, "Segment exception for {Url}", url);
             return StreamHealthStatus.SegmentUnreachable;
         }
+    }
+
+    private async Task<bool> ProbeSegmentAsync(
+        HttpMethod method,
+        string url,
+        string refererUrl,
+        CancellationToken ct,
+        bool useRange = false)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
+            request.Headers.Referrer = refUri;
+        if (useRange)
+            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+
+        logger.LogInformation("[StreamHealthChecker] Checking segment {Method} {Url} with referer {Referer}",
+            method.Method, url, refererUrl);
+
+        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogDebug("Segment {Method} probe returned {StatusCode} for {Url}",
+                method.Method, response.StatusCode, url);
+        }
+
+        return response.IsSuccessStatusCode;
     }
 }

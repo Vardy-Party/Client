@@ -164,6 +164,33 @@ namespace VardyParty.Core.Tests
         }
 
         [Fact]
+        public void DeduplicateStreams_V2SameUrlDifferentPlayerLabels_KeepsAll()
+        {
+            var dedup = CreateDeduplicator();
+            var streams = new List<Models.Stream>
+            {
+                new Models.Stream
+                {
+                    Url = "https://madplay.example/match",
+                    Channel = "Fola ID",
+                    PlayerStream = "Fola ID",
+                    ResolutionStrategy = "v2"
+                },
+                new Models.Stream
+                {
+                    Url = "https://madplay.example/match",
+                    Channel = "Fubo US",
+                    PlayerStream = "Fubo US",
+                    ResolutionStrategy = "v2"
+                }
+            };
+
+            var result = dedup.DeduplicateStreams(streams);
+
+            Assert.Equal(2, result.Count);
+        }
+
+        [Fact]
         public void DeduplicateStreams_CaseInsensitiveUrlMatching()
         {
             var dedup = CreateDeduplicator();

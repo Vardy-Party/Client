@@ -197,12 +197,15 @@ public class ApiService(
             yield break;
         }
 
+        var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
+            V2StreamExpander.Expand(response.Streams));
+
         // Deduplicate streams by base m3u8 URL
         List<Stream> deduplicated;
         try
         {
-            logger.LogInformation("[Api] Deduplicating {Count} streams", response.Streams.Count);
-            deduplicated = streamDeduplicator.DeduplicateStreams(response.Streams);
+            logger.LogInformation("[Api] Deduplicating {Count} streams", expandedStreams.Count);
+            deduplicated = streamDeduplicator.DeduplicateStreams(expandedStreams);
             logger.LogInformation("[Api] Starting incremental resolution of {Count} deduplicated streams",
                 deduplicated.Count);
         }

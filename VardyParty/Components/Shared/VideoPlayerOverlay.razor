@@ -36,6 +36,13 @@
                             <div class="stream-item @(isSelected ? "selected" : "")" 
                                  @onclick="() => SwitchStream(stream)">
                                 <span class="stream-name">@stream.Stream.Channel</span>
+                                @{
+                                    var sourceLabel = stream.Stream.CatalogSourceBadgeLabel;
+                                }
+                                @if (!string.IsNullOrEmpty(sourceLabel))
+                                {
+                                    <span class="source-badge source-badge-@sourceLabel.ToLowerInvariant()">@sourceLabel</span>
+                                }
                                 @if (!string.IsNullOrEmpty(stream.Stream.Reputation))
                                 {
                                     <span class="reputation">@stream.Stream.Reputation</span>
@@ -179,6 +186,27 @@
     .stream-name {
         font-weight: bold;
         font-size: 13px;
+    }
+
+    .source-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 1px 6px;
+        border-radius: 999px;
+        width: fit-content;
+    }
+
+    .source-badge-fb {
+        background: #1e3a5f;
+        color: #93c5fd;
+    }
+
+    .source-badge-v2 {
+        background: #3b0764;
+        color: #d8b4fe;
     }
 
     .reputation {

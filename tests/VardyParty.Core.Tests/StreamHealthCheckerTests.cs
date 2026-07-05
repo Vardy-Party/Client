@@ -182,6 +182,31 @@ public class StreamHealthCheckerTests
     }
 
     [Fact]
+    public async Task CheckStreamHealth_SegmentHeadForbidden_GetRangeSuccess()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://example.com/playlist.m3u8";
+        var segmentUrl = "http://example.com/segment.ts";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.Forbidden));
+        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK));
+
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+
+        Assert.Equal(StreamHealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
     public async Task CheckStreamHealth_SegmentHeadFail_GetSuccess()
     {
         var handler = new FakeHttpMessageHandler();

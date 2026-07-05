@@ -237,7 +237,13 @@ public class LocalLanPlayService(
             var json = await response.Content.ReadAsStringAsync(cts.Token);
             var result = JsonSerializer.Deserialize<M3U8Response>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            logger.LogDebug("[LocalLanPlay] Successfully resolved m3u8 via local service");
+            if (result == null || string.IsNullOrWhiteSpace(result.Url))
+            {
+                logger.LogWarning("[LocalLanPlay] Local service returned success but no m3u8 URL in response body");
+                return null;
+            }
+
+            logger.LogInformation("[LocalLanPlay] Resolved m3u8 via local service for {StreamUrl}", streamUrl);
             return result;
         }
         catch (Exception ex)

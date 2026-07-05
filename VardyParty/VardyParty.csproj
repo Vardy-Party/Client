@@ -340,6 +340,44 @@
       <Copy SourceFiles="@(_AppXWwwroot)"
             DestinationFiles="@(_AppXWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
             SkipUnchangedFiles="false" />
+      <!-- Unpackaged dotnet run resolves HostPage from OutputPath\wwwroot; mirror AppX Blazor assets there. -->
+      <ItemGroup>
+        <_AppXFramework Include="$(_AppXRoot)wwwroot\_framework\**\*.*" Condition="Exists('$(_AppXRoot)wwwroot\_framework')" />
+      </ItemGroup>
+      <Copy SourceFiles="@(_AppXFramework)"
+            DestinationFiles="@(_AppXFramework->'$(_WinOutputRoot)wwwroot\_framework\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="false"
+            Condition="'@(_AppXFramework)' != ''" />
+      <Copy SourceFiles="$(_AppXRoot)wwwroot\index.html"
+            DestinationFiles="$(_WinOutputRoot)wwwroot\index.html"
+            SkipUnchangedFiles="false"
+            Condition="Exists('$(_AppXRoot)wwwroot\index.html')" />
+      <Copy SourceFiles="$(_AppXRoot)wwwroot\VardyParty.styles.css"
+            DestinationFiles="$(_WinOutputRoot)wwwroot\VardyParty.styles.css"
+            SkipUnchangedFiles="false"
+            Condition="Exists('$(_AppXRoot)wwwroot\VardyParty.styles.css')" />
+      <!-- Maui splash/tile PNGs: refresh AppX from resizetizer, then mirror beside AppxManifest for loose-register. -->
+      <ItemGroup>
+        <_ResizetizerPng Include="$(IntermediateOutputPath)resizetizer\sp\*.png;$(IntermediateOutputPath)resizetizer\r\*.png" />
+        <_MsixAssetBase Include="vardyparty_splashStoreLogo;vardyparty_splashMediumTile;vardyparty_splashLogo;vardyparty_splashSmallTile;vardyparty_splashWideTile;vardyparty_splashLargeTile;vardyparty_splash_generatedSplashScreen" />
+        <_MsixAssetScale100 Include="@(_MsixAssetBase->'$(_AppXRoot)%(Identity).scale-100.png')"
+                             Condition="Exists('$(_AppXRoot)%(Identity).scale-100.png')">
+          <_Dest>$(_AppXRoot)%(Identity).png</_Dest>
+        </_MsixAssetScale100>
+        <_AppXLooseAsset Include="$(_AppXRoot)*.png;$(_AppXRoot)resources.pri" />
+      </ItemGroup>
+      <Copy SourceFiles="@(_ResizetizerPng)"
+            DestinationFolder="$(_AppXRoot)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_ResizetizerPng)' != ''" />
+      <Copy SourceFiles="@(_MsixAssetScale100)"
+            DestinationFiles="%(_MsixAssetScale100._Dest)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_MsixAssetScale100)' != ''" />
+      <Copy SourceFiles="@(_AppXLooseAsset)"
+            DestinationFolder="$(_WinOutputRoot)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_AppXLooseAsset)' != ''" />
     </Target>
 
     <!-- Keep MSIX loose-layout wwwroot in sync with league logo assets (AppX folder is not always refreshed on incremental builds). -->

@@ -6,39 +6,57 @@ using VardyParty.Models;
 
 namespace VardyParty.Services;
 
-    public interface IHomePagePresentationService
+public interface IHomePagePresentationService
+{
+    IObservable<List<Game>> DisplayStream { get; }
+}
+
+public class HomePagePresentationService : IHomePagePresentationService, IDisposable
+{
+    private readonly Subject<List<Game>> _subject = new Subject<List<Game>>();
+    private readonly IDisposable _subscription;
+    private readonly ILeagueFilterService _leagueFilter;
+    private Dictionary<string, List<Game>>? _latestSnapshot;
+
+    public IObservable<List<Game>> DisplayStream => _subject;
+
+    public HomePagePresentationService(IEnrichedGameService enriched, ILeagueFilterService leagueFilter)
     {
-        IObservable<List<Game>> DisplayStream { get; }
+        if (enriched == null) throw new ArgumentNullException(nameof(enriched));
+        _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
+
+        _leagueFilter.Changed += OnLeagueFilterChanged;
+
+        _subscription = enriched.GamesStream.Subscribe(dict =>
+        {
+            _latestSnapshot = dict;
+            PublishDisplay();
+        });
     }
 
-    public class HomePagePresentationService : IHomePagePresentationService, IDisposable
+    private void OnLeagueFilterChanged()
     {
-        private readonly Subject<List<Game>> _subject = new Subject<List<Game>>();
-        public IObservable<List<Game>> DisplayStream => _subject;
+        PublishDisplay();
+    }
 
-        private readonly IDisposable _subscription;
-
-        public HomePagePresentationService(IEnrichedGameService enriched)
+    private void PublishDisplay()
+    {
+        try
         {
-            if (enriched == null) throw new ArgumentNullException(nameof(enriched));
-
-            _subscription = enriched.GamesStream.Subscribe(dict =>
-            {
-                try
-                {
-                    var display = dict?.ToDisplay() ?? new List<Game>();
-                    _subject.OnNext(display);
-                }
-                catch (Exception)
-                {
-                    // swallow - presentation should be robust; optionally log if logger available
-                }
-            });
+            var display = _latestSnapshot?.ToDisplay() ?? new List<Game>();
+            var filtered = _leagueFilter.FilterGames(display);
+            _subject.OnNext(filtered);
         }
-
-        public void Dispose()
+        catch (Exception)
         {
-            _subscription.Dispose();
-            _subject.Dispose();
+            // swallow - presentation should be robust; optionally log if logger available
         }
     }
+
+    public void Dispose()
+    {
+        _leagueFilter.Changed -= OnLeagueFilterChanged;
+        _subscription.Dispose();
+        _subject.Dispose();
+    }
+}

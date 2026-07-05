@@ -1,8 +1,10 @@
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
+using VardyParty.Health;
 using VardyParty.Models;
 using VardyParty.Providers;
 using VardyParty.Services;
+using StreamModel = VardyParty.Models.Stream;
 
 namespace VardyParty.Orchestrators;
 
@@ -13,6 +15,7 @@ public class StreamResolutionOrchestrator(
     IStreamHealthService streamHealthService,
     IStreamHealthReporter streamHealthReporter,
     ISessionIdProvider sessionIdProvider,
+    SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     INativeVideoPlayerService nativeVideoPlayer,
     ILogger<StreamResolutionOrchestrator> logger) : IStreamResolutionOrchestrator
@@ -88,12 +91,13 @@ public class StreamResolutionOrchestrator(
 
             if (enrichedStream.Status == StreamResolutionStatus.Failed)
             {
-                _ = ReportHealthAsync(game, enrichedStream.Stream.Url, "failed", enrichedStream.ErrorMessage,
-                    cancellationToken);
+                _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
+                    enrichedStream.Health, cancellationToken);
             }
             else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
             {
-                _ = ReportHealthAsync(game, enrichedStream.Stream.Url, "unknown", null, cancellationToken);
+                _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
+                    cancellationToken);
             }
 
             if (enrichedStream.Status != StreamResolutionStatus.Healthy)
@@ -165,23 +169,35 @@ public class StreamResolutionOrchestrator(
         return streamHealthReporter.ReportBadStreamAsync(
             currentStream.Stream.Url,
             currentStream.Stream.Url,
+            StreamHealthIdentity.GetStreamName(currentStream.Stream),
             reason,
             cancellationToken);
     }
 
-    private Task ReportHealthAsync(Game game, string? streamUrl, string status, string? error,
-        CancellationToken cancellationToken)
+    private Task ReportHealthAsync(
+        Game game,
+        StreamModel stream,
+        string status,
+        string? error,
+        StreamHealth? health = null,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(streamUrl))
+        if (string.IsNullOrWhiteSpace(stream.Url))
         {
             return Task.CompletedTask;
         }
 
         var report = new StreamHealthReport
         {
-            StreamUrl = streamUrl,
+            StreamUrl = stream.Url,
+            StreamName = StreamHealthIdentity.GetStreamName(stream),
             Status = status,
             Error = error,
+            Bitrate = health?.Bitrate,
+            Resolution = health?.Resolution,
+            Framerate = health?.FrameRate,
+            VideoCodec = health?.VideoCodec,
+            AudioCodec = health?.AudioCodec,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             SessionId = sessionIdProvider.SessionId
         };
@@ -218,6 +234,8 @@ public class StreamResolutionOrchestrator(
         var title = $"{game.DisplayHome} vs {game.DisplayAway}";
         using var playbackCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        selectionState.CurrentStream = enrichedStream.Stream;
+
         // Reset buffering flag and subscribe to buffering events
         _hasBufferingOccurred = false;
         EventHandler<bool>? bufferingHandler = (sender, isBuffering) =>
@@ -229,17 +247,18 @@ public class StreamResolutionOrchestrator(
         };
         nativeVideoPlayer.BufferingStateChanged += bufferingHandler;
 
-        var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream.Url, playbackCts.Token);
+        var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream, playbackCts.Token);
         try
         {
             return await nativeVideoPlayer.PlayVideoAsync(
                 m3u8Url,
-                enrichedStream.Stream.Url,
+                string.IsNullOrWhiteSpace(enrichedStream.Referer) ? enrichedStream.Stream.Url : enrichedStream.Referer,
                 title,
                 () => HandleNextStreamRequestedAsync(game, cancellationToken),
                 game.DisplayLeague,
                 game.DisplayHome,
-                game.DisplayAway);
+                game.DisplayAway,
+                enrichedStream.RequestHeaders);
         }
         finally
         {
@@ -255,11 +274,12 @@ public class StreamResolutionOrchestrator(
         }
     }
 
-    private async Task StartPlaybackHealthReportingAsync(string? streamUrl, CancellationToken cancellationToken)
+    private async Task StartPlaybackHealthReportingAsync(StreamModel stream, CancellationToken cancellationToken)
     {
         try
         {
             var hasReportedMetadata = false;
+            var streamName = StreamHealthIdentity.GetStreamName(stream);
 
             // Wait for player to initialize and extract metadata
             // Windows MediaPlayer fires NaturalVideoSizeChanged after video decodes (~1-2s)
@@ -267,7 +287,8 @@ public class StreamResolutionOrchestrator(
 
             // Get real metrics from the player service after playback has started
             var initialMetrics = nativeVideoPlayer.GetCurrentMetrics();
-            _ = streamHealthReporter.ReportPlaybackStartedAsync(streamUrl, null, initialMetrics, cancellationToken);
+            _ = streamHealthReporter.ReportPlaybackStartedAsync(stream.Url, null, streamName, initialMetrics,
+                cancellationToken);
             hasReportedMetadata = initialMetrics?.Resolution.HasValue == true;
 
             while (!cancellationToken.IsCancellationRequested)
@@ -277,7 +298,8 @@ public class StreamResolutionOrchestrator(
                 var metrics = nativeVideoPlayer.GetCurrentMetrics();
 
                 // Report periodic metrics without duplicating metadata
-                _ = streamHealthReporter.ReportPlaybackMetricsAsync(streamUrl, null, metrics, cancellationToken);
+                _ = streamHealthReporter.ReportPlaybackMetricsAsync(stream.Url, null, streamName, metrics,
+                    cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -389,7 +411,8 @@ public class StreamResolutionOrchestrator(
         PlaybackResult playbackResult,
         CancellationToken cancellationToken)
     {
-        _ = ReportHealthAsync(game, enrichedStream.Stream.Url, "failed", playbackResult.Message, cancellationToken);
+        _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", playbackResult.Message, enrichedStream.Health,
+            cancellationToken);
 
         streamSwitchingService.RemoveCurrentStream();
         _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;

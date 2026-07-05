@@ -68,7 +68,8 @@ namespace VardyParty.Platforms.Windows
             Func<Task>? onNextStreamRequested = null,
             string? league = null,
             string? homeTeam = null,
-            string? awayTeam = null)
+            string? awayTeam = null,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             var tcs = new TaskCompletionSource<PlaybackResult>();
 
@@ -223,7 +224,13 @@ namespace VardyParty.Platforms.Windows
                 bool isPointerNearNextButton = false;
                 bool isNextStreamRequestInProgress = false;
                 int playbackGeneration = 0;
+                int lastAttachedGeneration = 0;
+                bool hasEstablishedPlayback = false;
+                string? lastGoodPlaybackUrl = m3u8Url;
                 var playbackSwitchLock = new SemaphoreSlim(1, 1);
+                AdaptiveMediaSource? activeAdaptiveMediaSource = null;
+                TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs>? activeDownloadHandler = null;
+                HttpClientWin? activePlaybackClient = null;
                 IStreamHealthReporter? _healthReporter = null;
                 
                 // Resolve health reporter
@@ -236,6 +243,23 @@ namespace VardyParty.Platforms.Windows
                 void StopTickerScroll()
                 {
                     try { scoresTickerScrollTimer?.Stop(); } catch { }
+                }
+
+                void ReleasePreviousPlaybackResources()
+                {
+                    if (activeAdaptiveMediaSource != null && activeDownloadHandler != null)
+                    {
+                        try { activeAdaptiveMediaSource.DownloadRequested -= activeDownloadHandler; } catch { }
+                    }
+
+                    activeAdaptiveMediaSource = null;
+                    activeDownloadHandler = null;
+
+                    if (activePlaybackClient != null)
+                    {
+                        try { activePlaybackClient.Dispose(); } catch { }
+                        activePlaybackClient = null;
+                    }
                 }
 
                 void CleanupMediaPlayer()
@@ -263,6 +287,8 @@ namespace VardyParty.Platforms.Windows
                             mediaPlayer.MediaFailed -= mediaFailedHandler;
                     }
                     catch { }
+
+                    ReleasePreviousPlaybackResources();
 
                     try
                     {
@@ -707,6 +733,7 @@ namespace VardyParty.Platforms.Windows
                         int streamTotal = 0;
                         string? streamChannel = null;
                         string? streamQuality = null;
+                        string? streamSourceLabel = null;
                         try
                         {
                             var switching = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
@@ -717,6 +744,7 @@ namespace VardyParty.Platforms.Windows
                                 var current = switching.GetCurrentStream();
                                 streamChannel = current?.Stream?.Channel;
                                 try { streamQuality = current?.GetQualityDisplay(); } catch { }
+                                try { streamSourceLabel = current?.Stream?.CatalogSourceBadgeLabel; } catch { }
                             }
                         }
                         catch { }
@@ -726,6 +754,8 @@ namespace VardyParty.Platforms.Windows
                             sb.AppendLine($"Stream: {streamIndex}/{streamTotal}");
                         if (!string.IsNullOrEmpty(streamChannel))
                             sb.AppendLine($"Channel: {streamChannel}");
+                        if (!string.IsNullOrEmpty(streamSourceLabel))
+                            sb.AppendLine($"Source: {streamSourceLabel}");
                         if (!string.IsNullOrEmpty(streamQuality))
                             sb.AppendLine($"Quality: {streamQuality}");
                         sb.AppendLine($"Resolution: {width}x{height} @ {frameRateText}");
@@ -1399,40 +1429,88 @@ namespace VardyParty.Platforms.Windows
                 };
 
                 mediaEndedHandler = (s, e) => { Restore(); tcs.TrySetResult(PlaybackResult.Completed("Stream ended.", false)); };
+
+                void ShowStreamError(string message)
+                {
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        try
+                        {
+                            infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                            infoText.Text = message;
+                        }
+                        catch { }
+                    });
+                }
+
+                void ClosePlayerSession(string message)
+                {
+                    if (cleanupInvoked) return;
+                    Restore();
+                    tcs.TrySetResult(PlaybackResult.Completed(message, true));
+                }
+
+                async Task RevertToLastGoodStreamAsync(string reason)
+                {
+                    WindowsEventLogger.Warning("VideoPlayer", reason);
+                    ShowStreamError(reason);
+                    try { switchingService?.SwitchToPreviousStream(); } catch { }
+                    if (string.IsNullOrWhiteSpace(lastGoodPlaybackUrl)) return;
+                    await StartPlaybackAsync(lastGoodPlaybackUrl, force: true, isRevertAttempt: true);
+                }
+
+                async Task HandleActiveStreamFailureAsync(string message)
+                {
+                    WindowsEventLogger.Warning("VideoPlayer", message);
+                    ShowStreamError(message);
+                    try
+                    {
+                        if (onNextStreamRequested != null && !isNextStreamRequestInProgress)
+                        {
+                            isNextStreamRequestInProgress = true;
+                            try { await onNextStreamRequested(); }
+                            finally { isNextStreamRequestInProgress = false; }
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("VideoPlayer", "Auto-advance after stream failure failed", ex);
+                    }
+
+                    await RevertToLastGoodStreamAsync("Stream failed — reverted to previous stream.");
+                }
+
                 mediaFailedHandler = (s, e) =>
                 {
                     try
                     {
+                        if (cleanupInvoked) return;
+
                         var errMsg = e?.ErrorMessage ?? "Unknown media error";
                         var ext = string.Empty;
                         try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch { }
+                        var detail = $"Media failed: {errMsg}\n{ext}";
 
-                        // Ensure we cleanup health checking so Home can restart
-                        try
+                        // Ignore stale failures from a source cleared during stream switch.
+                        if (playbackGeneration != lastAttachedGeneration)
                         {
-                            var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                            svc?.Cleanup();
+                            WindowsEventLogger.Info("VideoPlayer", $"Ignoring stale MediaFailed during switch: {errMsg}");
+                            return;
                         }
-                        catch { }
 
-                        MainThread.BeginInvokeOnMainThread(() =>
+                        if (hasEstablishedPlayback)
                         {
-                            try
-                            {
-                                infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                                infoText.Text = $"Media failed: {errMsg}\n{ext}";
-                            }
-                            catch { }
-                        });
+                            _ = HandleActiveStreamFailureAsync(detail);
+                            return;
+                        }
 
-                        // Restore UI and signal failure so Home moves to next stream
-                        Restore();
-                        tcs.TrySetResult(PlaybackResult.Completed($"Stream error on Windows player. Error: '{errMsg}'. Extended-message: '{ext}'.", true));
+                        ClosePlayerSession($"Stream error on Windows player. Error: '{errMsg}'. Extended-message: '{ext}'.");
                     }
                     catch
                     {
-                        try { Restore(); } catch { }
-                        tcs.TrySetResult(PlaybackResult.Completed("Stream error on Windows player.", true));
+                        if (!hasEstablishedPlayback)
+                            ClosePlayerSession("Stream error on Windows player.");
                     }
                 };
 
@@ -1513,6 +1591,22 @@ namespace VardyParty.Platforms.Windows
                     Text = ""
                 };
                 streamInfoPanel.Children.Add(streamCountText);
+
+                var streamSourceBadge = new Microsoft.UI.Xaml.Controls.Border
+                {
+                    HorizontalAlignment = WinHorizontalAlignment.Right,
+                    CornerRadius = new Microsoft.UI.Xaml.CornerRadius(999),
+                    Padding = new WinThickness(6, 1, 6, 1),
+                    Margin = new WinThickness(0, 4, 0, 0),
+                    Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                };
+                var streamSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    FontSize = 10,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold
+                };
+                streamSourceBadge.Child = streamSourceBadgeText;
+                streamInfoPanel.Children.Add(streamSourceBadge);
 
                 // Next stream button host (button + x/y hint directly beneath)
                 var nextButtonContainer = new Microsoft.UI.Xaml.Controls.StackPanel
@@ -1809,6 +1903,31 @@ namespace VardyParty.Platforms.Windows
                                 streamCountText.Text = "Streams: 0";
                             }
 
+                            var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
+                            if (!string.IsNullOrWhiteSpace(sourceLabel))
+                            {
+                                streamSourceBadgeText.Text = sourceLabel;
+                                if (string.Equals(sourceLabel, "FB", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                        global::Windows.UI.Color.FromArgb(0xFF, 0x1E, 0x3A, 0x5F));
+                                    streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                        global::Windows.UI.Color.FromArgb(0xFF, 0x93, 0xC5, 0xFD));
+                                }
+                                else
+                                {
+                                    streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                        global::Windows.UI.Color.FromArgb(0xFF, 0x3B, 0x07, 0x64));
+                                    streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                        global::Windows.UI.Color.FromArgb(0xFF, 0xD8, 0xB4, 0xFE));
+                                }
+                                streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                            }
+                            else
+                            {
+                                streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                            }
+
                             var canSwitchToAnother = onNextStreamRequested != null && total > 1;
                             nextButtonHotZone.Visibility = canSwitchToAnother
                                 ? Microsoft.UI.Xaml.Visibility.Visible
@@ -1857,6 +1976,7 @@ namespace VardyParty.Platforms.Windows
                     if (generation != playbackGeneration || cleanupInvoked) return;
 
                     StopTickerScroll();
+                    ReleasePreviousPlaybackResources();
                     try
                     {
                         mediaPlayer.Pause();
@@ -1866,12 +1986,13 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 }
 
-                async Task StartPlaybackAsync(string url)
+                async Task StartPlaybackAsync(string url, bool force = false, bool isRevertAttempt = false)
                 {
                     await playbackSwitchLock.WaitAsync();
                     var generation = Interlocked.Increment(ref playbackGeneration);
                     int consecutiveDownloadFailures = 0;
                     const int MaxDownloadFailures = 5;
+                    string? pendingRevertMessage = null;
 
                     try
                     {
@@ -1880,21 +2001,11 @@ namespace VardyParty.Platforms.Windows
                             return;
 
                         var client = new HttpClientWin();
-                        client.DefaultRequestHeaders.Add("Referer", refererUrl);
-                        client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                        activePlaybackClient = client;
+                        ConfigurePlaybackHttpClient(client, refererUrl, requestHeaders);
 
-                        // Try standard creation first
                         var uri = new Uri(url);
-                        var adaptiveResult = await AdaptiveMediaSource.CreateFromUriAsync(uri, client);
-
-                        if (adaptiveResult.Status == AdaptiveMediaSourceCreationStatus.UnsupportedManifestContentType)
-                        {
-                            // Fallback: Download manifest manually and force content type
-                            var response = await client.GetAsync(uri);
-                            response.EnsureSuccessStatusCode();
-                            var stream = await response.Content.ReadAsInputStreamAsync();
-                            adaptiveResult = await AdaptiveMediaSource.CreateFromStreamAsync(stream, uri, "application/vnd.apple.mpegurl");
-                        }
+                        var adaptiveResult = await CreateAdaptiveMediaSourceAsync(client, uri);
 
                         if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success || adaptiveResult.MediaSource == null)
                         {
@@ -1902,7 +2013,7 @@ namespace VardyParty.Platforms.Windows
                         }
 
                         // Attach handler to fix segment content types and ensure headers
-                        adaptiveResult.MediaSource.DownloadRequested += async (sender, args) =>
+                        TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
                             if (generation != playbackGeneration || cleanupInvoked)
                                 return;
@@ -1918,8 +2029,7 @@ namespace VardyParty.Platforms.Windows
                                     if (generation != playbackGeneration || cleanupInvoked)
                                         return;
                                     var request = new global::Windows.Web.Http.HttpRequestMessage(global::Windows.Web.Http.HttpMethod.Get, args.ResourceUri);
-                                    request.Headers.TryAppendWithoutValidation("Referer", refererUrl);
-                                    request.Headers.TryAppendWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                                    ApplyPlaybackRequestHeaders(request, refererUrl, requestHeaders);
 
                                     var response = await client.SendRequestAsync(request);
                                     response.EnsureSuccessStatusCode();
@@ -1989,12 +2099,16 @@ namespace VardyParty.Platforms.Windows
                                                 if (generation != playbackGeneration || cleanupInvoked)
                                                     return;
 
-                                                // Clear source to trigger MediaFailed event
+                                                var failureMessage =
+                                                    $"Stream failed after {MaxDownloadFailures} consecutive download errors (last: {statusCode})";
                                                 mediaPlayer.Source = null;
-                                                
-                                                // Manually trigger failure handling
-                                                Restore();
-                                                tcs.TrySetResult(PlaybackResult.Completed($"Stream failed after {MaxDownloadFailures} consecutive download errors (last: {statusCode})", true));
+
+                                                if (generation == lastAttachedGeneration && hasEstablishedPlayback)
+                                                    _ = HandleActiveStreamFailureAsync(failureMessage);
+                                                else if (hasEstablishedPlayback)
+                                                    _ = RevertToLastGoodStreamAsync($"Switch failed — {failureMessage}");
+                                                else
+                                                    ClosePlayerSession(failureMessage);
                                             }
                                             catch { }
                                         });
@@ -2013,6 +2127,10 @@ namespace VardyParty.Platforms.Windows
                                 }
                             }
                         };
+
+                        activeAdaptiveMediaSource = adaptiveResult.MediaSource;
+                        activeDownloadHandler = downloadHandler;
+                        adaptiveResult.MediaSource.DownloadRequested += downloadHandler;
 
                         var mediaSource = MediaSource.CreateFromAdaptiveMediaSource(adaptiveResult.MediaSource);
                         var playbackItem = new MediaPlaybackItem(mediaSource);
@@ -2046,6 +2164,9 @@ namespace VardyParty.Platforms.Windows
                                 }
 
                                 currentPlaybackUrl = url;
+                                lastAttachedGeneration = generation;
+                                hasEstablishedPlayback = true;
+                                lastGoodPlaybackUrl = url;
 
                                 // Ensure the grid is visible and hit testable
                                 playerGrid.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
@@ -2064,8 +2185,10 @@ namespace VardyParty.Platforms.Windows
 
                                 WindowsEventLogger.Error("VideoPlayer", "Failed to attach playback source", ex);
                                 System.Diagnostics.Debug.WriteLine($"[Windows] Failed to attach playback source: {ex.GetType().Name} - {ex.Message}");
-                                Restore();
-                                tcs.TrySetResult(PlaybackResult.Completed($"Failed to attach playback source: {ex.Message}", true));
+                                if (hasEstablishedPlayback && !isRevertAttempt)
+                                    _ = RevertToLastGoodStreamAsync($"Failed to switch stream: {ex.Message}");
+                                else if (!hasEstablishedPlayback)
+                                    ClosePlayerSession($"Failed to attach playback source: {ex.Message}");
                             }
                         });
 
@@ -2076,15 +2199,20 @@ namespace VardyParty.Platforms.Windows
                         if (generation == playbackGeneration && !cleanupInvoked)
                         {
                             WindowsEventLogger.Error("VideoPlayer", "Failed to start playback", ex);
-                            Restore();
                             System.Diagnostics.Debug.WriteLine($"[Windows] Failed to start playback: {ex.GetType().Name} - {ex.Message}");
-                            tcs.TrySetResult(PlaybackResult.Completed($"Failed to start playback: {ex.Message}", true));
+                            if (hasEstablishedPlayback && !isRevertAttempt)
+                                pendingRevertMessage = $"Failed to switch stream: {ex.Message}";
+                            else if (!hasEstablishedPlayback)
+                                ClosePlayerSession($"Failed to start playback: {ex.Message}");
                         }
                     }
                     finally
                     {
                         playbackSwitchLock.Release();
                     }
+
+                    if (!string.IsNullOrWhiteSpace(pendingRevertMessage))
+                        await RevertToLastGoodStreamAsync(pendingRevertMessage);
                 }
 
                 async Task TrySwitchToCurrentStreamAsync(bool force = false)
@@ -2097,7 +2225,7 @@ namespace VardyParty.Platforms.Windows
                         if (string.IsNullOrWhiteSpace(url)) return;
                         if (!force && string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
                         WindowsEventLogger.Info("VideoPlayer", $"Switching playback source (force={force})");
-                        await StartPlaybackAsync(url);
+                        await StartPlaybackAsync(url, force);
                     }
                     catch (Exception ex)
                     {
@@ -2350,6 +2478,94 @@ namespace VardyParty.Platforms.Windows
                 var hasAMS = mediaItem?.Source is MediaSource msCheck && msCheck.AdaptiveMediaSource != null;
                 var hasMetrics = _currentMetrics != null;
                 System.Diagnostics.Debug.WriteLine($"[Windows] Cannot update bitrate - mediaItem={hasMediaItem}, MediaSource={hasMediaSource}, AMS={hasAMS}, metrics={hasMetrics}");
+            }
+        }
+
+        private const string PlaybackUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+        private static void ConfigurePlaybackHttpClient(
+            HttpClientWin client,
+            string refererUrl,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
+        {
+            foreach (var (name, value) in ResolvePlaybackHeaders(refererUrl, requestHeaders))
+            {
+                client.DefaultRequestHeaders.TryAppendWithoutValidation(name, value);
+            }
+        }
+
+        private static void ApplyPlaybackRequestHeaders(
+            global::Windows.Web.Http.HttpRequestMessage request,
+            string refererUrl,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
+        {
+            foreach (var (name, value) in ResolvePlaybackHeaders(refererUrl, requestHeaders))
+            {
+                request.Headers.TryAppendWithoutValidation(name, value);
+            }
+        }
+
+        private static IEnumerable<KeyValuePair<string, string>> ResolvePlaybackHeaders(
+            string refererUrl,
+            IReadOnlyDictionary<string, string>? requestHeaders)
+        {
+            if (requestHeaders is { Count: > 0 })
+            {
+                foreach (var pair in requestHeaders)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Value))
+                    {
+                        yield return pair;
+                    }
+                }
+
+                yield break;
+            }
+
+            yield return new KeyValuePair<string, string>("User-Agent", PlaybackUserAgent);
+            if (string.IsNullOrWhiteSpace(refererUrl))
+            {
+                yield break;
+            }
+
+            yield return new KeyValuePair<string, string>("Referer", refererUrl);
+            if (Uri.TryCreate(refererUrl, UriKind.Absolute, out var refererUri))
+            {
+                yield return new KeyValuePair<string, string>(
+                    "Origin",
+                    $"{refererUri.Scheme}://{refererUri.Authority}");
+            }
+        }
+
+        private static async Task<AdaptiveMediaSourceCreationResult> CreateAdaptiveMediaSourceAsync(
+            HttpClientWin client,
+            Uri manifestUri)
+        {
+            var adaptiveResult = await AdaptiveMediaSource.CreateFromUriAsync(manifestUri, client);
+            if (adaptiveResult.Status == AdaptiveMediaSourceCreationStatus.Success && adaptiveResult.MediaSource != null)
+            {
+                return adaptiveResult;
+            }
+
+            WindowsEventLogger.Warning(
+                "VideoPlayer",
+                $"CreateFromUriAsync returned {adaptiveResult.Status}; downloading manifest with Referer/Origin");
+
+            try
+            {
+                var response = await client.GetAsync(manifestUri);
+                response.EnsureSuccessStatusCode();
+                var manifestStream = await response.Content.ReadAsInputStreamAsync();
+                return await AdaptiveMediaSource.CreateFromStreamAsync(
+                    manifestStream,
+                    manifestUri,
+                    "application/vnd.apple.mpegurl");
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("VideoPlayer", "Manual manifest download failed", ex);
+                return adaptiveResult;
             }
         }
     }

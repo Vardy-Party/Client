@@ -16,6 +16,7 @@ namespace VardyParty.WinUI
         {
             if (Auth0.OidcClient.Platforms.Windows.Activator.Default.CheckRedirectionActivation())
             {
+                Platforms.Windows.WindowsEventLogger.Info("WinUI.App", "Auth0 redirection activation handled; skipping main UI startup");
                 return;
             }
 

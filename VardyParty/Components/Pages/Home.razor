@@ -8,7 +8,7 @@
 @inject IAuthLoginService AuthLoginService
 @inject IAuthTokenProvider AuthTokenProvider
 @inject ILocalLanServiceAvailabilityMonitor LocalLanServiceAvailabilityMonitor
-@inject IBuildInfoService BuildInfoService
+@inject ILeagueFilterService LeagueFilter
 @using Microsoft.Extensions.Logging
 @using QRCoder
 @using VardyParty.Models
@@ -20,19 +20,12 @@
 <div class="page-shell@(OperatingSystem.IsWindows() ? " platform-windows" : OperatingSystem.IsAndroid() ? " platform-android" : string.Empty)">
     <header class="page-header">
         <div class="page-header-inner">
-            @if (buildInfo is not null)
-            {
-                <div class="header-build-info" title="Commit @buildInfo.Commit · @buildInfo.BuiltAtFull">v@(buildInfo.Version) · @buildInfo.BuiltAt</div>
-            }
-            <div class="header-brand">
-                <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" style="display:inline-block;vertical-align:middle;"/>
-                <div class="header-title" role="heading" aria-level="1" style="display:inline-block;vertical-align:middle;margin-left:8px;">Vardy Party</div>
+            <div class="header-left">
+                <AppMenu IsAuthenticated="isAuthenticated" OnSignOut="SignOutAsync" />
             </div>
-            <div class="header-right">
-                @if (isAuthenticated)
-                {
-                    <button class="header-auth-button" @onclick="SignOutAsync">Sign out</button>
-                }
+            <div class="header-brand">
+                <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" />
+                <div class="header-title" role="heading" aria-level="1">Vardy Party</div>
             </div>
         </div>
     </header>
@@ -42,18 +35,23 @@
     {
         <div class="local-service-warning">@localServiceWarning</div>
     }
+    @if (!string.IsNullOrWhiteSpace(statusMessage) && isAuthenticated && games.Count > 0)
+    {
+        <div class="local-service-warning">@statusMessage</div>
+    }
 
     @if (!isAuthenticated)
     {
         <div class="auth-hero">
             <div class="auth-hero-inner">
-                <p class="welcome-text" style="margin:0;font-size:20px;font-weight:600;text-align:center;">Welcome — please sign in to browse today's matches.</p>
-                <div style="display:flex;gap:12px;align-items:center;justify-content:center;">
+                <div class="state-icon state-icon-auth" aria-hidden="true">🔐</div>
+                <p class="welcome-text">Welcome — please sign in to browse today's matches.</p>
+                <div class="auth-actions">
                     <button class="btn btn-primary auth-action" @onclick="StartSignInAsync" disabled="@isAuthenticating">@(!isAuthenticating ? "Sign in — Continue" : "Signing in…")</button>
                 </div>
                 @if (!string.IsNullOrWhiteSpace(authStatusMessage))
                 {
-                    <div class="auth-message" style="text-align:center;margin-top:8px;">@authStatusMessage</div>
+                    <div class="auth-message">@authStatusMessage</div>
                 }
             </div>
 
@@ -68,7 +66,7 @@
                     </div>
                     <div>
                         <p>Open <strong>@deviceQrTarget</strong> or scan the QR code and enter code <strong>@deviceCode.UserCode</strong>.</p>
-                        <p style="margin-top:8px;">
+                        <p style="margin-top:12px;">
                             <button class="auth-cancel" @onclick="CancelSignIn">Cancel</button>
                         </p>
                     </div>
@@ -80,7 +78,8 @@
     @if (isLoading && isAuthenticated)
     {
         <div class="loading-container">
-            <p class="loading-text">Loading</p>
+            <div class="state-icon state-icon-loading" aria-hidden="true"></div>
+            <p class="loading-text">Loading matches</p>
             @if (!string.IsNullOrEmpty(statusMessage))
             {
                 <p class="status-message">@statusMessage</p>
@@ -89,14 +88,16 @@
     }
     else if (!isAuthenticated)
     {
-        <div class="empty-state">
+        <div class="empty-state empty-state-muted">
             <!-- consolidated; hero handles welcome -->
         </div>
     }
     else if (games.Count == 0)
     {
         <div class="empty-state">
-            <p>There are no games available</p>
+            <div class="state-icon state-icon-empty" aria-hidden="true">⚽</div>
+            <h2 class="empty-state-title">No matches right now</h2>
+            <p class="empty-state-text">Check back later — today's schedule will appear here when games are available.</p>
             @if (!string.IsNullOrEmpty(statusMessage))
             {
                 <p class="status-message">@statusMessage</p>
@@ -105,7 +106,12 @@
     }
     else
     {
-        <div class="games-grid">
+        <div class="schedule-section">
+            <div class="schedule-header">
+                <h2 class="schedule-title">Today's matches</h2>
+                <span class="schedule-count">@games.Count @(games.Count == 1 ? "game" : "games")</span>
+            </div>
+            <div class="games-grid">
             @{
                 var anySelected = games.Any(IsSelected);
             }
@@ -113,7 +119,7 @@
             {
                 var game = games[i];
                 var isSelected = IsSelected(game);
-                var shouldFocus = focusPending && (isSelected || (!anySelected && i == 0));
+                var shouldFocus = !skipGameCardAutofocus && focusPending && (isSelected || (!anySelected && i == 0));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard Game="game"
@@ -122,6 +128,7 @@
                           LeagueLogoUrl="@leagueLogo"
                           OnClick="StartStreamResolution"/>
             }
+            </div>
         </div>
     }
 
@@ -204,6 +211,7 @@
     private readonly List<Game> games = new();
     private bool isLoading = true;
     private bool focusPending = true;
+    private static readonly bool skipGameCardAutofocus = MauiProgram.IsTv;
     private IDisposable? _gamesSubscription;
     private IDisposable? _errorSubscription;
     private IDisposable? _localLanWarningSubscription;
@@ -217,13 +225,6 @@
     private string? deviceQrDataUri;
     private string? deviceQrTarget;
     private string? localServiceWarning;
-    private BuildInfo? buildInfo;
-
-    private readonly HashSet<string> _ignoredLeagues = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "WWE", "Rugby", "NFL", "NHL", "NBA", "UFC", "Boxing", "Formula 1", "MotoGP", "Tennis", "Cricket", "Golf"
-    };
-
     private string statusMessage = string.Empty;
 
     // Stream resolution state
@@ -264,7 +265,6 @@
     protected override async Task OnInitializedAsync()
     {
         Logger.LogInformation("[Home] OnInitialized start");
-        buildInfo = await BuildInfoService.GetAsync();
         isLoading = true;
         isAuthenticated = await AuthTokenProvider.IsAuthenticatedAsync();
 
@@ -278,6 +278,7 @@
         }
 
         Logger.LogInformation("[Home] OnInitialized complete");
+        ApplyPlaybackErrorFromQuery();
         if (OperatingSystem.IsWindows())
         {
             try
@@ -313,6 +314,11 @@
 #if ANDROID
     private void AndroidBackHandler(global::Android.Views.Keycode kc)
     {
+        if (MainActivity.IsFlyoutMenuOpen)
+        {
+            return;
+        }
+
         Logger.LogInformation("[Home] Android back pressed - canceling stream resolution if active");
         try
         {
@@ -582,11 +588,8 @@
 
         foreach (var kvp in updatedGames)
         {
-            var league = kvp.Key;
-            if (_ignoredLeagues.Contains(league)) continue;
-
             var leagueGames = kvp.Value ?? new List<Game>();
-            games.AddRange(leagueGames);
+            games.AddRange(LeagueFilter.FilterGames(leagueGames));
         }
 
         EnsureInitialSelection();
@@ -607,7 +610,7 @@
         Logger.LogInformation("[Home] Games updated (flattened): {Count} games", updatedGames.Count);
 
         games.Clear();
-        games.AddRange(updatedGames.Where(g => !_ignoredLeagues.Contains(g.League))); // still filter ignored leagues if present
+        games.AddRange(LeagueFilter.FilterGames(updatedGames));
 
         EnsureInitialSelection();
         isLoading = false;
@@ -740,9 +743,18 @@
                     return;
                 }
 
-                if (outcome.PlaybackResult != null && !outcome.PlaybackResult.Success)
+                if (outcome.NoWorkingStreams)
                 {
-                    await InvokeAsync(() => { NavigateToStreamsWithError(outcome.PlaybackResult.Message); });
+                    await InvokeAsync(() => ShowStreamPlaybackError("No working streams found"));
+                }
+                else if (outcome.PlaybackResult != null && !outcome.PlaybackResult.Success && !outcome.UserClosed)
+                {
+#if WINDOWS
+                    if (!MainPage.IsNativePlayerActive)
+#endif
+                    {
+                        await InvokeAsync(() => ShowStreamPlaybackError(outcome.PlaybackResult.Message));
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -770,32 +782,49 @@
         });
     }
 
-    private void NavigateToStreamsWithError(string? message)
+    private void ShowStreamPlaybackError(string? message)
     {
-        var league = string.IsNullOrWhiteSpace(Selection.LastLeague)
-            ? Selection.CurrentGame?.ApiLeague ?? selectedGame?.ApiLeague ?? string.Empty
-            : Selection.LastLeague;
-        var home = string.IsNullOrWhiteSpace(Selection.LastHomeTeam)
-            ? Selection.CurrentGame?.Home ?? selectedGame?.Home ?? string.Empty
-            : Selection.LastHomeTeam;
-        var away = string.IsNullOrWhiteSpace(Selection.LastAwayTeam)
-            ? Selection.CurrentGame?.Away ?? selectedGame?.Away ?? string.Empty
-            : Selection.LastAwayTeam;
+        statusMessage = message ?? "Stream unavailable";
+        streamResolutionStatus = statusMessage;
+        isResolvingStreams = false;
+        SetOverlayBackSuppression(false);
+        StateHasChanged();
+    }
 
-        if (string.IsNullOrWhiteSpace(league) || string.IsNullOrWhiteSpace(home) || string.IsNullOrWhiteSpace(away))
+    private void ApplyPlaybackErrorFromQuery()
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query;
+        if (string.IsNullOrEmpty(query))
         {
-            statusMessage = message ?? "Stream unavailable";
-            StateHasChanged();
             return;
         }
 
-        var encodedLeague = Uri.EscapeDataString(league);
-        var encodedHome = Uri.EscapeDataString(home);
-        var encodedAway = Uri.EscapeDataString(away);
-        var encodedMessage = Uri.EscapeDataString(message ?? "Stream unavailable");
-        var route = $"/streams/{encodedLeague}/{encodedHome}/{encodedAway}?error={encodedMessage}";
-        Selection.LastRoute = route;
-        Navigation.NavigateTo(route, replace: true);
+        foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq <= 0)
+            {
+                continue;
+            }
+
+            if (!string.Equals(Uri.UnescapeDataString(part[..eq]), "error", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var error = Uri.UnescapeDataString(part[(eq + 1)..]);
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                ShowStreamPlaybackError(error);
+            }
+
+            return;
+        }
+    }
+
+    private void NavigateToStreamsWithError(string? message)
+    {
+        ShowStreamPlaybackError(message);
     }
 
     private async Task LoadGamesAsync()

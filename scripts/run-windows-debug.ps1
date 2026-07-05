@@ -7,6 +7,9 @@
 #   pwsh ./scripts/run-windows-debug.ps1
 #   pwsh ./scripts/run-windows-debug.ps1 -Rebuild
 #   pwsh ./scripts/run-windows-debug.ps1 -NoLaunch
+#
+# CS2012 / DLL locked (VBCSCompiler, Xaml.Markup.Compiler, stale VardyParty.exe):
+#   Get-Process VardyParty,VBCSCompiler -EA SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -Filter "Name LIKE '%Markup.Compiler%'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
 
 param(
     [ValidateSet('Debug', 'Release')]
@@ -108,6 +111,58 @@ function Sync-AppXLayoutFromBuildOutput {
     if (Test-Path $wwwroot) {
         Copy-Item -Path (Join-Path $wwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
     }
+
+    # Loose-register install location is OutputRoot (win-x64), not AppX. Blazor static assets live in AppX\wwwroot\_framework after MSIX layout.
+    $appxFramework = Join-Path $appX 'wwwroot\_framework'
+    $outputFramework = Join-Path $wwwroot '_framework'
+    if (Test-Path $appxFramework) {
+        Write-Host "Mirroring AppX Blazor _framework into output wwwroot for loose-register"
+        New-Item -ItemType Directory -Path $outputFramework -Force | Out-Null
+        Copy-Item -Path (Join-Path $appxFramework '*') -Destination $outputFramework -Recurse -Force
+    }
+
+    foreach ($leaf in @('index.html', 'VardyParty.styles.css')) {
+        $appxFile = Join-Path $appX "wwwroot\$leaf"
+        $outputFile = Join-Path $wwwroot $leaf
+        if (Test-Path $appxFile) {
+            New-Item -ItemType Directory -Path (Split-Path $outputFile) -Force | Out-Null
+            Copy-Item -Path $appxFile -Destination $outputFile -Force
+        }
+    }
+
+    # Loose-register uses win-x64\AppxManifest.xml; splash/tile PNGs live under AppX after MSIX layout.
+    $msixAssetBases = @(
+        'vardyparty_splash_generatedSplashScreen',
+        'vardyparty_splashStoreLogo',
+        'vardyparty_splashMediumTile',
+        'vardyparty_splashLogo',
+        'vardyparty_splashSmallTile',
+        'vardyparty_splashWideTile',
+        'vardyparty_splashLargeTile'
+    )
+    foreach ($base in $msixAssetBases) {
+        $scaled = Join-Path $appX "$base.scale-100.png"
+        if (-not (Test-Path $scaled)) { continue }
+        Copy-Item -Path $scaled -Destination (Join-Path $appX "$base.png") -Force
+    }
+    Get-ChildItem -Path $appX -File -Filter '*.png' | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination (Join-Path $OutputRoot $_.Name) -Force
+    }
+    $appxPri = Join-Path $appX 'resources.pri'
+    if (Test-Path $appxPri) {
+        Copy-Item -Path $appxPri -Destination (Join-Path $OutputRoot 'resources.pri') -Force
+    }
+}
+
+function Test-BlazorWebViewAssets {
+    param([string]$OutputRoot)
+
+    $blazorJs = Join-Path $OutputRoot 'wwwroot\_framework\blazor.webview.js'
+    if (-not (Test-Path $blazorJs)) {
+        throw "Missing $blazorJs. Rebuild with -Rebuild so MSIX layout generates _framework, then re-run this script."
+    }
+
+    Write-Host "Blazor WebView asset OK: $blazorJs"
 }
 
 function Test-AppXWwwrootFresh {
@@ -156,6 +211,7 @@ $projectRoot = Join-Path $repoRoot 'VardyParty'
 Sync-AppXLayoutFromBuildOutput -OutputRoot $winOut -ProjectRoot $projectRoot -BuildConfiguration $Configuration
 Test-AppXBinaryFresh -OutputRoot $winOut
 Test-AppXWwwrootFresh -OutputRoot $winOut -ProjectRoot $projectRoot
+Test-BlazorWebViewAssets -OutputRoot $winOut
 
 $leagueDir = Join-Path $layoutDir 'wwwroot\images\leagues'
 if (-not (Test-Path (Join-Path $leagueDir 'lebanese-premier-league.png'))) {
