@@ -40,7 +40,7 @@
         <div class="local-service-warning">@statusMessage</div>
     }
 
-    @if (!isAuthenticated)
+    @if (authReady && !isAuthenticated)
     {
         <div class="auth-hero@(deviceCode != null ? " auth-hero-device" : string.Empty)">
             @if (deviceCode != null)
@@ -91,12 +91,12 @@
         </div>
     }
 
-    @if (isLoading && isAuthenticated)
+    @if (!authReady || (isLoading && isAuthenticated))
     {
         <div class="loading-container">
             <div class="state-icon state-icon-loading" aria-hidden="true"></div>
-            <p class="loading-text">Loading matches</p>
-            @if (!string.IsNullOrEmpty(statusMessage))
+            <p class="loading-text">@(authReady ? "Loading matches" : "Starting")</p>
+            @if (authReady && !string.IsNullOrEmpty(statusMessage))
             {
                 <p class="status-message">@statusMessage</p>
             }
@@ -231,8 +231,9 @@
     private readonly List<Game> games = new();
     private bool isLoading = true;
     private bool focusPending = true;
-    private bool signInContinueFocusPending = true;
+    private bool signInContinueFocusPending;
     private bool authCancelFocusPending;
+    private bool authReady;
     private ElementReference signInContinueButtonRef;
     private ElementReference authCancelButtonRef;
 
@@ -301,6 +302,7 @@
         Logger.LogInformation("[Home] OnInitialized start");
         isLoading = true;
         isAuthenticated = await AuthTokenProvider.IsAuthenticatedAsync();
+        authReady = true;
 
         if (isAuthenticated)
         {
@@ -309,9 +311,10 @@
         else
         {
             isLoading = false;
+            signInContinueFocusPending = true;
         }
 
-        Logger.LogInformation("[Home] OnInitialized complete");
+        Logger.LogInformation("[Home] OnInitialized complete (authenticated={Authenticated})", isAuthenticated);
         ApplyPlaybackErrorFromQuery();
         if (OperatingSystem.IsWindows())
         {
