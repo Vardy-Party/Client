@@ -7,11 +7,25 @@ namespace VardyParty.Parsers;
 
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {
-    private static readonly int Timeout = 200;
+    private static readonly int SlowGameWarnMs = 50;
+    // Real BBC event cards are ~2.5–4KB apart; cap avoids scanning hundreds of KB of trailing scripts.
+    private const int MaxGameBlockChars = 8192;
     private const string EscapedStartDateTimeMarker = "\\\"startDateTime\\\":\\\"";
     private const string EscapedIdMarker = "\\\"id\\\":\\\"";
     private const string UnescapedStartDateTimeMarker = "\"startDateTime\":\"";
     private const string UnescapedIdMarker = "\"id\":\"";
+    private const string DataEventIdMarker = "data-event-id=";
+    private const string H2Marker = "<h2";
+
+    private static readonly Regex AggScoreRegex = new(@"\(Agg\s+(?<h>\d+)\s*-\s*(?<a>\d+)\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex AggScoreAltRegex = new(@"Aggregate\s+score[^<]*(?<h>\d+)\s*,[^<]*(?<a>\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex InjuryTimeApostropheRegex = new(@"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex InjuryTimePlainRegex = new(@"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex MinuteApostropheRegex = new(@"(?<m>\d+)\s*'", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex MinuteWordsRegex = new(@"(?<m>\d+)\s*minutes?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex StyledPeriodMinuteRegex = new(@"<div[^>]*>(\d+)(?:&#x27;|&#39;|')</div>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PenaltiesWinRegex = new(@"(?<winner>[^<>\n]{1,100}?)\s+win\s+(?<w>\d+)\s*-\s*(?<l>\d+)\s+on\s+penalties", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex OrdinalStatusRegex = new(@"\b\d+\s*(st|nd|rd|th)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Simple, robust regex-based parser. Keeps memory footprint low.
     public List<BbcFixture> ParseHtml(string html, CancellationToken cancellationToken = default)
@@ -28,99 +42,15 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Fallback: extract the JSON object following __INITIAL_DATA__ and scan it for id/status pairs
         if (eventStatusMap.Count == 0)
         {
-            var swFallback = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                int anchorIdx = -1;
-                var anchorNames = new[] { "window.__INITIAL_DATA__", "__INITIAL_DATA__" };
-                foreach (var a in anchorNames)
-                {
-                    anchorIdx = html.IndexOf(a, StringComparison.OrdinalIgnoreCase);
-                    if (anchorIdx >= 0) break;
-                }
-
-                if (anchorIdx >= 0)
-                {
-                    int braceStart = html.IndexOf('{', anchorIdx);
-                    if (braceStart >= 0)
-                    {
-                        bool inString = false;
-                        int depth = 0;
-                        int blobEnd = -1;
-                        for (int i = braceStart; i < html.Length; i++)
-                        {
-                            var c = html[i];
-                            if (c == '"')
-                            {
-                                int back = i - 1; bool esc = false; while (back >= 0 && html[back] == '\\') { esc = !esc; back--; }
-                                if (!esc) inString = !inString;
-                            }
-                            if (!inString)
-                            {
-                                if (c == '{') depth++;
-                                else if (c == '}')
-                                {
-                                    depth--;
-                                    if (depth == 0)
-                                    {
-                                        blobEnd = i;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (blobEnd > braceStart)
-                        {
-                            var jsonBlob = html.Substring(braceStart, blobEnd - braceStart + 1);
-                            var blobMatches = Regex.Matches(jsonBlob, "\"id\"\\s*:\\s*\"(?<id>s-[^\"']+)\"[\\s\\S]*?\"status\"\\s*:\\s*\"(?<s>[^\"']+)\"", RegexOptions.IgnoreCase);
-                            foreach (Match m in blobMatches)
-                            {
-                                try
-                                {
-                                    var id = m.Groups["id"].Value;
-                                    var s = m.Groups["s"].Value;
-                                    if (!string.IsNullOrEmpty(id) && !eventStatusMap.ContainsKey(id)) eventStatusMap[id] = (string.Empty, s, string.Empty);
-                                }
-                                catch { }
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning("[BBC] JSON fallback parse error: {Message}", ex.Message);
-            }
-            swFallback.Stop();
-            logger.LogInformation("[BBC] Fallback map build took {Elapsed}ms", swFallback.ElapsedMilliseconds);
+            logger.LogWarning("[BBC] Event status map empty after streaming parse; continuing with HTML-only status");
         }
 
-        // Final fallback: scan entire HTML for id/status pairs (covers custom initial JSON blocks)
-        if (eventStatusMap.Count == 0)
-        {
-            var rx = new Regex("\\\"id\\\"\\s*:\\s*\\\"(?<id>s-[^\\\"]+)\\\"[\\\\s\\\\S]*?\\\"status\\\"\\s*:\\s*\\\"(?<status>[^\\\"]+)\\\"", RegexOptions.IgnoreCase | RegexOptions.Multiline);
-            foreach (Match m in rx.Matches(html))
-            {
-                try
-                {
-                    var id = m.Groups["id"].Value;
-                    var s = m.Groups["status"].Value;
-                    if (!string.IsNullOrEmpty(id) && !eventStatusMap.ContainsKey(id))
-                    {
-                        eventStatusMap[id] = (string.Empty, s, string.Empty);
-                    }
-                }
-                catch { }
-            }
-        }
-
+        var swKickoff = System.Diagnostics.Stopwatch.StartNew();
         var eventKickoffMap = BuildEventKickoffMap(html);
+        swKickoff.Stop();
 
-        // --- NEW SERIAL SCANNER ---
         var swSerial = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -134,9 +64,14 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
         sw.Stop();
         
-        // Log "Serial" instead of BlockParse parts
-        logger.LogInformation("[BBC] Parsing stats: HeaderRx=0ms MapStream={Map}ms GameRx=0ms SerialScan={Serial}ms Total={Total}ms", 
-            swMap.ElapsedMilliseconds, swSerial.ElapsedMilliseconds, sw.ElapsedMilliseconds);
+        logger.LogInformation(
+            "[BBC] Parsing stats: MapStream={Map}ms StatusMap={StatusCount} KickoffMap={Kickoff}ms SerialScan={Serial}ms Fixtures={FixtureCount} Total={Total}ms",
+            swMap.ElapsedMilliseconds,
+            eventStatusMap.Count,
+            swKickoff.ElapsedMilliseconds,
+            swSerial.ElapsedMilliseconds,
+            list.Count,
+            sw.ElapsedMilliseconds);
 
         return list;
     }
@@ -215,81 +150,73 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
         Dictionary<string, DateTime> eventKickoffMap)
     {
-        // Single pass scanner
-        // We look for "<h2" or "data-event-id=" markers serially
+        // Single pass scanner over "<h2" / "data-event-id=" markers.
         int cursor = 0;
         string currentLeague = string.Empty;
         int len = html.Length;
-        int gamesFound = 0;
 
         while (cursor < len)
         {
-            // Find next interesting marker
-            // We search for "<h2" and "data-event-id="
-            int nextH2 = html.IndexOf("<h2", cursor, StringComparison.OrdinalIgnoreCase);
-            int nextGame = html.IndexOf("data-event-id=", cursor, StringComparison.OrdinalIgnoreCase);
+            int nextH2 = html.IndexOf(H2Marker, cursor, StringComparison.OrdinalIgnoreCase);
+            int nextGame = html.IndexOf(DataEventIdMarker, cursor, StringComparison.Ordinal);
 
-            if (nextH2 < 0 && nextGame < 0) break; // done
+            if (nextH2 < 0 && nextGame < 0) break;
 
-            // Determine which comes first
-            bool isHeader = false;
-            int foundIdx = -1;
-
+            bool isHeader;
+            int foundIdx;
             if (nextH2 >= 0 && nextGame >= 0)
             {
-                if (nextH2 < nextGame) { isHeader = true; foundIdx = nextH2; }
-                else { isHeader = false; foundIdx = nextGame; }
+                isHeader = nextH2 < nextGame;
+                foundIdx = isHeader ? nextH2 : nextGame;
             }
-            else if (nextH2 >= 0) { isHeader = true; foundIdx = nextH2; }
-            else { isHeader = false; foundIdx = nextGame; }
+            else if (nextH2 >= 0)
+            {
+                isHeader = true;
+                foundIdx = nextH2;
+            }
+            else
+            {
+                isHeader = false;
+                foundIdx = nextGame;
+            }
 
-            // Move cursor past the finding
             cursor = foundIdx;
 
             if (isHeader)
             {
-                // Parse League Header
-                // <h2 ...>Content</h2>
                 int endH2 = html.IndexOf("</h2>", cursor, StringComparison.OrdinalIgnoreCase);
                 if (endH2 > cursor)
                 {
-                    // Find closing '>' of open tag
                     int closeTag = html.IndexOf('>', cursor);
                     if (closeTag > cursor && closeTag < endH2)
                     {
                         var content = html.Substring(closeTag + 1, endH2 - closeTag - 1);
-                        var text = StripTags(content);
-                        text = System.Net.WebUtility.HtmlDecode(text);
+                        var text = System.Net.WebUtility.HtmlDecode(StripTags(content));
                         if (!string.IsNullOrWhiteSpace(text) && !text.Contains("Scores & Fixtures", StringComparison.OrdinalIgnoreCase))
                         {
                             currentLeague = text;
                         }
                     }
-                    cursor = endH2 + 5; // skip </h2>
+                    cursor = endH2 + 5;
                 }
                 else
                 {
-                    cursor += 4; // safety skip
+                    cursor += 4;
                 }
             }
             else
             {
-                // Parse Game
-                // data-event-id="s-..."
-                // We need to define scope. Where does this game block end?
-                // It ends at next "data-event-id=" OR next "<h2" OR a reasonable limit.
-                // Actually, we can just extract fields *forward* from here until we hit something or are happy.
-                // But better to define a 'limit' index to avoid scanning into next game.
-                
-                int nextMarker1 = html.IndexOf("data-event-id=", cursor + 14, StringComparison.OrdinalIgnoreCase);
-                int nextMarker2 = html.IndexOf("<h2", cursor + 14, StringComparison.OrdinalIgnoreCase);
-                int limit = len;
+                // Bound the card tightly. Without a cap, the last fixture scans hundreds of KB of trailing scripts.
+                int searchFrom = cursor + DataEventIdMarker.Length;
+                int cappedLimit = Math.Min(cursor + MaxGameBlockChars, len);
+                int nextMarker1 = html.IndexOf(DataEventIdMarker, searchFrom, StringComparison.Ordinal);
+                int nextMarker2 = html.IndexOf(H2Marker, searchFrom, StringComparison.OrdinalIgnoreCase);
+                int limit = cappedLimit;
                 if (nextMarker1 >= 0 && nextMarker1 < limit) limit = nextMarker1;
                 if (nextMarker2 >= 0 && nextMarker2 < limit) limit = nextMarker2;
 
-                // Extract ID
                 string id = "";
-                int quoteStart = html.IndexOf('"', cursor + 14); // after data-event-id=
+                int quoteStart = html.IndexOf('"', searchFrom);
                 if (quoteStart >= 0 && quoteStart < limit)
                 {
                     int quoteEnd = html.IndexOf('"', quoteStart + 1);
@@ -299,21 +226,18 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     }
                 }
 
-                // If valid ID, extract details in range [cursor, limit)
                 if (!string.IsNullOrEmpty(id))
                 {
                     var swGame = System.Diagnostics.Stopwatch.StartNew();
-                    // Use helper that takes (html, start, end) to avoid substring
                     ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap, eventKickoffMap);
                     swGame.Stop();
-                    if (swGame.ElapsedMilliseconds > Timeout)
+                    if (swGame.ElapsedMilliseconds > SlowGameWarnMs)
                     {
-                         logger.LogWarning("[BBC] Slow game parse ({Elapsed}ms) for ID {Id} in League {League}", swGame.ElapsedMilliseconds, id, currentLeague);
+                        logger.LogWarning("[BBC] Slow game parse ({Elapsed}ms) for ID {Id} in League {League}", swGame.ElapsedMilliseconds, id, currentLeague);
                     }
-                    gamesFound++;
                 }
 
-                cursor = limit; // jump to next item
+                cursor = limit;
             }
         }
     }
@@ -439,7 +363,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 if (aggSearchLen > 0 && aggSearchLen < 5000)
                 {
                     var aggBlock = html.Substring(containerIdx, aggSearchLen);
-                    var aggMatch = Regex.Match(aggBlock, @"\(Agg\s+(?<h>\d+)\s*-\s*(?<a>\d+)\)", RegexOptions.IgnoreCase);
+                    var aggMatch = AggScoreRegex.Match(aggBlock);
                     if (aggMatch.Success)
                     {
                         aggHomeScore = TryParseInt(aggMatch.Groups["h"].Value);
@@ -447,7 +371,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     }
                     else
                     {
-                        var aggMatch2 = Regex.Match(aggBlock, @"Aggregate\s+score[^<]*(?<h>\d+)\s*,[^<]*(?<a>\d+)", RegexOptions.IgnoreCase);
+                        var aggMatch2 = AggScoreAltRegex.Match(aggBlock);
                         if (aggMatch2.Success)
                         {
                             aggHomeScore = TryParseInt(aggMatch2.Groups["h"].Value);
@@ -460,14 +384,14 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (!string.IsNullOrEmpty(progressInner))
             {
                 // First try: match injury time pattern with apostrophe before plus: 90'+8
-                var injPlus = Regex.Match(progressInner, @"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
-                
+                var injPlus = InjuryTimeApostropheRegex.Match(progressInner);
+
                 // If no apostrophe variant, try without apostrophe: 90+8
                 if (!injPlus.Success)
                 {
-                    injPlus = Regex.Match(progressInner, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                    injPlus = InjuryTimePlainRegex.Match(progressInner);
                 }
-                
+
                 if (injPlus.Success)
                 {
                     var m = TryParseInt(injPlus.Groups[1].Value) ?? 0;
@@ -477,8 +401,8 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 }
                 else
                 {
-                    var mMatch = Regex.Match(progressInner, @"(?<m>\d+)\s*'", RegexOptions.IgnoreCase);
-                    if (!mMatch.Success) mMatch = Regex.Match(progressInner, @"(?<m>\d+)\s*minutes", RegexOptions.IgnoreCase);
+                    var mMatch = MinuteApostropheRegex.Match(progressInner);
+                    if (!mMatch.Success) mMatch = MinuteWordsRegex.Match(progressInner);
                     if (mMatch.Success) minute = TryParseInt(mMatch.Groups["m"].Value);
                     if (minute.HasValue) minuteStatus = $"{minute}'";
                 }
@@ -495,12 +419,12 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     // First, try to find injury time pattern in the container block
                     int containerBlockLen = minSearchLen;
                     var containerBlock = html.Substring(containerIdx, containerBlockLen);
-                    var injMatch = Regex.Match(containerBlock, @"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                    var injMatch = InjuryTimeApostropheRegex.Match(containerBlock);
                     if (!injMatch.Success)
                     {
-                        injMatch = Regex.Match(containerBlock, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                        injMatch = InjuryTimePlainRegex.Match(containerBlock);
                     }
-                    
+
                     if (injMatch.Success)
                     {
                         var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
@@ -516,7 +440,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         {
                             int periodEnd = Math.Min(styledIdx + 200, html.Length);
                             var periodBlock = html.Substring(styledIdx, periodEnd - styledIdx);
-                            var minMatch = Regex.Match(periodBlock, @"<div[^>]*>(\d+)(?:&#x27;|&#39;|')</div>", RegexOptions.IgnoreCase);
+                            var minMatch = StyledPeriodMinuteRegex.Match(periodBlock);
                             if (minMatch.Success)
                             {
                                 minute = TryParseInt(minMatch.Groups[1].Value);
@@ -631,7 +555,8 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (firstBadgeIdx >= 0)
             {
                 // Scan back for http
-                int searchBackLimit = Math.Max(start, firstBadgeIdx - Timeout);
+                const int badgeHttpLookback = 200;
+                int searchBackLimit = Math.Max(start, firstBadgeIdx - badgeHttpLookback);
                 int httpIdx = html.LastIndexOf("http", firstBadgeIdx, firstBadgeIdx - searchBackLimit, StringComparison.OrdinalIgnoreCase);
                 if (httpIdx >= 0)
                 {
@@ -645,7 +570,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         int secondBadgeIdx = FindBadgeExtension(searchStart2, end);
                         if (secondBadgeIdx >= 0)
                         {
-                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - Timeout);
+                             int searchBackLimit2 = Math.Max(start, secondBadgeIdx - badgeHttpLookback);
                              int http2Idx = html.LastIndexOf("http", secondBadgeIdx, secondBadgeIdx - searchBackLimit2, StringComparison.OrdinalIgnoreCase);
                              if (http2Idx >= 0)
                              {
@@ -688,7 +613,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                      // Last game on page could have rangeLen of 100KB+, causing 400ms+ regex penalty
                      int cappedRangeLen = Math.Min(rangeLen, 5000);
                      var blockSub = html.Substring(start, cappedRangeLen);
-                     var penMatch = Regex.Match(blockSub, @"(?<winner>[^<>\n]{1,100}?)\s+win\s+(?<w>\d+)\s*-\s*(?<l>\d+)\s+on\s+penalties", RegexOptions.IgnoreCase);
+                     var penMatch = PenaltiesWinRegex.Match(blockSub);
                      if (penMatch.Success)
                      {
                          penaltyWinner = System.Net.WebUtility.HtmlDecode(penMatch.Groups["winner"].Value.Trim());
@@ -732,7 +657,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                  {
                      var periodText = statusMap.periodLabel;
                      // Try to parse injury time format: "90+8'" or "90+8"
-                     var injMatch = Regex.Match(periodText, @"(\d+)\s*\+\s*(\d+)", RegexOptions.IgnoreCase);
+                     var injMatch = InjuryTimePlainRegex.Match(periodText);
                      if (injMatch.Success)
                      {
                          var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
@@ -745,10 +670,10 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                      else
                      {
                          // Try to parse simple minute format: "68'" or "68 minutes"
-                         var minMatch = Regex.Match(periodText, @"(\d+)\s*'", RegexOptions.IgnoreCase);
+                         var minMatch = MinuteApostropheRegex.Match(periodText);
                          if (!minMatch.Success)
                          {
-                             minMatch = Regex.Match(periodText, @"(\d+)\s*minutes?", RegexOptions.IgnoreCase);
+                             minMatch = MinuteWordsRegex.Match(periodText);
                          }
                          if (minMatch.Success)
                          {
@@ -763,11 +688,14 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                      }
                  }
                  
-                 if (string.IsNullOrEmpty(status) || status.Equals("", StringComparison.OrdinalIgnoreCase))
+                 if (string.IsNullOrEmpty(status))
                  {
-                     status = statusMap.status;
-                     if (status.IndexOf("Postponed", StringComparison.OrdinalIgnoreCase) >= 0)
+                     // BBC lifecycle enums (PreEvent/MidEvent/PostEvent) are not display statuses.
+                     // Only promote human-readable map statuses such as Postponed.
+                     var mapStatus = statusMap.status ?? string.Empty;
+                     if (mapStatus.IndexOf("Postponed", StringComparison.OrdinalIgnoreCase) >= 0)
                      {
+                         status = "Postponed";
                          isPostponed = true;
                          hasProgress = false;
                          isFinished = false;
@@ -775,8 +703,9 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                          isHalf = false;
                          minute = null;
                      }
-                     else if (Regex.IsMatch(status, @"\b\d+\s*(st|nd|rd|th)\b", RegexOptions.IgnoreCase))
+                     else if (OrdinalStatusRegex.IsMatch(mapStatus))
                      {
+                         status = mapStatus;
                          minute = 0;
                      }
                  }

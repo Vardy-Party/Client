@@ -23,6 +23,27 @@ namespace VardyParty.Core.Tests
         }
 
         [Fact]
+        public void BuildEventStatusMapStreaming_ParsesEscapedInitialData_LikeBbc()
+        {
+            // BBC serves __INITIAL_DATA__ as an escaped JSON string assignment.
+            // Literal page text resembles: __INITIAL_DATA__="{\"id\":\"s-...\",\"status\":\"MidEvent\",...}"
+            var html =
+                "__INITIAL_DATA__=\"{" +
+                "\\\"id\\\":\\\"s-escaped1\\\"," +
+                "\\\"periodLabel\\\":{\\\"value\\\":\\\"87'\\\"}," +
+                "\\\"status\\\":\\\"MidEvent\\\"," +
+                "\\\"statusComment\\\":{\\\"value\\\":\\\"87 minutes\\\"}" +
+                "}\"";
+
+            var map = _parser.BuildEventStatusMapStreaming(html);
+
+            Assert.True(map.ContainsKey("s-escaped1"));
+            Assert.Equal("MidEvent", map["s-escaped1"].status);
+            Assert.Equal("87'", map["s-escaped1"].periodLabel);
+            Assert.Equal("87 minutes", map["s-escaped1"].statusComment);
+        }
+
+        [Fact]
         public void BuildEventStatusMapStreaming_MalformedJson_DoesNotThrow()
         {
             var malformed = "<script>window.__INITIAL_DATA__ = {\"events\":[{\"id\":\"s-1\",\"status\":\"Live\"}]"; // missing closing braces
