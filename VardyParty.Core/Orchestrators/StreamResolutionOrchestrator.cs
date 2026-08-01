@@ -250,6 +250,9 @@ public class StreamResolutionOrchestrator(
         var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream, playbackCts.Token);
         try
         {
+            // Warm the next candidate while this one plays so the first Next click is instant.
+            PrefetchUpcomingStreamUrl(game, cancellationToken);
+
             return await nativeVideoPlayer.PlayVideoAsync(
                 m3u8Url,
                 string.IsNullOrWhiteSpace(enrichedStream.Referer) ? enrichedStream.Stream.Url : enrichedStream.Referer,
@@ -354,6 +357,9 @@ public class StreamResolutionOrchestrator(
             return;
         }
 
+        // Prefer the queued m3u8 so Next is instant. Waiting on LocalService /play (~10–15s)
+        // before every switch makes the UI feel dead. Keep URLs fresh via background prefetch
+        // (see PrefetchUpcomingStreamUrl); resolve synchronously only when nothing is queued.
         if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
             _status = "Switch requested - resolving stream URL...";
@@ -374,13 +380,15 @@ public class StreamResolutionOrchestrator(
             }
 
             nextStream.ResolvedM3U8Url = resolved;
+            logger.LogInformation(
+                "[StreamResolution] Resolved fresh M3U8 for next stream {Channel}",
+                nextStream.Stream.Channel);
         }
         else
         {
-            logger.LogInformation("[StreamResolution] Reusing queued M3U8 for next stream {Channel}",
+            logger.LogInformation(
+                "[StreamResolution] Reusing queued M3U8 for next stream {Channel}",
                 nextStream.Stream.Channel);
-            _status = "Switch requested - using queued stream";
-            PublishProgress();
         }
 
         if (streamSwitchingService.SwitchToNextStream())
@@ -388,7 +396,58 @@ public class StreamResolutionOrchestrator(
             logger.LogInformation("[StreamResolution] Switched to next stream");
             _status = "Switched to next stream";
             PublishProgress();
+            PrefetchUpcomingStreamUrl(game, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Warm the next candidate's m3u8 in the background so the following Next click stays
+    /// instant without relying on a long-lived health-check URL.
+    /// </summary>
+    private void PrefetchUpcomingStreamUrl(Game game, CancellationToken cancellationToken)
+    {
+        var current = streamSwitchingService.GetCurrentStream();
+        var upcoming = streamSwitchingService.GetNextHealthyStream();
+        // With a single candidate, "next" wraps to current — don't re-resolve the live stream.
+        if (upcoming?.Stream == null || ReferenceEquals(upcoming, current)) return;
+
+        var channel = upcoming.Stream.Channel;
+        var path = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
+        var stream = upcoming.Stream;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var resolved = await apiService.ResolveM3U8ForPlaybackAsync(stream, path, cancellationToken);
+                if (string.IsNullOrEmpty(resolved))
+                {
+                    logger.LogDebug(
+                        "[StreamResolution] Prefetch skipped — no m3u8 for upcoming {Channel}",
+                        channel);
+                    return;
+                }
+
+                // Only write back if this is still the upcoming candidate (user may have switched).
+                var stillUpcoming = streamSwitchingService.GetNextHealthyStream();
+                if (stillUpcoming?.Stream == stream)
+                {
+                    stillUpcoming.ResolvedM3U8Url = resolved;
+                    logger.LogInformation(
+                        "[StreamResolution] Prefetched fresh M3U8 for upcoming stream {Channel}",
+                        channel);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex,
+                    "[StreamResolution] Prefetch failed for upcoming {Channel}",
+                    channel);
+            }
+        }, cancellationToken);
     }
 
     private async Task<bool> TryNextHealthyStreamAsync(Game game, CancellationToken cancellationToken)

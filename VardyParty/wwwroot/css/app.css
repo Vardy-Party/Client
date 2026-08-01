@@ -143,6 +143,11 @@ button {
     padding-top: max(32px, env(safe-area-inset-top, 0px));
 }
 
+/* Android TV has no phone status bar — don't reserve the 32px inset above the title. */
+.platform-android-tv .page-header {
+    padding-top: 0;
+}
+
 .header-brand {
     position: absolute;
     left: 50%;
@@ -305,6 +310,13 @@ button {
     width: 100%;
     margin: calc(50vh - 120px) auto 24px auto; /* vertically centered-ish */
     justify-content: center;
+}
+
+/* TV: keep device QR on-screen — no vertical centering that pushes content below the fold. */
+.platform-android-tv .auth-hero,
+.platform-android-tv .auth-hero.auth-hero-device {
+    margin: 8px auto 12px auto;
+    max-width: min(720px, calc(100vw - 48px));
 }
 
 .auth-message {
@@ -731,20 +743,28 @@ button {
     display: flex;
     align-items: center;
     gap: 10px;
+    width: 100%;
     padding: 10px 12px;
     font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    color: inherit;
     cursor: pointer;
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.03);
     transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     position: relative;
+    box-sizing: border-box;
 }
 
 .league-filter-item:hover,
+.league-filter-item:focus,
+.league-filter-item:focus-visible,
 .league-filter-item:focus-within {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.16);
+    outline: none;
 }
 
 .league-filter-item-active {
@@ -753,14 +773,7 @@ button {
 }
 
 .league-filter-checkbox {
-    position: absolute;
-    left: 12px;
-    opacity: 0;
-    width: 20px;
-    height: 20px;
-    margin: 0;
-    cursor: pointer;
-    z-index: 1;
+    display: none;
 }
 
 .league-filter-check {
@@ -796,10 +809,20 @@ button {
     line-height: 1.35;
 }
 
+.league-filter-item:focus,
+.league-filter-item:focus-visible,
 .league-filter-item:focus-within {
     outline: none;
     box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.4);
     border-color: rgba(74, 158, 255, 0.55);
+}
+
+.menu-chip-button:focus,
+.menu-chip-button:focus-visible {
+    background: rgba(74, 158, 255, 0.24);
+    border-color: rgba(74, 158, 255, 0.6);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.35);
 }
 
 .flyout-menu-section-actions {

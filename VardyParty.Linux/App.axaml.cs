@@ -72,12 +72,14 @@ public class App : Application
             .AddJsonFile(appSettingsFileName, false, true)
             .Build()
             .GetSection("Api");
+        // Default to production; set VARDYPARTY_DEBUG_API=local|preview to override.
         var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
         var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
         {
+            "local" => apiConfig["HeadlessBaseUrl-Local"],
             "preview" => apiConfig["HeadlessBaseUrl-Preview"],
             "production" or "prod" => apiConfig["HeadlessBaseUrl"],
-            _ => apiConfig["HeadlessBaseUrl-Local"],
+            _ => apiConfig["HeadlessBaseUrl"],
         };
         if (!string.IsNullOrWhiteSpace(debugBaseUrl))
         {
@@ -85,7 +87,7 @@ public class App : Application
             {
                 ["Api:HeadlessBaseUrl"] = debugBaseUrl
             });
-            Console.WriteLine($"[App] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "local"})");
+            Console.WriteLine($"[App] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "production"})");
         }
 #endif
 

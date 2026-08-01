@@ -123,7 +123,7 @@
 
     private async Task OnCardKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key is "Enter" or " " or "Spacebar")
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
         {
             await OnCardClick();
         }

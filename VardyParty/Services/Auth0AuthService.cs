@@ -128,11 +128,19 @@ public class Auth0AuthService(
 
     public async Task<AuthDeviceLoginResult?> StartDeviceLoginAsync(CancellationToken cancellationToken = default)
     {
-        if (_auth0Settings == null) return null;
+        if (_auth0Settings == null)
+        {
+            logger.LogWarning("[Auth0] Device login missing Auth0 settings instance");
+            throw new InvalidOperationException("Auth0 is not configured on this device build.");
+        }
 
         var clientId = _auth0Settings.ClientId;
         var domain = _auth0Settings.Domain;
-        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(domain)) return null;
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(domain))
+        {
+            logger.LogWarning("[Auth0] Device login missing ClientId/Domain");
+            throw new InvalidOperationException("Auth0 is not configured on this device build.");
+        }
 
         var client = httpClientFactory.CreateClient();
         var endpoint = BuildAuth0Url(domain, "/oauth/device/code");
@@ -147,13 +155,37 @@ public class Auth0AuthService(
         if (!string.IsNullOrWhiteSpace(_auth0Settings.Scope))
             form.Add(new KeyValuePair<string, string>("scope", _auth0Settings.Scope));
 
+        logger.LogInformation("[Auth0] Requesting device code from {Endpoint}", endpoint);
         using var response = await client.PostAsync(endpoint, new FormUrlEncodedContent(form), cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        var payload = await response.Content.ReadFromJsonAsync<DeviceCodeResponse>(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var authError = TryReadOAuthError(body);
+            logger.LogWarning(
+                "[Auth0] Device code request failed: {Status} {Error} {Description} body={Body}",
+                (int)response.StatusCode,
+                authError?.Error,
+                authError?.ErrorDescription,
+                body.Length > 300 ? body[..300] : body);
+
+            var message = !string.IsNullOrWhiteSpace(authError?.ErrorDescription)
+                ? authError.ErrorDescription
+                : !string.IsNullOrWhiteSpace(authError?.Error)
+                    ? authError.Error
+                    : $"Sign-in failed ({(int)response.StatusCode}). Check Auth0 device-code grant.";
+            throw new InvalidOperationException(message);
+        }
+
+        var payload = System.Text.Json.JsonSerializer.Deserialize<DeviceCodeResponse>(body);
         if (payload == null || string.IsNullOrWhiteSpace(payload.DeviceCode) ||
             string.IsNullOrWhiteSpace(payload.UserCode) ||
-            string.IsNullOrWhiteSpace(payload.VerificationUri)) return null;
+            string.IsNullOrWhiteSpace(payload.VerificationUri))
+        {
+            logger.LogWarning("[Auth0] Device code response missing required fields: {Body}",
+                body.Length > 300 ? body[..300] : body);
+            throw new InvalidOperationException("Auth0 device sign-in returned an incomplete response.");
+        }
 
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(payload.ExpiresIn);
         var deviceCode = new AuthDeviceCode(
@@ -165,6 +197,7 @@ public class Auth0AuthService(
             payload.Interval <= 0 ? 5 : payload.Interval,
             expiresAt);
 
+        logger.LogInformation("[Auth0] Device code issued. UserCode={UserCode}", deviceCode.UserCode);
         return new AuthDeviceLoginResult(deviceCode);
     }
 
@@ -253,7 +286,7 @@ public class Auth0AuthService(
     public async Task LogoutAsync()
     {
         await ClearTokensAsync();
-        _auth0Settings = null;
+        // Do not null _auth0Settings — that permanently breaks device sign-in until process restart.
     }
 
     private bool IsExpired(Auth0Settings? settings)
@@ -444,6 +477,19 @@ public class Auth0AuthService(
         };
     }
 
+    private static OAuthErrorResponse? TryReadOAuthError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<OAuthErrorResponse>(body);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string BuildAuth0Url(string domain, string path)
     {
         var normalized = domain.Trim();
@@ -452,6 +498,13 @@ public class Auth0AuthService(
         return $"https://{normalized}{path}";
     }
 
+
+    private sealed class OAuthErrorResponse
+    {
+        [JsonPropertyName("error")] public string? Error { get; init; }
+
+        [JsonPropertyName("error_description")] public string? ErrorDescription { get; init; }
+    }
 
     private sealed class DeviceCodeResponse
     {

@@ -112,7 +112,21 @@ public class RemoteKeyHandler
             case Keycode.Enter:
             case Keycode.NumpadEnter:
                 OnEnter?.Invoke(keyCode);
-                return ShouldConsumeEnter?.Invoke() == true;
+                if (ShouldConsumeEnter?.Invoke() == true)
+                {
+                    return true;
+                }
+
+                // Assist TV WebView click. Consume only when a real control was activated —
+                // otherwise OK falls through (e.g. QR screen). Consuming after a click
+                // prevents Blazor @onclick from firing twice (league toggles looked dead).
+                if (global::VardyParty.MauiProgram.IsTv
+                    && global::VardyParty.MainPage.Instance?.TryClickFocusedWebElement() == true)
+                {
+                    return true;
+                }
+
+                return false;
 
             default:
                 return false;

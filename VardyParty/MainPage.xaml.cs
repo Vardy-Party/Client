@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Maui.Controls;
+using System.Threading;
 #if WINDOWS
 using VardyParty.Platforms.Windows;
 using WinUiWindow = Microsoft.UI.Xaml.Window;
@@ -42,9 +43,27 @@ namespace VardyParty
                         {
                             Console.WriteLine("[MainPage] BlazorWebViewInitializing");
                         };
-                        blazorWebView.BlazorWebViewInitialized += (s, e) => 
+                        blazorWebView.BlazorWebViewInitialized += (s, e) =>
                         {
                             Console.WriteLine("[MainPage] BlazorWebViewInitialized - SUCCESS!");
+#if ANDROID
+                            try
+                            {
+                                if (e.WebView is Android.Webkit.WebView web)
+                                {
+                                    web.Focusable = true;
+                                    web.FocusableInTouchMode = true;
+                                    web.RequestFocus();
+                                    // Helps D-pad move between tabindex=0 game cards on Android TV.
+                                    web.Settings.SetSupportMultipleWindows(false);
+                                    Console.WriteLine($"[MainPage] WebView focusable (IsTv={MauiProgram.IsTv})");
+                                }
+                            }
+                            catch (Exception focusEx)
+                            {
+                                Console.WriteLine($"[MainPage] WebView focus setup failed: {focusEx.Message}");
+                            }
+#endif
                         };
                         blazorWebView.UrlLoading += (s, e) => 
                         {
@@ -153,6 +172,68 @@ namespace VardyParty
             return false;
 #endif
         }
+
+#if ANDROID
+        /// <summary>
+        /// Clicks the currently focused DOM element in the Blazor WebView.
+        /// Used for Android TV remotes where OK/Enter focuses a control but does not fire click.
+        /// Returns true when a real control was clicked so the key can be consumed (avoids double-toggle).
+        /// </summary>
+        public bool TryClickFocusedWebElement()
+        {
+            try
+            {
+                if (blazorWebView?.Handler?.PlatformView is not Android.Webkit.WebView web)
+                {
+                    return false;
+                }
+
+                // Only activate real controls — never treat a random focused node as success.
+                const string js =
+                    "(function(){var el=document.activeElement;" +
+                    "if(!el)return 'none';" +
+                    "var tag=(el.tagName||'').toLowerCase();" +
+                    "var role=(el.getAttribute('role')||'').toLowerCase();" +
+                    "if(tag==='button'||tag==='a'||role==='button')" +
+                    "{el.click();return tag;}" +
+                    "return 'skip:'+tag;})();";
+
+                string? jsResult = null;
+                using var done = new ManualResetEventSlim(false);
+                web.EvaluateJavascript(js, new JsStringCallback(value =>
+                {
+                    jsResult = value;
+                    done.Set();
+                }));
+
+                if (!done.Wait(TimeSpan.FromMilliseconds(250)))
+                {
+                    Console.WriteLine("[MainPage] TryClickFocusedWebElement timed out waiting for JS");
+                    return false;
+                }
+
+                // EvaluateJavascript string results are JSON-encoded (e.g. "\"button\"").
+                var normalized = (jsResult ?? string.Empty).Trim().Trim('"');
+                var clicked = normalized is "button" or "a";
+                Console.WriteLine($"[MainPage] TryClickFocusedWebElement result={normalized} clicked={clicked}");
+                return clicked;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainPage] TryClickFocusedWebElement failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private sealed class JsStringCallback : Java.Lang.Object, Android.Webkit.IValueCallback
+        {
+            private readonly Action<string?> _onResult;
+
+            public JsStringCallback(Action<string?> onResult) => _onResult = onResult;
+
+            public void OnReceiveValue(Java.Lang.Object? value) => _onResult(value?.ToString());
+        }
+#endif
 
         public void NavigateToRoute(string route)
         {

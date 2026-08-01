@@ -165,13 +165,14 @@ public static class MauiProgram
         
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
 #if DEBUG
-        // Default to local wrangler for dev; set VARDYPARTY_DEBUG_API=preview to hit preview workers.
+        // Default to production; set VARDYPARTY_DEBUG_API=local|preview to override.
         var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
         var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
         {
+            "local" => builder.Configuration["Api:HeadlessBaseUrl-Local"],
             "preview" => builder.Configuration["Api:HeadlessBaseUrl-Preview"],
             "production" or "prod" => builder.Configuration["Api:HeadlessBaseUrl"],
-            _ => builder.Configuration["Api:HeadlessBaseUrl-Local"],
+            _ => builder.Configuration["Api:HeadlessBaseUrl"],
         };
         if (!string.IsNullOrWhiteSpace(debugBaseUrl))
         {
@@ -179,7 +180,7 @@ public static class MauiProgram
             {
                 ["Api:HeadlessBaseUrl"] = debugBaseUrl
             });
-            Console.WriteLine($"[MauiProgram] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "local"})");
+            Console.WriteLine($"[MauiProgram] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "production"})");
         }
 #endif
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()

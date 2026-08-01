@@ -5,6 +5,7 @@ namespace VardyParty.Resolvers;
 
 /// <summary>
 /// Expands v2 API stream entries (one page URL, many player labels) into per-label candidates.
+/// v2 rows with no player-stream labels are dropped — an empty MP page shell is not testable.
 /// </summary>
 public static class V2StreamExpander
 {
@@ -21,15 +22,18 @@ public static class V2StreamExpander
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (labels.Count > 0)
+                // No labels => not a real MP candidate (matches API isV2StreamPlayable).
+                if (labels.Count == 0)
                 {
-                    foreach (var label in labels)
-                    {
-                        expanded.Add(CloneWithPlayerStream(stream, label));
-                    }
-
                     continue;
                 }
+
+                foreach (var label in labels)
+                {
+                    expanded.Add(CloneWithPlayerStream(stream, label));
+                }
+
+                continue;
             }
 
             expanded.Add(stream);

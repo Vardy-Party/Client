@@ -223,6 +223,7 @@ namespace VardyParty.Platforms.Windows
                 bool metadataReported = false;
                 bool isPointerNearNextButton = false;
                 bool isNextStreamRequestInProgress = false;
+                bool suppressIndexDrivenSwitch = false;
                 int playbackGeneration = 0;
                 int lastAttachedGeneration = 0;
                 bool hasEstablishedPlayback = false;
@@ -273,7 +274,6 @@ namespace VardyParty.Platforms.Windows
                         try { currentIndexSubscription?.Dispose(); } catch { }
                         try { gamesSubscription?.Dispose(); } catch { }
                         try { streamInfoHideTimer?.Stop(); } catch { }
-                        try { playbackSwitchLock.Dispose(); } catch { }
                         StopTickerScroll();
                         if (naturalVideoSizeChangedHandler != null)
                             mediaPlayer.PlaybackSession.NaturalVideoSizeChanged -= naturalVideoSizeChangedHandler;
@@ -309,6 +309,9 @@ namespace VardyParty.Platforms.Windows
                         mediaPlayer.Dispose();
                     }
                     catch { }
+
+                    // Dispose the switch lock last so in-flight StartPlaybackAsync can exit Wait/Release safely.
+                    try { playbackSwitchLock.Dispose(); } catch { }
                 }
                 // Top-left hamburger button — true top-left anchor, always visible in player
                 var menuButton = new WinButton
@@ -1454,9 +1457,93 @@ namespace VardyParty.Platforms.Windows
                 {
                     WindowsEventLogger.Warning("VideoPlayer", reason);
                     ShowStreamError(reason);
-                    try { switchingService?.SwitchToPreviousStream(); } catch { }
+                    // Do not call SwitchToPreviousStream here — that races CurrentStreamIndexChanged
+                    // against this forced attach and can leave the player on a cleared source.
                     if (string.IsNullOrWhiteSpace(lastGoodPlaybackUrl)) return;
                     await StartPlaybackAsync(lastGoodPlaybackUrl, force: true, isRevertAttempt: true);
+                }
+
+                async Task RecoverFromFailedSwitchAsync(string reason)
+                {
+                    WindowsEventLogger.Warning("VideoPlayer", reason);
+                    ShowStreamError(reason);
+
+                    suppressIndexDrivenSwitch = true;
+                    try
+                    {
+                        try
+                        {
+                            var failed = switchingService?.GetCurrentStream();
+                            if (failed != null)
+                            {
+                                failed.ResolvedM3U8Url = null;
+                            }
+
+                            // Drop the dead switch target so we don't keep cycling it.
+                            switchingService?.RemoveCurrentStream();
+                        }
+                        catch (Exception ex)
+                        {
+                            WindowsEventLogger.Error("VideoPlayer", "Failed to drop broken stream after switch failure", ex);
+                        }
+
+                        // Restore picture immediately from the last good manifest. Upcoming
+                        // candidates are background-prefetched so the next Next click stays fast.
+                        await RevertToLastGoodStreamAsync("Switch failed — reverted to last good stream.");
+                    }
+                    finally
+                    {
+                        suppressIndexDrivenSwitch = false;
+                    }
+                }
+
+                async Task RecoverFromFailedStartAsync(string reason)
+                {
+                    WindowsEventLogger.Warning("VideoPlayer", reason);
+                    ShowStreamError(reason);
+
+                    suppressIndexDrivenSwitch = true;
+                    try
+                    {
+                        try
+                        {
+                            var failed = switchingService?.GetCurrentStream();
+                            if (failed != null)
+                            {
+                                failed.ResolvedM3U8Url = null;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            WindowsEventLogger.Error("VideoPlayer", "Failed to clear broken start URL", ex);
+                        }
+
+                        var remaining = switchingService?.GetHealthyStreams().Count ?? 0;
+                        if (onNextStreamRequested != null && remaining > 1 && !isNextStreamRequestInProgress)
+                        {
+                            isNextStreamRequestInProgress = true;
+                            try
+                            {
+                                // Advance to the next candidate with a fresh m3u8 resolve.
+                                await onNextStreamRequested();
+                                return;
+                            }
+                            catch (Exception ex)
+                            {
+                                WindowsEventLogger.Error("VideoPlayer", "Auto-advance after start failure failed", ex);
+                            }
+                            finally
+                            {
+                                isNextStreamRequestInProgress = false;
+                            }
+                        }
+
+                        ClosePlayerSession(reason);
+                    }
+                    finally
+                    {
+                        suppressIndexDrivenSwitch = false;
+                    }
                 }
 
                 async Task HandleActiveStreamFailureAsync(string message)
@@ -1478,7 +1565,7 @@ namespace VardyParty.Platforms.Windows
                         WindowsEventLogger.Error("VideoPlayer", "Auto-advance after stream failure failed", ex);
                     }
 
-                    await RevertToLastGoodStreamAsync("Stream failed — reverted to previous stream.");
+                    await RevertToLastGoodStreamAsync("Stream failed — reverted to last good stream.");
                 }
 
                 mediaFailedHandler = (s, e) =>
@@ -1988,29 +2075,56 @@ namespace VardyParty.Platforms.Windows
 
                 async Task StartPlaybackAsync(string url, bool force = false, bool isRevertAttempt = false)
                 {
-                    await playbackSwitchLock.WaitAsync();
+                    if (cleanupInvoked) return;
+
+                    try
+                    {
+                        await playbackSwitchLock.WaitAsync();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+
                     var generation = Interlocked.Increment(ref playbackGeneration);
                     int consecutiveDownloadFailures = 0;
                     const int MaxDownloadFailures = 5;
                     string? pendingRevertMessage = null;
+                    string? pendingStartFailureMessage = null;
 
                     try
                     {
-                        await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
                         if (generation != playbackGeneration || cleanupInvoked)
                             return;
 
+                        // Build the adaptive source BEFORE clearing the current player source so a
+                        // failed switch does not leave the UI on a black frame.
                         var client = new HttpClientWin();
-                        activePlaybackClient = client;
                         ConfigurePlaybackHttpClient(client, refererUrl, requestHeaders);
 
                         var uri = new Uri(url);
                         var adaptiveResult = await CreateAdaptiveMediaSourceAsync(client, uri);
 
+                        if (cleanupInvoked || generation != playbackGeneration)
+                        {
+                            try { client.Dispose(); } catch { }
+                            return;
+                        }
+
                         if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success || adaptiveResult.MediaSource == null)
                         {
+                            try { client.Dispose(); } catch { }
                             throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
                         }
+
+                        await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
+                        if (generation != playbackGeneration || cleanupInvoked)
+                        {
+                            try { client.Dispose(); } catch { }
+                            return;
+                        }
+
+                        activePlaybackClient = client;
 
                         // Attach handler to fix segment content types and ensure headers
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
@@ -2106,9 +2220,9 @@ namespace VardyParty.Platforms.Windows
                                                 if (generation == lastAttachedGeneration && hasEstablishedPlayback)
                                                     _ = HandleActiveStreamFailureAsync(failureMessage);
                                                 else if (hasEstablishedPlayback)
-                                                    _ = RevertToLastGoodStreamAsync($"Switch failed — {failureMessage}");
+                                                    _ = RecoverFromFailedSwitchAsync($"Switch failed — {failureMessage}");
                                                 else
-                                                    ClosePlayerSession(failureMessage);
+                                                    _ = RecoverFromFailedStartAsync(failureMessage);
                                             }
                                             catch { }
                                         });
@@ -2186,9 +2300,9 @@ namespace VardyParty.Platforms.Windows
                                 WindowsEventLogger.Error("VideoPlayer", "Failed to attach playback source", ex);
                                 System.Diagnostics.Debug.WriteLine($"[Windows] Failed to attach playback source: {ex.GetType().Name} - {ex.Message}");
                                 if (hasEstablishedPlayback && !isRevertAttempt)
-                                    _ = RevertToLastGoodStreamAsync($"Failed to switch stream: {ex.Message}");
+                                    _ = RecoverFromFailedSwitchAsync($"Failed to switch stream: {ex.Message}");
                                 else if (!hasEstablishedPlayback)
-                                    ClosePlayerSession($"Failed to attach playback source: {ex.Message}");
+                                    _ = RecoverFromFailedStartAsync($"Failed to attach playback source: {ex.Message}");
                             }
                         });
 
@@ -2203,21 +2317,34 @@ namespace VardyParty.Platforms.Windows
                             if (hasEstablishedPlayback && !isRevertAttempt)
                                 pendingRevertMessage = $"Failed to switch stream: {ex.Message}";
                             else if (!hasEstablishedPlayback)
-                                ClosePlayerSession($"Failed to start playback: {ex.Message}");
+                                pendingStartFailureMessage = $"Failed to start playback: {ex.Message}";
                         }
                     }
                     finally
                     {
-                        playbackSwitchLock.Release();
+                        try
+                        {
+                            if (!cleanupInvoked)
+                            {
+                                playbackSwitchLock.Release();
+                            }
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                        }
                     }
 
                     if (!string.IsNullOrWhiteSpace(pendingRevertMessage))
-                        await RevertToLastGoodStreamAsync(pendingRevertMessage);
+                        await RecoverFromFailedSwitchAsync(pendingRevertMessage);
+                    else if (!string.IsNullOrWhiteSpace(pendingStartFailureMessage))
+                        await RecoverFromFailedStartAsync(pendingStartFailureMessage);
                 }
 
                 async Task TrySwitchToCurrentStreamAsync(bool force = false)
                 {
                     if (switchingService == null || cleanupInvoked) return;
+                    if (suppressIndexDrivenSwitch) return;
+
                     try
                     {
                         var current = switchingService.GetCurrentStream();

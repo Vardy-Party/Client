@@ -19,27 +19,18 @@
 <div class="app-menu-root">
 
     <button type="button"
-
             class="menu-button"
-
             aria-label="Open menu"
-
             aria-expanded="@isOpen"
-
+            tabindex="0"
             @ref="menuButtonRef"
-
-            @onclick="OpenMenu">
-
+            @onclick="OpenMenu"
+            @onkeydown="OnMenuButtonKeyDown">
         <span class="menu-button-icon" aria-hidden="true">
-
             <span></span>
-
             <span></span>
-
             <span></span>
-
         </span>
-
     </button>
 
 
@@ -63,17 +54,12 @@
                 </div>
 
                 <button type="button"
-
                         class="menu-close-button"
-
                         aria-label="Close menu"
-
+                        tabindex="0"
                         @ref="closeButtonRef"
-
                         @onclick="CloseMenu">
-
                     <span aria-hidden="true">×</span>
-
                 </button>
 
             </div>
@@ -135,45 +121,35 @@
                     {
 
                         <div class="league-filter-actions">
-
-                            <button type="button" class="menu-chip-button" @onclick="ShowAllLeagues">Show all</button>
-
-                            <button type="button" class="menu-chip-button menu-chip-button-muted" @onclick="ResetLeagueDefaults">Reset defaults</button>
-
+                            <button type="button"
+                                    class="menu-chip-button"
+                                    tabindex="0"
+                                    @ref="showAllButtonRef"
+                                    @onclick="ShowAllLeagues"
+                                    @onkeydown="OnShowAllKeyDown">Show all</button>
+                            <button type="button"
+                                    class="menu-chip-button menu-chip-button-muted"
+                                    tabindex="0"
+                                    @onclick="ResetLeagueDefaults"
+                                    @onkeydown="OnResetDefaultsKeyDown">Reset defaults</button>
                         </div>
-
                         <ul class="league-filter-list">
-
                             @foreach (var league in knownLeagues)
-
                             {
-
                                 var leagueName = league;
-
                                 var visible = LeagueFilter.IsLeagueVisible(leagueName);
-
                                 <li>
-
-                                    <label class="league-filter-item@(visible ? " league-filter-item-active" : string.Empty)">
-
-                                        <input type="checkbox"
-
-                                               class="league-filter-checkbox"
-
-                                               checked="@visible"
-
-                                               @onchange="e => OnLeagueToggle(leagueName, e)" />
-
+                                    <button type="button"
+                                            class="league-filter-item@(visible ? " league-filter-item-active" : string.Empty)"
+                                            tabindex="0"
+                                            aria-pressed="@visible"
+                                            @onclick="() => ToggleLeague(leagueName)"
+                                            @onkeydown="e => OnLeagueKeyDown(e, leagueName)">
                                         <span class="league-filter-check" aria-hidden="true"></span>
-
                                         <span class="league-filter-name">@leagueName</span>
-
-                                    </label>
-
+                                    </button>
                                 </li>
-
                             }
-
                         </ul>
 
                     }
@@ -184,12 +160,12 @@
 
                 <section class="flyout-menu-section flyout-menu-section-actions">
 
-                    <button type="button" class="menu-action-button menu-action-button-danger" @onclick="HandleSignOut">
-
+                    <button type="button"
+                            class="menu-action-button menu-action-button-danger"
+                            tabindex="0"
+                            @onclick="HandleSignOut">
                         <span class="section-icon" aria-hidden="true">⎋</span>
-
                         Sign out
-
                     </button>
 
                 </section>
@@ -229,6 +205,12 @@
     private ElementReference flyoutRef;
 
     private ElementReference closeButtonRef;
+
+    private ElementReference showAllButtonRef;
+
+    private string? lastToggleLeague;
+
+    private long lastToggleTimestampMs;
 
 
 
@@ -310,7 +292,22 @@
 
         {
 
-            await closeButtonRef.FocusAsync();
+            // TV: land in league controls so OK can toggle; Close is still reachable via D-pad Up.
+            if (isAuthenticated && knownLeagues.Count > 0)
+
+            {
+
+                await showAllButtonRef.FocusAsync();
+
+            }
+
+            else
+
+            {
+
+                await closeButtonRef.FocusAsync();
+
+            }
 
         }
 
@@ -322,13 +319,27 @@
 
             {
 
-                await menuButtonRef.FocusAsync();
+                await closeButtonRef.FocusAsync();
 
             }
 
             catch
 
             {
+
+                try
+
+                {
+
+                    await menuButtonRef.FocusAsync();
+
+                }
+
+                catch
+
+                {
+
+                }
 
             }
 
@@ -480,17 +491,52 @@
 
 
 
-    private void OnLeagueToggle(string league, ChangeEventArgs e)
-
+    private void ToggleLeague(string league)
     {
+        // Guard against TV OK firing both JS click assist and a native key activation.
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (string.Equals(lastToggleLeague, league, StringComparison.Ordinal)
+            && nowMs - lastToggleTimestampMs < 350)
+        {
+            return;
+        }
 
-        var visible = e.Value is bool b && b;
-
-        LeagueFilter.SetLeagueVisible(league, visible);
-
+        lastToggleLeague = league;
+        lastToggleTimestampMs = nowMs;
+        LeagueFilter.SetLeagueVisible(league, !LeagueFilter.IsLeagueVisible(league));
     }
 
+    private void OnLeagueKeyDown(KeyboardEventArgs e, string league)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            ToggleLeague(league);
+        }
+    }
 
+    private void OnShowAllKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            ShowAllLeagues();
+        }
+    }
+
+    private void OnResetDefaultsKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            ResetLeagueDefaults();
+        }
+    }
+
+    private void OnMenuButtonKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            OpenMenu();
+        }
+    }
 
     private void ShowAllLeagues()
 
@@ -521,8 +567,6 @@
         await OnSignOut.InvokeAsync();
 
     }
-
-
 
     public void Dispose()
 

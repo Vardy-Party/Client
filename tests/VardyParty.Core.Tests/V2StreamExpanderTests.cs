@@ -43,7 +43,7 @@ public class V2StreamExpanderTests
     }
 
     [Fact]
-    public void Expand_V2WithEmptyPlayerStreams_KeepsSingleEntry()
+    public void Expand_V2WithEmptyPlayerStreams_DropsEntry()
     {
         var stream = new Stream
         {
@@ -55,8 +55,24 @@ public class V2StreamExpanderTests
 
         var result = V2StreamExpander.Expand([stream]);
 
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void Expand_MixedFbAndEmptyMp_OnlyKeepsFb()
+    {
+        var fb = new Stream { Url = "https://fb.example/a", Channel = "weakstreams", ResolutionStrategy = "direct" };
+        var mp = new Stream
+        {
+            Url = "https://madplay.example/match",
+            ResolutionStrategy = "v2",
+            PlayerStreams = []
+        };
+
+        var result = V2StreamExpander.Expand([fb, mp]);
+
         Assert.Single(result);
-        Assert.Same(stream, result[0]);
+        Assert.Same(fb, result[0]);
     }
 
     [Fact]

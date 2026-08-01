@@ -17,7 +17,7 @@
 @using VardyParty.Services
 @implements IDisposable
 
-<div class="page-shell@(OperatingSystem.IsWindows() ? " platform-windows" : OperatingSystem.IsAndroid() ? " platform-android" : string.Empty)">
+<div class="page-shell@(GetPlatformShellClass())">
     <header class="page-header">
         <div class="page-header-inner">
             <div class="header-left">
@@ -42,34 +42,50 @@
 
     @if (!isAuthenticated)
     {
-        <div class="auth-hero">
-            <div class="auth-hero-inner">
-                <div class="state-icon state-icon-auth" aria-hidden="true">🔐</div>
-                <p class="welcome-text">Welcome — please sign in to browse today's matches.</p>
-                <div class="auth-actions">
-                    <button class="btn btn-primary auth-action" @onclick="StartSignInAsync" disabled="@isAuthenticating">@(!isAuthenticating ? "Sign in — Continue" : "Signing in…")</button>
-                </div>
-                @if (!string.IsNullOrWhiteSpace(authStatusMessage))
-                {
-                    <div class="auth-message">@authStatusMessage</div>
-                }
-            </div>
-
+        <div class="auth-hero@(deviceCode != null ? " auth-hero-device" : string.Empty)">
             @if (deviceCode != null)
             {
                 <div class="auth-device">
-                    <div>
-                        @if (!string.IsNullOrWhiteSpace(deviceQrDataUri))
+                    <div class="auth-device-copy">
+                        <p class="auth-device-code">Code <strong>@deviceCode.UserCode</strong></p>
+                        <button @ref="authCancelButtonRef"
+                                type="button"
+                                class="auth-cancel"
+                                tabindex="0"
+                                autofocus="true"
+                                @onclick="CancelSignIn"
+                                @onkeydown="OnAuthCancelKeyDown">Cancel</button>
+                        @if (!string.IsNullOrWhiteSpace(authStatusMessage))
                         {
-                            <img src="@deviceQrDataUri" alt="Device login QR code" class="qr-image"/>
+                            <div class="auth-message">@authStatusMessage</div>
                         }
                     </div>
-                    <div>
-                        <p>Open <strong>@deviceQrTarget</strong> or scan the QR code and enter code <strong>@deviceCode.UserCode</strong>.</p>
-                        <p style="margin-top:12px;">
-                            <button class="auth-cancel" @onclick="CancelSignIn">Cancel</button>
-                        </p>
+                    @if (!string.IsNullOrWhiteSpace(deviceQrDataUri))
+                    {
+                        <img src="@deviceQrDataUri" alt="Device login QR code" class="qr-image"/>
+                    }
+                    <p class="auth-device-uri">Scan the QR code, or open <strong>@deviceQrTarget</strong></p>
+                </div>
+            }
+            else
+            {
+                <div class="auth-hero-inner">
+                    <div class="state-icon state-icon-auth" aria-hidden="true">🔐</div>
+                    <p class="welcome-text">Welcome — please sign in to browse today's matches.</p>
+                    <div class="auth-actions">
+                        <button @ref="signInContinueButtonRef"
+                                type="button"
+                                class="btn btn-primary auth-action"
+                                tabindex="0"
+                                autofocus="@(!isAuthenticating)"
+                                @onclick="StartSignInAsync"
+                                @onkeydown="OnSignInContinueKeyDown"
+                                disabled="@isAuthenticating">@(!isAuthenticating ? "Sign in — Continue" : "Signing in…")</button>
                     </div>
+                    @if (!string.IsNullOrWhiteSpace(authStatusMessage))
+                    {
+                        <div class="auth-message">@authStatusMessage</div>
+                    }
                 </div>
             }
         </div>
@@ -119,7 +135,11 @@
             {
                 var game = games[i];
                 var isSelected = IsSelected(game);
-                var shouldFocus = !skipGameCardAutofocus && focusPending && (isSelected || (!anySelected && i == 0));
+                // TV: do not autofocus games[0] — that leaves a permanent focus ring.
+                // Selection is also skipped on TV until OK (EnsureInitialSelection).
+                var shouldFocus = !MauiProgram.IsTv
+                    && focusPending
+                    && (isSelected || (!anySelected && i == 0));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard Game="game"
@@ -211,7 +231,21 @@
     private readonly List<Game> games = new();
     private bool isLoading = true;
     private bool focusPending = true;
-    private static readonly bool skipGameCardAutofocus = MauiProgram.IsTv;
+    private bool signInContinueFocusPending = true;
+    private bool authCancelFocusPending;
+    private ElementReference signInContinueButtonRef;
+    private ElementReference authCancelButtonRef;
+
+    private static string GetPlatformShellClass()
+    {
+        if (OperatingSystem.IsWindows()) return " platform-windows";
+        if (OperatingSystem.IsAndroid())
+        {
+            return MauiProgram.IsTv ? " platform-android platform-android-tv" : " platform-android";
+        }
+
+        return string.Empty;
+    }
     private IDisposable? _gamesSubscription;
     private IDisposable? _errorSubscription;
     private IDisposable? _localLanWarningSubscription;
@@ -319,6 +353,14 @@
             return;
         }
 
+        // Device QR screen: Back cancels sign-in (same as Cancel).
+        if (!isAuthenticated && deviceCode != null)
+        {
+            Logger.LogInformation("[Home] Android back pressed during device sign-in — canceling");
+            CancelSignIn();
+            return;
+        }
+
         Logger.LogInformation("[Home] Android back pressed - canceling stream resolution if active");
         try
         {
@@ -378,6 +420,7 @@
     {
         if (isAuthenticating) return;
 
+        Logger.LogInformation("[Home] Sign in — Continue pressed (IsTv={IsTv})", MauiProgram.IsTv);
         isAuthenticating = true;
         authStatusMessage = string.Empty;
         deviceCode = null;
@@ -395,6 +438,7 @@
                 }
 
                 deviceCode = deviceLogin.DeviceCode;
+                authCancelFocusPending = true;
 
                 // Generate local QR for device flow
                 deviceQrTarget = string.IsNullOrWhiteSpace(deviceCode.VerificationUriComplete) ? deviceCode.VerificationUri : deviceCode.VerificationUriComplete;
@@ -418,11 +462,12 @@
                 _authCts = new CancellationTokenSource();
 
                 var result = await AuthLoginService.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
-                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+        if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
                 {
                     isAuthenticated = true;
                     authStatusMessage = string.Empty;
                     deviceCode = null;
+                    focusPending = true;
                     await LoadGamesAsync();
                 }
                 else if (!string.IsNullOrWhiteSpace(result.Error))
@@ -437,6 +482,7 @@
                 {
                     isAuthenticated = true;
                     authStatusMessage = string.Empty;
+                    focusPending = true;
                     await LoadGamesAsync();
                 }
                 else if (!string.IsNullOrWhiteSpace(result.Error))
@@ -451,17 +497,55 @@
         }
         catch (Exception ex)
         {
-            authStatusMessage = ex.Message;
+            Logger.LogWarning(ex, "[Home] Sign-in failed");
+            authStatusMessage = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Sign-in failed."
+                : ex.Message;
         }
         finally
         {
             isAuthenticating = false;
+            if (!isAuthenticated)
+            {
+                signInContinueFocusPending = true;
+            }
             await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnSignInContinueKeyDown(KeyboardEventArgs e)
+    {
+        // Android TV remotes often send Enter/DPAD_CENTER without a click event.
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            await StartSignInAsync();
+        }
+    }
+
+    private void OnAuthCancelKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            CancelSignIn();
         }
     }
 
     private async Task SignOutAsync()
     {
+        try
+        {
+            _authCts?.Cancel();
+        }
+        catch
+        {
+        }
+
+        _authCts = null;
+        isAuthenticating = false;
+        deviceCode = null;
+        deviceQrDataUri = null;
+        deviceQrTarget = null;
+
         await AuthTokenProvider.LogoutAsync();
 
         _gamesSubscription?.Dispose();
@@ -475,11 +559,14 @@
         StreamResolutionOrchestrator.Reset();
 
         games.Clear();
+        Selection.CurrentGame = null;
+        selectedGame = null;
         statusMessage = string.Empty;
         authStatusMessage = string.Empty;
         isAuthenticated = false;
         isLoading = false;
-        deviceCode = null;
+        focusPending = true;
+        signInContinueFocusPending = true;
         await InvokeAsync(StateHasChanged);
     }
 
@@ -491,6 +578,7 @@
         deviceQrTarget = null;
         isAuthenticating = false;
         authStatusMessage = "Sign-in canceled.";
+        signInContinueFocusPending = true;
     }
 
     private void OnOverlayCloseRequested()
@@ -532,11 +620,41 @@
         InvokeAsync(StateHasChanged);
     }
 
-    protected override Task OnAfterRenderAsync(bool firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (focusPending && isAuthenticated && games.Count > 0)
         {
             focusPending = false;
+        }
+
+        // Android TV / D-pad: put focus on Sign in — Continue when that CTA is visible.
+        // Without this, the header menu button typically owns first focus.
+        if (signInContinueFocusPending
+            && !isAuthenticated
+            && !isAuthenticating
+            && deviceCode == null)
+        {
+            try
+            {
+                await signInContinueButtonRef.FocusAsync();
+                signInContinueFocusPending = false;
+            }
+            catch
+            {
+                // Element may not be ready yet; retry on next render.
+            }
+        }
+
+        if (authCancelFocusPending && !isAuthenticated && deviceCode != null)
+        {
+            try
+            {
+                await authCancelButtonRef.FocusAsync();
+                authCancelFocusPending = false;
+            }
+            catch
+            {
+            }
         }
 
         // If user returned from native player (selectedGame still set) restart stream resolution
@@ -569,8 +687,6 @@
         catch
         {
         }
-
-        return Task.CompletedTask;
     }
 
     private void OnGamesUpdated(Dictionary<string, List<Game>>? updatedGames)
@@ -623,6 +739,13 @@
         if (games.Count == 0)
         {
             Selection.CurrentGame = null;
+            return;
+        }
+
+        // On TV, D-pad focus is the navigation cue. Auto-selecting games[0] leaves a second
+        // "selected" highlight that doesn't move with the remote.
+        if (MauiProgram.IsTv)
+        {
             return;
         }
 

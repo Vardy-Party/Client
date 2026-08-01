@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 
@@ -12,6 +13,8 @@ public interface IBuildInfoService
 
 public class BuildInfoService : IBuildInfoService
 {
+    private static readonly char[] BuildInfoSeparators = ['\r', '\n', ';'];
+
     private BuildInfo? _cache;
 
     public async Task<BuildInfo> GetAsync()
@@ -22,27 +25,41 @@ public class BuildInfoService : IBuildInfoService
         }
 
         var version = GetVersionLabel();
-        // DLL last-write time reflects the binary actually running (including AppX sync).
-        var (builtAt, builtAtFull) = GetAssemblyBuiltAt();
-        var commit = await TryReadCommitAsync();
+        var (commit, builtRaw) = await TryReadBuildInfoFileAsync();
+        var (builtAt, builtAtFull) = FormatBuiltAt(builtRaw) ?? GetAssemblyBuiltAt();
 
         _cache = new BuildInfo(version, commit, builtAt, builtAtFull);
         return _cache;
     }
 
-    private static async Task<string> TryReadCommitAsync()
+    /// <summary>
+    /// Reads Commit/Built written by the GenerateBuildInfo MSBuild target at package time.
+    /// Prefer this over assembly file timestamps — Android APK entries often show 1601-01-01 / 00:00 UTC.
+    /// </summary>
+    private static async Task<(string Commit, string? Built)> TryReadBuildInfoFileAsync()
     {
+        var commit = "unknown";
+        string? built = null;
+
         try
         {
             using var stream = await FileSystem.OpenAppPackageFileAsync("buildinfo.txt");
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var content = await reader.ReadToEndAsync();
-            foreach (var part in content.Split(';'))
+            foreach (var part in content.Split(BuildInfoSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                var kv = part.Split('=');
-                if (kv.Length == 2 && kv[0].Equals("Commit", StringComparison.OrdinalIgnoreCase))
+                var eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+
+                var key = part[..eq].Trim();
+                var value = part[(eq + 1)..].Trim();
+                if (key.Equals("Commit", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(value))
                 {
-                    return kv[1].Trim();
+                    commit = value;
+                }
+                else if (key.Equals("Built", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(value))
+                {
+                    built = value;
                 }
             }
         }
@@ -50,8 +67,42 @@ public class BuildInfoService : IBuildInfoService
         {
         }
 
-        return "unknown";
+        return (commit, built);
     }
+
+    private static (string Short, string Full)? FormatBuiltAt(string? builtRaw)
+    {
+        if (string.IsNullOrWhiteSpace(builtRaw))
+        {
+            return null;
+        }
+
+        // Written by MSBuild as: yyyy-MM-dd HH:mm:ss UTC
+        if (DateTime.TryParseExact(
+                builtRaw.Replace(" UTC", "", StringComparison.OrdinalIgnoreCase).Trim(),
+                "yyyy-MM-dd HH:mm:ss",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var utc)
+            && IsPlausibleBuildTimestamp(utc))
+        {
+            return (utc.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                utc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture));
+        }
+
+        if (DateTime.TryParse(builtRaw, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out utc)
+            && IsPlausibleBuildTimestamp(utc))
+        {
+            return (utc.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                utc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture));
+        }
+
+        // Keep the packaged string if we can't parse it.
+        return (builtRaw, builtRaw);
+    }
+
+    private static bool IsPlausibleBuildTimestamp(DateTime utc) => utc.Year >= 2020;
 
     private static string GetVersionLabel()
     {
@@ -78,7 +129,14 @@ public class BuildInfoService : IBuildInfoService
             }
 
             var utc = File.GetLastWriteTimeUtc(path);
-            return (utc.ToString("HH:mm 'UTC'"), utc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"));
+            if (!IsPlausibleBuildTimestamp(utc))
+            {
+                // Android APK / AOT assemblies often report Windows FILETIME epoch (1601-01-01).
+                return ("unknown", "unknown");
+            }
+
+            return (utc.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                utc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture));
         }
         catch
         {
