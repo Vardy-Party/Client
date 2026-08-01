@@ -1,17 +1,15 @@
 name: Bump Display Version
 
-# Only when a PR is opened (not on every synchronize/push). Duplicate PRs from
-# the same head branch share a concurrency group so only one bump runs.
+# Semver (ApplicationDisplayVersion) is a release decision — never auto-bump on PRs.
+# Run manually from Actions when you want major/minor/patch.
+#
+# ApplicationVersion (build counter) is incremented on successful CI for main
+# by "Increment Build Version" — not here, unless you also tick bump_build_number.
 on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - opened
   workflow_dispatch:
     inputs:
       version_bump_type:
-        description: 'Version bump type'
+        description: 'ApplicationDisplayVersion bump type'
         required: true
         default: 'patch'
         type: choice
@@ -19,10 +17,15 @@ on:
           - major
           - minor
           - patch
+      bump_build_number:
+        description: 'Also increment ApplicationVersion by 1'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
-  group: bump-display-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: bump-display-main
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -30,12 +33,11 @@ permissions:
 jobs:
   bump-display-version:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Read current version
@@ -51,17 +53,20 @@ jobs:
         run: |
           BUILD_VERSION="${{ steps.read-version.outputs.build_version }}"
           DISPLAY_VERSION="${{ steps.read-version.outputs.display_version }}"
-          BUMP_TYPE="${{ github.event.inputs.version_bump_type || 'patch' }}"
-          
-          # Increment ApplicationVersion by 1
-          NEW_BUILD_VERSION=$((BUILD_VERSION + 1))
-          
-          # Parse DisplayVersion (e.g., 1.7.2 -> major=1, minor=7, patch=2)
+          BUMP_TYPE="${{ github.event.inputs.version_bump_type }}"
+          BUMP_BUILD="${{ github.event.inputs.bump_build_number }}"
+
+          if [[ "${BUMP_BUILD}" == "true" ]]; then
+            NEW_BUILD_VERSION=$((BUILD_VERSION + 1))
+          else
+            NEW_BUILD_VERSION="${BUILD_VERSION}"
+          fi
+
           IFS='.' read -ra VERSION_PARTS <<< "$DISPLAY_VERSION"
           MAJOR=${VERSION_PARTS[0]}
           MINOR=${VERSION_PARTS[1]}
           PATCH=${VERSION_PARTS[2]:-0}
-          
+
           case "$BUMP_TYPE" in
             major)
               MAJOR=$((MAJOR + 1))
@@ -76,12 +81,12 @@ jobs:
               PATCH=$((PATCH + 1))
               ;;
           esac
-          
+
           NEW_DISPLAY_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "build_version=${NEW_BUILD_VERSION}" >> $GITHUB_OUTPUT
           echo "display_version=${NEW_DISPLAY_VERSION}" >> $GITHUB_OUTPUT
-          echo "::notice::Bumped ApplicationVersion from ${BUILD_VERSION} to ${NEW_BUILD_VERSION}"
-          echo "::notice::Bumped ApplicationDisplayVersion from ${DISPLAY_VERSION} to ${NEW_DISPLAY_VERSION} (${BUMP_TYPE})"
+          echo "::notice::ApplicationVersion ${BUILD_VERSION} → ${NEW_BUILD_VERSION}"
+          echo "::notice::ApplicationDisplayVersion ${DISPLAY_VERSION} → ${NEW_DISPLAY_VERSION} (${BUMP_TYPE})"
 
       - name: Update Version.props
         run: |
@@ -94,4 +99,4 @@ jobs:
           git config --local user.name "GitHub Actions"
           git add Version.props
           git commit -m "ci: bump ApplicationVersion to ${{ steps.bump-version.outputs.build_version }} and ApplicationDisplayVersion to ${{ steps.bump-version.outputs.display_version }}"
-          git push origin ${{ github.head_ref }}
+          git push origin main
