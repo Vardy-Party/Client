@@ -48,10 +48,17 @@
     opacity: 1;
 }
 
+/* Selection is independent of :focus — only the chosen game gets .selected. */
 .game-card.selected {
     border-color: rgba(74, 158, 255, 0.75);
     background: linear-gradient(135deg, rgba(74, 158, 255, 0.12), rgba(74, 158, 255, 0.04)), var(--bg-card);
     box-shadow: 0 8px 20px rgba(74, 158, 255, 0.15);
+}
+
+.game-card.selected:focus,
+.game-card.selected:focus-visible {
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.45), 0 8px 24px rgba(74, 158, 255, 0.2);
 }
 
 .league-badge {

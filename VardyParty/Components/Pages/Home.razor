@@ -135,14 +135,16 @@
             {
                 var game = games[i];
                 var isSelected = IsSelected(game);
-                // TV: do not autofocus games[0] — that leaves a permanent focus ring.
-                // Selection is also skipped on TV until OK (EnsureInitialSelection).
-                var shouldFocus = !MauiProgram.IsTv
-                    && focusPending
-                    && (isSelected || (!anySelected && i == 0));
+                // TV: autofocus first card for D-pad entry only — never ties to .selected.
+                // .selected comes from explicit OK/click (selectedGame), not games[0] auto-init.
+                var shouldFocus = focusPending && (
+                    MauiProgram.IsTv
+                        ? (!anySelected && i == 0)
+                        : (isSelected || (!anySelected && i == 0)));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
-                <GameCard Game="game"
+                <GameCard @key="GameKey(game)"
+                          Game="game"
                           IsSelected="isSelected"
                           ShouldFocus="shouldFocus"
                           LeagueLogoUrl="@leagueLogo"
@@ -670,6 +672,7 @@
                 if (_resolutionExhausted)
                 {
                     selectedGame = null;
+                    Selection.CurrentGame = null;
                 }
                 else
                 {
@@ -683,6 +686,7 @@
                     {
                         // Clear selection if we should not restart
                         selectedGame = null;
+                        Selection.CurrentGame = null;
                     }
                 }
             }
@@ -742,29 +746,47 @@
         if (games.Count == 0)
         {
             Selection.CurrentGame = null;
+            selectedGame = null;
             return;
         }
 
-        // On TV, D-pad focus is the navigation cue. Auto-selecting games[0] leaves a second
-        // "selected" highlight that doesn't move with the remote.
+        // TV: D-pad focus is the navigation cue. Never auto-select games[0] — that left a
+        // sticky .selected ring that did not move when the user chose another match.
+        // Rebind an explicit OK/click selection onto refreshed Game instances only.
         if (MauiProgram.IsTv)
         {
+            if (selectedGame != null)
+            {
+                var match = FindMatchingGame(selectedGame);
+                selectedGame = match;
+                Selection.CurrentGame = match;
+            }
+            else
+            {
+                // Drop any leftover CurrentGame so IsSelected cannot stick on games[0].
+                Selection.CurrentGame = null;
+            }
+
             return;
         }
 
-        if (Selection.CurrentGame == null)
+        if (selectedGame == null || Selection.CurrentGame == null)
         {
             Selection.CurrentGame = games[0];
+            selectedGame = games[0];
             return;
         }
 
-        var existing = games.Any(g =>
-            string.Equals(g.Home, Selection.CurrentGame.Home, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(g.Away, Selection.CurrentGame.Away, StringComparison.OrdinalIgnoreCase));
-
-        if (!existing)
+        var existing = FindMatchingGame(selectedGame);
+        if (existing == null)
         {
             Selection.CurrentGame = games[0];
+            selectedGame = games[0];
+        }
+        else
+        {
+            Selection.CurrentGame = existing;
+            selectedGame = existing;
         }
     }
 
@@ -783,12 +805,25 @@
         PublishHomeUiUpdate();
     }
 
+    /// <summary>
+    /// UI .selected must track the game the user chose (OK/click via selectedGame),
+    /// not Selection.CurrentGame alone — that was auto-initialized to games[0] and stayed sticky.
+    /// </summary>
     private bool IsSelected(Game game)
     {
-        if (Selection.CurrentGame == null) return false;
-        return string.Equals(game.Home, Selection.CurrentGame.Home, StringComparison.OrdinalIgnoreCase) &&
-               string.Equals(game.Away, Selection.CurrentGame.Away, StringComparison.OrdinalIgnoreCase);
+        if (selectedGame == null) return false;
+        return SameGame(game, selectedGame);
     }
+
+    private Game? FindMatchingGame(Game target) =>
+        games.FirstOrDefault(g => SameGame(g, target));
+
+    private static bool SameGame(Game a, Game b) =>
+        string.Equals(a.Home, b.Home, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.Away, b.Away, StringComparison.OrdinalIgnoreCase);
+
+    private static string GameKey(Game game) =>
+        $"{game.Home}|{game.Away}|{game.Start:O}";
 
     private async Task StartStreamResolution(Game game)
     {
@@ -796,11 +831,7 @@
 
         if (_streamResolutionTask is { IsCompleted: false })
         {
-            var sameGame = selectedGame != null &&
-                           string.Equals(selectedGame.Home, game.Home, StringComparison.OrdinalIgnoreCase) &&
-                           string.Equals(selectedGame.Away, game.Away, StringComparison.OrdinalIgnoreCase);
-
-            if (sameGame)
+            if (selectedGame != null && SameGame(selectedGame, game))
             {
                 Logger.LogInformation("[Home] Stream resolution already running for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
                 return;
@@ -809,8 +840,9 @@
             _streamResolutionCts?.Cancel();
         }
 
-        Selection.CurrentGame = game;
+        // Explicit user choice — drives .selected (IsSelected). Do this before overlay render.
         selectedGame = game;
+        Selection.CurrentGame = game;
         isResolvingStreams = true;
         totalStreamsFound = 0;
         streamsTested = 0;
