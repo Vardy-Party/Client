@@ -28,6 +28,7 @@ public class EnrichedGameService(
     private readonly BehaviorSubject<Dictionary<string, List<Game>>?> _subject = new(null);
     private Timer? _apiTimer;
     private Timer? _bbcTimer;
+    private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
     private List<BbcFixture> _latestBbcFixtures = new();
     private bool _timersStarted;
@@ -107,6 +108,12 @@ public class EnrichedGameService(
 
     private async Task FetchBbcFixtures()
     {
+        if (Interlocked.CompareExchange(ref _bbcFetchInFlight, 1, 0) != 0)
+        {
+            logger.LogInformation("[Enriched] Skipping BBC poll; previous fetch still in progress");
+            return;
+        }
+
         try
         {
             logger.LogInformation("[Enriched] Polling BBC fixtures...");
@@ -121,6 +128,10 @@ public class EnrichedGameService(
         catch (Exception ex)
         {
             logger.LogError(ex, "[Enriched] Background BBC fetch failed");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _bbcFetchInFlight, 0);
         }
     }
 

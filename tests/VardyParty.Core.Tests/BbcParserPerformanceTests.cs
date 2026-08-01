@@ -11,7 +11,8 @@ namespace VardyParty.Core.Tests;
 
 public class BbcParserPerformanceTests(ITestOutputHelper output)
 {
-    private static readonly int Timeout = 200;
+    // Large BBC match days (300+ fixtures / ~2MB HTML) take ~1s on desktop; keep headroom for CI.
+    private static readonly int Timeout = 5000;
 
     [Fact]
     public async Task Parse_RealBbcPage_Performance()

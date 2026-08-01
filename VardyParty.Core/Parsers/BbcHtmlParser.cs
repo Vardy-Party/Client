@@ -7,9 +7,11 @@ namespace VardyParty.Parsers;
 
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {
-    private static readonly int SlowGameWarnMs = 50;
+    // Android TV friendlies/cup cards commonly land 60–100ms; 50ms flooded logs without actionable outliers.
+    private static readonly int SlowGameWarnMs = 150;
     // Real BBC event cards are ~2.5–4KB apart; cap avoids scanning hundreds of KB of trailing scripts.
-    private const int MaxGameBlockChars = 8192;
+    private const int MaxGameBlockChars = 6144;
+    private const int CancelCheckEveryGames = 16;
     private const string EscapedStartDateTimeMarker = "\\\"startDateTime\\\":\\\"";
     private const string EscapedIdMarker = "\\\"id\\\":\\\"";
     private const string UnescapedStartDateTimeMarker = "\"startDateTime\":\"";
@@ -54,7 +56,11 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         var swSerial = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            ScanHtmlSerial(html, list, eventStatusMap, eventKickoffMap);
+            ScanHtmlSerial(html, list, eventStatusMap, eventKickoffMap, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -148,15 +154,22 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         string html,
         List<BbcFixture> list,
         Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
-        Dictionary<string, DateTime> eventKickoffMap)
+        Dictionary<string, DateTime> eventKickoffMap,
+        CancellationToken cancellationToken)
     {
         // Single pass scanner over "<h2" / "data-event-id=" markers.
         int cursor = 0;
         string currentLeague = string.Empty;
         int len = html.Length;
+        int gamesParsed = 0;
 
         while (cursor < len)
         {
+            if ((gamesParsed & (CancelCheckEveryGames - 1)) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             int nextH2 = html.IndexOf(H2Marker, cursor, StringComparison.OrdinalIgnoreCase);
             int nextGame = html.IndexOf(DataEventIdMarker, cursor, StringComparison.Ordinal);
 
@@ -231,6 +244,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                     var swGame = System.Diagnostics.Stopwatch.StartNew();
                     ParseGameNative(html, cursor, limit, id, currentLeague, list, eventStatusMap, eventKickoffMap);
                     swGame.Stop();
+                    gamesParsed++;
                     if (swGame.ElapsedMilliseconds > SlowGameWarnMs)
                     {
                         logger.LogWarning("[BBC] Slow game parse ({Elapsed}ms) for ID {Id} in League {League}", swGame.ElapsedMilliseconds, id, currentLeague);
@@ -252,6 +266,25 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
         Dictionary<string, DateTime> eventKickoffMap)
     {
+        var rangeLen = end - start;
+        if (rangeLen <= 0) return;
+
+        // Slice once so repeated IndexOf/regex work stays on the card, not the multi-MB page.
+        var card = html.Substring(start, rangeLen);
+        ParseGameNativeCard(card, id, currentLeague, list, eventStatusMap, eventKickoffMap);
+    }
+
+    private static void ParseGameNativeCard(
+        string html,
+        string id,
+        string currentLeague,
+        List<BbcFixture> list,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> eventStatusMap,
+        Dictionary<string, DateTime> eventKickoffMap)
+    {
+        const int start = 0;
+        var end = html.Length;
+
         // Extract fields using IndexOf within range
         // Helper to find subs
         string ExtractRange(string marker)
