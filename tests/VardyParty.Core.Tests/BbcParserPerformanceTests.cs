@@ -22,7 +22,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
     private const int FixtureBudgetMs = 500;
     private const string BaselineFileName = "BbcScoresFixtures_2026-08-01.html";
     private const int BaselineExactFixtures = 319;
-    private const int BaselineExactLeagues = 25;
+    private const int BaselineExactLeagues = 30;
     private const int BaselineMinWithScores = 180;
     private const int BaselineMinWithKickoffs = 300;
 

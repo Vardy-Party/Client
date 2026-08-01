@@ -105,6 +105,51 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
+    public void ParseHtml_LiveGame_NotMarkedFinished_WhenNextFixtureHasFullTimeNearby()
+    {
+        // Real BBC pages put the next fixture's "… at Full time" visually-hidden summary before its
+        // data-event-id, often after an <h3> competition heading. A long FT probe incorrectly
+        // finished the prior live game (e.g. Girona vs Arsenal), which then disappeared from the UI.
+        var html =
+            """
+            <h3>Club Friendlies</h3>
+            <div data-event-id="s-live1" class="ssrcss-1bjtunb-GridContainer">
+              <div class="WithInlineFallback-TeamHome"><span class="DesktopValue">Girona</span></div>
+              <div class="HomeScore">1</div><div class="AwayScore">4</div>
+              <div class="WithInlineFallback-TeamAway"><span class="DesktopValue">Arsenal</span></div>
+              <div class="MatchProgressContainer">
+                <span class="visually-hidden">81 minutes , in progress</span>
+                <div class="StyledPeriod"><div>81&#x27;</div></div>
+              </div>
+            </div>
+            <h3>Club Friendlies 2</h3>
+            <li>
+              <span class="visually-hidden">Kasimpasa 1 , Hull City 1 at Full time</span>
+              <div data-event-id="s-ft2" class="ssrcss-1bjtunb-GridContainer">
+                <div class="WithInlineFallback-TeamHome"><span class="DesktopValue">Kasimpasa</span></div>
+                <div class="HomeScore">1</div><div class="AwayScore">1</div>
+                <div class="WithInlineFallback-TeamAway"><span class="DesktopValue">Hull City</span></div>
+                <div class="MatchProgressContainer">
+                  <span class="visually-hidden">Full time</span>
+                  <div class="StyledPeriod"><div>FT</div></div>
+                </div>
+              </div>
+            </li>
+            """;
+
+        var fixtures = CreateParser().ParseHtml(html);
+        var live = Assert.Single(fixtures, f => f.Home == "Girona" && f.Away == "Arsenal");
+        Assert.False(live.IsFinished);
+        Assert.True(live.IsInProgress);
+        Assert.Equal(81, live.Minute);
+        Assert.Equal("81'", live.Status);
+
+        var finished = Assert.Single(fixtures, f => f.Home == "Kasimpasa");
+        Assert.True(finished.IsFinished);
+        Assert.Equal("FT", finished.Status);
+    }
+
+    [Fact]
     public void ParseHtml_Badges_AreExtracted()
     {
         var html = new BbcHtmlBuilder()

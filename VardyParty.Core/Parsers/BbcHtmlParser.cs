@@ -15,6 +15,10 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
     private const string UnescapedIdMarker = "\"id\":\"";
     private const string DataEventIdMarker = "data-event-id=";
     private const string H2Marker = "<h2";
+    // BBC competition headings are often <h3>, not <h2>; treat both as card boundaries.
+    private const string H3Marker = "<h3";
+    // MatchProgressContainer is compact; a long probe reaches the next fixture's "Full time".
+    private const int ProgressProbeMaxChars = 500;
 
     private static readonly Regex AggScoreAltRegex = new(@"Aggregate\s+score[^<]*(?<h>\d+)\s*,[^<]*(?<a>\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex InjuryTimeApostropheRegex = new(@"(\d+)(?:&#x27;|&#39;|')\s*\+\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -161,21 +165,23 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             }
 
             int nextH2 = html.IndexOf(H2Marker, cursor, StringComparison.Ordinal);
+            int nextH3 = html.IndexOf(H3Marker, cursor, StringComparison.Ordinal);
+            int nextHeader = MinNonNegative(nextH2, nextH3);
             int nextGame = html.IndexOf(DataEventIdMarker, cursor, StringComparison.Ordinal);
 
-            if (nextH2 < 0 && nextGame < 0) break;
+            if (nextHeader < 0 && nextGame < 0) break;
 
             bool isHeader;
             int foundIdx;
-            if (nextH2 >= 0 && nextGame >= 0)
+            if (nextHeader >= 0 && nextGame >= 0)
             {
-                isHeader = nextH2 < nextGame;
-                foundIdx = isHeader ? nextH2 : nextGame;
+                isHeader = nextHeader < nextGame;
+                foundIdx = isHeader ? nextHeader : nextGame;
             }
-            else if (nextH2 >= 0)
+            else if (nextHeader >= 0)
             {
                 isHeader = true;
-                foundIdx = nextH2;
+                foundIdx = nextHeader;
             }
             else
             {
@@ -187,20 +193,22 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
             if (isHeader)
             {
-                int endH2 = html.IndexOf("</h2>", cursor, StringComparison.OrdinalIgnoreCase);
-                if (endH2 > cursor)
+                var isH3 = foundIdx == nextH3;
+                var closeHeader = isH3 ? "</h3>" : "</h2>";
+                int endHeader = html.IndexOf(closeHeader, cursor, StringComparison.OrdinalIgnoreCase);
+                if (endHeader > cursor)
                 {
                     int closeTag = html.IndexOf('>', cursor);
-                    if (closeTag > cursor && closeTag < endH2)
+                    if (closeTag > cursor && closeTag < endHeader)
                     {
-                        var content = html.Substring(closeTag + 1, endH2 - closeTag - 1);
+                        var content = html.Substring(closeTag + 1, endHeader - closeTag - 1);
                         var text = System.Net.WebUtility.HtmlDecode(StripTags(content));
                         if (!string.IsNullOrWhiteSpace(text) && !text.Contains("Scores & Fixtures", StringComparison.OrdinalIgnoreCase))
                         {
                             currentLeague = text;
                         }
                     }
-                    cursor = endH2 + 5;
+                    cursor = endHeader + closeHeader.Length;
                 }
                 else
                 {
@@ -214,9 +222,11 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 int cappedLimit = Math.Min(cursor + MaxGameBlockChars, len);
                 int nextMarker1 = html.IndexOf(DataEventIdMarker, searchFrom, StringComparison.Ordinal);
                 int nextMarker2 = html.IndexOf(H2Marker, searchFrom, StringComparison.Ordinal);
+                int nextMarker3 = html.IndexOf(H3Marker, searchFrom, StringComparison.Ordinal);
                 int limit = cappedLimit;
                 if (nextMarker1 >= 0 && nextMarker1 < limit) limit = nextMarker1;
                 if (nextMarker2 >= 0 && nextMarker2 < limit) limit = nextMarker2;
+                if (nextMarker3 >= 0 && nextMarker3 < limit) limit = nextMarker3;
 
                 string id = "";
                 int quoteStart = html.IndexOf('"', searchFrom);
@@ -333,7 +343,10 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             if (containerIdx >= 0)
             {
                 hasProgressContainer = true;
-                var probeLen = Math.Min(1500, end - containerIdx);
+                // Keep FT/HT probes inside this fixture's progress block. A long window can reach the
+                // next fixture's "Full time" (often before the next data-event-id) and hide live games.
+                var progressScopeEnd = Math.Min(end, containerIdx + ProgressProbeMaxChars);
+                var probeLen = progressScopeEnd - containerIdx;
                 if (probeLen > 0)
                 {
                     quickFt = html.IndexOf(">FT<", containerIdx, probeLen, StringComparison.Ordinal) >= 0
@@ -345,33 +358,34 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 if (quickFt)
                 {
                     progressInner = "FT";
-                    progressContainerEnd = containerIdx + probeLen;
+                    progressContainerEnd = progressScopeEnd;
                 }
                 else if (quickHt)
                 {
                     progressInner = "HT";
-                    progressContainerEnd = containerIdx + probeLen;
+                    progressContainerEnd = progressScopeEnd;
                 }
                 else
                 {
                     int cStart = html.IndexOf('>', containerIdx) + 1;
                     if (cStart > 0)
                     {
-                        int searchLimit = Math.Min(end - cStart, 5000);
-                        int cEnd = html.IndexOf("</div>", cStart, searchLimit, StringComparison.Ordinal);
+                        int searchLimit = Math.Min(progressScopeEnd - cStart, ProgressProbeMaxChars);
+                        if (searchLimit < 0) searchLimit = 0;
+                        int cEnd = searchLimit > 0
+                            ? html.IndexOf("</div>", cStart, searchLimit, StringComparison.Ordinal)
+                            : -1;
 
-                        if (cEnd < 0)
-                        {
-                            int maxSearch = Math.Min(html.Length - cStart, 10000);
-                            cEnd = html.IndexOf("</div>", cStart, maxSearch, StringComparison.Ordinal);
-                        }
-
-                        progressContainerEnd = cEnd;
+                        progressContainerEnd = cEnd > cStart ? cEnd : progressScopeEnd;
                         if (cEnd > cStart)
                         {
                             var raw = html.Substring(cStart, cEnd - cStart);
                             progressInner = DecodeIfNeeded(StripTags(raw));
                         }
+                    }
+                    else
+                    {
+                        progressContainerEnd = progressScopeEnd;
                     }
                 }
             }
@@ -486,7 +500,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             bool ContainerContains(string value)
             {
                 if (!hasProgressContainer || containerIdx < 0) return false;
-                var searchLen = Math.Min(1500, end - containerIdx);
+                var searchLen = Math.Min(ProgressProbeMaxChars, end - containerIdx);
                 return searchLen > 0
                        && html.IndexOf(value, containerIdx, searchLen, StringComparison.OrdinalIgnoreCase) >= 0;
             }
@@ -785,6 +799,13 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
         int extLen2 = GetExtensionLength(secondBadgeIdx);
         awayBadge = html.Substring(http2Idx, secondBadgeIdx - http2Idx + extLen2);
+    }
+
+    private static int MinNonNegative(int a, int b)
+    {
+        if (a < 0) return b;
+        if (b < 0) return a;
+        return Math.Min(a, b);
     }
 
     private static bool TryParseAggScores(string html, int start, int end, out int? home, out int? away)
