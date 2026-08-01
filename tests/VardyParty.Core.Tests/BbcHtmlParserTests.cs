@@ -105,48 +105,56 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
-    public void ParseHtml_LiveGame_NotMarkedFinished_WhenNextFixtureHasFullTimeNearby()
+    public void ParseHtml_RealBbcPage_GironaArsenal_LiveDetails_NotStolenFromNextFullTime()
     {
-        // Real BBC pages put the next fixture's "… at Full time" visually-hidden summary before its
-        // data-event-id, often after an <h3> competition heading. A long FT probe incorrectly
-        // finished the prior live game (e.g. Girona vs Arsenal), which then disappeared from the UI.
-        var html =
-            """
-            <h3>Club Friendlies</h3>
-            <div data-event-id="s-live1" class="ssrcss-1bjtunb-GridContainer">
-              <div class="WithInlineFallback-TeamHome"><span class="DesktopValue">Girona</span></div>
-              <div class="HomeScore">1</div><div class="AwayScore">4</div>
-              <div class="WithInlineFallback-TeamAway"><span class="DesktopValue">Arsenal</span></div>
-              <div class="MatchProgressContainer">
-                <span class="visually-hidden">81 minutes , in progress</span>
-                <div class="StyledPeriod"><div>81&#x27;</div></div>
-              </div>
-            </div>
-            <h3>Club Friendlies 2</h3>
-            <li>
-              <span class="visually-hidden">Kasimpasa 1 , Hull City 1 at Full time</span>
-              <div data-event-id="s-ft2" class="ssrcss-1bjtunb-GridContainer">
-                <div class="WithInlineFallback-TeamHome"><span class="DesktopValue">Kasimpasa</span></div>
-                <div class="HomeScore">1</div><div class="AwayScore">1</div>
-                <div class="WithInlineFallback-TeamAway"><span class="DesktopValue">Hull City</span></div>
-                <div class="MatchProgressContainer">
-                  <span class="visually-hidden">Full time</span>
-                  <div class="StyledPeriod"><div>FT</div></div>
-                </div>
-              </div>
-            </li>
-            """;
+        // Captured from https://www.bbc.com/sport/football/scores-fixtures on 2026-08-01 while
+        // Girona vs Arsenal was live (85'). The next competition block is <h3>Club Friendlies 2</h3>
+        // with Kasimpasa vs Hull City already FT; that nearby "Full time" must not finish Girona.
+        //
+        // Ground truth taken from the saved HTML / __INITIAL_DATA__ for event
+        // s-8ew7n1ri67qmwp7v5lrcpk9hw:
+        //   DesktopValue teams, HomeScore/AwayScore, StyledPeriod 85&#x27;,
+        //   visually-hidden "85 minutes , in progress",
+        //   startDateTime 2026-08-01T18:00:00Z, status MidEvent, periodLabel 85',
+        //   badge-img src URLs for girona / arsenal.
+        var html = GetResxValue("BbcScoresFixtures_2026-08-01_GironaArsenalLive");
+        // Fixture sanity: prove we locked the real captured page, not a synthetic stub.
+        Assert.Contains("s-8ew7n1ri67qmwp7v5lrcpk9hw", html, StringComparison.Ordinal);
+        Assert.Contains("85 minutes , in progress", html, StringComparison.Ordinal);
+        Assert.Contains("s-60kcu3gx41jye1nrvbys34bh0", html, StringComparison.Ordinal);
+        Assert.Contains("at Full time", html, StringComparison.Ordinal);
 
         var fixtures = CreateParser().ParseHtml(html);
         var live = Assert.Single(fixtures, f => f.Home == "Girona" && f.Away == "Arsenal");
+
+        Assert.Equal(1, live.HomeScore);
+        Assert.Equal(4, live.AwayScore);
+        Assert.Equal(85, live.Minute);
+        Assert.Equal("85'", live.Status);
         Assert.False(live.IsFinished);
         Assert.True(live.IsInProgress);
-        Assert.Equal(81, live.Minute);
-        Assert.Equal("81'", live.Status);
+        Assert.False(live.IsHalfTime);
+        Assert.True(live.HasProgress);
+        Assert.False(live.AfterExtraTime);
+        Assert.Equal(new DateTime(2026, 8, 1, 18, 0, 0, DateTimeKind.Utc), live.KickoffUtc);
+        Assert.Equal("Club Friendlies 1", live.League);
+        Assert.Equal(
+            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/girona.4dc82412e1.svg",
+            live.HomeBadgeUrl);
+        Assert.Equal(
+            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5a62ec890e.svg",
+            live.AwayBadgeUrl);
 
-        var finished = Assert.Single(fixtures, f => f.Home == "Kasimpasa");
+        // Neighboring FT fixture (Kasımpaşa — Turkish ı/ş in BBC DesktopValue) that poisoned the FT probe.
+        const string kasimpasa = "Kas\u0131mpa\u015Fa";
+        var finished = Assert.Single(fixtures, f => f.Home == kasimpasa && f.Away == "Hull City");
+        Assert.Equal(1, finished.HomeScore);
+        Assert.Equal(1, finished.AwayScore);
         Assert.True(finished.IsFinished);
+        Assert.False(finished.IsInProgress);
         Assert.Equal("FT", finished.Status);
+        Assert.Equal(new DateTime(2026, 8, 1, 16, 0, 0, DateTimeKind.Utc), finished.KickoffUtc);
+        Assert.Equal("Club Friendlies 2", finished.League);
     }
 
     [Fact]
