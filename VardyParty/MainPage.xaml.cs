@@ -1,6 +1,5 @@
 ﻿using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Maui.Controls;
-using System.Threading;
 #if WINDOWS
 using VardyParty.Platforms.Windows;
 using WinUiWindow = Microsoft.UI.Xaml.Window;
@@ -177,7 +176,9 @@ namespace VardyParty
         /// <summary>
         /// Clicks the currently focused DOM element in the Blazor WebView.
         /// Used for Android TV remotes where OK/Enter focuses a control but does not fire click.
-        /// Returns true when a real control was clicked so the key can be consumed (avoids double-toggle).
+        /// Returns true when the click script was scheduled (caller should consume the key).
+        /// Must not block the UI thread waiting for EvaluateJavascript — that deadlocks the
+        /// callback and made every TV OK time out after 250ms with no click.
         /// </summary>
         public bool TryClickFocusedWebElement()
         {
@@ -188,35 +189,19 @@ namespace VardyParty
                     return false;
                 }
 
-                // Only activate real controls — never treat a random focused node as success.
+                // closest() covers focus on children inside buttons / role=button game cards.
                 const string js =
                     "(function(){var el=document.activeElement;" +
                     "if(!el)return 'none';" +
-                    "var tag=(el.tagName||'').toLowerCase();" +
-                    "var role=(el.getAttribute('role')||'').toLowerCase();" +
-                    "if(tag==='button'||tag==='a'||role==='button')" +
-                    "{el.click();return tag;}" +
-                    "return 'skip:'+tag;})();";
+                    "var t=el.closest('button,a,[role=\"button\"]');" +
+                    "if(!t)return 'skip';" +
+                    "t.click();" +
+                    "try{t.scrollIntoView({block:'nearest',inline:'nearest'});}catch(e){}" +
+                    "return (t.tagName||'').toLowerCase();})();";
 
-                string? jsResult = null;
-                using var done = new ManualResetEventSlim(false);
-                web.EvaluateJavascript(js, new JsStringCallback(value =>
-                {
-                    jsResult = value;
-                    done.Set();
-                }));
-
-                if (!done.Wait(TimeSpan.FromMilliseconds(250)))
-                {
-                    Console.WriteLine("[MainPage] TryClickFocusedWebElement timed out waiting for JS");
-                    return false;
-                }
-
-                // EvaluateJavascript string results are JSON-encoded (e.g. "\"button\"").
-                var normalized = (jsResult ?? string.Empty).Trim().Trim('"');
-                var clicked = normalized is "button" or "a";
-                Console.WriteLine($"[MainPage] TryClickFocusedWebElement result={normalized} clicked={clicked}");
-                return clicked;
+                web.EvaluateJavascript(js, JsLogCallback.Instance);
+                Console.WriteLine("[MainPage] TryClickFocusedWebElement scheduled");
+                return true;
             }
             catch (Exception ex)
             {
@@ -225,13 +210,15 @@ namespace VardyParty
             }
         }
 
-        private sealed class JsStringCallback : Java.Lang.Object, Android.Webkit.IValueCallback
+        private sealed class JsLogCallback : Java.Lang.Object, Android.Webkit.IValueCallback
         {
-            private readonly Action<string?> _onResult;
+            public static readonly JsLogCallback Instance = new();
 
-            public JsStringCallback(Action<string?> onResult) => _onResult = onResult;
-
-            public void OnReceiveValue(Java.Lang.Object? value) => _onResult(value?.ToString());
+            public void OnReceiveValue(Java.Lang.Object? value)
+            {
+                var normalized = (value?.ToString() ?? string.Empty).Trim().Trim('"');
+                Console.WriteLine($"[MainPage] TryClickFocusedWebElement result={normalized}");
+            }
         }
 #endif
 

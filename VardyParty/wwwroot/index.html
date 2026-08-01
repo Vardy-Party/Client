@@ -150,6 +150,53 @@
                 window.playClickSound();
             }
         }, true); // Capture phase to ensure it runs
+
+        // Keep focused menu controls visible while D-pad scrolling the flyout.
+        document.addEventListener('focusin', function (e) {
+            const el = e.target;
+            if (!(el instanceof Element)) return;
+            if (!el.classList.contains('league-filter-item')
+                && !el.classList.contains('menu-chip-button')
+                && !el.classList.contains('menu-action-button')
+                && !el.classList.contains('menu-close-button')) {
+                return;
+            }
+            try {
+                el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            } catch (_) { /* ignore */ }
+        }, true);
+
+        window.vardyFocusLeagueByName = function (name) {
+            if (!name) return false;
+            const nodes = document.querySelectorAll('.league-filter-item[data-league]');
+            for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].getAttribute('data-league') === name) {
+                    nodes[i].focus();
+                    try {
+                        nodes[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                    } catch (_) { /* ignore */ }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        window.vardyFocusFirstLeagueControl = function () {
+            const firstLeague = document.querySelector('.league-filter-item');
+            if (firstLeague) {
+                firstLeague.focus();
+                try {
+                    firstLeague.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                } catch (_) { /* ignore */ }
+                return true;
+            }
+            const showAll = document.querySelector('.league-filter-actions .menu-chip-button');
+            if (showAll) {
+                showAll.focus();
+                return true;
+            }
+            return false;
+        };
     </script>
 
 </body>

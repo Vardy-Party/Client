@@ -614,6 +614,7 @@ button {
 }
 
 .menu-close-button:hover,
+.menu-close-button:focus,
 .menu-close-button:focus-visible {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(74, 158, 255, 0.55);
@@ -712,6 +713,7 @@ button {
 }
 
 .menu-chip-button:hover,
+.menu-chip-button:focus,
 .menu-chip-button:focus-visible {
     background: rgba(74, 158, 255, 0.24);
     border-color: rgba(74, 158, 255, 0.6);
@@ -730,13 +732,38 @@ button {
     list-style: none;
     margin: 0;
     padding: 0;
-    flex: 1 1 auto;
+    /* Do not nest a scrollport inside .flyout-menu — Android TV WebView D-pad
+       treats overflow:auto regions as scroll traps and never focuses row buttons. */
+    flex: 0 0 auto;
     min-height: 0;
     max-height: none;
-    overflow-y: auto;
+    overflow: visible;
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+
+.league-filter-list > li {
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.platform-android-tv .flyout-menu-section-leagues {
+    /* Let the flyout itself scroll; avoid a constrained inner flex scrollport. */
+    flex: 0 0 auto;
+    min-height: auto;
+}
+
+.platform-android-tv .league-filter-actions {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.platform-android-tv .menu-chip-button {
+    width: 100%;
+    border-radius: 10px;
+    text-align: center;
 }
 
 .league-filter-item {
@@ -854,6 +881,7 @@ button {
 }
 
 .menu-action-button:hover,
+.menu-action-button:focus,
 .menu-action-button:focus-visible {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.28);

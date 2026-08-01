@@ -12,6 +12,8 @@
 
 @inject IAuthTokenProvider AuthTokenProvider
 
+@inject IJSRuntime JS
+
 @implements IDisposable
 
 
@@ -125,26 +127,24 @@
                                     class="menu-chip-button"
                                     tabindex="0"
                                     @ref="showAllButtonRef"
-                                    @onclick="ShowAllLeagues"
-                                    @onkeydown="OnShowAllKeyDown">Show all</button>
+                                    @onclick="ShowAllLeagues">Show all</button>
                             <button type="button"
                                     class="menu-chip-button menu-chip-button-muted"
                                     tabindex="0"
-                                    @onclick="ResetLeagueDefaults"
-                                    @onkeydown="OnResetDefaultsKeyDown">Reset defaults</button>
+                                    @onclick="ResetLeagueDefaults">Reset defaults</button>
                         </div>
                         <ul class="league-filter-list">
                             @foreach (var league in knownLeagues)
                             {
                                 var leagueName = league;
                                 var visible = LeagueFilter.IsLeagueVisible(leagueName);
-                                <li>
+                                <li @key="leagueName">
                                     <button type="button"
                                             class="league-filter-item@(visible ? " league-filter-item-active" : string.Empty)"
                                             tabindex="0"
+                                            data-league="@leagueName"
                                             aria-pressed="@visible"
-                                            @onclick="() => ToggleLeague(leagueName)"
-                                            @onkeydown="e => OnLeagueKeyDown(e, leagueName)">
+                                            @onclick="() => ToggleLeague(leagueName)">
                                         <span class="league-filter-check" aria-hidden="true"></span>
                                         <span class="league-filter-name">@leagueName</span>
                                     </button>
@@ -211,6 +211,8 @@
     private string? lastToggleLeague;
 
     private long lastToggleTimestampMs;
+
+    private string? restoreFocusLeague;
 
 
 
@@ -282,6 +284,32 @@
 
     {
 
+        if (!string.IsNullOrEmpty(restoreFocusLeague))
+
+        {
+
+            var league = restoreFocusLeague;
+
+            restoreFocusLeague = null;
+
+            try
+
+            {
+
+                await JS.InvokeAsync<bool>("vardyFocusLeagueByName", league);
+
+            }
+
+            catch
+
+            {
+
+            }
+
+        }
+
+
+
         if (!focusOnOpen || !isOpen) return;
 
 
@@ -292,12 +320,36 @@
 
         {
 
-            // TV: land in league controls so OK can toggle; Close is still reachable via D-pad Up.
+            // TV: land on the first league row so Down/Up walk the list; chips are above via Up.
             if (isAuthenticated && knownLeagues.Count > 0)
 
             {
 
-                await showAllButtonRef.FocusAsync();
+                var focused = false;
+
+                try
+
+                {
+
+                    focused = await JS.InvokeAsync<bool>("vardyFocusFirstLeagueControl");
+
+                }
+
+                catch
+
+                {
+
+                }
+
+
+
+                if (!focused)
+
+                {
+
+                    await showAllButtonRef.FocusAsync();
+
+                }
 
             }
 
@@ -503,31 +555,8 @@
 
         lastToggleLeague = league;
         lastToggleTimestampMs = nowMs;
+        restoreFocusLeague = league;
         LeagueFilter.SetLeagueVisible(league, !LeagueFilter.IsLeagueVisible(league));
-    }
-
-    private void OnLeagueKeyDown(KeyboardEventArgs e, string league)
-    {
-        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
-        {
-            ToggleLeague(league);
-        }
-    }
-
-    private void OnShowAllKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
-        {
-            ShowAllLeagues();
-        }
-    }
-
-    private void OnResetDefaultsKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
-        {
-            ResetLeagueDefaults();
-        }
     }
 
     private void OnMenuButtonKeyDown(KeyboardEventArgs e)
