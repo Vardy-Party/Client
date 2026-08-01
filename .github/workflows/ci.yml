@@ -8,10 +8,12 @@ env:
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
 
+# Feature-branch CI runs via pull_request only. Push is main-only so a PR push
+# does not also fire a duplicate branch push workflow.
 on:
   push:
     branches:
-      - '**'
+      - main
   pull_request:
     branches:
       - main
@@ -23,6 +25,12 @@ on:
         description: "Run optional Linux runtime smoke test (installs VLC deps)"
         required: false
         default: "true"
+
+# One run per head branch (or main ref). Duplicate PRs from the same branch
+# share this group and cancel each other instead of fan-out.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   resolve-flags:

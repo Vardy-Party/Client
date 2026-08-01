@@ -1,9 +1,13 @@
 name: Bump Display Version
 
+# Only when a PR is opened (not on every synchronize/push). Duplicate PRs from
+# the same head branch share a concurrency group so only one bump runs.
 on:
   pull_request:
     branches:
       - main
+    types:
+      - opened
   workflow_dispatch:
     inputs:
       version_bump_type:
@@ -15,6 +19,10 @@ on:
           - major
           - minor
           - patch
+
+concurrency:
+  group: bump-display-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
