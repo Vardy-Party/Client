@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
@@ -14,10 +15,12 @@ public class BbcJsonParser : IBbcJsonParser
     private const string EscapedStatusMarker = "\\\"status\\\":\\\"";
     private const string EscapedPeriodValueMarker = "\\\"periodLabel\\\":{\\\"value\\\":\\\"";
     private const string EscapedStatusCommentValueMarker = "\\\"statusComment\\\":{\\\"value\\\":\\\"";
+    private const string EscapedStartDateTimeMarker = "\\\"startDateTime\\\":\\\"";
     private const string EscapedStringEnd = "\\\"";
 
     private const string UnescapedIdMarker = "\"id\":\"s-";
     private const int EventFieldWindow = 3000;
+    private const int IdLookbackChars = 800;
     private const int MaxObjects = 5000;
 
     public BbcJsonParser(ILogger<BbcJsonParser>? logger = null)
@@ -25,42 +28,167 @@ public class BbcJsonParser : IBbcJsonParser
         _logger = logger ?? NullLogger<BbcJsonParser>.Instance;
     }
 
-    public Dictionary<string, (string periodLabel, string status, string statusComment)> BuildEventStatusMapStreaming(string html, CancellationToken cancellationToken = default)
+    public Dictionary<string, (string periodLabel, string status, string statusComment)> BuildEventStatusMapStreaming(
+        string html,
+        CancellationToken cancellationToken = default)
+        => BuildEventMapsStreaming(html, cancellationToken).StatusByEventId;
+
+    public (Dictionary<string, (string periodLabel, string status, string statusComment)> StatusByEventId,
+        Dictionary<string, DateTime> KickoffUtcByEventId) BuildEventMapsStreaming(
+        string html,
+        CancellationToken cancellationToken = default)
     {
-        var map = new Dictionary<string, (string periodLabel, string status, string statusComment)>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrEmpty(html)) return map;
+        // Typical heavy match day is ~300 fixtures; pre-size to cut dictionary growth churn.
+        var statusMap = new Dictionary<string, (string periodLabel, string status, string statusComment)>(384, StringComparer.OrdinalIgnoreCase);
+        var kickoffMap = new Dictionary<string, DateTime>(384, StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(html)) return (statusMap, kickoffMap);
 
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var searchStart = 0;
-            var anchorIdx = html.IndexOf("__INITIAL_DATA__", StringComparison.OrdinalIgnoreCase);
-            if (anchorIdx >= 0) searchStart = anchorIdx;
+            var (searchStart, searchEnd) = GetInitialDataSearchBounds(html);
 
             // Real BBC pages use escaped JSON inside a quoted JS/HTML string.
-            ExtractEscapedEventStatuses(html, searchStart, map, cancellationToken);
+            // Prefer startDateTime-driven scan (~1 hit/fixture). Fall back to id scan for
+            // synthetic HTML that has status without kickoff fields.
+            ExtractEscapedEventMaps(html, searchStart, searchEnd, statusMap, kickoffMap, cancellationToken);
+            if (statusMap.Count == 0)
+            {
+                ExtractEscapedEventMapsById(html, searchStart, searchEnd, statusMap, kickoffMap, cancellationToken);
+            }
 
             // Unit tests / older markup may embed raw JSON objects.
-            if (map.Count == 0)
+            if (statusMap.Count == 0)
             {
-                ExtractUnescapedEventStatuses(html, searchStart, map, cancellationToken);
+                ExtractUnescapedEventMaps(html, searchStart, statusMap, kickoffMap, cancellationToken);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[BBC] BuildEventStatusMapStreaming failed");
+            _logger.LogError(ex, "[BBC] BuildEventMapsStreaming failed");
         }
 
-        return map;
+        return (statusMap, kickoffMap);
     }
 
-    private void ExtractEscapedEventStatuses(
+    private static (int Start, int End) GetInitialDataSearchBounds(string html)
+    {
+        var anchorIdx = html.IndexOf("__INITIAL_DATA__", StringComparison.OrdinalIgnoreCase);
+        if (anchorIdx < 0) return (0, html.Length);
+
+        var eq = html.IndexOf('=', anchorIdx);
+        if (eq < 0) return (anchorIdx, html.Length);
+
+        var quoteStart = html.IndexOf('"', eq + 1);
+        if (quoteStart < 0) return (anchorIdx, html.Length);
+
+        // Payload ends at the closing quote before "; (content uses \").
+        var quoteEnd = html.IndexOf("\";", quoteStart + 1, StringComparison.Ordinal);
+        if (quoteEnd < 0)
+        {
+            var scriptEnd = html.IndexOf("</script>", quoteStart + 1, StringComparison.OrdinalIgnoreCase);
+            return (quoteStart + 1, scriptEnd > quoteStart ? scriptEnd : html.Length);
+        }
+
+        return (quoteStart + 1, quoteEnd);
+    }
+
+    private void ExtractEscapedEventMaps(
         string html,
         int searchStart,
-        Dictionary<string, (string periodLabel, string status, string statusComment)> map,
+        int searchEnd,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> statusMap,
+        Dictionary<string, DateTime> kickoffMap,
         CancellationToken cancellationToken)
     {
+        if (searchEnd <= searchStart) return;
+
+        var pos = searchStart;
+        var found = 0;
+        // Drive from startDateTime (~1 per fixture) instead of every \"id\":\" (~7× more on real pages).
+        var available = searchEnd - searchStart;
+
+        while (found < MaxObjects && available > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var dtMarkerPos = html.IndexOf(EscapedStartDateTimeMarker, pos, available, StringComparison.Ordinal);
+            if (dtMarkerPos < 0 || dtMarkerPos >= searchEnd) break;
+
+            var dtStart = dtMarkerPos + EscapedStartDateTimeMarker.Length;
+            var dtRemaining = searchEnd - dtStart;
+            if (dtRemaining <= 0) break;
+
+            var dtEnd = html.IndexOf(EscapedStringEnd, dtStart, Math.Min(48, dtRemaining), StringComparison.Ordinal);
+            if (dtEnd <= dtStart)
+            {
+                pos = dtMarkerPos + EscapedStartDateTimeMarker.Length;
+                available = searchEnd - pos;
+                continue;
+            }
+
+            var lookback = Math.Min(IdLookbackChars, dtMarkerPos - searchStart);
+            var idMarkerPos = lookback > 0
+                ? html.LastIndexOf(EscapedIdMarker, dtMarkerPos, lookback, StringComparison.Ordinal)
+                : -1;
+
+            if (idMarkerPos < searchStart)
+            {
+                pos = dtEnd + EscapedStringEnd.Length;
+                available = searchEnd - pos;
+                continue;
+            }
+
+            var idStart = idMarkerPos + EscapedIdMarker.Length;
+            if (idStart + 2 >= searchEnd || html[idStart] != 's' || html[idStart + 1] != '-')
+            {
+                pos = dtEnd + EscapedStringEnd.Length;
+                available = searchEnd - pos;
+                continue;
+            }
+
+            var idEnd = html.IndexOf(EscapedStringEnd, idStart, Math.Min(80, searchEnd - idStart), StringComparison.Ordinal);
+            if (idEnd <= idStart)
+            {
+                pos = dtEnd + EscapedStringEnd.Length;
+                available = searchEnd - pos;
+                continue;
+            }
+
+            var id = html.Substring(idStart, idEnd - idStart);
+            var windowLen = Math.Min(EventFieldWindow, searchEnd - idMarkerPos);
+            var status = ExtractEscapedStringValue(html, EscapedStatusMarker, idMarkerPos, windowLen);
+            var period = ExtractEscapedStringValue(html, EscapedPeriodValueMarker, idMarkerPos, windowLen);
+            var statusComment = ExtractEscapedStringValue(html, EscapedStatusCommentValueMarker, idMarkerPos, windowLen);
+            var startDateTime = html.Substring(dtStart, dtEnd - dtStart);
+
+            if (!string.IsNullOrEmpty(status) && !statusMap.ContainsKey(id))
+            {
+                statusMap[id] = (period, status, statusComment);
+                found++;
+            }
+
+            if (!kickoffMap.ContainsKey(id) && TryParseKickoffUtc(startDateTime, out var kickoffUtc))
+            {
+                kickoffMap[id] = kickoffUtc;
+            }
+
+            pos = dtEnd + EscapedStringEnd.Length;
+            available = searchEnd - pos;
+        }
+    }
+
+    private void ExtractEscapedEventMapsById(
+        string html,
+        int searchStart,
+        int searchEnd,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> statusMap,
+        Dictionary<string, DateTime> kickoffMap,
+        CancellationToken cancellationToken)
+    {
+        if (searchEnd <= searchStart) return;
+
         var pos = searchStart;
         var found = 0;
 
@@ -68,17 +196,20 @@ public class BbcJsonParser : IBbcJsonParser
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var idMarkerPos = html.IndexOf(EscapedIdMarker, pos, StringComparison.Ordinal);
-            if (idMarkerPos < 0) break;
+            var remaining = searchEnd - pos;
+            if (remaining <= 0) break;
+
+            var idMarkerPos = html.IndexOf(EscapedIdMarker, pos, remaining, StringComparison.Ordinal);
+            if (idMarkerPos < 0 || idMarkerPos >= searchEnd) break;
 
             var idStart = idMarkerPos + EscapedIdMarker.Length;
-            if (idStart + 2 >= html.Length || html[idStart] != 's' || html[idStart + 1] != '-')
+            if (idStart + 2 >= searchEnd || html[idStart] != 's' || html[idStart + 1] != '-')
             {
                 pos = idMarkerPos + EscapedIdMarker.Length;
                 continue;
             }
 
-            var idEnd = html.IndexOf(EscapedStringEnd, idStart, StringComparison.Ordinal);
+            var idEnd = html.IndexOf(EscapedStringEnd, idStart, Math.Min(80, searchEnd - idStart), StringComparison.Ordinal);
             if (idEnd <= idStart)
             {
                 pos = idStart + 1;
@@ -86,18 +217,24 @@ public class BbcJsonParser : IBbcJsonParser
             }
 
             var id = html.Substring(idStart, idEnd - idStart);
-            var windowEnd = Math.Min(html.Length, idMarkerPos + EventFieldWindow);
-            var windowLen = windowEnd - idMarkerPos;
+            var windowLen = Math.Min(EventFieldWindow, searchEnd - idMarkerPos);
 
             var status = ExtractEscapedStringValue(html, EscapedStatusMarker, idMarkerPos, windowLen);
             var period = ExtractEscapedStringValue(html, EscapedPeriodValueMarker, idMarkerPos, windowLen);
             var statusComment = ExtractEscapedStringValue(html, EscapedStatusCommentValueMarker, idMarkerPos, windowLen);
+            var startDateTime = ExtractEscapedStringValue(html, EscapedStartDateTimeMarker, idMarkerPos, windowLen);
 
-            // Only keep event-like objects that expose a status field.
-            if (!string.IsNullOrEmpty(status) && !map.ContainsKey(id))
+            if (!string.IsNullOrEmpty(status) && !statusMap.ContainsKey(id))
             {
-                map[id] = (period, status, statusComment);
+                statusMap[id] = (period, status, statusComment);
                 found++;
+            }
+
+            if (!string.IsNullOrEmpty(startDateTime)
+                && !kickoffMap.ContainsKey(id)
+                && TryParseKickoffUtc(startDateTime, out var kickoffUtc))
+            {
+                kickoffMap[id] = kickoffUtc;
             }
 
             pos = idEnd + EscapedStringEnd.Length;
@@ -121,10 +258,11 @@ public class BbcJsonParser : IBbcJsonParser
         return html.Substring(valueStart, valueEnd - valueStart);
     }
 
-    private void ExtractUnescapedEventStatuses(
+    private void ExtractUnescapedEventMaps(
         string html,
         int searchStart,
-        Dictionary<string, (string periodLabel, string status, string statusComment)> map,
+        Dictionary<string, (string periodLabel, string status, string statusComment)> statusMap,
+        Dictionary<string, DateTime> kickoffMap,
         CancellationToken cancellationToken)
     {
         var searchPos = searchStart;
@@ -184,9 +322,17 @@ public class BbcJsonParser : IBbcJsonParser
                             statusComment = scv.GetString() ?? string.Empty;
                         }
 
-                        if (!map.ContainsKey(id))
+                        if (!statusMap.ContainsKey(id))
                         {
-                            map[id] = (period, status, statusComment);
+                            statusMap[id] = (period, status, statusComment);
+                        }
+
+                        if (!kickoffMap.ContainsKey(id)
+                            && root.TryGetProperty("startDateTime", out var sdt)
+                            && sdt.ValueKind == JsonValueKind.String
+                            && TryParseKickoffUtc(sdt.GetString(), out var kickoffUtc))
+                        {
+                            kickoffMap[id] = kickoffUtc;
                         }
                     }
                 }
@@ -199,6 +345,20 @@ public class BbcJsonParser : IBbcJsonParser
             found++;
             searchPos = objEnd + 1;
         }
+    }
+
+    internal static bool TryParseKickoffUtc(string? value, out DateTime kickoffUtc)
+    {
+        kickoffUtc = DateTime.MinValue;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            return false;
+        }
+
+        kickoffUtc = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        return true;
     }
 
     private static int FindJsonObjectEnd(string html, int objStart)

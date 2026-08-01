@@ -166,11 +166,14 @@ public class BbcHtmlParserTests
             .BuildPage();
 
         var mockParser = new Mock<IBbcJsonParser>();
+        var postponedMap = new Dictionary<string, (string periodLabel, string status, string statusComment)>
+        {
+            ["s-x"] = ("Postponed", "Postponed", string.Empty)
+        };
+        mockParser.Setup(p => p.BuildEventMapsStreaming(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((postponedMap, new Dictionary<string, DateTime>()));
         mockParser.Setup(p => p.BuildEventStatusMapStreaming(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(new Dictionary<string, (string periodLabel, string status, string statusComment)>
-            {
-                ["s-x"] = ("Postponed", "Postponed", string.Empty)
-            });
+            .Returns(postponedMap);
 
         var f = CreateParser(mockParser.Object).ParseHtml(html).FirstOrDefault();
         Assert.NotNull(f);
