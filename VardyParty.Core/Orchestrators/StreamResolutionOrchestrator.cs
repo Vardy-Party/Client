@@ -63,7 +63,7 @@ public class StreamResolutionOrchestrator(
 
         await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
                            orderedStreams,
-                           3,
+                           2,
                            cancellationToken,
                            totalCount =>
                            {
