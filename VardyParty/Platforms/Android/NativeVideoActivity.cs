@@ -556,13 +556,15 @@ namespace VardyParty.Platforms.Android
                 tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
                 ConfigureEmojiFriendlyTextView(tv);
                 tv.SetSingleLine(true);
-                tv.SetHorizontallyScrolling(true);
+                // Do NOT call SetHorizontallyScrolling — that is for TextView's own marquee
+                // engine and interferes with the manual TranslationX scroll approach.
                 tv.SetPadding(0, 0, (int)(64 * density), 0); // gap between copies
                 return tv;
             }
 
             _tickerText1 = MakeTickerTextView();
             _tickerText2 = MakeTickerTextView();
+            // WrapContent so each TextView measures at its natural text width, not screen width.
             _tickerInner.AddView(_tickerText1, new LinearLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
@@ -570,10 +572,12 @@ namespace VardyParty.Platforms.Android
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
 
+            // _tickerInner must be WrapContent so it expands to hold both copies side-by-side.
+            // Clipping to the visible viewport is handled by _scoresTickerContainer (MatchParent).
             _scoresTickerContainer.SetClipChildren(true);
             _scoresTickerContainer.SetClipToPadding(true);
             _scoresTickerContainer.AddView(_tickerInner, new LinearLayout.LayoutParams(
-                global::Android.Views.ViewGroup.LayoutParams.MatchParent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
 
             // Runnable-based scroll loop: runs every ~16ms (~60fps)
