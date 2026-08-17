@@ -158,6 +158,7 @@
                           OnClick="StartStreamResolution"
                           OnEscapeGrid="EscapeGridToMenu"
                           OnFocused="(i) => _focusedCardIndex = i"
+                          OnFocusDelivered="OnCardFocusDelivered"
                           OnFocusPrevious="() => FocusCardAsync(idx - 1)"
                           OnFocusNext="() => FocusCardAsync(idx + 1)"/>
             }
@@ -686,13 +687,13 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void OnCardFocusDelivered()
+    {
+        focusPending = false;
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (focusPending && isAuthenticated && games.Count > 0)
-        {
-            focusPending = false;
-        }
-
         // Android TV / D-pad: put focus on Sign in — Continue when that CTA is visible.
         // Without this, the header menu button typically owns first focus.
         if (signInContinueFocusPending

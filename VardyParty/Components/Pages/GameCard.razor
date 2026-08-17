@@ -83,6 +83,7 @@
     [Parameter] public EventCallback OnFocusPrevious { get; set; }
     [Parameter] public EventCallback OnFocusNext { get; set; }
     [Parameter] public EventCallback<int> OnFocused { get; set; }
+    [Parameter] public EventCallback OnFocusDelivered { get; set; }
     [Parameter] public bool IsFirst { get; set; }
     [Parameter] public int CardIndex { get; set; }
     [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
@@ -181,6 +182,8 @@
             try
             {
                 await cardRef.FocusAsync();
+                if (OnFocusDelivered.HasDelegate)
+                    await OnFocusDelivered.InvokeAsync();
             }
             catch { /* Ignore focus errors */ }
         }
