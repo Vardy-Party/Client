@@ -208,22 +208,15 @@ public class StreamResolutionOrchestrator(
     private async Task<PlaybackResult?> PlayStreamAsync(Game game, EnrichedStream enrichedStream,
         CancellationToken cancellationToken)
     {
-        // Use the M3U8 response cached from health check phase if available
-        string? m3u8Url = null;
-
-        if (!string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url))
-        {
-            logger.LogInformation("[StreamResolution] Reusing M3U8 from health check (token-based, used immediately)");
-            m3u8Url = enrichedStream.ResolvedM3U8Url;
-        }
-        else
-        {
-            logger.LogInformation("[StreamResolution] M3U8 not cached, resolving fresh for playback");
-            m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(
-                enrichedStream.Stream,
-                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-                cancellationToken);
-        }
+        // Always resolve a fresh M3U8 URL immediately before playback. CDN tokens are
+        // connection-bound: the URL fetched during health-checking is valid only for the
+        // LAN server's TCP session and will 403 when ExoPlayer opens it from a different
+        // connection. The LAN service is fast (~100ms warm), so this adds no perceptible delay.
+        logger.LogInformation("[StreamResolution] Resolving fresh M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+        var m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(
+            enrichedStream.Stream,
+            $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+            cancellationToken);
 
         if (string.IsNullOrEmpty(m3u8Url))
         {
@@ -357,39 +350,29 @@ public class StreamResolutionOrchestrator(
             return;
         }
 
-        // Prefer the queued m3u8 so Next is instant. Waiting on LocalService /play (~10–15s)
-        // before every switch makes the UI feel dead. Keep URLs fresh via background prefetch
-        // (see PrefetchUpcomingStreamUrl); resolve synchronously only when nothing is queued.
-        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
+        // Always resolve fresh — CDN tokens are connection-bound and will 403 if reused
+        // from a different TCP session. The LAN service is warm (~100ms) so this is instant.
+        _status = "Switch requested - resolving stream URL...";
+        PublishProgress();
+
+        var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
+            nextStream.Stream,
+            $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+            cancellationToken);
+
+        if (string.IsNullOrEmpty(resolved))
         {
-            _status = "Switch requested - resolving stream URL...";
+            logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
+                nextStream.Stream.Channel);
+            _status = "Switch failed - could not resolve stream URL";
             PublishProgress();
-
-            var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
-                nextStream.Stream,
-                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-                cancellationToken);
-
-            if (string.IsNullOrEmpty(resolved))
-            {
-                logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
-                    nextStream.Stream.Channel);
-                _status = "Switch failed - could not resolve stream URL";
-                PublishProgress();
-                return;
-            }
-
-            nextStream.ResolvedM3U8Url = resolved;
-            logger.LogInformation(
-                "[StreamResolution] Resolved fresh M3U8 for next stream {Channel}",
-                nextStream.Stream.Channel);
+            return;
         }
-        else
-        {
-            logger.LogInformation(
-                "[StreamResolution] Reusing queued M3U8 for next stream {Channel}",
-                nextStream.Stream.Channel);
-        }
+
+        nextStream.ResolvedM3U8Url = resolved;
+        logger.LogInformation(
+            "[StreamResolution] Resolved fresh M3U8 for next stream {Channel}",
+            nextStream.Stream.Channel);
 
         if (streamSwitchingService.SwitchToNextStream())
         {
