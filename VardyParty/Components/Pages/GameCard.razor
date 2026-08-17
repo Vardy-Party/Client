@@ -9,6 +9,7 @@
      aria-pressed="@IsSelected"
      @onclick="OnCardClick"
      @onkeydown="OnCardKeyDown"
+     @onfocus="OnCardFocus"
      @ref="cardRef">
     <div class="league-badge@(string.IsNullOrEmpty(LeagueLogoUrl) ? " league-badge-empty" : string.Empty)">
         @if (!string.IsNullOrEmpty(LeagueLogoUrl))
@@ -78,7 +79,12 @@
     [Parameter] public bool IsSelected { get; set; }
     [Parameter] public bool ShouldFocus { get; set; }
     [Parameter] public EventCallback<Game> OnClick { get; set; }
-    [Parameter] public EventCallback OnEscapeGrid { get; set; }
+    [Parameter] public EventCallback<int> OnEscapeGrid { get; set; }
+    [Parameter] public EventCallback OnFocusPrevious { get; set; }
+    [Parameter] public EventCallback OnFocusNext { get; set; }
+    [Parameter] public EventCallback<int> OnFocused { get; set; }
+    [Parameter] public bool IsFirst { get; set; }
+    [Parameter] public int CardIndex { get; set; }
     [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
 
     private ElementReference cardRef;
@@ -114,6 +120,12 @@
     private bool HasScore => Game.HomeScore.HasValue || Game.AwayScore.HasValue;
     private bool HasAggregateScore => Game.AggregateHomeScore.HasValue && Game.AggregateAwayScore.HasValue;
 
+    private async Task OnCardFocus()
+    {
+        if (OnFocused.HasDelegate)
+            await OnFocused.InvokeAsync(CardIndex);
+    }
+
     private async Task OnCardClick()
     {
         if (OnClick.HasDelegate)
@@ -130,12 +142,36 @@
             return;
         }
 
-        // TV D-pad: Left or Up from any card escapes the grid to the menu button.
-        if (MauiProgram.IsTv && e.Key is "ArrowLeft" or "ArrowUp")
+        if (!MauiProgram.IsTv) return;
+
+        switch (e.Key)
         {
-            if (OnEscapeGrid.HasDelegate)
-                await OnEscapeGrid.InvokeAsync();
+            case "ArrowUp":
+                // Top card: escape to menu. Other cards: move to previous card.
+                if (IsFirst)
+                {
+                    if (OnEscapeGrid.HasDelegate) await OnEscapeGrid.InvokeAsync(CardIndex);
+                }
+                else
+                {
+                    if (OnFocusPrevious.HasDelegate) await OnFocusPrevious.InvokeAsync();
+                }
+                break;
+
+            case "ArrowLeft":
+                // Left always escapes to menu from any card.
+                if (OnEscapeGrid.HasDelegate) await OnEscapeGrid.InvokeAsync(CardIndex);
+                break;
+
+            case "ArrowDown":
+                if (OnFocusNext.HasDelegate) await OnFocusNext.InvokeAsync();
+                break;
         }
+    }
+
+    public async Task FocusAsync()
+    {
+        try { await cardRef.FocusAsync(); } catch { }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

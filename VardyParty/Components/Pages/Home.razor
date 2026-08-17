@@ -21,7 +21,10 @@
     <header class="page-header">
         <div class="page-header-inner">
             <div class="header-left">
-                <AppMenu @ref="appMenu" IsAuthenticated="isAuthenticated" OnSignOut="SignOutAsync" />
+                <AppMenu @ref="appMenu"
+                         IsAuthenticated="isAuthenticated"
+                         OnSignOut="SignOutAsync"
+                         OnReturnToGrid="ReturnFocusToGridAsync" />
             </div>
             <div class="header-brand">
                 <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" />
@@ -134,22 +137,29 @@
             @for (var i = 0; i < games.Count; i++)
             {
                 var game = games[i];
+                var idx = i;
                 var isSelected = IsSelected(game);
                 // TV: autofocus first card for D-pad entry only — never ties to .selected.
                 // .selected comes from explicit OK/click (selectedGame), not games[0] auto-init.
                 var shouldFocus = focusPending && (
                     MauiProgram.IsTv
-                        ? (!anySelected && i == 0)
+                        ? (!anySelected && (_focusedCardIndex >= 0 ? idx == _focusedCardIndex : idx == 0))
                         : (isSelected || (!anySelected && i == 0)));
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard @key="GameKey(game)"
+                          @ref="_cardRefs[idx]"
                           Game="game"
                           IsSelected="isSelected"
                           ShouldFocus="shouldFocus"
+                          IsFirst="idx == 0"
+                          CardIndex="idx"
                           LeagueLogoUrl="@leagueLogo"
                           OnClick="StartStreamResolution"
-                          OnEscapeGrid="EscapeGridToMenu"/>
+                          OnEscapeGrid="EscapeGridToMenu"
+                          OnFocused="(i) => _focusedCardIndex = i"
+                          OnFocusPrevious="() => FocusCardAsync(idx - 1)"
+                          OnFocusNext="() => FocusCardAsync(idx + 1)"/>
             }
             </div>
         </div>
@@ -232,6 +242,8 @@
 
 @code {
     private AppMenu? appMenu;
+    private GameCard?[] _cardRefs = [];
+    private int _focusedCardIndex = -1;
     private readonly List<Game> games = new();
     private bool isLoading = true;
     private bool focusPending = true;
@@ -280,10 +292,45 @@
     // Indicates we have finished testing all streams for the currently selected game
     private bool _resolutionExhausted;
 
-    private async Task EscapeGridToMenu()
+    private async Task EscapeGridToMenu(int fromIndex = 0)
     {
+        // Record which card triggered the escape so ArrowRight from menu returns to it.
+        _focusedCardIndex = fromIndex;
         if (appMenu != null)
             await appMenu.FocusMenuButtonAsync();
+    }
+
+    private async Task FocusCardAsync(int index)
+    {
+        if (index < 0 || index >= games.Count) return;
+        _focusedCardIndex = index;
+        if (index < _cardRefs.Length && _cardRefs[index] != null)
+        {
+            await _cardRefs[index]!.FocusAsync();
+        }
+        else
+        {
+            // Ref not available yet (e.g. after a games update) — use focusPending
+            // to trigger ShouldFocus on the next render.
+            focusPending = true;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public async Task ReturnFocusToGridAsync()
+    {
+        var target = _focusedCardIndex >= 0 && _focusedCardIndex < games.Count
+            ? _focusedCardIndex : 0;
+        await FocusCardAsync(target);
+    }
+
+    private void ResizeCardRefs()
+    {
+        if (_cardRefs.Length == games.Count) return;
+        // Preserve existing refs for indices that are still valid.
+        var next = new GameCard?[games.Count];
+        Array.Copy(_cardRefs, next, Math.Min(_cardRefs.Length, next.Length));
+        _cardRefs = next;
     }
 
     private void PublishHomeUiUpdate()
@@ -729,6 +776,7 @@
             games.AddRange(LeagueFilter.FilterGames(leagueGames));
         }
 
+        ResizeCardRefs();
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
@@ -752,6 +800,7 @@
         games.Clear();
         games.AddRange(LeagueFilter.FilterGames(updatedGames));
 
+        ResizeCardRefs();
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;

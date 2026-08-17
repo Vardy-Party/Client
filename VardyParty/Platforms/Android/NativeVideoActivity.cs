@@ -227,12 +227,23 @@ namespace VardyParty.Platforms.Android
         private global::Android.Widget.Button? _reportButton;
         private global::Android.Widget.Button? _videoInfoButton;
         private LinearLayout? _scoresTickerContainer;
-        private TextView? _scoresTickerText;
+        private LinearLayout? _tickerInner;
+        private TextView? _tickerText1;
+        private TextView? _tickerText2;
+        private global::Android.OS.Handler? _tickerHandler;
+        private Java.Lang.Runnable? _tickerRunnable;
+        private float _tickerScrollX;
+        private float _tickerPixelsPerFrame = 2f; // scroll speed
         private bool _isScoresTickerVisible;
         private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
+        private TextView? _streamToastView;
+        private global::Android.OS.Handler? _streamToastHandler;
+        private Java.Lang.IRunnable? _streamToastRunnable;
+        private int _lastToastIndex = -1;
+        private int _lastToastTotal = -1;
         private bool _playbackResultReported;
         private bool _isAutoSwitchingOnPlaybackError;
         private const int PlayerStateIdle = 1;
@@ -329,6 +340,8 @@ namespace VardyParty.Platforms.Android
             // Stream detail (resolution/bitrate/codecs/urls) should use a smaller font
             _resBrView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, smallSp);
             _resBrView.SetTextColor(global::Android.Graphics.Color.LightGray);
+            _resBrView.SetMaxLines(8);
+            _resBrView.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
 
             var linear = new LinearLayout(this)
             {
@@ -346,7 +359,9 @@ namespace VardyParty.Platforms.Android
             linear.Alpha = 0.95f;
             linear.SetPadding(paddingDp, paddingDp, paddingDp, paddingDp);
 
-            var overlayParams = new FrameLayout.LayoutParams(global::Android.Views.ViewGroup.LayoutParams.WrapContent, global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            // Cap overlay at half the screen width so long source URLs don't push it across the screen.
+            int overlayMaxWidth = metrics.WidthPixels / 2;
+            var overlayParams = new FrameLayout.LayoutParams(overlayMaxWidth, global::Android.Views.ViewGroup.LayoutParams.WrapContent)
             {
                 // Top-right keeps broadcaster score bugs (usually top-left) visible on TV feeds.
                 Gravity = global::Android.Views.GravityFlags.Top | global::Android.Views.GravityFlags.Right,
@@ -354,6 +369,32 @@ namespace VardyParty.Platforms.Android
                 TopMargin = outerTopDp
             };
             root.AddView(linear, overlayParams);
+
+            // Stream toast — top-right, just below the detail overlay.
+            // Shows "Stream: x/y" briefly when a new healthy stream is found and the info overlay is hidden.
+            _streamToastView = new TextView(this)
+            {
+                Visibility = global::Android.Views.ViewStates.Gone
+            };
+            _streamToastView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+            _streamToastView.SetTextColor(global::Android.Graphics.Color.White);
+            _streamToastView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
+            _streamToastView.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000")));
+            _streamToastView.SetPadding(paddingDp, (int)(4 * density), paddingDp, (int)(4 * density));
+            var streamToastParams = new FrameLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.Top | global::Android.Views.GravityFlags.Right,
+                RightMargin = outerRightDp,
+                TopMargin = outerTopDp + (int)(80 * density)
+            };
+            root.AddView(_streamToastView, streamToastParams);
+            _streamToastHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+            _streamToastRunnable = new Java.Lang.Runnable(() =>
+            {
+                try { _streamToastView.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
+            });
 
             _bufferingIndicator = new global::Android.Widget.ProgressBar(this)
             {
@@ -503,19 +544,56 @@ namespace VardyParty.Platforms.Android
             _scoresTickerContainer.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
             _scoresTickerContainer.SetPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
 
-            _scoresTickerText = new TextView(this) { Text = string.Empty };
-            _scoresTickerText.SetTextColor(global::Android.Graphics.Color.White);
-            _scoresTickerText.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
-            ConfigureEmojiFriendlyTextView(_scoresTickerText);
-            _scoresTickerText.SetSingleLine(true);
-            _scoresTickerText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.Marquee;
-            _scoresTickerText.SetMarqueeRepeatLimit(-1);
-            _scoresTickerText.Selected = true;
-            _scoresTickerText.SetHorizontallyScrolling(true);
+            // Seamless infinite ticker: two identical TextViews side-by-side inside a
+            // clipped inner LinearLayout, translated continuously by a Runnable loop.
+            // When the first copy scrolls fully off the left, reset to 0 — seamless wrap.
+            _tickerInner = new LinearLayout(this) { Orientation = Orientation.Horizontal };
 
-            _scoresTickerContainer.AddView(_scoresTickerText, new LinearLayout.LayoutParams(
+            TextView MakeTickerTextView()
+            {
+                var tv = new TextView(this) { Text = string.Empty };
+                tv.SetTextColor(global::Android.Graphics.Color.White);
+                tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+                ConfigureEmojiFriendlyTextView(tv);
+                tv.SetSingleLine(true);
+                tv.SetHorizontallyScrolling(true);
+                tv.SetPadding(0, 0, (int)(64 * density), 0); // gap between copies
+                return tv;
+            }
+
+            _tickerText1 = MakeTickerTextView();
+            _tickerText2 = MakeTickerTextView();
+            _tickerInner.AddView(_tickerText1, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+            _tickerInner.AddView(_tickerText2, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+
+            _scoresTickerContainer.SetClipChildren(true);
+            _scoresTickerContainer.SetClipToPadding(true);
+            _scoresTickerContainer.AddView(_tickerInner, new LinearLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.MatchParent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+
+            // Runnable-based scroll loop: runs every ~16ms (~60fps)
+            _tickerHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+            _tickerRunnable = new Java.Lang.Runnable(() =>
+            {
+                if (_tickerInner == null || _tickerText1 == null) return;
+                var text1Width = _tickerText1.Width;
+                if (text1Width <= 0)
+                {
+                    // View not laid out yet — wait and retry
+                    _tickerHandler?.PostDelayed(_tickerRunnable!, 32);
+                    return;
+                }
+                _tickerScrollX += _tickerPixelsPerFrame;
+                if (_tickerScrollX >= text1Width)
+                    _tickerScrollX -= text1Width; // seamless reset
+                _tickerInner.TranslationX = -_tickerScrollX;
+                _tickerHandler?.PostDelayed(_tickerRunnable!, 16);
+            });
 
             var scoresParams = new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.MatchParent,
@@ -582,7 +660,15 @@ namespace VardyParty.Platforms.Android
 
                 _healthySub = _switching.HealthyStreamsUpdated.Subscribe(_ =>
                 {
-                    try { RunOnUiThread(UpdateOverlayFromCurrentStream); } catch { }
+                    try
+                    {
+                        RunOnUiThread(() =>
+                        {
+                            UpdateOverlayFromCurrentStream();
+                            ShowStreamToastIfNeeded();
+                        });
+                    }
+                    catch { }
                 });
 
                 _indexSub = _switching.CurrentStreamIndexChanged.Subscribe(_ =>
@@ -823,6 +909,8 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
+                _streamToastHandler?.RemoveCallbacks(_streamToastRunnable);
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
                 _overlayHandler?.RemoveCallbacks(_overlayHideRunnable);
@@ -1409,6 +1497,14 @@ namespace VardyParty.Platforms.Android
         {
             _isInfoVisible = true;
             _overlayLocked = true;
+            // Dismiss the brief stream toast — the full overlay supersedes it.
+            try
+            {
+                _streamToastHandler?.RemoveCallbacks(_streamToastRunnable);
+                if (_streamToastView != null)
+                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+            }
+            catch { }
             ShowOverlayAnimated();
             UpdateBackdropVisibility();
         }
@@ -1419,6 +1515,48 @@ namespace VardyParty.Platforms.Android
             _overlayLocked = false;
             HideOverlayAnimated();
             UpdateBackdropVisibility();
+        }
+
+        private void ShowStreamToastIfNeeded()
+        {
+            if (_streamToastView == null || _streamToastHandler == null || _streamToastRunnable == null) return;
+            if (_switching == null) return;
+
+            // Don't show the toast if the detailed info overlay is already open.
+            if (_isInfoVisible) return;
+
+            var index = _switching.GetCurrentStreamIndex();
+            var total = _switching.GetHealthyStreams().Count;
+            if (total <= 0) return;
+
+            // Only flash when something meaningful changed.
+            if (index == _lastToastIndex && total == _lastToastTotal) return;
+            _lastToastIndex = index;
+            _lastToastTotal = total;
+
+            // Build text — match Windows: "Stream: x/y (res)" where resolution is optional.
+            var current = _switching.GetCurrentStream();
+            string? vertRes = null;
+            try
+            {
+                var res = current?.Health?.Resolution ?? current?.Stream?.Resolution;
+                if (!string.IsNullOrEmpty(res))
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(res, @"\d{3,4}[xX](\d{3,4})");
+                    if (m.Success) vertRes = $"{m.Groups[1].Value}p";
+                }
+                if (vertRes == null && _videoHeight.HasValue)
+                    vertRes = $"{_videoHeight}p";
+            }
+            catch { }
+
+            _streamToastView.Text = string.IsNullOrEmpty(vertRes)
+                ? $"Stream: {index}/{total}"
+                : $"Stream: {index}/{total} ({vertRes})";
+
+            _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
+            _streamToastHandler.RemoveCallbacks(_streamToastRunnable);
+            _streamToastHandler.PostDelayed(_streamToastRunnable, 10_000);
         }
 
         private void UpdateBackdropVisibility()
@@ -1706,12 +1844,15 @@ namespace VardyParty.Platforms.Android
                 };
 
                 var message = lines.Count == 0 ? emptyMessage : string.Join(InternationalTeamDisplay.TickerSeparator, lines);
-                if (_scoresTickerText != null)
-                {
-                    _scoresTickerText.Text = $"{title}: {message}";
-                    _scoresTickerText.Selected = true;
-                    _scoresTickerText.RequestFocus();
-                }
+                var fullText = $"{title}: {message}";
+                if (_tickerText1 != null) _tickerText1.Text = fullText;
+                if (_tickerText2 != null) _tickerText2.Text = fullText;
+                // Reset scroll position and restart animation
+                _tickerScrollX = 0f;
+                if (_tickerInner != null) _tickerInner.TranslationX = 0f;
+                _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
+                if (_isScoresTickerVisible && _tickerRunnable != null)
+                    _tickerHandler?.PostDelayed(_tickerRunnable, 16);
             }
             catch (Exception ex)
             {
@@ -1734,7 +1875,12 @@ namespace VardyParty.Platforms.Android
                 if (_isScoresTickerVisible)
                 {
                     _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                    UpdateScoresTickerText();
+                    UpdateScoresTickerText(); // also starts the runnable
+                }
+                else
+                {
+                    // Stop the scroll animation when hidden
+                    _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
                 }
             }
             catch (Exception ex)
