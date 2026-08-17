@@ -683,6 +683,7 @@ namespace VardyParty.Platforms.Android
                         {
                             UpdateOverlayFromCurrentStream();
                             TrySwitchToCurrentStream();
+                            ShowStreamToastIfNeeded();
                         });
                     }
                     catch { }
@@ -2343,9 +2344,12 @@ namespace VardyParty.Platforms.Android
             public void OnPlaybackSuppressionReasonChanged(int playbackSuppressionReason) { }
             public void OnPlayerErrorChanged(PlaybackException? error)
             {
+                // ExoPlayer calls this with null to clear the previous error when a new source
+                // is prepared. Treat null as a no-op to avoid spurious auto-switches.
+                if (error == null) return;
                 try
                 {
-                    var message = error?.Message ?? "Playback error";
+                    var message = error.Message ?? "Playback error";
                     _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
                     _activity._isBuffering = false;
                     _activity._isPreparing = false;
