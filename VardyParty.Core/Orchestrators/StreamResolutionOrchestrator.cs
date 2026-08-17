@@ -208,15 +208,24 @@ public class StreamResolutionOrchestrator(
     private async Task<PlaybackResult?> PlayStreamAsync(Game game, EnrichedStream enrichedStream,
         CancellationToken cancellationToken)
     {
-        // Always resolve a fresh M3U8 URL immediately before playback. CDN tokens are
-        // connection-bound: the URL fetched during health-checking is valid only for the
-        // LAN server's TCP session and will 403 when ExoPlayer opens it from a different
-        // connection. The LAN service is fast (~100ms warm), so this adds no perceptible delay.
-        logger.LogInformation("[StreamResolution] Resolving fresh M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
-        var m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(
-            enrichedStream.Stream,
-            $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-            cancellationToken);
+        var gamePath = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
+
+        // Use the cached URL from health-check / prefetch if available (fast path).
+        // If absent, resolve fresh now. Either way, if the first attempt fails we
+        // resolve a brand-new URL and retry once — CDN tokens can be connection-bound
+        // and the cached URL may have been invalidated since it was fetched.
+        bool usedCachedUrl = !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
+        string? m3u8Url;
+        if (usedCachedUrl)
+        {
+            logger.LogInformation("[StreamResolution] Using cached M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+            m3u8Url = enrichedStream.ResolvedM3U8Url;
+        }
+        else
+        {
+            logger.LogInformation("[StreamResolution] Resolving fresh M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+            m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+        }
 
         if (string.IsNullOrEmpty(m3u8Url))
         {
@@ -241,12 +250,13 @@ public class StreamResolutionOrchestrator(
         nativeVideoPlayer.BufferingStateChanged += bufferingHandler;
 
         var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream, playbackCts.Token);
+        PlaybackResult? result;
         try
         {
             // Warm the next candidate while this one plays so the first Next click is instant.
             PrefetchUpcomingStreamUrl(game, cancellationToken);
 
-            return await nativeVideoPlayer.PlayVideoAsync(
+            result = await nativeVideoPlayer.PlayVideoAsync(
                 m3u8Url,
                 string.IsNullOrWhiteSpace(enrichedStream.Referer) ? enrichedStream.Stream.Url : enrichedStream.Referer,
                 title,
@@ -268,6 +278,24 @@ public class StreamResolutionOrchestrator(
             {
             }
         }
+
+        // If we used a cached URL and it failed immediately, the token may have been
+        // invalidated. Re-resolve fresh and retry this same stream once.
+        if (usedCachedUrl && result != null && !result.Success &&
+            result.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
+            var freshUrl = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+            if (!string.IsNullOrEmpty(freshUrl) && !string.Equals(freshUrl, m3u8Url, StringComparison.OrdinalIgnoreCase))
+            {
+                enrichedStream.ResolvedM3U8Url = freshUrl;
+                // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.
+                return await PlayStreamAsync(game, enrichedStream, cancellationToken);
+            }
+            logger.LogWarning("[StreamResolution] Fresh M3U8 unavailable or identical for {Channel} — treating as failed", enrichedStream.Stream.Channel);
+        }
+
+        return result;
     }
 
     private async Task StartPlaybackHealthReportingAsync(StreamModel stream, CancellationToken cancellationToken)
@@ -350,29 +378,36 @@ public class StreamResolutionOrchestrator(
             return;
         }
 
-        // Always resolve fresh — CDN tokens are connection-bound and will 403 if reused
-        // from a different TCP session. The LAN service is warm (~100ms) so this is instant.
-        _status = "Switch requested - resolving stream URL...";
-        PublishProgress();
-
-        var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
-            nextStream.Stream,
-            $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-            cancellationToken);
-
-        if (string.IsNullOrEmpty(resolved))
+        // Use the prefetched URL if available (instant). If not, resolve fresh now.
+        // The caller (PlayStreamAsync) will retry with a fresh URL if the cached one 403s.
+        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
-            logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
-                nextStream.Stream.Channel);
-            _status = "Switch failed - could not resolve stream URL";
+            _status = "Switch requested - resolving stream URL...";
             PublishProgress();
-            return;
-        }
 
-        nextStream.ResolvedM3U8Url = resolved;
-        logger.LogInformation(
-            "[StreamResolution] Resolved fresh M3U8 for next stream {Channel}",
-            nextStream.Stream.Channel);
+            var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
+                nextStream.Stream,
+                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+                cancellationToken);
+
+            if (string.IsNullOrEmpty(resolved))
+            {
+                logger.LogWarning("[StreamResolution] Failed to resolve m3u8 for next stream {Channel}",
+                    nextStream.Stream.Channel);
+                _status = "Switch failed - could not resolve stream URL";
+                PublishProgress();
+                return;
+            }
+
+            nextStream.ResolvedM3U8Url = resolved;
+            logger.LogInformation("[StreamResolution] Resolved fresh M3U8 for next stream {Channel}",
+                nextStream.Stream.Channel);
+        }
+        else
+        {
+            logger.LogInformation("[StreamResolution] Using prefetched M3U8 for next stream {Channel}",
+                nextStream.Stream.Channel);
+        }
 
         if (streamSwitchingService.SwitchToNextStream())
         {
