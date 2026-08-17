@@ -137,7 +137,7 @@ public class BbcHtmlParserTests
         Assert.True(live.HasProgress);
         Assert.False(live.AfterExtraTime);
         Assert.Equal(new DateTime(2026, 8, 1, 18, 0, 0, DateTimeKind.Utc), live.KickoffUtc);
-        Assert.Equal("Club Friendlies 1", live.League);
+        Assert.Equal("Club Friendlies", live.League);
         Assert.Equal(
             "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/girona.4dc82412e1.svg",
             live.HomeBadgeUrl);
@@ -154,7 +154,7 @@ public class BbcHtmlParserTests
         Assert.False(finished.IsInProgress);
         Assert.Equal("FT", finished.Status);
         Assert.Equal(new DateTime(2026, 8, 1, 16, 0, 0, DateTimeKind.Utc), finished.KickoffUtc);
-        Assert.Equal("Club Friendlies 2", finished.League);
+        Assert.Equal("Club Friendlies", finished.League);
     }
 
     [Fact]

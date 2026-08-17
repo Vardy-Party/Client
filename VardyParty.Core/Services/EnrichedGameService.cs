@@ -30,6 +30,7 @@ public class EnrichedGameService(
     private Timer? _bbcTimer;
     private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
+    private bool _hasFetchedBbc;
     private List<BbcFixture> _latestBbcFixtures = new();
     private bool _timersStarted;
 
@@ -121,6 +122,7 @@ public class EnrichedGameService(
             lock (_stateLock)
             {
                 _latestBbcFixtures = fixtures;
+                _hasFetchedBbc = true;
             }
 
             RunMatching();
@@ -143,7 +145,7 @@ public class EnrichedGameService(
 
         lock (_stateLock)
         {
-            ready = _hasFetchedApi;
+            ready = _hasFetchedApi && _hasFetchedBbc;
             // manual deep copy of structure (lists are refs but we replace them in fetch)
             // Actually, Game objects are refs. 
             // Matcher modifies Game objects in-place. 

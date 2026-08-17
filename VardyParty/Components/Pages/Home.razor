@@ -21,7 +21,7 @@
     <header class="page-header">
         <div class="page-header-inner">
             <div class="header-left">
-                <AppMenu IsAuthenticated="isAuthenticated" OnSignOut="SignOutAsync" />
+                <AppMenu @ref="appMenu" IsAuthenticated="isAuthenticated" OnSignOut="SignOutAsync" />
             </div>
             <div class="header-brand">
                 <img src="images/vardyparty_splash.svg" class="app-logo" alt="VardyParty Logo" />
@@ -148,7 +148,8 @@
                           IsSelected="isSelected"
                           ShouldFocus="shouldFocus"
                           LeagueLogoUrl="@leagueLogo"
-                          OnClick="StartStreamResolution"/>
+                          OnClick="StartStreamResolution"
+                          OnEscapeGrid="EscapeGridToMenu"/>
             }
             </div>
         </div>
@@ -230,6 +231,7 @@
 }
 
 @code {
+    private AppMenu? appMenu;
     private readonly List<Game> games = new();
     private bool isLoading = true;
     private bool focusPending = true;
@@ -278,10 +280,22 @@
     // Indicates we have finished testing all streams for the currently selected game
     private bool _resolutionExhausted;
 
+    private async Task EscapeGridToMenu()
+    {
+        if (appMenu != null)
+            await appMenu.FocusMenuButtonAsync();
+    }
+
     private void PublishHomeUiUpdate()
     {
 #if WINDOWS
         if (MainPage.IsNativePlayerActive) return;
+#endif
+#if ANDROID
+        // Don't re-render the game cards while the flyout menu is open — the DOM churn
+        // underneath the backdrop races against AppMenu's focus-restore and blurs the
+        // focused league button. The menu will re-render itself when it closes.
+        if (MainActivity.IsFlyoutMenuOpen) return;
 #endif
         _ = InvokeAsync(StateHasChanged);
     }
@@ -718,6 +732,9 @@
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
+        // TV: re-arm focus so the first card regains D-pad focus after a background games refresh.
+        if (MauiProgram.IsTv && !isResolvingStreams && selectedGame == null)
+            focusPending = true;
         PublishHomeUiUpdate();
     }
 
@@ -738,6 +755,9 @@
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
+        // TV: re-arm focus so the first card regains D-pad focus after a background games refresh.
+        if (MauiProgram.IsTv && !isResolvingStreams && selectedGame == null)
+            focusPending = true;
         PublishHomeUiUpdate();
     }
 

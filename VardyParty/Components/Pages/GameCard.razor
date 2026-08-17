@@ -78,6 +78,7 @@
     [Parameter] public bool IsSelected { get; set; }
     [Parameter] public bool ShouldFocus { get; set; }
     [Parameter] public EventCallback<Game> OnClick { get; set; }
+    [Parameter] public EventCallback OnEscapeGrid { get; set; }
     [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
 
     private ElementReference cardRef;
@@ -126,6 +127,14 @@
         if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
         {
             await OnCardClick();
+            return;
+        }
+
+        // TV D-pad: Left or Up from any card escapes the grid to the menu button.
+        if (MauiProgram.IsTv && e.Key is "ArrowLeft" or "ArrowUp")
+        {
+            if (OnEscapeGrid.HasDelegate)
+                await OnEscapeGrid.InvokeAsync();
         }
     }
 

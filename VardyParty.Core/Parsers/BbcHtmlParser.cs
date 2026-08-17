@@ -154,6 +154,7 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
         // Single pass scanner over "<h2" / "data-event-id=" markers.
         int cursor = 0;
         string currentLeague = string.Empty;
+        string currentH2League = string.Empty; // competition set by <h2>; h3 sub-rounds do not overwrite it
         int len = html.Length;
         int gamesParsed = 0;
 
@@ -205,7 +206,20 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         var text = System.Net.WebUtility.HtmlDecode(StripTags(content));
                         if (!string.IsNullOrWhiteSpace(text) && !text.Contains("Scores & Fixtures", StringComparison.OrdinalIgnoreCase))
                         {
-                            currentLeague = text;
+                            if (!isH3)
+                            {
+                                // <h2> is always the competition name; reset h3 tracking.
+                                currentH2League = text;
+                                currentLeague = text;
+                            }
+                            else if (string.IsNullOrEmpty(currentH2League))
+                            {
+                                // <h3> only sets the league when there is no parent <h2> competition
+                                // (some BBC pages use h3 as the top-level heading).
+                                currentLeague = text;
+                            }
+                            // else: <h3> is a sub-round label (e.g. "1st Round") under an <h2> competition —
+                            // ignore it so the competition name is preserved for the fixtures below.
                         }
                     }
                     cursor = endHeader + closeHeader.Length;
