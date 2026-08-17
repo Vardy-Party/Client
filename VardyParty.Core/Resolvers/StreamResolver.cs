@@ -141,16 +141,10 @@ public class StreamResolver(
                 logger.LogInformation("[StreamResolver] Stream {Channel} is healthy: {Quality}",
                     stream.Channel, health.GetQualityLabel());
             }
-            else if (health.Status is StreamHealthStatus.SegmentUnreachable or StreamHealthStatus.ManifestUnreachable)
-            {
-                // LocalService already resolved a live m3u8 via Playwright; client CDN probes often fail HEAD/referrer checks.
-                enriched.Status = StreamResolutionStatus.Healthy;
-                logger.LogWarning(
-                    "[StreamResolver] Health probe reported {Status} for {Channel}; trusting LocalService m3u8 for playback",
-                    health.Status, stream.Channel);
-            }
             else
             {
+                // ManifestUnreachable / SegmentUnreachable both mean the CDN refused the probe connection —
+                // the same URL will fail in ExoPlayer. Do not trust it for playback.
                 enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = $"Health check failed: {health.Status}";
                 logger.LogWarning("[StreamResolver] Stream {Channel} failed health check: {Status}",

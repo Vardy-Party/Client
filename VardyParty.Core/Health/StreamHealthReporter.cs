@@ -98,7 +98,7 @@ public class StreamHealthReporter(
 
     private static string? ResolveStreamUrl(string? streamUrl, string? refererUrl)
     {
-        return !string.IsNullOrWhiteSpace(refererUrl) ? refererUrl : streamUrl;
+        return !string.IsNullOrWhiteSpace(streamUrl) ? streamUrl : refererUrl;
     }
 
     private static string? DetectQuality(PlaybackMetrics? metrics)
