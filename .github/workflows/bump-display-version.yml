@@ -29,6 +29,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   bump-display-version:
@@ -93,10 +94,42 @@ jobs:
           sed -i "s/<ApplicationVersion>[^<]*<\/ApplicationVersion>/<ApplicationVersion>${{ steps.bump-version.outputs.build_version }}<\/ApplicationVersion>/" Version.props
           sed -i "s/<ApplicationDisplayVersion>[^<]*<\/ApplicationDisplayVersion>/<ApplicationDisplayVersion>${{ steps.bump-version.outputs.display_version }}<\/ApplicationDisplayVersion>/" Version.props
 
-      - name: Commit and push version update
+      - name: Commit, open PR, and squash-merge to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_VERSION: ${{ steps.bump-version.outputs.build_version }}
+          DISPLAY_VERSION: ${{ steps.bump-version.outputs.display_version }}
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Actions"
+          set -euo pipefail
+
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          BRANCH="ci/bump-display-version-${DISPLAY_VERSION}-b${BUILD_VERSION}"
+          TITLE="ci: bump ApplicationVersion to ${BUILD_VERSION} and ApplicationDisplayVersion to ${DISPLAY_VERSION}"
+          BODY="Automated display-version bump from workflow_dispatch.
+
+          main is protected (GH006: changes must be made through a pull request), so this workflow cannot push directly. Squash-merging this PR lands the new versions on main."
+
+          git checkout -B "$BRANCH"
           git add Version.props
-          git commit -m "ci: bump ApplicationVersion to ${{ steps.bump-version.outputs.build_version }} and ApplicationDisplayVersion to ${{ steps.bump-version.outputs.display_version }}"
-          git push origin main
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "HEAD:${BRANCH}"
+
+          PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "${PR_NUMBER}" ]]; then
+            if ! PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"); then
+              echo "::error::Could not create the version-bump PR. Enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests', then re-run this workflow."
+              exit 1
+            fi
+            echo "::notice::Opened ${PR_URL}"
+          else
+            echo "::notice::Reusing existing PR #${PR_NUMBER}"
+          fi
+
+          if ! gh pr merge --squash --delete-branch --subject "$TITLE"; then
+            echo "::error::Opened a version-bump PR but could not squash-merge it onto main. If required status checks or reviews block github-actions[bot], allow that actor to bypass those rules for this path, or merge the PR manually."
+            exit 1
+          fi
+
+          echo "::notice::ApplicationDisplayVersion ${DISPLAY_VERSION} (build ${BUILD_VERSION}) is on main"
