@@ -15,4 +15,5 @@ public sealed class PlaybackSessionSnapshot
     public bool CacheRetryUsed { get; init; }
     public int HealthyStreamCount { get; init; }
     public bool IsBuffering { get; init; }
+    public int ConsecutiveDownloadFailures { get; init; }
 }

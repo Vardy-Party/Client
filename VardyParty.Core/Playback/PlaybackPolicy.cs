@@ -74,8 +74,24 @@ public static class PlaybackPolicy
 
     /// <summary>
     /// Start never established: advance if pool has another candidate after removal, else close.
+    /// Windows MediaFailed-on-start currently closes immediately; unified rule is advance-if-pool.
     /// </summary>
     public static bool ShouldAdvanceAfterFailedStart(PlaybackSessionSnapshot snapshot, int healthyStreamCountAfterRemove)
         => !snapshot.HasEstablishedPlayback
            && healthyStreamCountAfterRemove >= 1;
+
+    /// <summary>
+    /// Windows AdaptiveMediaSource counted consecutive segment/manifest HTTP failures.
+    /// Unified: N consecutive download failures are a hard fail (same as Error).
+    /// </summary>
+    public const int MaxConsecutiveDownloadFailures = 5;
+
+    public static bool IsHardDownloadFailure(int consecutiveFailures)
+        => consecutiveFailures >= MaxConsecutiveDownloadFailures;
+
+    /// <summary>
+    /// ExoPlayer raises OnPlayerErrorChanged(null) to clear a previous error. Hosts must not
+    /// translate that into <see cref="MediaEngineEventKind.Error"/> (legacy Android auto-switched).
+    /// </summary>
+    public static bool ShouldIgnoreClearedEngineError(bool errorIsNull) => errorIsNull;
 }

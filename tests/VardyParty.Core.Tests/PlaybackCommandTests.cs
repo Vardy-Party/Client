@@ -86,4 +86,34 @@ public class PlaybackCommandTests
         Assert.True(cmd.RaiseBuffering);
         Assert.True(cmd.IsBuffering);
     }
+
+    [Fact]
+    public void UserPrevious_SwitchesPoolIndex_DoesNotRemove()
+    {
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(2);
+        session.BeginAttach("http://a.m3u8");
+        session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
+
+        var cmd = PlaybackCommand.FromEffects(session.Handle(MediaEngineEvent.UserPrevious()));
+
+        Assert.True(cmd.SwitchPoolToPrevious);
+        Assert.False(cmd.RemoveCurrentFromPool);
+        Assert.False(cmd.SwitchPoolToNext);
+    }
+
+    [Fact]
+    public void FailedStart_AttachesCurrentAfterRemove()
+    {
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(2);
+        session.BeginAttach("http://a.m3u8");
+
+        var cmd = PlaybackCommand.FromEffects(
+            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "start fail")));
+
+        Assert.True(cmd.RemoveCurrentFromPool);
+        Assert.True(cmd.AttachCurrentAfterRemove);
+        Assert.False(cmd.SwitchPoolToNext);
+    }
 }

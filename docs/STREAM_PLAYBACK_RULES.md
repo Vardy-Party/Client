@@ -64,7 +64,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 | **Failed switch** | Index advance only | Stay on next if index moved | Remove broken + **revert last-good** | Decide once |
 | **Failed start (never established)** | `HandlePlaybackFailureAsync`: remove + try next | Error → next (same as hard error) | Clear URL → next if pool >1 else close session | Shared |
 | **Stale failure during switch** | — | Null `OnPlayerErrorChanged` ignored | Generation check ignores stale `MediaFailed` | Shared generation id |
-| **Buffering → Core** | Sticky OR flag until report | `ReportBufferingState` **no-op** | Raises `BufferingStateChanged` | Always raise |
+| **Buffering → Core** | Sticky OR flag until report | Raises `BufferingStateChanged` | Raises `BufferingStateChanged` | Always raise |
 | **Health reports** | Orchestrator 30s poll + reporter | Activity timer + event reports | Orchestrator + Windows events | Single reporter path |
 
 ---
@@ -254,29 +254,35 @@ Emit one structured event stream (file or log JSON lines) per session:
 
 `ProbeResult` → `PlaybackEstablished` → `MetricsSample` → `BufferingSpike` | `Declined` | `HardFail` → `SwitchRequested` → `SwitchSucceeded` | `Reverted` → `SessionEnded`
 
-Until that exists, agents should reconstruct the timeline from the markers above and flag **Android advance-without-revert** vs **Windows revert-on-failed-switch** as known divergence—not as random bugs.
+Until that exists, agents should reconstruct the timeline from the markers above. Failed-switch revert vs advance is no longer a platform fork — Core reverts (locked by `PlaybackUnificationRulesTests`).
 
 ---
 
-## Known divergence summary (fix first)
+## Known divergence summary
 
-1. **Failed switch:** Windows reverts to last-good; Android advances and stays.  
-2. **Soft decline:** Android only (`StreamMetricsWindow`).  
-3. **Buffering into Core:** Windows yes; Android hook empty.  
-4. **Orchestrator remove+next** often races native auto-switch.  
-5. **Health URL key** page vs M3U8 inconsistent.  
-6. **Dual entry:** Home orchestrator vs `/player` Blazor path.
+| Rule | Unified (tests) | Android now | Windows still |
+|------|-----------------|-------------|---------------|
+| Failed switch | Revert last-good | Session controller | Local `RecoverFromFailedSwitchAsync` (same idea) |
+| Established hard fail | Remove + advance | Session controller | `HandleActiveStreamFailureAsync` advances **without** remove |
+| Failed start | Remove + advance if pool remains | Session controller | `MediaFailed` **closes**; download/attach fail may auto-next without remove |
+| Soft decline | Shared `StreamMetricsWindow` | Session controller | **Not used** |
+| Buffering into Core | Always raise | `ReportBufferingState` wired | Already raises |
+| 5 consecutive download failures | Hard fail via `NotifyDownloadFailure` | Not emitted yet | Local counter then Recover* |
+| Null/cleared engine error | Ignore (`ShouldIgnoreClearedEngineError`) | Host skips null | N/A |
+| Failed last-good after revert | Advance (no revert loop) | Session controller | `isRevertAttempt` skipped both recover paths |
+
+Remaining (not a recovery-policy fork): health URL key (page vs M3U8); dual entry Home vs `/player`.
 
 ---
 
 ## Implementation backlog (suggested order)
 
-1. Freeze this doc; add unit tests for `PlaybackPolicy` decisions (table-driven).  
-2. Shared session controller consuming engine events; Android calls it from ExoPlayer listener.  
-3. Windows call same controller; delete duplicated Recover* locals incrementally.  
-4. Fix Android `BufferingStateChanged`; one reporter path; unified streamKey.  
-5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` to media + chrome.  
-6. Align or retire `VideoPlayer.razor` failover behavior.  
+1. ~~Freeze this doc; add unit tests for `PlaybackPolicy` decisions.~~
+2. ~~Shared session controller; Android calls it from ExoPlayer listener.~~
+3. Windows call same controller; delete duplicated Recover* locals incrementally.
+4. One reporter path; unified streamKey.
+5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` to media + chrome.
+6. Align or retire `VideoPlayer.razor` failover behavior.
 7. Optional: dump session event JSON next to logcat for agent observation.
 
 ---

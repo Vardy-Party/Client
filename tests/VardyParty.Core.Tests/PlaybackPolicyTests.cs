@@ -99,4 +99,68 @@ public class PlaybackPolicyTests
         window.AddBufferingEvent();
         Assert.True(PlaybackPolicy.IsHealthDeclined(window));
     }
+
+    [Fact]
+    public void ShouldAdvanceAfterEstablishedFailure_RequiresPlayingPool()
+    {
+        var playing = new PlaybackSessionSnapshot
+        {
+            HasEstablishedPlayback = true,
+            State = PlaybackSessionState.Playing
+        };
+        Assert.True(PlaybackPolicy.ShouldAdvanceAfterEstablishedFailure(playing, 2));
+        Assert.False(PlaybackPolicy.ShouldAdvanceAfterEstablishedFailure(playing, 1));
+
+        var switching = new PlaybackSessionSnapshot
+        {
+            HasEstablishedPlayback = true,
+            State = PlaybackSessionState.Switching
+        };
+        Assert.False(PlaybackPolicy.ShouldAdvanceAfterEstablishedFailure(switching, 3));
+    }
+
+    [Fact]
+    public void ShouldAdvanceAfterFailedStart_WhenPoolRemainsAfterRemove()
+    {
+        var start = new PlaybackSessionSnapshot { HasEstablishedPlayback = false };
+        Assert.True(PlaybackPolicy.ShouldAdvanceAfterFailedStart(start, healthyStreamCountAfterRemove: 1));
+        Assert.False(PlaybackPolicy.ShouldAdvanceAfterFailedStart(start, healthyStreamCountAfterRemove: 0));
+
+        var established = new PlaybackSessionSnapshot { HasEstablishedPlayback = true };
+        Assert.False(PlaybackPolicy.ShouldAdvanceAfterFailedStart(established, 2));
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(4, false)]
+    [InlineData(5, true)]
+    [InlineData(6, true)]
+    public void IsHardDownloadFailure_MatchesWindowsThreshold(int failures, bool expected)
+        => Assert.Equal(expected, PlaybackPolicy.IsHardDownloadFailure(failures));
+
+    [Fact]
+    public void ShouldIgnoreClearedEngineError_LocksAndroidNullErrorNoOp()
+    {
+        Assert.True(PlaybackPolicy.ShouldIgnoreClearedEngineError(errorIsNull: true));
+        Assert.False(PlaybackPolicy.ShouldIgnoreClearedEngineError(errorIsNull: false));
+    }
+
+    [Fact]
+    public void IsCurrentGeneration_RejectsStaleEvents()
+    {
+        var snap = new PlaybackSessionSnapshot { AttachGeneration = 3 };
+        Assert.True(PlaybackPolicy.IsCurrentGeneration(snap, 3));
+        Assert.False(PlaybackPolicy.IsCurrentGeneration(snap, 2));
+    }
+
+    [Fact]
+    public void CanUserNavigate_BlocksFailedState()
+    {
+        var snap = new PlaybackSessionSnapshot
+        {
+            State = PlaybackSessionState.Failed,
+            IsPreparing = false
+        };
+        Assert.False(PlaybackPolicy.CanUserNavigate(snap, 5));
+    }
 }

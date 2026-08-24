@@ -39,4 +39,35 @@ public class StreamMetricsWindowTests
         w.AddError();
         Assert.True(w.IsHealthDeclined());
     }
+
+    [Fact]
+    public void DoesNotDecline_WithFewerThanThreeBitrateSamples()
+    {
+        var w = new StreamMetricsWindow();
+        w.AddBitrate(50);
+        w.AddBitrate(50);
+        Assert.False(w.IsHealthDeclined());
+    }
+
+    [Fact]
+    public void Declines_WhenTenSamplesAndLastThreeAllBelow500()
+    {
+        var w = new StreamMetricsWindow();
+        for (var i = 0; i < 7; i++)
+            w.AddBitrate(2000);
+        w.AddBitrate(400);
+        w.AddBitrate(400);
+        w.AddBitrate(400);
+        Assert.True(w.IsHealthDeclined());
+    }
+
+    [Fact]
+    public void DoesNotDecline_WhenLastThreeAreHealthyBitrate()
+    {
+        var w = new StreamMetricsWindow();
+        w.AddBitrate(2000);
+        w.AddBitrate(1800);
+        w.AddBitrate(1600);
+        Assert.False(w.IsHealthDeclined());
+    }
 }

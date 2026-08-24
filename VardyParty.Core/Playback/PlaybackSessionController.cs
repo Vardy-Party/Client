@@ -19,6 +19,7 @@ public sealed class PlaybackSessionController
     private bool _cacheRetryUsed;
     private int _healthyStreamCount;
     private bool _isBuffering;
+    private int _consecutiveDownloadFailures;
 
     public PlaybackSessionSnapshot Snapshot => new()
     {
@@ -31,7 +32,8 @@ public sealed class PlaybackSessionController
         UsedCachedUrl = _usedCachedUrl,
         CacheRetryUsed = _cacheRetryUsed,
         HealthyStreamCount = _healthyStreamCount,
-        IsBuffering = _isBuffering
+        IsBuffering = _isBuffering,
+        ConsecutiveDownloadFailures = _consecutiveDownloadFailures
     };
 
     public StreamMetricsWindow MetricsWindow => _metricsWindow;
@@ -55,6 +57,7 @@ public sealed class PlaybackSessionController
         _isPreparing = true;
         _isBuffering = false;
         _usedCachedUrl = usedCachedUrl;
+        _consecutiveDownloadFailures = 0;
         // Cache retry flag is sticky for the stream attempt until established or failed start completes.
 
         if (_hasEstablishedPlayback)
@@ -95,6 +98,27 @@ public sealed class PlaybackSessionController
         return FailStartOrAdvance(reason ?? "Fresh M3U8 unavailable");
     }
 
+    /// <summary>
+    /// Windows AdaptiveMediaSource download failures. After
+    /// <see cref="PlaybackPolicy.MaxConsecutiveDownloadFailures"/> this is a hard Error.
+    /// </summary>
+    public IReadOnlyList<PlaybackEffect> NotifyDownloadFailure(string? reason = null)
+    {
+        if (_state == PlaybackSessionState.Closed)
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
+
+        _consecutiveDownloadFailures++;
+        if (!PlaybackPolicy.IsHardDownloadFailure(_consecutiveDownloadFailures))
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Download failure below threshold")];
+
+        return OnError(new MediaEngineEvent
+        {
+            Kind = MediaEngineEventKind.Error,
+            Generation = _attachGeneration,
+            Message = reason ?? "Consecutive download failures"
+        });
+    }
+
     public void Reset()
     {
         _state = PlaybackSessionState.Idle;
@@ -107,6 +131,7 @@ public sealed class PlaybackSessionController
         _cacheRetryUsed = false;
         _healthyStreamCount = 0;
         _isBuffering = false;
+        _consecutiveDownloadFailures = 0;
         _metricsWindow = new StreamMetricsWindow();
     }
 
@@ -121,6 +146,7 @@ public sealed class PlaybackSessionController
         _lastGoodUrl = _currentUrl;
         _cacheRetryUsed = false;
         _usedCachedUrl = false;
+        _consecutiveDownloadFailures = 0;
         _state = PlaybackSessionState.Playing;
 
         return
