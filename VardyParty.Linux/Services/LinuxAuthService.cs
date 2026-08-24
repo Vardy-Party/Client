@@ -26,6 +26,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     private string? _accessToken;
     private string? _refreshToken;
     private DateTimeOffset _expiresAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastRefreshedAt = DateTimeOffset.MinValue;
     private bool _tokenLoaded;
 
     public LinuxAuthService(
@@ -48,7 +49,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
 
     public async Task<AuthLoginResult> LoginInteractiveAsync(CancellationToken cancellationToken = default)
     {
-        await EnsureTokenLoadedAsync(cancellationToken);
+        await EnsureTokenReadyAsync(cancellationToken, forceRefresh: false);
         if (HasValidToken)
         {
             return new AuthLoginResult(true, _accessToken, null);
@@ -153,10 +154,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             form.Add(new KeyValuePair<string, string>("audience", _auth0Settings.Audience));
         }
 
-        if (!string.IsNullOrWhiteSpace(_auth0Settings.Scope))
-        {
-            form.Add(new KeyValuePair<string, string>("scope", _auth0Settings.Scope));
-        }
+        form.Add(new KeyValuePair<string, string>("scope", AuthTokenLifetime.EnsureOfflineAccess(_auth0Settings.Scope)));
 
         using var response = await client.PostAsync(endpoint, new FormUrlEncodedContent(form), cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -241,16 +239,16 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         return new AuthLoginResult(false, null, "Device code expired.");
     }
 
-    public async Task<string?> GetAccessTokenAsync(CancellationToken cancellationToken = default)
+    public async Task<string?> GetAccessTokenAsync(CancellationToken cancellationToken = default, bool forceRefresh = false)
     {
-        await EnsureTokenLoadedAsync(cancellationToken);
+        await EnsureTokenReadyAsync(cancellationToken, forceRefresh);
         return HasValidToken ? _accessToken : null;
     }
 
     public async Task<bool> IsAuthenticatedAsync()
     {
-        await EnsureTokenLoadedAsync(CancellationToken.None);
-        return HasValidToken;
+        await EnsureTokenReadyAsync(CancellationToken.None, forceRefresh: false);
+        return HasValidToken || !string.IsNullOrWhiteSpace(_refreshToken);
     }
 
     public async Task LogoutAsync()
@@ -270,9 +268,21 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         return _expiresAt <= DateTimeOffset.UtcNow.AddSeconds(Math.Abs(leeway));
     }
 
-    private async Task EnsureTokenLoadedAsync(CancellationToken cancellationToken)
+    private bool NeedsAccessTokenRefresh(bool forceRefresh)
+        => forceRefresh
+           || AuthTokenLifetime.ShouldRefreshAccessToken(
+               _expiresAt,
+               DateTimeOffset.UtcNow,
+               _auth0Settings.TokenLeewaySeconds,
+               _lastRefreshedAt,
+               _auth0Settings.SlidingRefreshAfterSeconds);
+
+    private async Task EnsureTokenReadyAsync(CancellationToken cancellationToken, bool forceRefresh)
     {
-        if (_tokenLoaded && (HasValidToken || string.IsNullOrWhiteSpace(_refreshToken)))
+        if (_tokenLoaded
+            && !forceRefresh
+            && !NeedsAccessTokenRefresh(forceRefresh: false)
+            && (HasValidToken || string.IsNullOrWhiteSpace(_refreshToken)))
         {
             return;
         }
@@ -284,15 +294,21 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             {
                 await LoadTokensFromDiskAsync(cancellationToken);
                 _tokenLoaded = true;
+                if (_lastRefreshedAt == DateTimeOffset.MinValue)
+                {
+                    _lastRefreshedAt = DateTimeOffset.UtcNow;
+                }
             }
 
-            if (!HasValidToken && !string.IsNullOrWhiteSpace(_refreshToken))
+            if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
             {
-                var refreshed = await RefreshAccessTokenAsync(cancellationToken);
-                if (!refreshed)
-                {
-                    await ClearTokensCoreAsync();
-                }
+                return;
+            }
+
+            var outcome = await RefreshAccessTokenAsync(cancellationToken);
+            if (outcome == AuthTokenRefreshOutcome.Rejected)
+            {
+                await ClearTokensCoreAsync();
             }
         }
         finally
@@ -321,6 +337,9 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             _refreshToken = payload.RefreshToken;
             _expiresAt = payload.ExpiresAtUnixSeconds > 0
                 ? DateTimeOffset.FromUnixTimeSeconds(payload.ExpiresAtUnixSeconds)
+                : DateTimeOffset.MinValue;
+            _lastRefreshedAt = payload.LastRefreshedAtUnixSeconds > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(payload.LastRefreshedAtUnixSeconds)
                 : DateTimeOffset.MinValue;
         }
         catch (Exception ex)
@@ -363,7 +382,8 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     {
         _accessToken = accessToken;
         _expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn > 0 ? expiresIn : 3600);
-        _refreshToken = refreshToken;
+        _refreshToken = AuthTokenLifetime.CoalesceRefreshToken(refreshToken, _refreshToken);
+        _lastRefreshedAt = DateTimeOffset.UtcNow;
 
         try
         {
@@ -371,7 +391,8 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             {
                 AccessToken = _accessToken,
                 RefreshToken = _refreshToken,
-                ExpiresAtUnixSeconds = _expiresAt.ToUnixTimeSeconds()
+                ExpiresAtUnixSeconds = _expiresAt.ToUnixTimeSeconds(),
+                LastRefreshedAtUnixSeconds = _lastRefreshedAt.ToUnixTimeSeconds()
             };
 
             var json = JsonSerializer.Serialize(payload);
@@ -485,6 +506,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         _accessToken = null;
         _refreshToken = null;
         _expiresAt = DateTimeOffset.MinValue;
+        _lastRefreshedAt = DateTimeOffset.MinValue;
         _tokenLoaded = true;
 
         try
@@ -502,12 +524,12 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         return Task.CompletedTask;
     }
 
-    private async Task<bool> RefreshAccessTokenAsync(CancellationToken cancellationToken)
+    private async Task<AuthTokenRefreshOutcome> RefreshAccessTokenAsync(CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_refreshToken) || string.IsNullOrWhiteSpace(_auth0Settings.ClientId) ||
             string.IsNullOrWhiteSpace(_auth0Settings.Domain))
         {
-            return false;
+            return AuthTokenRefreshOutcome.TransientFailure;
         }
 
         try
@@ -529,18 +551,19 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             var tokenPayload = await response.Content.ReadFromJsonAsync<TokenResponse>(cts.Token);
             if (response.IsSuccessStatusCode && tokenPayload != null && !string.IsNullOrWhiteSpace(tokenPayload.AccessToken))
             {
-                await SaveTokensAsync(tokenPayload.AccessToken, tokenPayload.ExpiresIn,
-                    tokenPayload.RefreshToken ?? _refreshToken);
-                return true;
+                await SaveTokensAsync(tokenPayload.AccessToken, tokenPayload.ExpiresIn, tokenPayload.RefreshToken);
+                return AuthTokenRefreshOutcome.Success;
             }
 
             _logger.LogWarning("[Auth0/Linux] Failed to refresh token. Error: {Error}", tokenPayload?.Error);
-            return false;
+            return AuthTokenLifetime.IsRefreshRejected(tokenPayload?.Error)
+                ? AuthTokenRefreshOutcome.Rejected
+                : AuthTokenRefreshOutcome.TransientFailure;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Auth0/Linux] Refresh token request failed");
-            return false;
+            return AuthTokenRefreshOutcome.TransientFailure;
         }
     }
 
@@ -555,7 +578,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     private string BuildAuthorizeUrl(Uri redirectUri, string state, string codeChallenge)
     {
         var authEndpoint = BuildAuth0Url(_auth0Settings.Domain, "/authorize");
-        var scope = EnsureOidcScopes(_auth0Settings.Scope);
+        var scope = AuthTokenLifetime.EnsureOfflineAccess(_auth0Settings.Scope);
 
         var query = new Dictionary<string, string?>
         {
@@ -574,26 +597,6 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             .Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value!)}"));
 
         return $"{authEndpoint}?{queryString}";
-    }
-
-    private static string EnsureOidcScopes(string? configuredScope)
-    {
-        var scopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "openid",
-            "profile",
-            "offline_access"
-        };
-
-        if (!string.IsNullOrWhiteSpace(configuredScope))
-        {
-            foreach (var item in configuredScope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                scopes.Add(item.Trim());
-            }
-        }
-
-        return string.Join(" ", scopes);
     }
 
     private bool TryGetLoopbackRedirectUri(out Uri uri)
@@ -834,6 +837,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         public string? AccessToken { get; init; }
         public string? RefreshToken { get; init; }
         public long ExpiresAtUnixSeconds { get; init; }
+        public long LastRefreshedAtUnixSeconds { get; init; }
     }
 
     private sealed class DeviceCodeResponse
