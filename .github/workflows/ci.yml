@@ -20,11 +20,6 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
-    inputs:
-      run_linux_runtime_smoke:
-        description: "Run optional Linux runtime smoke test (installs VLC deps)"
-        required: false
-        default: "true"
 
 # One run per head branch (or main ref). Duplicate PRs from the same branch
 # share this group and cancel each other instead of fan-out.
@@ -309,10 +304,9 @@ jobs:
           retention-days: 5
 
   linux-runtime-smoke:
-    name: Linux Runtime Smoke (optional)
+    name: Linux Runtime Smoke
     runs-on: ubuntu-latest
     needs: build-linux
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_linux_runtime_smoke == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 10
@@ -365,6 +359,7 @@ jobs:
       - build-ios
       - build-macos
       - build-linux
+      - linux-runtime-smoke
     if: ${{ always() }}
     steps:
       - name: Check CI status
@@ -378,7 +373,9 @@ jobs:
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \
                 "${{ needs.build-android.result }}" == "failure" || \
-                "${{ needs.build-linux.result }}" == "failure" ]]; then
+                "${{ needs.build-linux.result }}" == "failure" || \
+                "${{ needs.linux-runtime-smoke.result }}" == "failure" || \
+                "${{ needs.linux-runtime-smoke.result }}" == "skipped" ]]; then
             echo "❌ CI pipeline failed"
             exit 1
           fi
