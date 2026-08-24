@@ -12,15 +12,28 @@ public class StreamUrlNormalizerTests
     [InlineData("https://cdn.example.com:443/live/master.m3u8", "https://cdn.example.com/live/master.m3u8")]
     public void NormalizeForDedup_StripsTokensAndCanonicalizes(string input, string expected)
     {
-        Assert.Equal(expected, StreamUrlNormalizer.NormalizeForDedup(input));
+        // Arrange
+        var url = input;
+
+        // Act
+        var normalized = StreamUrlNormalizer.NormalizeForDedup(url);
+
+        // Assert
+        Assert.Equal(expected, normalized);
     }
 
     [Fact]
     public void NormalizeForDedup_TreatsDifferentTokensAsSameStream()
     {
-        var first = StreamUrlNormalizer.NormalizeForDedup("https://cdn.example.com/live/master.m3u8?token=abc123");
-        var second = StreamUrlNormalizer.NormalizeForDedup("https://cdn.example.com/live/master.m3u8?token=xyz789");
+        // Arrange
+        var firstUrl = "https://cdn.example.com/live/master.m3u8?token=abc123";
+        var secondUrl = "https://cdn.example.com/live/master.m3u8?token=xyz789";
 
+        // Act
+        var first = StreamUrlNormalizer.NormalizeForDedup(firstUrl);
+        var second = StreamUrlNormalizer.NormalizeForDedup(secondUrl);
+
+        // Assert
         Assert.Equal(first, second);
     }
 }

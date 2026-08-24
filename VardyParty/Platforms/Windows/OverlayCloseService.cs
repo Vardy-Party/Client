@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -13,8 +14,16 @@ namespace VardyParty.Platforms.Windows;
 
 public class OverlayCloseService : IOverlayCloseService
 {
+    private readonly IStreamSwitchingService _switching;
+    private readonly ILogger<OverlayCloseService> _logger;
     private Button? _closeButton;
     public event Action? CloseRequested;
+
+    public OverlayCloseService(IStreamSwitchingService switching, ILogger<OverlayCloseService> logger)
+    {
+        _switching = switching;
+        _logger = logger;
+    }
 
     public void ShowCloseControl()
     {
@@ -62,33 +71,34 @@ public class OverlayCloseService : IOverlayCloseService
                     {
                         try
                         {
-                            var svc =
-                                AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamSwitchingService)) as
-                                    IStreamSwitchingService;
-                            svc?.Cleanup();
+                            _switching.Cleanup();
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            _logger.LogDebug(ex, "[OverlayClose] Cleanup failed");
                         }
 
                         try
                         {
                             CloseRequested?.Invoke();
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            _logger.LogDebug(ex, "[OverlayClose] CloseRequested failed");
                         }
                     };
 
                     panel.Children.Add(_closeButton);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.LogDebug(ex, "[OverlayClose] ShowCloseControl enqueue failed");
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "[OverlayClose] ShowCloseControl failed");
         }
     }
 

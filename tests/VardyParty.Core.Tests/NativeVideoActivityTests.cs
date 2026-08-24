@@ -9,10 +9,20 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void CanSwitchTo_RespectsPreparingAndSameUrl()
         {
-            // Use SwitchingDecision helper instead of activity instance in unit tests
-            Assert.True(SwitchingDecision.CanSwitch(null, "http://a", false));
-            Assert.False(SwitchingDecision.CanSwitch(null, "http://b", true));
-            Assert.False(SwitchingDecision.CanSwitch("http://a", "http://a", false));
+            // Arrange
+            string? noCurrent = null;
+            var urlA = "http://a";
+            var urlB = "http://b";
+
+            // Act
+            var canWhenIdle = SwitchingDecision.CanSwitch(noCurrent, urlA, false);
+            var cannotWhenPreparing = SwitchingDecision.CanSwitch(noCurrent, urlB, true);
+            var cannotSameUrl = SwitchingDecision.CanSwitch(urlA, urlA, false);
+
+            // Assert
+            Assert.True(canWhenIdle);
+            Assert.False(cannotWhenPreparing);
+            Assert.False(cannotSameUrl);
         }
     }
 }

@@ -14,20 +14,20 @@ namespace VardyParty.Core.Tests;
 
 public class StreamHealthCheckerTests
 {
-    private readonly Fixture _fixture = new();
-
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
     public async Task CheckStreamHealth_Healthy_DirectSegment()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/playlist.m3u8";
-        var segmentUrl = "http://example.com/segment.ts";
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
 
         handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -36,8 +36,10 @@ public class StreamHealthCheckerTests
 
         handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
         Assert.Equal(manifestUrl, result.Url);
     }
@@ -45,71 +47,81 @@ public class StreamHealthCheckerTests
     [Fact]
     public async Task CheckStreamHealth_ManifestUnreachable_404()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/lost.m3u8";
+        var manifestUrl = "http://streams.example.com/lost.m3u8";
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.ManifestUnreachable, result.Status);
     }
 
     [Fact]
     public async Task CheckStreamHealth_InvalidManifest_NoTags()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/bad.m3u8";
+        var manifestUrl = "http://streams.example.com/bad.m3u8";
         handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("Just some text\nNo M3U8 headers")
         });
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.InvalidManifest, result.Status);
     }
 
     [Fact]
     public async Task CheckStreamHealth_EmptyManifest_JustHeader()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/empty.m3u8";
+        var manifestUrl = "http://streams.example.com/empty.m3u8";
         handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("#EXTM3U\n")
         });
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.EmptyManifest, result.Status);
     }
 
     [Fact]
     public async Task CheckStreamHealth_MasterPlaylist_RecursiveCheck_Success()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var masterUrl = "http://example.com/master.m3u8";
-        var childUrl = "http://example.com/child.m3u8";
-        var segmentUrl = "http://example.com/segment.ts";
+        var masterUrl = "http://streams.example.com/master.m3u8";
+        var childUrl = "http://streams.example.com/child.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
 
         handler.AddResponse(masterUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -123,14 +135,17 @@ public class StreamHealthCheckerTests
 
         handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
 
-        var result = await checker.CheckStreamHealthAsync(masterUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(masterUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
     }
 
     [Fact]
     public async Task CheckStreamHealth_MasterPlaylist_RecursionLimit()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
@@ -139,8 +154,8 @@ public class StreamHealthCheckerTests
 
         void AddChain(int i)
         {
-            var url = $"http://example.com/list{i}.m3u8";
-            var next = $"http://example.com/list{i + 1}.m3u8";
+            var url = $"http://streams.example.com/list{i}.m3u8";
+            var next = $"http://streams.example.com/list{i + 1}.m3u8";
             handler.AddResponse(url, new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent($"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n{next}")
@@ -152,22 +167,25 @@ public class StreamHealthCheckerTests
         AddChain(2);
         AddChain(3);
 
-        var result = await checker.CheckStreamHealthAsync("http://example.com/list0.m3u8", "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync("http://streams.example.com/list0.m3u8", "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.InvalidManifest, result.Status);
     }
 
     [Fact]
     public async Task CheckStreamHealth_SegmentUnreachable()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/playlist.m3u8";
-        var segmentUrl = "http://example.com/segment.ts";
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
 
         handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -176,22 +194,53 @@ public class StreamHealthCheckerTests
 
         handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.NotFound));
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
     }
 
     [Fact]
-    public async Task CheckStreamHealth_SegmentHeadFail_GetSuccess()
+    public async Task CheckStreamHealth_SegmentHeadForbidden_GetRangeSuccess()
     {
+        // Arrange
         var handler = new FakeHttpMessageHandler();
         var client = new HttpClient(handler);
         var settingsProvider = _fixture.Create<StreamHealthSettings>();
         var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
             Options.Create(settingsProvider));
 
-        var manifestUrl = "http://example.com/playlist.m3u8";
-        var segmentUrl = "http://example.com/segment.ts";
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.Forbidden));
+        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK));
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task CheckStreamHealth_SegmentHeadFail_GetSuccess()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
 
         handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -201,8 +250,10 @@ public class StreamHealthCheckerTests
         handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.MethodNotAllowed));
         handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK));
 
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://referer.com");
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
     }
 

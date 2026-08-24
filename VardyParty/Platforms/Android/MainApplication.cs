@@ -18,10 +18,14 @@ namespace VardyParty
             // Detect TV devices using PackageManager features
             try
             {
-                var ctx = Android.App.Application.Context;
-                var pm = ctx.PackageManager;
+                var ctx = Android.App.Application.Context
+                    ?? throw new InvalidOperationException("Application context is unavailable.");
+                var pm = ctx.PackageManager
+                    ?? throw new InvalidOperationException("PackageManager is unavailable.");
                 var hasLeanback = pm.HasSystemFeature(Android.Content.PM.PackageManager.FeatureLeanback);
+#pragma warning disable CS0618 // FeatureTelevision is the pre-Leanback TV flag still present on older images
                 var hasTelevision = pm.HasSystemFeature(Android.Content.PM.PackageManager.FeatureTelevision);
+#pragma warning restore CS0618
                 var isTv = hasLeanback || hasTelevision;
                 MauiProgram.IsTv = isTv;
                 Console.WriteLine($"[MainApplication] Device IsTv={isTv}");

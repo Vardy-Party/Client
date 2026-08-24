@@ -7,6 +7,7 @@ using LibVLCSharp.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty;
 using VardyParty.Configuration;
 using VardyParty.Handlers;
 using VardyParty.Health;
@@ -65,6 +66,31 @@ public class App : Application
             configurationBuilder.AddJsonFile(userSecretsPath, true, true);
         }
 
+#if DEBUG
+        var apiConfig = new ConfigurationBuilder()
+            .SetBasePath(appSettingsDirectory)
+            .AddJsonFile(appSettingsFileName, false, true)
+            .Build()
+            .GetSection("Api");
+        // Default to production; set VARDYPARTY_DEBUG_API=local|preview to override.
+        var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
+        var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
+        {
+            "local" => apiConfig["HeadlessBaseUrl-Local"],
+            "preview" => apiConfig["HeadlessBaseUrl-Preview"],
+            "production" or "prod" => apiConfig["HeadlessBaseUrl"],
+            _ => apiConfig["HeadlessBaseUrl"],
+        };
+        if (!string.IsNullOrWhiteSpace(debugBaseUrl))
+        {
+            configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Api:HeadlessBaseUrl"] = debugBaseUrl
+            });
+            Console.WriteLine($"[App] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "production"})");
+        }
+#endif
+
         var configuration = configurationBuilder.Build();
 
         var services = new ServiceCollection();
@@ -93,6 +119,8 @@ public class App : Application
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
         services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
         services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
+        services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
+        services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
@@ -114,7 +142,13 @@ public class App : Application
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>();
         services.AddHttpClient<IApiService, ApiService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
+            .ConfigureHttpClient(client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    VardyPartyClientApiVersion.HeaderName,
+                    VardyPartyClientApiVersion.DefaultHeaderValue);
+            });
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler

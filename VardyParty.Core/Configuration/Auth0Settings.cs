@@ -11,6 +11,7 @@ public class Auth0Settings
     public required string RedirectUri { get; set; }
     public required string PostLogoutRedirectUri { get; set; }
     public required int TokenLeewaySeconds { get; set; }
+    public int SlidingRefreshAfterSeconds { get; set; } = 900;
     public required string RequiredRoleClaimType { get; set; }
     public required string RequiredRole { get; set; }
 }

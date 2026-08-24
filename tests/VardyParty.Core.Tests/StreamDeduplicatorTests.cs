@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using VardyParty.Models;
 using VardyParty.Resolvers;
@@ -10,6 +11,8 @@ namespace VardyParty.Core.Tests
 {
     public class StreamDeduplicatorTests
     {
+        private readonly IFixture _fixture = AutoMoqFixture.Create();
+
         private StreamDeduplicator CreateDeduplicator()
         {
             return new StreamDeduplicator(NullLogger<StreamDeduplicator>.Instance);
@@ -18,164 +21,308 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void ExtractBaseUrl_RemovesQueryString()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var url = "https://example.com/stream.m3u8?token=abc123&expires=456";
-            
+            var url = "https://streams.example.com/stream.m3u8?token=abc123&expires=456";
+
+            // Act
             var result = dedup.ExtractBaseUrl(url);
-            
-            Assert.Equal("https://example.com/stream.m3u8", result);
+
+            // Assert
+            Assert.Equal("https://streams.example.com/stream.m3u8", result);
         }
 
         [Fact]
         public void ExtractBaseUrl_NoQueryString_ReturnsUrlAsIs()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var url = "https://example.com/stream.m3u8";
-            
+            var url = "https://streams.example.com/stream.m3u8";
+
+            // Act
             var result = dedup.ExtractBaseUrl(url);
-            
+
+            // Assert
             Assert.Equal(url, result);
         }
 
         [Fact]
         public void ExtractBaseUrl_EmptyString_ReturnsEmpty()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            
+
+            // Act
             var result = dedup.ExtractBaseUrl("");
-            
+
+            // Assert
             Assert.Empty(result);
         }
 
         [Fact]
         public void DeduplicateStreams_SingleStream_ReturnsAsIs()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                new Models.Stream { Url = "https://example.com/stream.m3u8", Channel = "Channel1" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
+
+            // Assert
             Assert.Single(result);
-            Assert.Equal("Channel1", result[0].Channel);
+            Assert.Equal("Channel North", result[0].Channel);
         }
 
         [Fact]
         public void DeduplicateStreams_DuplicateUrlsWithDifferentQueryStrings_KeepsOne()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                new Models.Stream { Url = "https://example.com/stream.m3u8?token=abc", Channel = "Channel1", Reputation = "Good" },
-                new Models.Stream { Url = "https://example.com/stream.m3u8?token=xyz", Channel = "Channel2", Reputation = "OK" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?token=abc")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.Reputation, "Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?token=xyz")
+                    .With(s => s.Channel, "Channel South")
+                    .With(s => s.Reputation, "OK")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
+
+            // Assert
             Assert.Single(result);
-            Assert.Equal("Channel1", result[0].Channel); // Good reputation selected over OK
+            Assert.Equal("Channel North", result[0].Channel);
         }
 
         [Fact]
         public void DeduplicateStreams_MultipleUniquUrls_KeepsAll()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                new Models.Stream { Url = "https://example1.com/stream.m3u8", Channel = "Channel1" },
-                new Models.Stream { Url = "https://example2.com/stream.m3u8", Channel = "Channel2" },
-                new Models.Stream { Url = "https://example3.com/stream.m3u8", Channel = "Channel3" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://alpha.example.com/stream.m3u8")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://beta.example.com/stream.m3u8")
+                    .With(s => s.Channel, "Channel South")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://gamma.example.com/stream.m3u8")
+                    .With(s => s.Channel, "Channel East")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
+
+            // Assert
             Assert.Equal(3, result.Count);
         }
 
         [Fact]
         public void DeduplicateStreams_MixedDuplicatesAndUnique_DeduplicatesCorrectly()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                // Group 1: 2 duplicates with same base URL
-                new Models.Stream { Url = "https://example1.com/stream.m3u8?token=abc", Channel = "Channel1", Reputation = "Good" },
-                new Models.Stream { Url = "https://example1.com/stream.m3u8?token=xyz", Channel = "Channel1b", Reputation = "OK" },
-                
-                // Group 2: unique
-                new Models.Stream { Url = "https://example2.com/stream.m3u8", Channel = "Channel2" },
-                
-                // Group 3: 3 duplicates with same base URL
-                new Models.Stream { Url = "https://example3.com/stream.m3u8?a=1", Channel = "Channel3a", Reputation = "Very Good" },
-                new Models.Stream { Url = "https://example3.com/stream.m3u8?a=2", Channel = "Channel3b", Reputation = "Good" },
-                new Models.Stream { Url = "https://example3.com/stream.m3u8?a=3", Channel = "Channel3c", Reputation = "Poor" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://alpha.example.com/stream.m3u8?token=abc")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.Reputation, "Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://alpha.example.com/stream.m3u8?token=xyz")
+                    .With(s => s.Channel, "Channel North B")
+                    .With(s => s.Reputation, "OK")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://beta.example.com/stream.m3u8")
+                    .With(s => s.Channel, "Channel South")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=1")
+                    .With(s => s.Channel, "Channel East")
+                    .With(s => s.Reputation, "Very Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=2")
+                    .With(s => s.Channel, "Channel East B")
+                    .With(s => s.Reputation, "Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=3")
+                    .With(s => s.Channel, "Channel East C")
+                    .With(s => s.Reputation, "Poor")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
-            Assert.Equal(3, result.Count); // 3 unique base URLs
-            
-            // Verify correct streams were selected
+
+            // Assert
+            Assert.Equal(3, result.Count);
+
             var channels = result.Select(s => s.Channel).OrderBy(c => c).ToList();
-            Assert.True(channels.Contains("Channel1"));      // Good reputation selected
-            Assert.True(channels.Contains("Channel2"));      // Only one, kept as-is
-            Assert.True(channels.Contains("Channel3a"));     // Very Good reputation selected
+            Assert.Contains("Channel North", channels);
+            Assert.Contains("Channel South", channels);
+            Assert.Contains("Channel East", channels);
         }
 
         [Fact]
         public void DeduplicateStreams_ReputationOrdering()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                new Models.Stream { Url = "https://example.com/stream.m3u8?v=1", Channel = "Poor", Reputation = "Poor" },
-                new Models.Stream { Url = "https://example.com/stream.m3u8?v=2", Channel = "VeryGood", Reputation = "Very Good" },
-                new Models.Stream { Url = "https://example.com/stream.m3u8?v=3", Channel = "Good", Reputation = "Good" },
-                new Models.Stream { Url = "https://example.com/stream.m3u8?v=4", Channel = "OK", Reputation = "OK" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=1")
+                    .With(s => s.Channel, "Channel Poor")
+                    .With(s => s.Reputation, "Poor")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=2")
+                    .With(s => s.Channel, "Channel Best")
+                    .With(s => s.Reputation, "Very Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=3")
+                    .With(s => s.Channel, "Channel Good")
+                    .With(s => s.Reputation, "Good")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=4")
+                    .With(s => s.Channel, "Channel Ok")
+                    .With(s => s.Reputation, "OK")
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
+
+            // Assert
             Assert.Single(result);
-            Assert.Equal("VeryGood", result[0].Channel); // Highest reputation selected
+            Assert.Equal("Channel Best", result[0].Channel);
         }
 
         [Fact]
         public void DeduplicateStreams_EmptyList_ReturnsEmpty()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>();
-            
+            var streams = new List<Stream>();
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
+
+            // Assert
             Assert.Empty(result);
         }
 
         [Fact]
         public void DeduplicateStreams_NullList_ReturnsEmpty()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(null!);
-            
+
+            // Assert
             Assert.Empty(result);
+        }
+
+        [Fact]
+        public void DeduplicateStreams_V2SameUrlDifferentPlayerLabels_KeepsAll()
+        {
+            // Arrange
+            var dedup = CreateDeduplicator();
+            var streams = new List<Stream>
+            {
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/match")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.PlayerStream, "Channel North")
+                    .With(s => s.ResolutionStrategy, "v2")
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/match")
+                    .With(s => s.Channel, "Channel South")
+                    .With(s => s.PlayerStream, "Channel South")
+                    .With(s => s.ResolutionStrategy, "v2")
+                    .Create()
+            };
+
+            // Act
+            var result = dedup.DeduplicateStreams(streams);
+
+            // Assert
+            Assert.Equal(2, result.Count);
         }
 
         [Fact]
         public void DeduplicateStreams_CaseInsensitiveUrlMatching()
         {
+            // Arrange
             var dedup = CreateDeduplicator();
-            var streams = new List<Models.Stream>
+            var streams = new List<Stream>
             {
-                new Models.Stream { Url = "https://EXAMPLE.COM/stream.m3u8?v=1", Channel = "Channel1" },
-                new Models.Stream { Url = "https://example.com/stream.m3u8?v=2", Channel = "Channel2" }
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://STREAMS.EXAMPLE.COM/stream.m3u8?v=1")
+                    .With(s => s.Channel, "Channel North")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create(),
+                _fixture.Build<Stream>()
+                    .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=2")
+                    .With(s => s.Channel, "Channel South")
+                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.ResolutionStrategy, string.Empty)
+                    .Create()
             };
-            
+
+            // Act
             var result = dedup.DeduplicateStreams(streams);
-            
-            // Should deduplicate despite case difference in domain
+
+            // Assert
             Assert.Single(result);
         }
     }

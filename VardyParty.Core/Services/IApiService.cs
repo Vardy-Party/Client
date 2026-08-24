@@ -7,6 +7,7 @@ public interface IApiService
     Task<Dictionary<string, List<Game>>> GetAllGamesAsync(bool forceRefresh = false);
     Task<StreamResponse?> GetStreamsAsync(string league, string homeTeam, string awayTeam, bool forceRefresh = false);
     Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl);
+    Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName);
     
     /// <summary>
     /// Gets enriched streams with incremental m3u8 resolution and metadata

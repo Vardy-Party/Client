@@ -1,8 +1,16 @@
 @using VardyParty.Models
 @using VardyParty.Services
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
 
-<div class="@CardClass" tabindex="0" @onclick="OnCardClick" @ref="cardRef">
+<div class="@CardClass"
+     tabindex="0"
+     role="button"
+     aria-pressed="@IsSelected"
+     @onclick="OnCardClick"
+     @onkeydown="OnCardKeyDown"
+     @onfocus="OnCardFocus"
+     @ref="cardRef">
     <div class="league-badge@(string.IsNullOrEmpty(LeagueLogoUrl) ? " league-badge-empty" : string.Empty)">
         @if (!string.IsNullOrEmpty(LeagueLogoUrl))
         {
@@ -71,6 +79,13 @@
     [Parameter] public bool IsSelected { get; set; }
     [Parameter] public bool ShouldFocus { get; set; }
     [Parameter] public EventCallback<Game> OnClick { get; set; }
+    [Parameter] public EventCallback<int> OnEscapeGrid { get; set; }
+    [Parameter] public EventCallback OnFocusPrevious { get; set; }
+    [Parameter] public EventCallback OnFocusNext { get; set; }
+    [Parameter] public EventCallback<int> OnFocused { get; set; }
+    [Parameter] public EventCallback OnFocusDelivered { get; set; }
+    [Parameter] public bool IsFirst { get; set; }
+    [Parameter] public int CardIndex { get; set; }
     [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
 
     private ElementReference cardRef;
@@ -106,12 +121,58 @@
     private bool HasScore => Game.HomeScore.HasValue || Game.AwayScore.HasValue;
     private bool HasAggregateScore => Game.AggregateHomeScore.HasValue && Game.AggregateAwayScore.HasValue;
 
+    private async Task OnCardFocus()
+    {
+        if (OnFocused.HasDelegate)
+            await OnFocused.InvokeAsync(CardIndex);
+    }
+
     private async Task OnCardClick()
     {
         if (OnClick.HasDelegate)
         {
             await OnClick.InvokeAsync(Game);
         }
+    }
+
+    private async Task OnCardKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
+        {
+            await OnCardClick();
+            return;
+        }
+
+        if (!MauiProgram.IsTv) return;
+
+        switch (e.Key)
+        {
+            case "ArrowUp":
+                // Top card: escape to menu. Other cards: move to previous card.
+                if (IsFirst)
+                {
+                    if (OnEscapeGrid.HasDelegate) await OnEscapeGrid.InvokeAsync(CardIndex);
+                }
+                else
+                {
+                    if (OnFocusPrevious.HasDelegate) await OnFocusPrevious.InvokeAsync();
+                }
+                break;
+
+            case "ArrowLeft":
+                // Left always escapes to menu from any card.
+                if (OnEscapeGrid.HasDelegate) await OnEscapeGrid.InvokeAsync(CardIndex);
+                break;
+
+            case "ArrowDown":
+                if (OnFocusNext.HasDelegate) await OnFocusNext.InvokeAsync();
+                break;
+        }
+    }
+
+    public async Task FocusAsync()
+    {
+        try { await cardRef.FocusAsync(); } catch { }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -121,6 +182,8 @@
             try
             {
                 await cardRef.FocusAsync();
+                if (OnFocusDelivered.HasDelegate)
+                    await OnFocusDelivered.InvokeAsync();
             }
             catch { /* Ignore focus errors */ }
         }

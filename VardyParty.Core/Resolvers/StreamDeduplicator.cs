@@ -26,17 +26,17 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
 
         var groupedByBaseUrl = new Dictionary<string, List<Models.Stream>>(StringComparer.OrdinalIgnoreCase);
 
-        // Group streams by their base URL
+        // Group streams by their base URL (and player label for v2 multi-stream pages)
         foreach (var stream in streams)
         {
-            var baseUrl = ExtractBaseUrl(stream.Url);
+            var dedupKey = GetDedupKey(stream);
             
-            if (!groupedByBaseUrl.ContainsKey(baseUrl))
+            if (!groupedByBaseUrl.ContainsKey(dedupKey))
             {
-                groupedByBaseUrl[baseUrl] = new List<Models.Stream>();
+                groupedByBaseUrl[dedupKey] = new List<Models.Stream>();
             }
             
-            groupedByBaseUrl[baseUrl].Add(stream);
+            groupedByBaseUrl[dedupKey].Add(stream);
         }
 
         // Select best stream from each group
@@ -59,14 +59,32 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
 
     public string ExtractBaseUrl(string url) => StreamUrlNormalizer.NormalizeForDedup(url);
 
+    private static string GetDedupKey(Models.Stream stream)
+    {
+        var baseUrl = StreamUrlNormalizer.NormalizeForDedup(stream.Url);
+        if (!stream.RequiresV2StreamSelection)
+        {
+            return baseUrl;
+        }
+
+        var playerLabel = string.IsNullOrWhiteSpace(stream.PlayerStream)
+            ? stream.Channel
+            : stream.PlayerStream;
+
+        return string.IsNullOrWhiteSpace(playerLabel)
+            ? baseUrl
+            : $"{baseUrl}\0{playerLabel.Trim()}";
+    }
+
     private Models.Stream SelectBestStream(List<Models.Stream> group)
     {
         if (group.Count == 1)
             return group[0];
 
-        // Sort by reputation score (highest first), then by channel name
+        // Sort by reputation score (highest first), then FB before MP, then by channel name
         var sorted = group
             .OrderByDescending(s => GetReputationScore(s.Reputation))
+            .ThenBy(s => StreamCatalogSourceOrderer.GetCatalogSourcePriority(s))
             .ThenBy(s => s.Channel, StringComparer.OrdinalIgnoreCase)
             .ToList();
 

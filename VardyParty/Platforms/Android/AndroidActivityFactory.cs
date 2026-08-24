@@ -3,6 +3,7 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty.Orchestrators;
 using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
@@ -24,11 +25,17 @@ namespace VardyParty.Platforms.Android
 
                 if (activity is NativeVideoActivity nva)
                 {
-                    // prefer constructor-like injection via method
-                    nva.InjectServices(switching, logger);
+                    var health = provider.GetService<IStreamHealthReporter>();
+                    var enriched = provider.GetService<IEnrichedGameService>();
+                    var api = provider.GetService<IApiService>();
+                    var orchestrator = provider.GetService<IStreamResolutionOrchestrator>();
+                    nva.InjectServices(switching, logger, health, enriched, api, orchestrator);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AndroidActivityFactory] Inject failed: {ex.Message}");
+            }
         }
     }
 }

@@ -26,7 +26,8 @@ namespace VardyParty.Platforms.Android
 
         public AndroidX.Media3.DataSource.IDataSource CreateDataSource()
         {
-            var ds = _innerFactory.CreateDataSource();
+            var ds = _innerFactory.CreateDataSource()
+                ?? throw new InvalidOperationException("HTTP data source factory returned null.");
             try
             {
                 if (ds is DefaultHttpDataSource dh)

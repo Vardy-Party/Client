@@ -1,0 +1,46 @@
+---
+description: Hard rules for xUnit tests — AAA comments, AutoFixture specimens, GetMock
+globs: tests/**/*.cs
+alwaysApply: false
+---
+
+# Test hard rules
+
+Every `[Fact]` / `[Theory]` method **must** contain these three comments, in order:
+
+```
+// Arrange
+// Act
+// Assert
+```
+
+Do not skip a section. Setup (fixtures, `GetMock`, `Build`/`Create`, SUT) goes under Arrange. The single operation under test goes under Act. Assertions go under Assert.
+
+## Fictional names only
+
+Test source must not contain real team names, league names, competitions, or streaming sites. Use labels like `Home United`, `Away City`, `League Alpha`, `Channel North`, `https://streams.example.com/...`. Identify captured HTML fixtures by scores, status, or minute — not by club or competition names.
+
+## Specimens
+
+- Create data with **AutoFixture** (`IFixture` from `AutoMoqFixture.Create()`).
+- Use `_fixture.Build<T>().With(...).Create()` or `_fixture.Create<T>()` in the test — do not hand-build object graphs with `new Stream { ... }` / `new Game { ... }`.
+- Collaborator mocks: `_fixture.GetMock<IFoo>()` — **never** `new Mock<IFoo>()`.
+- `GetMock` freezes the mock so `_fixture.Create<Sut>()` receives the same instance.
+
+```csharp
+[Fact]
+public async Task Resolve_WhenHealthy_ReturnsUrl()
+{
+    // Arrange
+    var stream = _fixture.Build<Stream>().With(s => s.Url, url).Create();
+    var lan = _fixture.GetMock<ILocalLanPlayService>();
+    lan.Setup(...).ReturnsAsync(m3u8);
+    var sut = _fixture.Create<StreamResolver>();
+
+    // Act
+    var result = await sut.ResolveM3U8UrlAsync(stream, referer);
+
+    // Assert
+    Assert.Equal(m3u8.Url, result);
+}
+```

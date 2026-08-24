@@ -18,11 +18,19 @@ namespace VardyParty
     public class MainActivity : MauiAppCompatActivity
     {
         private static bool _overlayBackSuppression;
+        private static bool _flyoutMenuOpen;
 
         public static void SetOverlayBackSuppression(bool suppress)
         {
             _overlayBackSuppression = suppress;
         }
+
+        public static void SetFlyoutMenuOpen(bool open)
+        {
+            _flyoutMenuOpen = open;
+        }
+
+        public static bool IsFlyoutMenuOpen => _flyoutMenuOpen;
         private static Platforms.Android.RemoteKeyHandler? _remoteKeyHandler;
 
         public static Platforms.Android.RemoteKeyHandler RemoteKeyHandler
@@ -51,6 +59,22 @@ namespace VardyParty
             {
                 _suppressNextBack = false;
                 Log.Info("MainActivity", "[MAIN] Back suppressed by overlay");
+                return;
+            }
+
+            if (_flyoutMenuOpen)
+            {
+                Log.Info("MainActivity", "[MAIN] Back pressed while flyout open - closing menu");
+                try
+                {
+                    if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
+                    {
+                        return;
+                    }
+                }
+                catch { }
+
+                SetFlyoutMenuOpen(false);
                 return;
             }
 
@@ -107,6 +131,12 @@ namespace VardyParty
 
         private void RemoteBackHandler(Keycode keyCode)
         {
+            if (_flyoutMenuOpen)
+            {
+                Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to flyout menu");
+                return;
+            }
+
             // If an overlay (e.g., stream discovery) is active and intends to consume Back,
             // do not perform navigation here; let the overlay handler handle cancelation.
             if (_overlayBackSuppression)
@@ -183,24 +213,22 @@ namespace VardyParty
 
             if (segments[0].Equals("player", StringComparison.OrdinalIgnoreCase))
             {
-                if (segments.Count >= 4)
+            if (segments.Count >= 4)
+            {
+                var league = Uri.UnescapeDataString(segments[1]);
+                var home = Uri.UnescapeDataString(segments[2]);
+                var away = Uri.UnescapeDataString(segments[3]);
+                if (selection != null)
                 {
-                    var league = Uri.UnescapeDataString(segments[1]);
-                    var home = Uri.UnescapeDataString(segments[2]);
-                    var away = Uri.UnescapeDataString(segments[3]);
-                    var target = $"/streams/{Uri.EscapeDataString(league)}/{Uri.EscapeDataString(home)}/{Uri.EscapeDataString(away)}";
-                    if (selection != null)
-                    {
-                        selection.LastLeague = league;
-                        selection.LastHomeTeam = home;
-                        selection.LastAwayTeam = away;
-                        selection.LastRoute = target;
-                    }
-                    return target;
+                    selection.LastLeague = league;
+                    selection.LastHomeTeam = home;
+                    selection.LastAwayTeam = away;
+                    selection.LastRoute = "/";
                 }
+                return "/";
+            }
 
-                // Fallback if URL missing parts
-                return "/streams";
+            return "/";
             }
 
             if (segments[0].Equals("streams", StringComparison.OrdinalIgnoreCase))

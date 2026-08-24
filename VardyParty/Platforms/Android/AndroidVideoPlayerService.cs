@@ -10,11 +10,17 @@ namespace VardyParty.Platforms.Android
     {
         public event EventHandler<bool>? BufferingStateChanged;
 
+        private static AndroidVideoPlayerService? _instance;
         private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private static Func<Task>? _onNextStreamRequested;
         private static int _currentStreamIndex;
         private static int _totalHealthyStreams;
         private static PlaybackMetrics? _currentMetrics;
+
+        public AndroidVideoPlayerService()
+        {
+            _instance = this;
+        }
 
         public Task<PlaybackResult> PlayVideoAsync(
             string m3u8Url,
@@ -23,7 +29,8 @@ namespace VardyParty.Platforms.Android
             Func<Task>? onNextStreamRequested = null,
             string? league = null,
             string? homeTeam = null,
-            string? awayTeam = null)
+            string? awayTeam = null,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             try
             {
@@ -137,9 +144,14 @@ namespace VardyParty.Platforms.Android
 
         internal static void ReportBufferingState(bool isBuffering)
         {
-            // Raise the event - this will be called from NativeVideoActivity
-            // Note: In static context, this would need a static event or instance reference
-            // For now, this method serves as a hook point for the activity to call
+            try
+            {
+                _instance?.BufferingStateChanged?.Invoke(_instance, isBuffering);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AndroidVideoPlayerService] ReportBufferingState failed: {ex.Message}");
+            }
         }
 
         public PlaybackMetrics? GetCurrentMetrics()

@@ -26,6 +26,11 @@ public class EnrichedStream
     public string? Referer { get; set; }
 
     /// <summary>
+    /// HTTP headers captured by Playwright when the m3u8 playlist was requested in-browser.
+    /// </summary>
+    public Dictionary<string, string>? RequestHeaders { get; set; }
+
+    /// <summary>
     /// Stream health and metadata extracted from the m3u8 manifest
     /// Populated after m3u8 is resolved and tested
     /// </summary>

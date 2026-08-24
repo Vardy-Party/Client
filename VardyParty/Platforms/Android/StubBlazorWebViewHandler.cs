@@ -13,7 +13,10 @@ namespace VardyParty.Platforms.Android
 
         protected override global::Android.Views.View CreatePlatformView()
         {
-            return new global::Android.Views.View(MauiContext.Context);
+            var context = MauiContext?.Context
+                ?? global::Android.App.Application.Context
+                ?? throw new InvalidOperationException("Android context is unavailable.");
+            return new global::Android.Views.View(context);
         }
     }
 }
