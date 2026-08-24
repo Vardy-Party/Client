@@ -8,7 +8,7 @@ public interface IApiService
     Task<StreamResponse?> GetStreamsAsync(string league, string homeTeam, string awayTeam, bool forceRefresh = false);
     Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl);
     Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName);
-    
+
     /// <summary>
     /// Gets enriched streams with incremental m3u8 resolution and metadata
     /// Returns an async enumerable that yields streams as they complete testing
@@ -25,7 +25,7 @@ public interface IApiService
         string awayTeam,
         Action<int>? onTotalStreamsKnown = null,
         System.Threading.CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Resolves m3u8 URL for a single stream for playback
     /// (m3u8 URLs are single-use, so they need to be resolved again when user selects stream)

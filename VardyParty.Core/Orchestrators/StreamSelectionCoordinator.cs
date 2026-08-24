@@ -64,7 +64,7 @@ public class StreamSelectionCoordinator(
             }
 
             testOrder = BuildTestOrder(recommendations, _totalStreams);
-            
+
             if (testOrder.Count > 0)
             {
                 logger.LogInformation("[StreamSelection] Using recommendation-based test order: {Order}",
@@ -222,7 +222,7 @@ public class StreamSelectionCoordinator(
 
         var ordered = new List<int>();
         var seen = new HashSet<int>();
-        
+
         foreach (var recommendedItem in recommendations.Recommended)
         {
             var index = ResolveRecommendationIndex(recommendedItem.Url, recommendedItem.StreamName);

@@ -2,7 +2,7 @@ namespace VardyParty.Services
 {
     public interface IOverlayCloseService
     {
-    event Action? CloseRequested;
+        event Action? CloseRequested;
         void ShowCloseControl();
         void HideCloseControl();
     }

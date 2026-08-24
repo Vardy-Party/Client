@@ -30,12 +30,12 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
         foreach (var stream in streams)
         {
             var dedupKey = GetDedupKey(stream);
-            
+
             if (!groupedByBaseUrl.ContainsKey(dedupKey))
             {
                 groupedByBaseUrl[dedupKey] = new List<Models.Stream>();
             }
-            
+
             groupedByBaseUrl[dedupKey].Add(stream);
         }
 
@@ -50,7 +50,7 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
         var removedCount = streams.Count - deduplicated.Count;
         if (removedCount > 0)
         {
-            logger.LogInformation("[Dedup] Removed {Removed} duplicate streams, {Remaining} unique remain", 
+            logger.LogInformation("[Dedup] Removed {Removed} duplicate streams, {Remaining} unique remain",
                 removedCount, deduplicated.Count);
         }
 
@@ -89,10 +89,10 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
             .ToList();
 
         var best = sorted[0];
-        
+
         if (sorted.Count > 1)
         {
-            logger.LogInformation("[Dedup] Selected '{Channel}' (rep: {Reputation}) over {Count} duplicate(s) for URL base", 
+            logger.LogInformation("[Dedup] Selected '{Channel}' (rep: {Reputation}) over {Count} duplicate(s) for URL base",
                 best.Channel, best.Reputation, sorted.Count - 1);
         }
 

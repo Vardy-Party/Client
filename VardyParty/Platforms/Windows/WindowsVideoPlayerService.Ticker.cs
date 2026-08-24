@@ -311,7 +311,7 @@ namespace VardyParty.Platforms.Windows
                     return InternationalTeamDisplay.TextParts("In-play games: No same-league live scores available.").ToList();
                 }
 
-                    bool IsSameLeague(Game g) => ScoresTickerPolicy.IsSameLeague(g, watchedLeagueName);
+                bool IsSameLeague(Game g) => ScoresTickerPolicy.IsSameLeague(g, watchedLeagueName);
 
                 var lines = snapshot.Values
                     .SelectMany(v => v)
@@ -440,17 +440,17 @@ namespace VardyParty.Platforms.Windows
             private List<TickerDisplayPart> BuildCurrentModeTickerParts() => scoresTickerMode switch
             {
                 ScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerParts(),
-                ScoresTickerMode.AllFinished      => BuildFinishedScoresTickerParts(),
-                ScoresTickerMode.AllUpcoming      => BuildUpcomingTickerParts(),
-                _                                        => BuildSameLeagueTickerParts()
+                ScoresTickerMode.AllFinished => BuildFinishedScoresTickerParts(),
+                ScoresTickerMode.AllUpcoming => BuildUpcomingTickerParts(),
+                _ => BuildSameLeagueTickerParts()
             };
 
             private List<TickerDisplayPart> GetTickerEmptyParts(ScoresTickerMode mode) => mode switch
             {
                 ScoresTickerMode.AllLeaguesInPlay => InternationalTeamDisplay.TextParts("All leagues in-play: No live games right now.").ToList(),
-                ScoresTickerMode.AllFinished      => InternationalTeamDisplay.TextParts("Finished games: No finished games right now.").ToList(),
-                ScoresTickerMode.AllUpcoming      => InternationalTeamDisplay.TextParts("Upcoming games: No unstarted games in the schedule window.").ToList(),
-                _                                        => InternationalTeamDisplay.TextParts(
+                ScoresTickerMode.AllFinished => InternationalTeamDisplay.TextParts("Finished games: No finished games right now.").ToList(),
+                ScoresTickerMode.AllUpcoming => InternationalTeamDisplay.TextParts("Upcoming games: No unstarted games in the schedule window.").ToList(),
+                _ => InternationalTeamDisplay.TextParts(
                     string.IsNullOrWhiteSpace(watchedLeagueName)
                         ? "In-play: No other live games right now."
                         : $"In-play {watchedLeagueName}: No other live games right now.").ToList()
@@ -466,61 +466,61 @@ namespace VardyParty.Platforms.Windows
                     {
                         try
                         {
-                        if (cleanupInvoked || !isScoresTickerVisible || scoresTickerSingleCopy == null || scoresTickerSingleCopy.Count == 0) return;
+                            if (cleanupInvoked || !isScoresTickerVisible || scoresTickerSingleCopy == null || scoresTickerSingleCopy.Count == 0) return;
 
-                        var viewportWidth = scoresTickerViewport.ActualWidth;
-                        if (viewportWidth <= 0) return;
+                            var viewportWidth = scoresTickerViewport.ActualWidth;
+                            if (viewportWidth <= 0) return;
 
-                        var transform = scoresTickerTrack.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
-                        if (transform == null) return;
+                            var transform = scoresTickerTrack.RenderTransform as Microsoft.UI.Xaml.Media.TranslateTransform;
+                            if (transform == null) return;
 
-                        if (tickerMeasuredTextWidth <= 0 || tickerLoopWidth <= 0)
-                        {
-                            WindowsScoresTickerTrackBuilder.MeasureLoop(
-                                scoresTickerTrack,
-                                Math.Max(scoresTickerViewport.ActualHeight, 24),
-                                out var contentWidth,
-                                out var loopPeriod);
-                            if (contentWidth <= 0) return;
-                            tickerMeasuredTextWidth = contentWidth;
-                            tickerLoopWidth = scoresTickerLoopEnabled ? loopPeriod : contentWidth;
-                        }
-
-                        // Only scroll when a single copy is wider than the viewport
-                        if (!scoresTickerLoopEnabled)
-                        {
-                            if (!tickerUserPaused)
-                                transform.X = 0;
-                            return;
-                        }
-
-                        // Handle resume countdown after user gesture / pointer-exit
-                        if (tickerUserPaused)
-                        {
-                            if (tickerResumeCountdown > 0)
+                            if (tickerMeasuredTextWidth <= 0 || tickerLoopWidth <= 0)
                             {
-                                tickerResumeCountdown--;
-                                if (tickerResumeCountdown == 0)
-                                {
-                                    tickerUserPaused = false;
-                                    tickerScrollDelayTicks = Math.Max(tickerScrollDelayTicks, TickerReadDelayTicks);
-                                }
+                                WindowsScoresTickerTrackBuilder.MeasureLoop(
+                                    scoresTickerTrack,
+                                    Math.Max(scoresTickerViewport.ActualHeight, 24),
+                                    out var contentWidth,
+                                    out var loopPeriod);
+                                if (contentWidth <= 0) return;
+                                tickerMeasuredTextWidth = contentWidth;
+                                tickerLoopWidth = scoresTickerLoopEnabled ? loopPeriod : contentWidth;
                             }
-                            return;
-                        }
 
-                        if (tickerScrollDelayTicks < TickerReadDelayTicks)
-                        {
-                            tickerScrollDelayTicks++;
-                            transform.X = 0;
-                            return;
-                        }
+                            // Only scroll when a single copy is wider than the viewport
+                            if (!scoresTickerLoopEnabled)
+                            {
+                                if (!tickerUserPaused)
+                                    transform.X = 0;
+                                return;
+                            }
 
-                        scoresTickerOffsetPx = TickerMarquee.AdvanceLeft(
-                            scoresTickerOffsetPx,
-                            tickerSpeedPerTickPx,
-                            tickerLoopWidth);
-                        transform.X = scoresTickerOffsetPx;
+                            // Handle resume countdown after user gesture / pointer-exit
+                            if (tickerUserPaused)
+                            {
+                                if (tickerResumeCountdown > 0)
+                                {
+                                    tickerResumeCountdown--;
+                                    if (tickerResumeCountdown == 0)
+                                    {
+                                        tickerUserPaused = false;
+                                        tickerScrollDelayTicks = Math.Max(tickerScrollDelayTicks, TickerReadDelayTicks);
+                                    }
+                                }
+                                return;
+                            }
+
+                            if (tickerScrollDelayTicks < TickerReadDelayTicks)
+                            {
+                                tickerScrollDelayTicks++;
+                                transform.X = 0;
+                                return;
+                            }
+
+                            scoresTickerOffsetPx = TickerMarquee.AdvanceLeft(
+                                scoresTickerOffsetPx,
+                                tickerSpeedPerTickPx,
+                                tickerLoopWidth);
+                            transform.X = scoresTickerOffsetPx;
                         }
                         catch (Exception ex)
                         {

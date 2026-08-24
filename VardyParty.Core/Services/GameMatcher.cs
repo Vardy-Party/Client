@@ -33,7 +33,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         int bbcCount = bbcFixtures?.Count ?? 0;
         logger.LogInformation("[Matcher] EnrichGames start. Games={GameCount} BBC={BbcCount} Label={Label}", gameCount, bbcCount, leagueLabel);
 
-        if (games == null || games.Count == 0 || bbcFixtures == null || bbcFixtures.Count == 0) 
+        if (games == null || games.Count == 0 || bbcFixtures == null || bbcFixtures.Count == 0)
         {
             logger.LogInformation("[Matcher] EnrichGames skipped (empty input)");
             return;
@@ -95,7 +95,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                 var homeScore = ComputeNameSimilarity(gHomeComparable, b.HomeComparable, g.Home, b.HomeRaw);
                 var awayScore = ComputeNameSimilarity(gAwayComparable, b.AwayComparable, g.Away, b.AwayRaw);
                 var pairScore = (homeScore + awayScore) / 2.0;
-                
+
                 // Tier 1
                 if (homeScore >= 0.55 && awayScore >= 0.55 && pairScore >= 0.60)
                 {
@@ -183,7 +183,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                 g.IsFinished = true;
             }
         }
-        
+
         sw.Stop();
         logger.LogInformation("[Matcher] EnrichGames total duration: {Elapsed}ms", sw.ElapsedMilliseconds);
     }
@@ -279,7 +279,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             g.IsInProgress = false;
             g.IsHalfTime = false;
             g.Minute = null;
-            
+
             // Postponed games have HasProgress=false but carry significant Status
             if (!string.IsNullOrEmpty(bbc.Status) && bbc.Status.Contains("Postponed", StringComparison.OrdinalIgnoreCase))
             {
@@ -439,26 +439,26 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
     private static string NormalizeTeamName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-        
+
         var decoded = WebUtility.HtmlDecode(name) ?? string.Empty;
 
         // Step 1: Semantic replacements for common diacritics to ensure ASCII match
         var replaced = decoded
             .Replace("İ", "i").Replace("ı", "i")
             .Replace("Ş", "s").Replace("ş", "s")
-            .Replace("Ğ", "g"). Replace("ğ", "g")
-            .Replace("Ü", "u"). Replace("ü", "u")
-            .Replace("Ö", "o"). Replace("ö", "o")
-            .Replace("Ç", "c"). Replace("ç", "c")
-            .Replace("Á", "a"). Replace("á", "a")
-            .Replace("É", "e"). Replace("é", "e")
-            .Replace("Í", "i"). Replace("í", "i")
-            .Replace("Ó", "o"). Replace("ó", "o")
-            .Replace("Ú", "u"). Replace("ú", "u")
-            .Replace("Ñ", "n"). Replace("ñ", "n")
-            .Replace("ø", "o"). Replace("Ø", "o")  // Danish ø
-            .Replace("å", "a"). Replace("Å", "a")  // Danish å
-            .Replace("æ", "ae"). Replace("Æ", "ae"); // Danish æ
+            .Replace("Ğ", "g").Replace("ğ", "g")
+            .Replace("Ü", "u").Replace("ü", "u")
+            .Replace("Ö", "o").Replace("ö", "o")
+            .Replace("Ç", "c").Replace("ç", "c")
+            .Replace("Á", "a").Replace("á", "a")
+            .Replace("É", "e").Replace("é", "e")
+            .Replace("Í", "i").Replace("í", "i")
+            .Replace("Ó", "o").Replace("ó", "o")
+            .Replace("Ú", "u").Replace("ú", "u")
+            .Replace("Ñ", "n").Replace("ñ", "n")
+            .Replace("ø", "o").Replace("Ø", "o")  // Danish ø
+            .Replace("å", "a").Replace("Å", "a")  // Danish å
+            .Replace("æ", "ae").Replace("Æ", "ae"); // Danish æ
 
         var lower = replaced.Trim().ToLowerInvariant();
 
@@ -523,7 +523,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         // Optimization: Fail fast if one string is significantly longer than the other (length diff > 70%) unless very short
         // This avoids Levenshtein on clearly mismatched names
         if (string.IsNullOrEmpty(aComparable) || string.IsNullOrEmpty(bComparable)) return 0;
-        
+
         // Quick containment check - very cheap and high signal
         if (bComparable.IndexOf(aComparable, StringComparison.OrdinalIgnoreCase) >= 0) return 0.95;
         if (aComparable.IndexOf(bComparable, StringComparison.OrdinalIgnoreCase) >= 0) return 0.95; // Symmetric check needed
@@ -572,27 +572,27 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
                 }
             }
         }
-        
+
         int union = (aTokens.Length + bTokens.Length) - intersectCount;
         var tokenScore = union == 0 ? 0 : (double)intersectCount / union;
 
         // If token score is extremely low, Levenshtein is unlikely to rescue it unless it's a typo.
         // Skip Levenshtein if tokens are totally disparate and length difference is huge.
-        if (tokenScore < 0.1 && Math.Abs(aComparable.Length - bComparable.Length) > 5) 
+        if (tokenScore < 0.1 && Math.Abs(aComparable.Length - bComparable.Length) > 5)
         {
-             return tokenScore * 0.55; 
+            return tokenScore * 0.55;
         }
 
         var aNormRaw = NormalizeTeamName(aRaw);
         var bNormRaw = NormalizeTeamName(bRaw);
-        
+
         // Skip expensive Levenshtein if length allows
         var maxLen = Math.Max(aNormRaw.Length, bNormRaw.Length);
         if (maxLen == 0) return 0;
 
         // Optimization: Thresholded Levenshtein? No, we need actual score.
         // But we can skip if token score is high enough? No, combined score is needed.
-        
+
         var dist = ComputeLevenshteinDistance(aNormRaw, bNormRaw);
         var levScore = 1.0 - (double)dist / maxLen;
 

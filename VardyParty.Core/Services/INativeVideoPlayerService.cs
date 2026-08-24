@@ -7,8 +7,8 @@ namespace VardyParty.Services
         event EventHandler<bool>? BufferingStateChanged;
 
         Task<PlaybackResult> PlayVideoAsync(
-            string m3u8Url, 
-            string refererUrl, 
+            string m3u8Url,
+            string refererUrl,
             string title,
             Func<Task>? onNextStreamRequested = null,
             string? league = null,

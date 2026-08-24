@@ -13,7 +13,7 @@ internal class Program
     private static async Task Main(string[] args)
     {
         var services = new ServiceCollection();
-        
+
         services.AddLogging(configure =>
         {
             configure.AddConsole();
@@ -30,7 +30,7 @@ internal class Program
         services.AddSingleton<IStreamResolver, StreamResolver>()
             .AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
         services.AddHttpClient<IApiService, ApiService>();
-        
+
 
         var serviceProvider = services.BuildServiceProvider();
 

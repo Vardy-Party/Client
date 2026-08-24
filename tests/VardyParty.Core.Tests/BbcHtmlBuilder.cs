@@ -82,7 +82,7 @@ namespace VardyParty.Core.Tests
                 {
                     progressHtml = $"<div class=\"MatchProgressContainer\"><div class=\"StyledPeriod\">{System.Net.WebUtility.HtmlEncode(_progressText)}</div></div>";
                 }
-                else if (_inExtraTime && _etMinute.HasValue) 
+                else if (_inExtraTime && _etMinute.HasValue)
                 {
                     // ET markup must mimic real BBC structure to satisfy parser
                     // Parser looks for "ET" or "extra time" inside the progress container

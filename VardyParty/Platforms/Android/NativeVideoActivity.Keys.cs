@@ -259,7 +259,7 @@ namespace VardyParty.Platforms.Android
                             }
 
                             try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); }
-                    catch (Exception ex) { LogIgnored("Toast.SwitchRequested", ex); }
+                            catch (Exception ex) { LogIgnored("Toast.SwitchRequested", ex); }
 
                             if (wasVisible)
                             {

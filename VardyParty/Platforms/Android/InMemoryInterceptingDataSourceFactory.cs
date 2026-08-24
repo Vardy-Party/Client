@@ -47,14 +47,14 @@ namespace VardyParty.Platforms.Android
                 {
                     string? oldestKey = null;
                     DateTimeOffset oldest = DateTimeOffset.MaxValue;
-                foreach (var kv in _inMemoryMap)
-                {
-                    if (kv.Value.Added < oldest)
+                    foreach (var kv in _inMemoryMap)
                     {
-                        oldest = kv.Value.Added;
-                        oldestKey = kv.Key;
+                        if (kv.Value.Added < oldest)
+                        {
+                            oldest = kv.Value.Added;
+                            oldestKey = kv.Key;
+                        }
                     }
-                }
                     if (oldestKey != null) _inMemoryMap.Remove(oldestKey);
                     else break;
                 }
