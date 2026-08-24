@@ -119,6 +119,11 @@ public sealed class PlaybackSessionController
         });
     }
 
+    /// <summary>
+    /// A successful segment/manifest download resets the consecutive-failure counter.
+    /// </summary>
+    public void NotifyDownloadSuccess() => _consecutiveDownloadFailures = 0;
+
     public void Reset()
     {
         _state = PlaybackSessionState.Idle;

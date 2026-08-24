@@ -148,7 +148,10 @@ namespace VardyParty.Platforms.Android
             {
                 _instance?.BufferingStateChanged?.Invoke(_instance, isBuffering);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AndroidVideoPlayerService] ReportBufferingState failed: {ex.Message}");
+            }
         }
 
         public PlaybackMetrics? GetCurrentMetrics()

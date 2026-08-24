@@ -21,6 +21,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SemaphoreSlim _authLock = new(1, 1);
     private readonly string _tokenFilePath;
+    private readonly string _tokenKeyPath;
     private Auth0Settings _auth0Settings;
     private string? _accessToken;
     private string? _refreshToken;
@@ -39,7 +40,8 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         var configDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "VardyParty");
-        _tokenFilePath = Path.Combine(configDir, "auth0-tokens.json");
+        _tokenFilePath = Path.Combine(configDir, "auth0-tokens.bin");
+        _tokenKeyPath = Path.Combine(configDir, ".token-key");
     }
 
     public bool HasValidToken => !string.IsNullOrWhiteSpace(_accessToken) && !IsExpired(_auth0Settings);
@@ -303,12 +305,12 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     {
         try
         {
-            if (!File.Exists(_tokenFilePath))
+            var json = await TryReadTokenJsonAsync(cancellationToken);
+            if (json == null)
             {
                 return;
             }
 
-            var json = await File.ReadAllTextAsync(_tokenFilePath, cancellationToken);
             var payload = JsonSerializer.Deserialize<StoredTokenPayload>(json);
             if (payload == null)
             {
@@ -327,6 +329,36 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         }
     }
 
+    private async Task<string?> TryReadTokenJsonAsync(CancellationToken cancellationToken)
+    {
+        if (File.Exists(_tokenFilePath))
+        {
+            var bytes = await File.ReadAllBytesAsync(_tokenFilePath, cancellationToken);
+            return UnprotectTokens(bytes);
+        }
+
+        var legacyPath = Path.Combine(
+            Path.GetDirectoryName(_tokenFilePath) ?? string.Empty,
+            "auth0-tokens.json");
+        if (!File.Exists(legacyPath))
+        {
+            return null;
+        }
+
+        var json = await File.ReadAllTextAsync(legacyPath, cancellationToken);
+        try
+        {
+            await SaveEncryptedJsonAsync(json);
+            File.Delete(legacyPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Auth0/Linux] Failed to migrate plaintext token cache");
+        }
+
+        return json;
+    }
+
     private async Task SaveTokensAsync(string accessToken, int expiresIn, string? refreshToken)
     {
         _accessToken = accessToken;
@@ -335,12 +367,6 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
 
         try
         {
-            var directory = Path.GetDirectoryName(_tokenFilePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
             var payload = new StoredTokenPayload
             {
                 AccessToken = _accessToken,
@@ -348,13 +374,97 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
                 ExpiresAtUnixSeconds = _expiresAt.ToUnixTimeSeconds()
             };
 
-            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(_tokenFilePath, json);
+            var json = JsonSerializer.Serialize(payload);
+            await SaveEncryptedJsonAsync(json);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Auth0/Linux] Failed to persist token cache to disk");
         }
+    }
+
+    private async Task SaveEncryptedJsonAsync(string json)
+    {
+        var directory = Path.GetDirectoryName(_tokenFilePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var bytes = ProtectTokens(json);
+        await File.WriteAllBytesAsync(_tokenFilePath, bytes);
+        RestrictUserOnly(_tokenFilePath);
+        RestrictUserOnly(_tokenKeyPath);
+    }
+
+    private byte[] ProtectTokens(string plaintext)
+    {
+        var key = GetOrCreateKey();
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var plain = Encoding.UTF8.GetBytes(plaintext);
+        var cipher = new byte[plain.Length];
+        var tag = new byte[16];
+        using var gcm = new AesGcm(key, 16);
+        gcm.Encrypt(nonce, plain, cipher, tag);
+
+        var output = new byte[3 + nonce.Length + tag.Length + cipher.Length];
+        output[0] = (byte)'V';
+        output[1] = (byte)'P';
+        output[2] = (byte)'1';
+        Buffer.BlockCopy(nonce, 0, output, 3, nonce.Length);
+        Buffer.BlockCopy(tag, 0, output, 15, tag.Length);
+        Buffer.BlockCopy(cipher, 0, output, 31, cipher.Length);
+        return output;
+    }
+
+    private string UnprotectTokens(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == (byte)'V' && bytes[1] == (byte)'P' && bytes[2] == (byte)'1')
+        {
+            var key = GetOrCreateKey();
+            var nonce = bytes.AsSpan(3, 12);
+            var tag = bytes.AsSpan(15, 16);
+            var cipher = bytes.AsSpan(31);
+            var plain = new byte[cipher.Length];
+            using var gcm = new AesGcm(key, 16);
+            gcm.Decrypt(nonce, cipher, tag, plain);
+            return Encoding.UTF8.GetString(plain);
+        }
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    private byte[] GetOrCreateKey()
+    {
+        var directory = Path.GetDirectoryName(_tokenKeyPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        if (File.Exists(_tokenKeyPath))
+        {
+            var existing = File.ReadAllBytes(_tokenKeyPath);
+            if (existing.Length == 32)
+            {
+                return existing;
+            }
+        }
+
+        var key = RandomNumberGenerator.GetBytes(32);
+        File.WriteAllBytes(_tokenKeyPath, key);
+        RestrictUserOnly(_tokenKeyPath);
+        return key;
+    }
+
+    private static void RestrictUserOnly(string path)
+    {
+        if (!File.Exists(path) || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
     private async Task ClearTokensAsync()

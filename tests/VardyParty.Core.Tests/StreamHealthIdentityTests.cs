@@ -92,6 +92,24 @@ public class StreamHealthIdentityTests
     }
 
     [Fact]
+    public void ResolveReportUrl_PrefersCatalogPageOverM3U8()
+    {
+        // Arrange
+        const string manifest = "https://cdn.example.com/live/playlist.m3u8?token=abc";
+        const string page = "https://streams.example.com/match.html";
+
+        // Act
+        var fromPair = StreamHealthIdentity.ResolveReportUrl(manifest, page);
+        var pageOnly = StreamHealthIdentity.ResolveReportUrl(page, null);
+        var manifestOnly = StreamHealthIdentity.ResolveReportUrl(manifest, null);
+
+        // Assert
+        Assert.Equal(page, fromPair);
+        Assert.Equal(page, pageOnly);
+        Assert.Equal(manifest, manifestOnly);
+    }
+
+    [Fact]
     public void MatchesRecommendation_RequiresLabel_WhenRecommendationIncludesStreamName()
     {
         // Arrange

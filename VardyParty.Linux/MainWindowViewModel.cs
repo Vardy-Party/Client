@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using QRCoder;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -706,20 +707,21 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         DeviceQrCode = null;
     }
 
-    private async Task<Bitmap?> GenerateQrCodeAsync(string value)
+    private Task<Bitmap?> GenerateQrCodeAsync(string value)
     {
         try
         {
-            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={Uri.EscapeDataString(value)}";
-            using var httpClient = new HttpClient();
-            var bytes = await httpClient.GetByteArrayAsync(qrUrl);
-            await using var stream = new MemoryStream(bytes);
-            return new Bitmap(stream);
+            using var qrGenerator = new QRCodeGenerator();
+            var qrData = qrGenerator.CreateQrCode(value, QRCodeGenerator.ECCLevel.Q);
+            var pngQr = new PngByteQRCode(qrData);
+            var pngBytes = pngQr.GetGraphic(8);
+            using var stream = new MemoryStream(pngBytes);
+            return Task.FromResult<Bitmap?>(new Bitmap(stream));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to generate device-flow QR code");
-            return null;
+            return Task.FromResult<Bitmap?>(null);
         }
     }
 

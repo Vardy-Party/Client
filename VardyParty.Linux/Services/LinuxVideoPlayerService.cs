@@ -7,8 +7,10 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using VardyParty.Models;
+using VardyParty.Playback;
 using VardyParty.Services;
 
 namespace VardyParty.Linux.Services
@@ -16,6 +18,9 @@ namespace VardyParty.Linux.Services
 public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
     private readonly ILogger<LinuxVideoPlayerService> _logger;
+    private readonly IStreamSwitchingService _switching;
+    private readonly PlaybackSessionController _session = new();
+    private readonly DelegatingMediaEngine _engine = new();
     private LibVLC? _libVLC;
     private MediaPlayer? _mediaPlayer;
     private Media? _currentMedia;
@@ -25,6 +30,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private string? _tempManifestPath;
     private EventHandler<LogEventArgs>? _libVlcLogHandler;
     private bool _libVlcLogAttached;
+    private string? _refererUrl;
+    private IReadOnlyDictionary<string, string>? _requestHeaders;
+    private Timer? _metricsTimer;
 
     private static readonly string[] SuspiciousStreamExtensions =
     {
@@ -41,9 +49,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     public MediaPlayer? MediaPlayer => _mediaPlayer;
 
-    public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger)
+    public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger, IStreamSwitchingService switching)
     {
         _logger = logger;
+        _switching = switching;
+        _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
+        _engine.MetricsHandler = GetCurrentMetrics;
+        _engine.AttachHandler = AttachLibVlcAsync;
         InitializeLibVLC();
         EnsureMediaPlayer();
     }
@@ -53,6 +65,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         try
         {
             _mediaPlayer?.Stop();
+            StopMetricsLoop();
             CleanupTemporaryManifest();
             PlaybackVisibilityChanged?.Invoke(this, false);
             _playbackTcs?.TrySetResult(new PlaybackResult
@@ -110,42 +123,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         _onNextStreamRequested = onNextStreamRequested;
         _playbackTcs = new TaskCompletionSource<PlaybackResult>();
+        _refererUrl = refererUrl;
+        _requestHeaders = requestHeaders;
 
         try
         {
-            // Clean up previous media if exists
-            _currentMedia?.Dispose();
-            _mediaPlayer?.Stop();
-            CleanupTemporaryManifest();
-
-            EnsureMediaPlayer();
-
-            _logger.LogInformation("[LinuxVideoPlayerService] Using direct playback URL (recovery mode)");
-
-            // Create media with options
-            var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
-            _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
-            
-            // Set HTTP Referer header
-            if (!string.IsNullOrWhiteSpace(refererUrl))
-            {
-                _currentMedia.AddOption($":http-referrer={refererUrl}");
-            }
-
-            // Set HTTP User-Agent
-            _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            _currentMedia.AddOption(":avcodec-hw=any");
-
-            // Ensure the video panel is visible before starting playback
-            PlaybackVisibilityChanged?.Invoke(this, true);
-
-            // Start playback
-            var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
-            mediaPlayer.Play(_currentMedia);
-
-            _logger.LogInformation("[LinuxVideoPlayerService] Playback started successfully");
-
-            // Wait for playback to complete or error
+            _session.Reset();
+            AttachViaSession(m3u8Url);
             var result = await _playbackTcs.Task;
             return result;
         }
@@ -161,11 +145,106 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
     }
 
+    private void DispatchEngine(MediaEngineEvent engineEvent)
+    {
+        try
+        {
+            ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] DispatchEngine failed ({Kind})", engineEvent.Kind);
+        }
+    }
+
+    private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
+    {
+        _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
+        ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.BeginAttach(url, usedCachedUrl, force)));
+    }
+
+    private void ApplyPlaybackCommand(PlaybackCommand cmd)
+    {
+        if (cmd.IsNoOp)
+            return;
+
+        try
+        {
+            if (cmd.ClearResolvedUrl)
+            {
+                var failed = _switching.GetCurrentStream();
+                if (failed != null)
+                    failed.ResolvedM3U8Url = null;
+            }
+
+            if (cmd.RemoveCurrentFromPool)
+                _switching.RemoveCurrentStream();
+
+            _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
+
+            if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
+                _ = _engine.AttachAsync(cmd.AttachUrl, _requestHeaders);
+            else if (cmd.AttachCurrentAfterRemove)
+            {
+                var url = _switching.GetCurrentStream()?.ResolvedM3U8Url;
+                if (!string.IsNullOrWhiteSpace(url))
+                    AttachViaSession(url, usedCachedUrl: false, force: true);
+            }
+
+            if (cmd.Stop)
+                _mediaPlayer?.Stop();
+
+            if (cmd.CloseSession)
+            {
+                PlaybackVisibilityChanged?.Invoke(this, false);
+                _playbackTcs?.TrySetResult(PlaybackResult.Completed(cmd.CloseReason ?? cmd.Reason ?? "Playback failed", true));
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
+        }
+
+        if (cmd.SwitchPoolToNext && _onNextStreamRequested != null)
+            _ = _onNextStreamRequested();
+        else if (cmd.SwitchPoolToPrevious)
+            _switching.SwitchToPreviousStream();
+    }
+
+    private Task AttachLibVlcAsync(
+        string m3u8Url,
+        IReadOnlyDictionary<string, string>? requestHeaders,
+        CancellationToken cancellationToken)
+    {
+        _currentMedia?.Dispose();
+        _mediaPlayer?.Stop();
+        CleanupTemporaryManifest();
+        EnsureMediaPlayer();
+
+        var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
+        _currentMedia = new Media(mediaLibVlc, new Uri(m3u8Url));
+
+        if (!string.IsNullOrWhiteSpace(_refererUrl))
+            _currentMedia.AddOption($":http-referrer={_refererUrl}");
+
+        _currentMedia.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        _currentMedia.AddOption(":avcodec-hw=any");
+
+        PlaybackVisibilityChanged?.Invoke(this, true);
+        var mediaPlayer = _mediaPlayer ?? throw new InvalidOperationException("MediaPlayer is not initialized");
+        mediaPlayer.Play(_currentMedia);
+        _logger.LogInformation("[LinuxVideoPlayerService] Requested LibVLC attach for {Url}", m3u8Url);
+        return Task.CompletedTask;
+    }
+
     private void OnPlaying(object? sender, EventArgs e)
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
         PlaybackVisibilityChanged?.Invoke(this, true);
         SetBufferingState(false);
+        _engine.Raise(MediaEngineEvent.Ready(_session.Snapshot.AttachGeneration));
+        StartMetricsLoop();
     }
 
     private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e)
@@ -173,48 +252,25 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         var isBuffering = e.Cache < 100f;
         _logger.LogDebug("[LinuxVideoPlayerService] Buffering: {Percentage}%", e.Cache);
         SetBufferingState(isBuffering);
+        _engine.Raise(MediaEngineEvent.Buffering(_session.Snapshot.AttachGeneration, isBuffering));
     }
 
     private void OnEncounteredError(object? sender, EventArgs e)
     {
         _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
+        StopMetricsLoop();
         CleanupTemporaryManifest();
-        PlaybackVisibilityChanged?.Invoke(this, false);
-        
-        _playbackTcs?.TrySetResult(new PlaybackResult
-        {
-            Success = false,
-            Message = "Stream playback failed"
-        });
+        _engine.Raise(MediaEngineEvent.Error(_session.Snapshot.AttachGeneration, "Stream playback failed"));
     }
 
-    private async void OnEndReached(object? sender, EventArgs e)
+    private void OnEndReached(object? sender, EventArgs e)
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Playback ended");
+        StopMetricsLoop();
         CleanupTemporaryManifest();
-
-        // Try to play next stream if callback provided
-        if (_onNextStreamRequested != null)
-        {
-            _logger.LogInformation("[LinuxVideoPlayerService] Requesting next stream...");
-            try
-            {
-                await _onNextStreamRequested.Invoke();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[LinuxVideoPlayerService] Error requesting next stream");
-            }
-        }
-        else
-        {
-            PlaybackVisibilityChanged?.Invoke(this, false);
-            _playbackTcs?.TrySetResult(new PlaybackResult
-            {
-                Success = true,
-                Message = "Playback completed"
-            });
-        }
+        _engine.Raise(MediaEngineEvent.Ended(_session.Snapshot.AttachGeneration));
+        PlaybackVisibilityChanged?.Invoke(this, false);
+        _playbackTcs?.TrySetResult(PlaybackResult.SuccessResult("Playback completed"));
     }
 
     private void SetBufferingState(bool isBuffering)
@@ -282,9 +338,36 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
     }
 
+    private void StartMetricsLoop()
+    {
+        StopMetricsLoop();
+        _metricsTimer = new Timer(_ =>
+        {
+            try
+            {
+                var metrics = GetCurrentMetrics();
+                _engine.Raise(MediaEngineEvent.Metrics(
+                    _session.Snapshot.AttachGeneration,
+                    metrics?.BitrateKbps,
+                    _isBuffering));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Metrics raise failed");
+            }
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private void StopMetricsLoop()
+    {
+        _metricsTimer?.Dispose();
+        _metricsTimer = null;
+    }
+
     public void Dispose()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Disposing");
+        StopMetricsLoop();
 
         try
         {

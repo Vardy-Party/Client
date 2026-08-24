@@ -29,6 +29,33 @@ public static class StreamHealthIdentity
 
     public static string NormalizeStreamUrl(string url) => NormalizeUrl(url);
 
+    /// <summary>
+    /// Crowd health keys on the catalog/page URL. Ephemeral M3U8/DASH URLs must not be the identity.
+    /// </summary>
+    public static bool IsEphemeralPlaybackUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        var path = NormalizeUrl(url);
+        return path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
+               || path.EndsWith(".mpd", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string? ResolveReportUrl(string? streamUrl, string? refererUrl)
+    {
+        if (IsEphemeralPlaybackUrl(streamUrl)
+            && !string.IsNullOrWhiteSpace(refererUrl)
+            && !IsEphemeralPlaybackUrl(refererUrl))
+        {
+            return refererUrl;
+        }
+
+        return !string.IsNullOrWhiteSpace(streamUrl) ? streamUrl : refererUrl;
+    }
+
     public static string BuildStreamKey(string streamUrl, string? streamName = null)
     {
         var normalizedUrl = NormalizeUrl(streamUrl);

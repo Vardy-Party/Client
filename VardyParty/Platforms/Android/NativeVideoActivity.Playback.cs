@@ -11,6 +11,7 @@ namespace VardyParty.Platforms.Android
     public partial class NativeVideoActivity
     {
         private readonly PlaybackSessionController _session = new();
+        private readonly DelegatingMediaEngine _engine = new();
         private bool _suppressIndexDrivenSwitch;
 
         private long CurrentAttachGeneration => _session.Snapshot.AttachGeneration;
@@ -86,11 +87,11 @@ namespace VardyParty.Platforms.Android
                 if (cmd.AttachIsRevert && !string.IsNullOrWhiteSpace(cmd.AttachUrl))
                 {
                     _logger?.LogWarning("[NativeVideoActivity] Reverting to last good stream: {Url}", cmd.AttachUrl);
-                    AttachEngine(cmd.AttachUrl);
+                    _ = _engine.AttachAsync(cmd.AttachUrl);
                 }
                 else if (!cmd.AttachIsRevert && !string.IsNullOrWhiteSpace(cmd.AttachUrl))
                 {
-                    AttachEngine(cmd.AttachUrl);
+                    _ = _engine.AttachAsync(cmd.AttachUrl);
                 }
                 else if (cmd.AttachCurrentAfterRemove)
                 {
@@ -343,7 +344,7 @@ namespace VardyParty.Platforms.Android
                         _logger?.LogError(ex, "[NativeVideoActivity] AttachEngine failed");
                         var generation = CurrentAttachGeneration;
                         var message = ex.Message;
-                        _playerView?.Post(() => DispatchEngine(MediaEngineEvent.Error(generation, message)));
+                        _playerView?.Post(() => _engine.Raise(MediaEngineEvent.Error(generation, message)));
                     }
                 });
             }

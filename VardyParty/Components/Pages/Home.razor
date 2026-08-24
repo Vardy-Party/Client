@@ -4,7 +4,8 @@
 @inject SelectionState Selection
 @inject ILogger<Home> Logger
 @inject IStreamResolutionOrchestrator StreamResolutionOrchestrator
-@inject IServiceProvider ServiceProvider
+@inject IOverlayCloseService OverlayClose
+@inject IHomePagePresentationService HomePresentation
 @inject IAuthLoginService AuthLoginService
 @inject IAuthTokenProvider AuthTokenProvider
 @inject ILocalLanServiceAvailabilityMonitor LocalLanServiceAvailabilityMonitor
@@ -380,20 +381,15 @@
 
         Logger.LogInformation("[Home] OnInitialized complete (authenticated={Authenticated})", isAuthenticated);
         ApplyPlaybackErrorFromQuery();
-        if (OperatingSystem.IsWindows())
+        try
         {
-            try
-            {
-                _overlayCloseService = ServiceProvider?.GetService(typeof(IOverlayCloseService)) as IOverlayCloseService;
-                if (_overlayCloseService != null)
-                {
-                    _overlayCloseService.CloseRequested -= OnOverlayCloseRequested;
-                    _overlayCloseService.CloseRequested += OnOverlayCloseRequested;
-                }
-            }
-            catch
-            {
-            }
+            _overlayCloseService = OverlayClose;
+            _overlayCloseService.CloseRequested -= OnOverlayCloseRequested;
+            _overlayCloseService.CloseRequested += OnOverlayCloseRequested;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "[Home] Overlay close subscribe failed");
         }
         // Subscribe to Android remote Back while on Home so Back cancels stream resolution when visible
 #if ANDROID
@@ -1059,21 +1055,12 @@
     {
         isLoading = true;
 
-        var enrichedGameService = (IEnrichedGameService?)ServiceProvider?.GetService(typeof(IEnrichedGameService));
-        if (enrichedGameService is EnrichedGameService svc)
+        if (GameService is EnrichedGameService svc)
         {
             svc.StartBackgroundPolling();
         }
 
-        var presentation = (IHomePagePresentationService?)ServiceProvider?.GetService(typeof(IHomePagePresentationService));
-        if (presentation != null)
-        {
-            _gamesSubscription = presentation.DisplayStream.Subscribe(OnGamesUpdatedFlattened);
-        }
-        else
-        {
-            _gamesSubscription = GameService.GamesStream.Subscribe(OnGamesUpdated);
-        }
+        _gamesSubscription = HomePresentation.DisplayStream.Subscribe(OnGamesUpdatedFlattened);
 
         _errorSubscription = GameService.ErrorStream.Subscribe(OnErrorUpdated);
     }

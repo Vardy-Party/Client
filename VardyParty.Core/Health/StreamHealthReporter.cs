@@ -66,7 +66,7 @@ public class StreamHealthReporter(
         var game = selectionState.CurrentGame;
         if (game == null) return;
 
-        var resolvedStreamUrl = ResolveStreamUrl(streamUrl, refererUrl);
+        var resolvedStreamUrl = StreamHealthIdentity.ResolveReportUrl(streamUrl, refererUrl);
         if (string.IsNullOrWhiteSpace(resolvedStreamUrl)) return;
 
         var report = new StreamHealthReport
@@ -94,11 +94,6 @@ public class StreamHealthReporter(
             game.Away,
             report,
             cancellationToken);
-    }
-
-    private static string? ResolveStreamUrl(string? streamUrl, string? refererUrl)
-    {
-        return !string.IsNullOrWhiteSpace(streamUrl) ? streamUrl : refererUrl;
     }
 
     private static string? DetectQuality(PlaybackMetrics? metrics)

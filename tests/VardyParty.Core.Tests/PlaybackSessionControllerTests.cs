@@ -583,6 +583,23 @@ public class PlaybackSessionControllerTests
     }
 
     [Fact]
+    public void NotifyDownloadSuccess_ResetsConsecutiveFailures()
+    {
+        // Arrange
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(2);
+        session.BeginAttach("https://cdn.example.com/a.m3u8");
+        session.NotifyDownloadFailure();
+        session.NotifyDownloadFailure();
+
+        // Act
+        session.NotifyDownloadSuccess();
+
+        // Assert
+        Assert.Equal(0, session.Snapshot.ConsecutiveDownloadFailures);
+    }
+
+    [Fact]
     public void Reset_ReturnsToIdle()
     {
         // Arrange

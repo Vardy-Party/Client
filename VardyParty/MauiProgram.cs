@@ -3,6 +3,7 @@ using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using VardyParty;
 using VardyParty.Components.Pages;
@@ -61,6 +62,14 @@ public static class MauiProgram
     private static HttpClientHandler CreateHeadlessHttpClientHandler(APISettings apiSettings)
     {
         var handler = new HttpClientHandler();
+
+#if !DEBUG
+        if (apiSettings.IgnoreSslCertificateErrors)
+        {
+            Console.WriteLine("[MauiProgram] IgnoreSslCertificateErrors is ignored in Release builds");
+            apiSettings.IgnoreSslCertificateErrors = false;
+        }
+#endif
 
         if (!apiSettings.IgnoreSslCertificateErrors)
         {
@@ -221,13 +230,13 @@ public static class MauiProgram
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.Windows.WindowsVideoPlayerService>();
-            // Register windows overlay close service for native close control in overlay
             builder.Services.AddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
 #elif IOS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.iOS.IosVideoPlayerService>();
 #elif MACCATALYST
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.MacCatalyst.MacCatalystVideoPlayerService>();
 #endif
+        builder.Services.TryAddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Services.NullOverlayCloseService>();
 
         builder.Services.AddTransient<M3U8HttpHandler>();
 

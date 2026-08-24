@@ -26,11 +26,22 @@ namespace VardyParty.Platforms.Android
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
         public NativeVideoActivity() : this(ResolveSwitching(), ResolveLogger()) { }
 
-        public NativeVideoActivity(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger)
+        public NativeVideoActivity(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger, IStreamHealthReporter? healthReporter = null)
         {
             _switching = switching;
             _logger = logger;
-            _healthReporter = ResolveHealthReporter();
+            _healthReporter = healthReporter ?? ResolveHealthReporter();
+            _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
+            _engine.AttachHandler = (url, _, _) =>
+            {
+                AttachEngine(url);
+                return Task.CompletedTask;
+            };
+            _engine.StopHandler = _ =>
+            {
+                StopAndReleasePlayer(release: false);
+                return Task.CompletedTask;
+            };
         }
 
         private static string? MapCodecToFriendlyName(string? codec)
@@ -141,14 +152,11 @@ namespace VardyParty.Platforms.Android
         }
 
         // Support post-construction injection for true constructor-like DI via activity factory / lifecycle hook
-        public void InjectServices(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger)
+        public void InjectServices(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger, IStreamHealthReporter? healthReporter = null)
         {
-            try
-            {
-                if (switching != null) _switching = switching;
-                if (logger != null) _logger = logger;
-            }
-            catch { }
+            if (switching != null) _switching = switching;
+            if (logger != null) _logger = logger;
+            if (healthReporter != null) _healthReporter = healthReporter;
         }
 
         // Test helpers / query methods to allow unit testing decision logic without running Android UI
@@ -159,7 +167,15 @@ namespace VardyParty.Platforms.Android
 
         private static IStreamSwitchingService? ResolveSwitching()
         {
-            try { return VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamSwitchingService)) as IStreamSwitchingService; } catch { return null; }
+            try
+            {
+                return VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamSwitchingService)) as IStreamSwitchingService;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NativeVideoActivity] ResolveSwitching failed: {ex.Message}");
+                return null;
+            }
         }
 
         private static ILogger<NativeVideoActivity>? ResolveLogger()
@@ -169,7 +185,11 @@ namespace VardyParty.Platforms.Android
                 var lf = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
                 return lf?.CreateLogger<NativeVideoActivity>();
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NativeVideoActivity] ResolveLogger failed: {ex.Message}");
+                return null;
+            }
         }
 
         private static IStreamHealthReporter? ResolveHealthReporter()
@@ -178,7 +198,11 @@ namespace VardyParty.Platforms.Android
             {
                 return VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IStreamHealthReporter)) as IStreamHealthReporter;
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NativeVideoActivity] ResolveHealthReporter failed: {ex.Message}");
+                return null;
+            }
         }
 
         private IExoPlayer? _player;
@@ -1279,7 +1303,7 @@ namespace VardyParty.Platforms.Android
                     var bitrate = metrics.BitrateKbps;
                     var buffering = metrics.IsBuffering;
                     RunOnUiThread(() =>
-                        DispatchEngine(MediaEngineEvent.Metrics(generation, bitrate, buffering)));
+                        _engine.Raise(MediaEngineEvent.Metrics(generation, bitrate, buffering)));
                 }
                 catch { }
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -1510,22 +1534,12 @@ namespace VardyParty.Platforms.Android
                     || (SameTeam(home, _currentAwayTeam) && SameTeam(away, _currentHomeTeam));
             }
 
-            bool IsSameLeague(Game game)
-            {
-                if (string.IsNullOrWhiteSpace(_currentLeague)) return true;
-                return string.Equals((game.DisplayLeague ?? string.Empty).Trim(), _currentLeague.Trim(), StringComparison.OrdinalIgnoreCase);
-            }
-
-            bool IsInPlay(Game game)
-            {
-                if (game.IsFinished || game.IsPostponed) return false;
-                return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
-            }
+            bool IsSameLeague(Game game) => ScoresTickerPolicy.IsSameLeague(game, _currentLeague);
 
             return snapshot.Values
                 .SelectMany(g => g)
                 .Where(IsSameLeague)
-                .Where(IsInPlay)
+                .Where(ScoresTickerPolicy.IsInPlay)
                 .Where(g => !IsCurrentGame(g))
                 .OrderByDescending(g => g.LiveMinuteForOrdering)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1542,7 +1556,7 @@ namespace VardyParty.Platforms.Android
             }
 
             return games
-                .Where(IsInPlayGame)
+                .Where(ScoresTickerPolicy.IsInPlay)
                 .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(g => g.LiveMinuteForOrdering)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1559,7 +1573,7 @@ namespace VardyParty.Platforms.Android
             }
 
             return games
-                .Where(g => g.IsFinished && g.HomeScore.HasValue && g.AwayScore.HasValue)
+                .Where(g => ScoresTickerPolicy.IsFinishedWithScore(g))
                 .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(g => g.StartUtcForOrdering)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1576,7 +1590,7 @@ namespace VardyParty.Platforms.Android
             }
 
             return games
-                .Where(IsUpcomingGame)
+                .Where(ScoresTickerPolicy.IsUpcoming)
                 .OrderBy(g => g.StartUtcForOrdering)
                 .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1592,18 +1606,6 @@ namespace VardyParty.Platforms.Android
                     ? new List<Game>()
                     : _latestGamesByLeague.Values.SelectMany(v => v).ToList();
             }
-        }
-
-        private static bool IsInPlayGame(Game game)
-        {
-            if (game.IsFinished || game.IsPostponed) return false;
-            return game.IsInProgress || game.IsHalfTime || game.Minute.HasValue;
-        }
-
-        private static bool IsUpcomingGame(Game game)
-        {
-            if (game.IsFinished || game.IsPostponed) return false;
-            return !game.IsInProgress && !game.IsHalfTime && !game.Minute.HasValue;
         }
 
         private static string FormatScore(Game game)
@@ -1684,13 +1686,7 @@ namespace VardyParty.Platforms.Android
 
         private void CycleScoresTickerMode()
         {
-            _scoresTickerMode = _scoresTickerMode switch
-            {
-                ScoresTickerMode.SameLeagueInPlay => ScoresTickerMode.AllLeaguesInPlay,
-                ScoresTickerMode.AllLeaguesInPlay => ScoresTickerMode.AllFinished,
-                ScoresTickerMode.AllFinished => ScoresTickerMode.AllUpcoming,
-                _ => ScoresTickerMode.SameLeagueInPlay
-            };
+            _scoresTickerMode = ScoresTickerPolicy.Next(_scoresTickerMode);
 
             if (_isScoresTickerVisible)
             {
@@ -2103,7 +2099,7 @@ namespace VardyParty.Platforms.Android
                     _activity.HideBufferingIndicator();
                     _activity._isPreparing = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
-                    _activity.DispatchEngine(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
+                    _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
                     // Update overlay UI now that player is ready
@@ -2152,7 +2148,7 @@ namespace VardyParty.Platforms.Android
                     }
                     catch { }
 
-                    _activity.DispatchEngine(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
+                    _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
             }
 
@@ -2181,14 +2177,14 @@ namespace VardyParty.Platforms.Android
                         _activity._isBuffering = true;
                         _activity.ShowBufferingIndicator();
                         _activity.HideOverlayAnimated();
-                        _activity.DispatchEngine(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
+                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
                     }
                     else if (_activity._player?.PlaybackState == PlayerStateReady)
                     {
                         _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
                         _activity._isBuffering = false;
                         _activity.HideBufferingIndicator();
-                        _activity.DispatchEngine(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
+                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
                     }
 
                     var last = _activity._lastOverlayInfo;
@@ -2224,7 +2220,7 @@ namespace VardyParty.Platforms.Android
                     _activity._isBuffering = false;
                     _activity._isPreparing = false;
                     _activity.HideBufferingIndicator();
-                    _activity.DispatchEngine(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
+                    _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
                 catch { }
             }
@@ -2240,14 +2236,6 @@ namespace VardyParty.Platforms.Android
             public void OnTimelineChanged(Timeline? timeline, int reason) { }
             public void OnVolumeChanged(float volume) { }
         }
-    }
-
-    internal enum ScoresTickerMode
-    {
-        SameLeagueInPlay,
-        AllLeaguesInPlay,
-        AllFinished,
-        AllUpcoming
     }
 }
 #endif

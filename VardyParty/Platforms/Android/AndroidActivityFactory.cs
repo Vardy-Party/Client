@@ -24,11 +24,14 @@ namespace VardyParty.Platforms.Android
 
                 if (activity is NativeVideoActivity nva)
                 {
-                    // prefer constructor-like injection via method
-                    nva.InjectServices(switching, logger);
+                    var health = provider.GetService<IStreamHealthReporter>();
+                    nva.InjectServices(switching, logger, health);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AndroidActivityFactory] Inject failed: {ex.Message}");
+            }
         }
     }
 }

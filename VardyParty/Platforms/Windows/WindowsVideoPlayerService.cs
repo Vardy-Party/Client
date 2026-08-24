@@ -14,6 +14,7 @@ using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using VardyParty.Extensions;
 using VardyParty.Health;
 using VardyParty.Models;
+using VardyParty.Playback;
 using System.Text.RegularExpressions;
 
 namespace VardyParty.Platforms.Windows
@@ -153,6 +154,9 @@ namespace VardyParty.Platforms.Windows
 
                 var switchingService = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
                 var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
+                var session = new PlaybackSessionController();
+                var engine = new DelegatingMediaEngine();
+                engine.MetricsHandler = () => GetCurrentMetrics();
                 IDisposable? healthyStreamsSubscription = null;
                 IDisposable? currentIndexSubscription = null;
                 IDisposable? gamesSubscription = null;
@@ -178,7 +182,7 @@ namespace VardyParty.Platforms.Windows
                 const double tickerSpeedPerTickPx = 1.5;
                 Dictionary<string, List<Game>>? latestGamesByLeague = null;
                 var gamesLock = new object();
-                var scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
+                var scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
 
                 static string? StripTickerFlags(string? value) =>
                     string.IsNullOrWhiteSpace(value)
@@ -223,10 +227,7 @@ namespace VardyParty.Platforms.Windows
                 bool isPointerNearNextButton = false;
                 bool isNextStreamRequestInProgress = false;
                 bool suppressIndexDrivenSwitch = false;
-                int playbackGeneration = 0;
-                int lastAttachedGeneration = 0;
-                bool hasEstablishedPlayback = false;
-                string? lastGoodPlaybackUrl = m3u8Url;
+                var lastMetricsRaiseUtc = DateTime.MinValue;
                 var playbackSwitchLock = new SemaphoreSlim(1, 1);
                 AdaptiveMediaSource? activeAdaptiveMediaSource = null;
                 TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs>? activeDownloadHandler = null;
@@ -971,22 +972,12 @@ namespace VardyParty.Platforms.Windows
                         return InternationalTeamDisplay.TextParts("In-play games: No same-league live scores available.").ToList();
                     }
 
-                    bool IsSameLeague(Game g)
-                    {
-                        if (string.IsNullOrWhiteSpace(watchedLeagueName)) return true;
-                        return string.Equals((g.DisplayLeague ?? string.Empty).Trim(), watchedLeagueName.Trim(), StringComparison.OrdinalIgnoreCase);
-                    }
-
-                    bool IsInPlay(Game g)
-                    {
-                        if (g.IsFinished || g.IsPostponed) return false;
-                        return g.IsInProgress || g.IsHalfTime || g.Minute.HasValue;
-                    }
+                    bool IsSameLeague(Game g) => ScoresTickerPolicy.IsSameLeague(g, watchedLeagueName);
 
                     var lines = snapshot.Values
                         .SelectMany(v => v)
                         .Where(IsSameLeague)
-                        .Where(IsInPlay)
+                        .Where(ScoresTickerPolicy.IsInPlay)
                         .Where(g => !IsCurrentGame(g))
                         .OrderByDescending(g => g.LiveMinuteForOrdering)
                         .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1017,7 +1008,7 @@ namespace VardyParty.Platforms.Windows
                     }
 
                     var lines = allGames
-                        .Where(g => !g.IsFinished && !g.IsPostponed && (g.IsInProgress || g.IsHalfTime || g.Minute.HasValue))
+                        .Where(ScoresTickerPolicy.IsInPlay)
                         .Where(g => !IsCurrentGame(g))
                         .DistinctBy(BuildAllLeaguesTickerDedupeKey)
                         .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
@@ -1048,7 +1039,7 @@ namespace VardyParty.Platforms.Windows
                     }
 
                     var lines = allGames
-                        .Where(g => g.IsFinished && g.HomeScore.HasValue && g.AwayScore.HasValue)
+                        .Where(ScoresTickerPolicy.IsFinishedWithScore)
                         .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
                         .ThenByDescending(g => g.StartUtcForOrdering)
                         .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
@@ -1109,17 +1100,17 @@ namespace VardyParty.Platforms.Windows
 
                 List<TickerDisplayPart> BuildCurrentModeTickerParts() => scoresTickerMode switch
                 {
-                    WindowsScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerParts(),
-                    WindowsScoresTickerMode.AllFinished      => BuildFinishedScoresTickerParts(),
-                    WindowsScoresTickerMode.AllUpcoming      => BuildUpcomingTickerParts(),
+                    ScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerParts(),
+                    ScoresTickerMode.AllFinished      => BuildFinishedScoresTickerParts(),
+                    ScoresTickerMode.AllUpcoming      => BuildUpcomingTickerParts(),
                     _                                        => BuildSameLeagueTickerParts()
                 };
 
-                List<TickerDisplayPart> GetTickerEmptyParts(WindowsScoresTickerMode mode) => mode switch
+                List<TickerDisplayPart> GetTickerEmptyParts(ScoresTickerMode mode) => mode switch
                 {
-                    WindowsScoresTickerMode.AllLeaguesInPlay => InternationalTeamDisplay.TextParts("All leagues in-play: No live games right now.").ToList(),
-                    WindowsScoresTickerMode.AllFinished      => InternationalTeamDisplay.TextParts("Finished games: No finished games right now.").ToList(),
-                    WindowsScoresTickerMode.AllUpcoming      => InternationalTeamDisplay.TextParts("Upcoming games: No unstarted games in the schedule window.").ToList(),
+                    ScoresTickerMode.AllLeaguesInPlay => InternationalTeamDisplay.TextParts("All leagues in-play: No live games right now.").ToList(),
+                    ScoresTickerMode.AllFinished      => InternationalTeamDisplay.TextParts("Finished games: No finished games right now.").ToList(),
+                    ScoresTickerMode.AllUpcoming      => InternationalTeamDisplay.TextParts("Upcoming games: No unstarted games in the schedule window.").ToList(),
                     _                                        => InternationalTeamDisplay.TextParts(
                         string.IsNullOrWhiteSpace(watchedLeagueName)
                             ? "In-play: No other live games right now."
@@ -1320,7 +1311,7 @@ namespace VardyParty.Platforms.Windows
                         if (isScoresTickerVisible)
                         {
                             RefreshGamesSnapshot();
-                            scoresTickerMode = WindowsScoresTickerMode.SameLeagueInPlay;
+                            scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
                             RefreshTickerText(resetOffset: true);
                         }
                         else
@@ -1339,13 +1330,7 @@ namespace VardyParty.Platforms.Windows
 
                 void CycleScoresTickerMode()
                 {
-                    scoresTickerMode = scoresTickerMode switch
-                    {
-                        WindowsScoresTickerMode.SameLeagueInPlay => WindowsScoresTickerMode.AllLeaguesInPlay,
-                        WindowsScoresTickerMode.AllLeaguesInPlay => WindowsScoresTickerMode.AllFinished,
-                        WindowsScoresTickerMode.AllFinished      => WindowsScoresTickerMode.AllUpcoming,
-                        _                                        => WindowsScoresTickerMode.SameLeagueInPlay
-                    };
+                    scoresTickerMode = ScoresTickerPolicy.Next(scoresTickerMode);
 
                     if (isScoresTickerVisible)
                     {
@@ -1452,119 +1437,196 @@ namespace VardyParty.Platforms.Windows
                     tcs.TrySetResult(PlaybackResult.Completed(message, true));
                 }
 
-                async Task RevertToLastGoodStreamAsync(string reason)
+                void SyncHealthyStreamCount()
                 {
-                    WindowsEventLogger.Warning("VideoPlayer", reason);
-                    ShowStreamError(reason);
-                    // Do not call SwitchToPreviousStream here — that races CurrentStreamIndexChanged
-                    // against this forced attach and can leave the player on a cleared source.
-                    if (string.IsNullOrWhiteSpace(lastGoodPlaybackUrl)) return;
-                    await StartPlaybackAsync(lastGoodPlaybackUrl, force: true, isRevertAttempt: true);
+                    session.SetHealthyStreamCount(switchingService?.GetHealthyStreams().Count ?? 0);
                 }
 
-                async Task RecoverFromFailedSwitchAsync(string reason)
+                void DispatchEngine(MediaEngineEvent engineEvent)
                 {
-                    WindowsEventLogger.Warning("VideoPlayer", reason);
-                    ShowStreamError(reason);
+                    try
+                    {
+                        ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.Handle(engineEvent)));
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("VideoPlayer", $"DispatchEngine failed ({engineEvent.Kind})", ex);
+                    }
+                }
+
+                void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
+                {
+                    SyncHealthyStreamCount();
+                    ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
+                }
+
+                void ApplyPlaybackCommand(PlaybackCommand cmd)
+                {
+                    if (cmd.IsNoOp)
+                        return;
 
                     suppressIndexDrivenSwitch = true;
                     try
                     {
-                        try
+                        if (cmd.ClearResolvedUrl)
                         {
                             var failed = switchingService?.GetCurrentStream();
                             if (failed != null)
-                            {
                                 failed.ResolvedM3U8Url = null;
-                            }
+                        }
 
-                            // Drop the dead switch target so we don't keep cycling it.
+                        if (cmd.RemoveCurrentFromPool)
                             switchingService?.RemoveCurrentStream();
-                        }
-                        catch (Exception ex)
-                        {
-                            WindowsEventLogger.Error("VideoPlayer", "Failed to drop broken stream after switch failure", ex);
-                        }
 
-                        // Restore picture immediately from the last good manifest. Upcoming
-                        // candidates are background-prefetched so the next Next click stays fast.
-                        await RevertToLastGoodStreamAsync("Switch failed — reverted to last good stream.");
-                    }
-                    finally
-                    {
-                        suppressIndexDrivenSwitch = false;
-                    }
-                }
+                        SyncHealthyStreamCount();
 
-                async Task RecoverFromFailedStartAsync(string reason)
-                {
-                    WindowsEventLogger.Warning("VideoPlayer", reason);
-                    ShowStreamError(reason);
+                        if (cmd.ReportFailed || cmd.ReportDeclined)
+                            ShowStreamError(cmd.Reason ?? "Playback error");
 
-                    suppressIndexDrivenSwitch = true;
-                    try
-                    {
-                        try
+                        if (cmd.RaiseBuffering)
+                            BufferingStateChanged?.Invoke(this, cmd.IsBuffering);
+
+                        if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
                         {
-                            var failed = switchingService?.GetCurrentStream();
-                            if (failed != null)
-                            {
-                                failed.ResolvedM3U8Url = null;
-                            }
+                            if (cmd.AttachIsRevert)
+                                WindowsEventLogger.Warning("VideoPlayer", $"Reverting to last good stream: {cmd.AttachUrl}");
+                            _ = engine.AttachAsync(cmd.AttachUrl, requestHeaders);
                         }
-                        catch (Exception ex)
+                        else if (cmd.AttachCurrentAfterRemove)
                         {
-                            WindowsEventLogger.Error("VideoPlayer", "Failed to clear broken start URL", ex);
+                            _ = AttachCurrentFromPoolAsync();
                         }
 
-                        var remaining = switchingService?.GetHealthyStreams().Count ?? 0;
-                        if (onNextStreamRequested != null && remaining > 1 && !isNextStreamRequestInProgress)
+                        if (cmd.RetryFreshResolve)
+                            _ = RetryFreshResolveAsync();
+
+                        if (cmd.Stop)
                         {
-                            isNextStreamRequestInProgress = true;
                             try
                             {
-                                // Advance to the next candidate with a fresh m3u8 resolve.
-                                await onNextStreamRequested();
-                                return;
+                                mediaPlayer.Pause();
+                                mediaPlayer.Source = null;
                             }
                             catch (Exception ex)
                             {
-                                WindowsEventLogger.Error("VideoPlayer", "Auto-advance after start failure failed", ex);
-                            }
-                            finally
-                            {
-                                isNextStreamRequestInProgress = false;
+                                WindowsEventLogger.Warning("VideoPlayer", "Stop engine failed", ex);
                             }
                         }
 
-                        ClosePlayerSession(reason);
-                    }
-                    finally
-                    {
-                        suppressIndexDrivenSwitch = false;
-                    }
-                }
-
-                async Task HandleActiveStreamFailureAsync(string message)
-                {
-                    WindowsEventLogger.Warning("VideoPlayer", message);
-                    ShowStreamError(message);
-                    try
-                    {
-                        if (onNextStreamRequested != null && !isNextStreamRequestInProgress)
+                        if (cmd.CloseSession)
                         {
-                            isNextStreamRequestInProgress = true;
-                            try { await onNextStreamRequested(); }
-                            finally { isNextStreamRequestInProgress = false; }
+                            ClosePlayerSession(cmd.CloseReason ?? cmd.Reason ?? "Playback failed");
                             return;
                         }
                     }
                     catch (Exception ex)
                     {
-                        WindowsEventLogger.Error("VideoPlayer", "Auto-advance after stream failure failed", ex);
+                        WindowsEventLogger.Error("VideoPlayer", "ApplyPlaybackCommand failed", ex);
+                    }
+                    finally
+                    {
+                        suppressIndexDrivenSwitch = false;
                     }
 
-                    await RevertToLastGoodStreamAsync("Stream failed — reverted to last good stream.");
+                    if (cmd.SwitchPoolToNext)
+                    {
+                        if (onNextStreamRequested != null && !isNextStreamRequestInProgress)
+                        {
+                            isNextStreamRequestInProgress = true;
+                            _ = InvokeNextStreamAsync();
+                        }
+                    }
+                    else if (cmd.SwitchPoolToPrevious)
+                    {
+                        switchingService?.SwitchToPreviousStream();
+                    }
+                }
+
+                async Task InvokeNextStreamAsync()
+                {
+                    try
+                    {
+                        if (onNextStreamRequested != null)
+                            await onNextStreamRequested();
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("VideoPlayer", "Auto-advance after session command failed", ex);
+                    }
+                    finally
+                    {
+                        isNextStreamRequestInProgress = false;
+                    }
+                }
+
+                async Task AttachCurrentFromPoolAsync()
+                {
+                    try
+                    {
+                        var current = switchingService?.GetCurrentStream();
+                        if (current == null)
+                            return;
+
+                        var url = current.ResolvedM3U8Url;
+                        if (string.IsNullOrWhiteSpace(url) && current.Stream != null)
+                        {
+                            url = await ResolveFreshM3U8Async(current);
+                            if (!string.IsNullOrWhiteSpace(url))
+                                current.ResolvedM3U8Url = url;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(url))
+                        {
+                            WindowsEventLogger.Warning("VideoPlayer", "No URL after remove — cannot attach next stream");
+                            return;
+                        }
+
+                        MainThread.BeginInvokeOnMainThread(() => AttachViaSession(url, usedCachedUrl: false, force: true));
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("VideoPlayer", "AttachCurrentFromPoolAsync failed", ex);
+                    }
+                }
+
+                async Task RetryFreshResolveAsync()
+                {
+                    try
+                    {
+                        var current = switchingService?.GetCurrentStream();
+                        var fresh = current != null ? await ResolveFreshM3U8Async(current) : null;
+                        if (string.IsNullOrWhiteSpace(fresh) ||
+                            !PlaybackPolicy.ShouldAcceptFreshM3U8(session.Snapshot.CurrentUrl, fresh))
+                        {
+                            MainThread.BeginInvokeOnMainThread(() =>
+                                ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.NotifyFreshResolveUnavailable())));
+                            return;
+                        }
+
+                        if (current != null)
+                            current.ResolvedM3U8Url = fresh;
+
+                        MainThread.BeginInvokeOnMainThread(() => AttachViaSession(fresh, usedCachedUrl: false, force: true));
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("VideoPlayer", "RetryFreshResolveAsync failed", ex);
+                        MainThread.BeginInvokeOnMainThread(() =>
+                            ApplyPlaybackCommand(PlaybackCommand.FromEffects(
+                                session.NotifyFreshResolveUnavailable(ex.Message))));
+                    }
+                }
+
+                static async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
+                {
+                    if (current.Stream == null)
+                        return null;
+
+                    var api = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IApiService)) as IApiService;
+                    if (api == null)
+                        return null;
+
+                    return await api.ResolveM3U8ForPlaybackAsync(current.Stream, current.Referer ?? string.Empty);
                 }
 
                 mediaFailedHandler = (s, e) =>
@@ -1575,36 +1637,23 @@ namespace VardyParty.Platforms.Windows
 
                         var errMsg = e?.ErrorMessage ?? "Unknown media error";
                         var ext = string.Empty;
-                        try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch { }
+                        try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch (Exception ex) { WindowsEventLogger.Warning("VideoPlayer", "Failed to read extended media error", ex); }
                         var detail = $"Media failed: {errMsg}\n{ext}";
-
-                        // Ignore stale failures from a source cleared during stream switch.
-                        if (playbackGeneration != lastAttachedGeneration)
-                        {
-                            WindowsEventLogger.Info("VideoPlayer", $"Ignoring stale MediaFailed during switch: {errMsg}");
-                            return;
-                        }
-
-                        if (hasEstablishedPlayback)
-                        {
-                            _ = HandleActiveStreamFailureAsync(detail);
-                            return;
-                        }
-
-                        ClosePlayerSession($"Stream error on Windows player. Error: '{errMsg}'. Extended-message: '{ext}'.");
+                        engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, detail));
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        if (!hasEstablishedPlayback)
-                            ClosePlayerSession("Stream error on Windows player.");
+                        WindowsEventLogger.Error("VideoPlayer", "MediaFailed handler failed", ex);
+                        engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "Stream error on Windows player."));
                     }
                 };
 
                 // Detect buffering state from PlaybackSession
-                playbackStateChangedHandler = (session, _) =>
+                playbackStateChangedHandler = (playbackSession, _) =>
                 {
-                    var isBuffering = session.PlaybackState == MediaPlaybackState.Buffering;
+                    var isBuffering = playbackSession.PlaybackState == MediaPlaybackState.Buffering;
                     BufferingStateChanged?.Invoke(this, isBuffering);
+                    engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, isBuffering));
                 };
 
                 mediaPlayer.PlaybackSession.PlaybackStateChanged += playbackStateChangedHandler;
@@ -1628,27 +1677,37 @@ namespace VardyParty.Platforms.Windows
                 {
                     try
                     {
-                        // Periodically update bitrate during playback
                         if (mediaPlayer.Source is MediaPlaybackItem item)
                         {
                             UpdateBitrateFromAdaptiveSource(item);
                         }
+
+                        if ((DateTime.UtcNow - lastMetricsRaiseUtc).TotalSeconds >= 30)
+                        {
+                            lastMetricsRaiseUtc = DateTime.UtcNow;
+                            var metrics = GetCurrentMetrics();
+                            engine.Raise(MediaEngineEvent.Metrics(
+                                session.Snapshot.AttachGeneration,
+                                metrics?.BitrateKbps,
+                                metrics?.IsBuffering == true));
+                        }
                     }
                     catch (InvalidCastException)
                     {
-                        // Silently ignore cast exceptions during position updates to avoid spam
-                        // This can happen during adaptive stream switches
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[Windows] Position handler error: {ex.GetType().Name} - {ex.Message}");
+                        WindowsEventLogger.Warning("VideoPlayer", "Position handler error", ex);
                     }
                     
                     try
                     {
                         UpdateInfo();
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Warning("VideoPlayer", "UpdateInfo failed", ex);
+                    }
                 };
                 
                 mediaPlayer.PlaybackSession.NaturalVideoSizeChanged += naturalVideoSizeChangedHandler;
@@ -2061,7 +2120,7 @@ namespace VardyParty.Platforms.Windows
 
                 void PreparePlaybackSwitchOnUiThread(int generation)
                 {
-                    if (generation != playbackGeneration || cleanupInvoked) return;
+                    if (IsStaleAttach(generation)) return;
 
                     StopTickerScroll();
                     ReleasePreviousPlaybackResources();
@@ -2074,7 +2133,10 @@ namespace VardyParty.Platforms.Windows
                     catch { }
                 }
 
-                async Task StartPlaybackAsync(string url, bool force = false, bool isRevertAttempt = false)
+                bool IsStaleAttach(int generation) =>
+                    cleanupInvoked || generation != (int)session.Snapshot.AttachGeneration;
+
+                async Task StartPlaybackAsync(string url)
                 {
                     if (cleanupInvoked) return;
 
@@ -2087,15 +2149,11 @@ namespace VardyParty.Platforms.Windows
                         return;
                     }
 
-                    var generation = Interlocked.Increment(ref playbackGeneration);
-                    int consecutiveDownloadFailures = 0;
-                    const int MaxDownloadFailures = 5;
-                    string? pendingRevertMessage = null;
-                    string? pendingStartFailureMessage = null;
+                    var generation = (int)session.Snapshot.AttachGeneration;
 
                     try
                     {
-                        if (generation != playbackGeneration || cleanupInvoked)
+                        if (IsStaleAttach(generation))
                             return;
 
                         // Build the adaptive source BEFORE clearing the current player source so a
@@ -2106,7 +2164,7 @@ namespace VardyParty.Platforms.Windows
                         var uri = new Uri(url);
                         var adaptiveResult = await CreateAdaptiveMediaSourceAsync(client, uri);
 
-                        if (cleanupInvoked || generation != playbackGeneration)
+                        if (IsStaleAttach(generation))
                         {
                             try { client.Dispose(); } catch { }
                             return;
@@ -2119,7 +2177,7 @@ namespace VardyParty.Platforms.Windows
                         }
 
                         await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
-                        if (generation != playbackGeneration || cleanupInvoked)
+                        if (IsStaleAttach(generation))
                         {
                             try { client.Dispose(); } catch { }
                             return;
@@ -2130,7 +2188,7 @@ namespace VardyParty.Platforms.Windows
                         // Attach handler to fix segment content types and ensure headers
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
-                            if (generation != playbackGeneration || cleanupInvoked)
+                            if (IsStaleAttach(generation))
                                 return;
 
                             // Intercept Manifest, MediaSegment, and InitializationSegment
@@ -2141,7 +2199,7 @@ namespace VardyParty.Platforms.Windows
                                 var deferral = args.GetDeferral();
                                 try
                                 {
-                                    if (generation != playbackGeneration || cleanupInvoked)
+                                    if (IsStaleAttach(generation))
                                         return;
                                     var request = new global::Windows.Web.Http.HttpRequestMessage(global::Windows.Web.Http.HttpMethod.Get, args.ResourceUri);
                                     ApplyPlaybackRequestHeaders(request, refererUrl, requestHeaders);
@@ -2175,17 +2233,13 @@ namespace VardyParty.Platforms.Windows
 
                                     args.Result.InputStream = await response.Content.ReadAsInputStreamAsync();
                                     args.Result.ContentType = contentType;
-                                    
-                                    // Reset failure counter on successful download
-                                    consecutiveDownloadFailures = 0;
+                                    session.NotifyDownloadSuccess();
                                 }
                                 catch (Exception ex)
                                 {
                                     var statusCode = 0;
                                     try
                                     {
-                                        // Windows.Web.Http throws COMException for HTTP errors
-                                        // Try to extract status code from exception message or use HResult
                                         var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
                                         if (msg.Contains("404")) statusCode = 404;
                                         else if (msg.Contains("502")) statusCode = 502;
@@ -2194,47 +2248,43 @@ namespace VardyParty.Platforms.Windows
                                         else if (msg.Contains("401")) statusCode = 401;
                                         else if (msg.Contains("500")) statusCode = 500;
                                     }
-                                    catch { }
-                                    
-                                    System.Diagnostics.Debug.WriteLine($"[Windows] Segment download failed ({args.ResourceType}, status={statusCode}): {ex.Message}");
-                                    
-                                    consecutiveDownloadFailures++;
-                                    
-                                    // After max failures, trigger media failure to switch streams
-                                    if (consecutiveDownloadFailures >= MaxDownloadFailures
-                                        && generation == playbackGeneration
-                                        && !cleanupInvoked)
+                                    catch (Exception statusEx)
                                     {
-                                        System.Diagnostics.Debug.WriteLine($"[Windows] Max download failures ({MaxDownloadFailures}) reached, triggering stream failure");
-                                        
+                                        WindowsEventLogger.Warning("VideoPlayer", "Failed to parse download status", statusEx);
+                                    }
+
+                                    WindowsEventLogger.Warning("VideoPlayer",
+                                        $"Segment download failed ({args.ResourceType}, status={statusCode}): {ex.Message}");
+
+                                    var failureMessage =
+                                        $"Segment download failed ({args.ResourceType}, status={statusCode})";
+                                    var downloadCmd = PlaybackCommand.FromEffects(
+                                        session.NotifyDownloadFailure(failureMessage));
+                                    if (!downloadCmd.IsNoOp)
+                                    {
                                         MainThread.BeginInvokeOnMainThread(() =>
                                         {
                                             try
                                             {
-                                                if (generation != playbackGeneration || cleanupInvoked)
+                                                if (IsStaleAttach(generation))
                                                     return;
-
-                                                var failureMessage =
-                                                    $"Stream failed after {MaxDownloadFailures} consecutive download errors (last: {statusCode})";
-                                                mediaPlayer.Source = null;
-
-                                                if (generation == lastAttachedGeneration && hasEstablishedPlayback)
-                                                    _ = HandleActiveStreamFailureAsync(failureMessage);
-                                                else if (hasEstablishedPlayback)
-                                                    _ = RecoverFromFailedSwitchAsync($"Switch failed — {failureMessage}");
-                                                else
-                                                    _ = RecoverFromFailedStartAsync(failureMessage);
+                                                ApplyPlaybackCommand(downloadCmd);
                                             }
-                                            catch { }
+                                            catch (Exception marshalEx)
+                                            {
+                                                WindowsEventLogger.Warning("VideoPlayer", "Download-failure command failed", marshalEx);
+                                            }
                                         });
                                     }
-            
-                                    // Signal error status to Windows Media Player
+
                                     try
                                     {
                                         args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
                                     }
-                                    catch { }
+                                    catch (Exception statusEx)
+                                    {
+                                        WindowsEventLogger.Warning("VideoPlayer", "Failed to set download extended status", statusEx);
+                                    }
                                 }
                                 finally
                                 {
@@ -2250,7 +2300,7 @@ namespace VardyParty.Platforms.Windows
                         var mediaSource = MediaSource.CreateFromAdaptiveMediaSource(adaptiveResult.MediaSource);
                         var playbackItem = new MediaPlaybackItem(mediaSource);
 
-                        if (generation != playbackGeneration || cleanupInvoked)
+                        if (IsStaleAttach(generation))
                             return;
 
                         // Ensure UI updates happen on the main thread
@@ -2258,7 +2308,7 @@ namespace VardyParty.Platforms.Windows
                         {
                             try
                             {
-                                if (generation != playbackGeneration || cleanupInvoked)
+                                if (IsStaleAttach(generation))
                                     return;
 
                                 mediaPlayer.Source = playbackItem;
@@ -2279,9 +2329,7 @@ namespace VardyParty.Platforms.Windows
                                 }
 
                                 currentPlaybackUrl = url;
-                                lastAttachedGeneration = generation;
-                                hasEstablishedPlayback = true;
-                                lastGoodPlaybackUrl = url;
+                                engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
                                 // Ensure the grid is visible and hit testable
                                 if (playerGrid is { } overlay)
@@ -2298,15 +2346,12 @@ namespace VardyParty.Platforms.Windows
                             }
                             catch (Exception ex)
                             {
-                                if (generation != playbackGeneration || cleanupInvoked)
+                                if (IsStaleAttach(generation))
                                     return;
 
                                 WindowsEventLogger.Error("VideoPlayer", "Failed to attach playback source", ex);
-                                System.Diagnostics.Debug.WriteLine($"[Windows] Failed to attach playback source: {ex.GetType().Name} - {ex.Message}");
-                                if (hasEstablishedPlayback && !isRevertAttempt)
-                                    _ = RecoverFromFailedSwitchAsync($"Failed to switch stream: {ex.Message}");
-                                else if (!hasEstablishedPlayback)
-                                    _ = RecoverFromFailedStartAsync($"Failed to attach playback source: {ex.Message}");
+                                engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration,
+                                    $"Failed to attach playback source: {ex.Message}"));
                             }
                         });
 
@@ -2314,14 +2359,11 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch (Exception ex)
                     {
-                        if (generation == playbackGeneration && !cleanupInvoked)
+                        if (!IsStaleAttach(generation))
                         {
                             WindowsEventLogger.Error("VideoPlayer", "Failed to start playback", ex);
-                            System.Diagnostics.Debug.WriteLine($"[Windows] Failed to start playback: {ex.GetType().Name} - {ex.Message}");
-                            if (hasEstablishedPlayback && !isRevertAttempt)
-                                pendingRevertMessage = $"Failed to switch stream: {ex.Message}";
-                            else if (!hasEstablishedPlayback)
-                                pendingStartFailureMessage = $"Failed to start playback: {ex.Message}";
+                            engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration,
+                                $"Failed to start playback: {ex.Message}"));
                         }
                     }
                     finally
@@ -2338,11 +2380,10 @@ namespace VardyParty.Platforms.Windows
                         }
                     }
 
-                    if (!string.IsNullOrWhiteSpace(pendingRevertMessage))
-                        await RecoverFromFailedSwitchAsync(pendingRevertMessage);
-                    else if (!string.IsNullOrWhiteSpace(pendingStartFailureMessage))
-                        await RecoverFromFailedStartAsync(pendingStartFailureMessage);
                 }
+
+                engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
+                engine.AttachHandler = (url, _, _) => StartPlaybackAsync(url);
 
                 async Task TrySwitchToCurrentStreamAsync(bool force = false)
                 {
@@ -2356,7 +2397,7 @@ namespace VardyParty.Platforms.Windows
                         if (string.IsNullOrWhiteSpace(url)) return;
                         if (!force && string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
                         WindowsEventLogger.Info("VideoPlayer", $"Switching playback source (force={force})");
-                        await StartPlaybackAsync(url, force);
+                        AttachViaSession(url, usedCachedUrl: false, force: force);
                     }
                     catch (Exception ex)
                     {
@@ -2475,7 +2516,7 @@ namespace VardyParty.Platforms.Windows
 
                 WindowsEventLogger.Info("VideoPlayer", "UI thread: starting playback task");
                 ShowPlayerOverlay();
-                _ = StartPlaybackAsync(m3u8Url);
+                AttachViaSession(m3u8Url);
                 }
                 catch (Exception ex)
                 {
@@ -2699,13 +2740,5 @@ namespace VardyParty.Platforms.Windows
                 return adaptiveResult;
             }
         }
-    }
-
-    internal enum WindowsScoresTickerMode
-    {
-        SameLeagueInPlay,
-        AllLeaguesInPlay,
-        AllFinished,
-        AllUpcoming
     }
 }

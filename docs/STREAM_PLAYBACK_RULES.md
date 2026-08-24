@@ -1,10 +1,10 @@
 # Stream Playback Rules
 
-**STATUS:** In progress — Android `NativeVideoActivity` now executes `PlaybackSessionController` effects; Windows still owns local Recover*  
-**AUDIENCE:** Developers and AI assistants working on MAUI stream handling (Android, Android TV, Windows)  
+**STATUS:** Android, Windows, and Linux hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
+**AUDIENCE:** Developers and AI assistants working on MAUI/Linux stream handling (Android, Android TV, Windows, Linux)  
 **RELATED:** [STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)
 
-### Implementation (Core + Android)
+### Implementation
 
 | Type | Path | Role |
 |------|------|------|
@@ -12,11 +12,12 @@
 | `PlaybackSessionController` | `VardyParty.Core/Playback/PlaybackSessionController.cs` | State machine: engine events → effects |
 | `PlaybackCommand` | `VardyParty.Core/Playback/PlaybackCommand.cs` | Collapses effect batches (remove+advance must not skip) |
 | `IMediaEngine` | `VardyParty.Core/Playback/IMediaEngine.cs` | Slim OS contract (Attach/Stop/events/metrics only) |
+| `DelegatingMediaEngine` | `VardyParty.Core/Playback/DelegatingMediaEngine.cs` | Host adapter: OS plugs attach/stop/metrics, raises facts |
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
-| Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → session → pool/health/attach |
-| Tests | `tests/VardyParty.Core.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop |
-
-**Next:** Wire Windows `WindowsVideoPlayerService` to the same controller; delete `RecoverFromFailed*`. Keep WinUI as attach/stop/events only. OS adapters should implement `IMediaEngine` (facts only) — do not put ExoPlayer/WinUI into Core tests.
+| Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → `IMediaEngine` → session → pool/health/attach |
+| Windows host | `WindowsVideoPlayerService.cs` | WinUI facts → same loop; no local `RecoverFromFailed*` |
+| Linux host | `LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
+| Tests | `tests/VardyParty.Core.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`, `StreamResolutionOrchestratorTests.cs`, `StreamHealthReporterTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
 
 ---
 
@@ -34,11 +35,11 @@ ExoPlayer / WinUI / FakeMediaEngine  →  IMediaEngine (facts only)
                          host executes PlaybackCommand (pool, resolve, health)
 ```
 
-`FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android does. When Windows is wired, it should use that same loop.
+`FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android, Windows, and Linux do.
 
-**Do not share one fat player interface** (`INativeVideoPlayerService` stays a MAUI launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
+**Do not share one fat player interface** (`INativeVideoPlayerService` stays a MAUI/Linux launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
 
-Remaining Core test gaps (not OS): orchestrator cache→fresh retry with a fake `INativeVideoPlayerService`; health streamKey (page vs M3U8); Home vs `/player` dual path.
+Remaining Core test gaps (not OS): Home vs `/player` dual path (`VideoPlayer.razor` is still a single-URL launch without the orchestrator pool). Health reports now key on the catalog/page URL via `StreamHealthIdentity.ResolveReportUrl`. Cache→fresh retry is covered by `StreamResolutionOrchestratorTests`.
 
 ---
 
@@ -47,7 +48,7 @@ Remaining Core test gaps (not OS): orchestrator cache→fresh retry with a fake 
 One set of business rules for stream **selection → start → survive → switch → recover**.  
 OS code should only attach/detach media and surface metrics/errors. Shared Core owns decisions.
 
-Today: selection/pre-play is largely shared; **runtime recovery is fragmented** across Android and Windows players. This document is the source of truth for unifying that.
+Today: selection/pre-play is shared; **runtime recovery is Core** (`PlaybackSessionController`) on Android, Windows, and Linux. Hosts only attach/stop and raise engine facts.
 
 ---
 
@@ -59,9 +60,11 @@ Home.razor
        ├─ StreamSelectionCoordinator
        ├─ StreamResolver + StreamHealthChecker
        ├─ StreamSwitchingService            ← healthy pool + index Rx
-       └─ INativeVideoPlayerService.PlayVideoAsync(...)
-            ├─ Android (+ TV): NativeVideoActivity (ExoPlayer)  ← owns auto-switch + decline
-            └─ Windows: WindowsVideoPlayerService (WinUI)     ← owns revert / auto-advance / generations
+            └─ INativeVideoPlayerService.PlayVideoAsync(...)
+                 ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
+                 ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
+                 └─ Linux: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC)
+                      all: engine facts → PlaybackSessionController → PlaybackCommand
 ```
 
 **Alternate path (weaker):** `VideoPlayer.razor` (`/player/...`) — single URL, no orchestrator failover pool.
@@ -70,24 +73,24 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 ---
 
-## Phase matrix (as-is vs target)
+## Phase matrix
 
-| Phase | Shared Core today | Android today | Windows today | Target (unified) |
-|-------|-------------------|---------------|---------------|------------------|
-| **Select / order** | Recommendations + catalog order + FB-before-MP | Uses Core | Uses Core | Keep in Core |
-| **Pre-play probe** | `StreamHealthChecker` statuses | Uses Core | Uses Core | Keep in Core |
-| **Skip countdown** | `StreamResolver` skips `IsCountdown` | — | — | Keep |
-| **Start first healthy** | First healthy → `PlayVideoAsync`; continue testing | Attaches ExoPlayer | Attaches AdaptiveMediaSource | Keep |
-| **Cache → fresh retry** | Once if cached M3U8 fails (CDN token) | N/A (orchestrator) | N/A (orchestrator) | Keep in Core |
-| **Prefetch next M3U8** | `PrefetchUpcomingStreamUrl` | Index change rebinds | Index change rebinds | Keep |
-| **User Next / Prev** | `SwitchToNext/Previous` + resolve if needed | Rebind URL; **must not** mark bad | Rebind; **must not** mark bad | Shared policy |
-| **Hard playback error** | Only after `PlayVideoAsync` returns | Immediate auto-next via `RequestNextStream` | Established → auto-next; else close / start-fail path | **One** policy |
-| **Soft decline (buffer/bitrate)** | Not used | `StreamMetricsWindow` → auto-next | **Not used** | Shared window on all OS |
-| **Failed switch** | Index advance only | Stay on next if index moved | Remove broken + **revert last-good** | Decide once |
-| **Failed start (never established)** | `HandlePlaybackFailureAsync`: remove + try next | Error → next (same as hard error) | Clear URL → next if pool >1 else close session | Shared |
-| **Stale failure during switch** | — | Null `OnPlayerErrorChanged` ignored | Generation check ignores stale `MediaFailed` | Shared generation id |
-| **Buffering → Core** | Sticky OR flag until report | Raises `BufferingStateChanged` | Raises `BufferingStateChanged` | Always raise |
-| **Health reports** | Orchestrator 30s poll + reporter | Activity timer + event reports | Orchestrator + Windows events | Single reporter path |
+| Phase | Shared Core | Android / Windows / Linux | Notes |
+|-------|-------------|---------------------------|-------|
+| **Select / order** | Recommendations + catalog order + FB-before-MP | Uses Core | Keep in Core |
+| **Pre-play probe** | `StreamHealthChecker` | Uses Core | Keep in Core |
+| **Skip countdown** | `StreamResolver` skips `IsCountdown` | — | Keep |
+| **Start first healthy** | First healthy → `PlayVideoAsync`; continue testing | Attaches ExoPlayer / AdaptiveMediaSource / LibVLC | Keep |
+| **Cache → fresh retry** | Once if cached M3U8 fails (CDN token) | Hosts attach whatever URL Core gives | Covered by `StreamResolutionOrchestratorTests` |
+| **Prefetch next M3U8** | `PrefetchUpcomingStreamUrl` | Index change rebinds | Keep |
+| **User Next / Prev** | Session `UserNext` / `UserPrevious` | Rebind URL; **must not** mark bad | Shared policy |
+| **Hard playback error** | Session `Error` → remove + advance or revert | `engine.Raise(Error)` | One policy |
+| **Soft decline (buffer/bitrate)** | `StreamMetricsWindow` via session Metrics/Buffering | Android 30s metrics; Windows throttled PositionChanged; Linux 30s timer | Shared window |
+| **Failed switch** | Restore last-good once | Hosts execute `PlaybackCommand` | Locked by `PlaybackUnificationRulesTests` |
+| **Failed start (never established)** | Remove + advance if pool remains | Hosts execute `PlaybackCommand` | Shared |
+| **Stale failure during switch** | Ignore if `generation != AttachGeneration` | Hosts compare session generation | Shared |
+| **Buffering → Core** | Session Buffering effect | All three raise `MediaEngineEvent.Buffering` | Always raise |
+| **Health reports** | `StreamHealthIdentity.ResolveReportUrl` (page over M3U8) | Android still passes M3U8+referer; reporter prefers page | Single identity |
 
 ---
 
@@ -121,13 +124,11 @@ Android duplicates this in `NativeVideoActivity.CanSwitchTo`. Windows uses local
 
 ### 4. Android recovery (`NativeVideoActivity`)
 
-| Trigger | Action | Removes from pool? | Reverts last-good? |
-|---------|--------|--------------------|--------------------|
-| ExoPlayer `OnPlayerErrorChanged` (non-null) | Report error; `TryAutoSwitchFromPlaybackError` → `RequestNextStream` / `SwitchToNextStream` | No (unless orchestrator later) | No |
-| Soft decline (`StreamMetricsWindow.IsHealthDeclined`) | `RequestNextStream` | No | No |
-| User Next / Prev | Index change → `TrySwitchToCurrentStream` | No | No |
-| Playback ended | Clear in-memory manifest; no auto-next in listener | No | No |
-| Null error clear | **Ignore** (avoids spurious switch) | — | — |
+ExoPlayer facts go through `DelegatingMediaEngine` → `PlaybackSessionController`. The activity executes `PlaybackCommand` (pool remove, attach, buffering report). Null `OnPlayerErrorChanged` is ignored (`ShouldIgnoreClearedEngineError`). Playback ended does not auto-next.
+
+### 5. Windows recovery (`WindowsVideoPlayerService`)
+
+WinUI `MediaFailed` / download failures / buffering raise engine facts. Stale work is ignored when `generation != session.AttachGeneration`. Consecutive AdaptiveMediaSource download failures call `NotifyDownloadFailure` (threshold in Core). Successful downloads call `NotifyDownloadSuccess`. There is no local `RecoverFromFailed*`.
 
 **Decline window** (`StreamMetricsWindow`, 60s buffering/bitrate window; errors over 300s):
 
@@ -136,23 +137,7 @@ Android duplicates this in `NativeVideoActivity.CanSwitchTo`. Windows uses local
 - ≥ 10 bitrate samples and last 3 all &lt; 500 kbps → declined  
 - ≥ 3 errors in 300s → declined  
 
-**Gaps:** `AndroidVideoPlayerService.ReportBufferingState` is a no-op (orchestrator may miss buffering). Soft decline does not clear `ResolvedM3U8Url` or remove the stream. Auto-switch may race with orchestrator `HandlePlaybackFailureAsync` when the session eventually ends.
-
-### 5. Windows recovery (`WindowsVideoPlayerService`)
-
-| Trigger | Condition | Action |
-|---------|-----------|--------|
-| `MediaFailed` | Stale generation | Ignore |
-| `MediaFailed` | `hasEstablishedPlayback` | `HandleActiveStreamFailureAsync` → `onNextStreamRequested` else revert last-good |
-| `MediaFailed` | Not established | Close session with error (orchestrator sees failure) |
-| ≥ 5 consecutive segment/manifest download failures | Established + current generation | Active failure → next |
-| ≥ 5 download failures | Established + stale attach generation | `RecoverFromFailedSwitchAsync` |
-| ≥ 5 download failures | Not established | `RecoverFromFailedStartAsync` |
-| Attach exception during switch | Established, not revert | Remove current + clear URL + **revert last-good** |
-| Attach/start failure | Never established | Clear URL; if pool &gt; 1 call next; else close session |
-| User Next | Index Rx | `TrySwitchToCurrentStreamAsync` (do not double-call after `SwitchToNextStream`) |
-
-**Notable:** Windows **reverts to `lastGoodPlaybackUrl`** after a failed switch. Android does **not** — it advances and stays on the next index. This is the largest behavioral fork.
+`AndroidVideoPlayerService.ReportBufferingState` now forwards to `BufferingStateChanged`. Soft decline is a session effect (remove + advance). Orchestrator `HandlePlaybackFailureAsync` still runs when `PlayVideoAsync` returns failure — native auto-switch may already have drained the pool (session then resumes testing).
 
 ### 6. Orchestrator post-session failure (Core)
 
@@ -167,18 +152,13 @@ Only runs when `PlayVideoAsync` **returns** with `Success == false` (and not “
 
 ### 7. Health reporting identity
 
-Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)). In practice:
-
-- Orchestrator reports often use **page/stream URL**
-- Android activity reports often use **M3U8 URL**
-
-Correlate carefully until identity is unified via `StreamHealthIdentity`.
+Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)). `StreamHealthIdentity.ResolveReportUrl` prefers the catalog/page URL (referer) when the first argument is an ephemeral M3U8/DASH URL. Android still passes M3U8 + referer; the reporter stores the page URL.
 
 ---
 
-## Target unified policy (proposed)
+## Unified policy (in Core)
 
-These rules should become a testable `PlaybackPolicy` / `StreamSessionController` in Core. Platforms only emit facts.
+`PlaybackPolicy` + `PlaybackSessionController` own these rules. Platforms only emit facts.
 
 ### States
 
@@ -280,20 +260,15 @@ Until that exists, agents should reconstruct the timeline from the markers above
 
 ---
 
-## Known divergence summary
+## Known remaining work
 
-| Rule | Unified (tests) | Android now | Windows still |
-|------|-----------------|-------------|---------------|
-| Failed switch | Revert last-good | Session controller | Local `RecoverFromFailedSwitchAsync` (same idea) |
-| Established hard fail | Remove + advance | Session controller | `HandleActiveStreamFailureAsync` advances **without** remove |
-| Failed start | Remove + advance if pool remains | Session controller | `MediaFailed` **closes**; download/attach fail may auto-next without remove |
-| Soft decline | Shared `StreamMetricsWindow` | Session controller | **Not used** |
-| Buffering into Core | Always raise | `ReportBufferingState` wired | Already raises |
-| 5 consecutive download failures | Hard fail via `NotifyDownloadFailure` | Not emitted yet | Local counter then Recover* |
-| Null/cleared engine error | Ignore (`ShouldIgnoreClearedEngineError`) | Host skips null | N/A |
-| Failed last-good after revert | Advance (no revert loop) | Session controller | `isRevertAttempt` skipped both recover paths |
-
-Remaining (not a recovery-policy fork): health URL key (page vs M3U8); dual entry Home vs `/player`.
+| Item | Status |
+|------|--------|
+| Failed switch revert vs advance | Unified in session (locked by `PlaybackUnificationRulesTests`) |
+| Soft decline / download-failure threshold | Session; Windows/Linux now raise Metrics |
+| Health URL key (page vs M3U8) | Reporter prefers page via `ResolveReportUrl` |
+| Dual entry Home vs `/player` | `VideoPlayer.razor` still skips the orchestrator pool |
+| God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy` |
 
 ---
 
@@ -301,9 +276,9 @@ Remaining (not a recovery-policy fork): health URL key (page vs M3U8); dual entr
 
 1. ~~Freeze this doc; add unit tests for `PlaybackPolicy` decisions.~~
 2. ~~Shared session controller; Android calls it from ExoPlayer listener.~~
-3. Windows call same controller; delete duplicated Recover* locals incrementally.
-4. One reporter path; unified streamKey.
-5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` to media + chrome.
+3. ~~Windows/Linux call same controller; delete duplicated Recover* locals.~~
+4. ~~Health reporter prefers catalog/page URL over M3U8.~~
+5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys).
 6. Align or retire `VideoPlayer.razor` failover behavior.
 7. Optional: dump session event JSON next to logcat for agent observation.
 

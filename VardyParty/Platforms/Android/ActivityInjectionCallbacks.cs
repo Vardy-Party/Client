@@ -14,7 +14,10 @@ namespace VardyParty.Platforms.Android
             {
                 AndroidActivityFactory.Inject(activity);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ActivityInjectionCallbacks] Inject failed: {ex.Message}");
+            }
         }
 
         public void OnActivityDestroyed(Activity activity) { }
