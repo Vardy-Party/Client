@@ -24,7 +24,8 @@ namespace VardyParty.Platforms.Android
 
         public IDataSource CreateDataSource()
         {
-            var inner = _innerFactory.CreateDataSource();
+            var inner = _innerFactory.CreateDataSource()
+                ?? throw new InvalidOperationException("Inner data source factory returned null.");
             return new InMemoryInterceptingDataSource(inner, _inMemoryMap, this);
         }
 
@@ -85,14 +86,14 @@ namespace VardyParty.Platforms.Android
             _owner = owner;
         }
 
-        public long Open(DataSpec dataSpec)
+        public long Open(DataSpec? dataSpec)
         {
             try
             {
-                var key = dataSpec.Uri.ToString();
+                var key = dataSpec?.Uri?.ToString();
                 if (!string.IsNullOrEmpty(key) && _map.TryGetValue(key, out var entry))
                 {
-                    _currentUri = dataSpec.Uri;
+                    _currentUri = dataSpec?.Uri;
                     _stream = new MemoryStream(entry.Data);
                     // Update access time
                     try { entry.Added = DateTimeOffset.UtcNow; } catch { }
@@ -118,11 +119,11 @@ namespace VardyParty.Platforms.Android
             return _inner.Open(dataSpec);
         }
 
-        public int Read(byte[] buffer, int offset, int readLength)
+        public int Read(byte[]? buffer, int offset, int readLength)
         {
             try
             {
-                if (_stream != null)
+                if (_stream is not null && buffer is not null)
                 {
                     int r = _stream.Read(buffer, offset, readLength);
                     return r == 0 ? -1 : r;
@@ -132,7 +133,7 @@ namespace VardyParty.Platforms.Android
             return _inner.Read(buffer, offset, readLength);
         }
 
-        public global::Android.Net.Uri Uri => _currentUri ?? _inner.Uri;
+        public global::Android.Net.Uri? Uri => _currentUri ?? _inner.Uri;
 
         public void Close()
         {
@@ -144,7 +145,7 @@ namespace VardyParty.Platforms.Android
             try { _owner?.EnsureSizeLimitAndExpiry(); } catch { }
         }
 
-        public void AddTransferListener(AndroidX.Media3.DataSource.ITransferListener listener)
+        public void AddTransferListener(AndroidX.Media3.DataSource.ITransferListener? listener)
         {
             try { _inner.AddTransferListener(listener); } catch { }
         }

@@ -105,10 +105,11 @@ public class Auth0AuthService(
                 return new AuthLoginResult(false, null, null);
             }
 
-            // AccessToken is already scoped to the audience since we included it in the scope during login
-            var expiresIn = loginResult.AccessTokenExpiration != null
-                ? (int)Math.Max(0, (loginResult.AccessTokenExpiration - DateTimeOffset.UtcNow).TotalSeconds)
-                : 3600;
+            // AccessTokenExpiration is DateTimeOffset (never null); default means the IdP omitted expiry.
+            var expiration = loginResult.AccessTokenExpiration;
+            var expiresIn = expiration == default
+                ? 3600
+                : (int)Math.Max(0, (expiration - DateTimeOffset.UtcNow).TotalSeconds);
 
             logger.LogInformation("[Auth0] Setting token with {ExpiresIn}s expiry", expiresIn);
             await SaveTokensAsync(loginResult.AccessToken, expiresIn, loginResult.RefreshToken);

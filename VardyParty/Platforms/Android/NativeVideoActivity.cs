@@ -108,8 +108,13 @@ namespace VardyParty.Platforms.Android
                             };
                             var headerFactory = new HeaderInjectingDataSourceFactory(headers);
                             var interceptFactory = new InMemoryInterceptingDataSourceFactory(headerFactory, manifestMap, maxEntries: 5, maxAge: TimeSpan.FromSeconds(60));
-                            var mediaItem = new MediaItem.Builder().SetUri(m3u8Url).SetMimeType(MimeTypes.ApplicationM3u8).Build();
-                            var mediaSource = new HlsMediaSource.Factory(interceptFactory).CreateMediaSource(mediaItem);
+                            var mediaBuilder = new MediaItem.Builder();
+                            mediaBuilder.SetUri(m3u8Url);
+                            mediaBuilder.SetMimeType(MimeTypes.ApplicationM3u8);
+                            var mediaItem = mediaBuilder.Build()
+                                ?? throw new InvalidOperationException("MediaItem.Build returned null.");
+                            var mediaSource = new HlsMediaSource.Factory(interceptFactory).CreateMediaSource(mediaItem)
+                                ?? throw new InvalidOperationException("CreateMediaSource returned null.");
                             _player?.SetMediaSource(mediaSource);
                             _player?.Prepare();
                             _player?.Play();
@@ -211,7 +216,6 @@ namespace VardyParty.Platforms.Android
         private string _currentLeague = string.Empty;
         private string _currentHomeTeam = string.Empty;
         private string _currentAwayTeam = string.Empty;
-        private bool _manifestFallbackAttempted;
         private System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? _inMemoryManifestMap;
         private string _playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
         private VardyParty.Models.PlayerOverlayInfo? _lastOverlayInfo;
@@ -287,9 +291,10 @@ namespace VardyParty.Platforms.Android
 
             // Overlay panel with separate styled lines for better readability and localization
             // Scale UI values using device density to improve readability across devices
-            var metrics = Resources.DisplayMetrics;
+            var resources = Resources ?? throw new InvalidOperationException("Resources are unavailable.");
+            var metrics = resources.DisplayMetrics ?? throw new InvalidOperationException("Display metrics are unavailable.");
             float density = metrics.Density; // dp scaling
-            float scaledDensity = metrics.ScaledDensity; // sp scaling for fonts
+            float scaledDensity = density * (resources.Configuration?.FontScale ?? 1f); // sp scaling for fonts
 
             // Use conservative base sizes and avoid upscaling on TV so overlay fits
             float fontScaleCap = Math.Min(1.0f, scaledDensity); // do not upscale
@@ -343,7 +348,7 @@ namespace VardyParty.Platforms.Android
             };
             // store overlay container to control visibility/animations
             _overlayContainer = linear;
-            linear.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000")));
+            linear.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000"));
             linear.AddView(_titleView);
             linear.AddView(_statusView);
             linear.AddView(_indexView);
@@ -373,7 +378,7 @@ namespace VardyParty.Platforms.Android
             _streamToastView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _streamToastView.SetTextColor(global::Android.Graphics.Color.White);
             _streamToastView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
-            _streamToastView.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000")));
+            _streamToastView.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000"));
             _streamToastView.SetPadding(paddingDp, (int)(4 * density), paddingDp, (int)(4 * density));
             var streamToastParams = new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
@@ -429,7 +434,7 @@ namespace VardyParty.Platforms.Android
                 Clickable = true,
                 Focusable = true
             };
-            _menuPanel.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
+            _menuPanel.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010"));
             _menuPanel.SetPadding((int)(12 * density), (int)(12 * density), (int)(12 * density), (int)(12 * density));
 
             var reportButton = new global::Android.Widget.Button(this) { Text = "Report stream" };
@@ -535,7 +540,7 @@ namespace VardyParty.Platforms.Android
                 Orientation = Orientation.Horizontal,
                 Visibility = global::Android.Views.ViewStates.Gone
             };
-            _scoresTickerContainer.SetBackgroundDrawable(new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010")));
+            _scoresTickerContainer.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010"));
             _scoresTickerContainer.SetPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
 
             // Seamless infinite ticker: two identical TextViews side-by-side inside a
@@ -583,14 +588,14 @@ namespace VardyParty.Platforms.Android
                 if (text1Width <= 0)
                 {
                     // View not laid out yet — wait and retry
-                    _tickerHandler?.PostDelayed(_tickerRunnable!, 32);
+                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 32);
                     return;
                 }
                 _tickerScrollX += _tickerPixelsPerFrame;
                 if (_tickerScrollX >= text1Width)
                     _tickerScrollX -= text1Width; // seamless reset
                 _tickerInner.TranslationX = -_tickerScrollX;
-                _tickerHandler?.PostDelayed(_tickerRunnable!, 16);
+                PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             });
 
             var scoresParams = new FrameLayout.LayoutParams(
@@ -836,11 +841,11 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
-                _streamToastHandler?.RemoveCallbacks(_streamToastRunnable);
+                RemoveCallback(_tickerHandler, _tickerRunnable);
+                RemoveCallback(_streamToastHandler, _streamToastRunnable);
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
-                _overlayHandler?.RemoveCallbacks(_overlayHideRunnable);
+                RemoveCallback(_overlayHandler, _overlayHideRunnable);
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
@@ -852,6 +857,20 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private static void RemoveCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable)
+        {
+            if (handler is null || runnable is null)
+                return;
+            handler.RemoveCallbacks(runnable);
+        }
+
+        private static void PostDelayedCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable, long delayMs)
+        {
+            if (handler is null || runnable is null)
+                return;
+            handler.PostDelayed(runnable, delayMs);
+        }
+
         // Hide system UI (status bar and navigation bar) for full-screen video experience
         private void HideSystemUI()
         {
@@ -861,10 +880,11 @@ namespace VardyParty.Platforms.Android
                 if (window == null) return;
 
                 // Hide status bar and navigation bar for immersive full-screen video
-                if (Build.VERSION.SdkInt >= BuildVersionCodes.R)
+                if (OperatingSystem.IsAndroidVersionAtLeast(30))
                 {
-                    // Android 11+ (API 30+) - Use WindowInsetsController
-                    window.SetDecorFitsSystemWindows(false);
+                    // SetDecorFitsSystemWindows is obsolete on API 35+ where edge-to-edge is the default.
+                    if (!OperatingSystem.IsAndroidVersionAtLeast(35))
+                        window.SetDecorFitsSystemWindows(false);
                     var controller = window.InsetsController;
                     if (controller != null)
                     {
@@ -1086,13 +1106,14 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                if (_overlayContainer == null) return;
+                var overlay = _overlayContainer;
+                if (overlay == null) return;
                 RunOnUiThread(() =>
                 {
-                    _overlayContainer.Animate().Cancel();
-                    _overlayContainer.Visibility = global::Android.Views.ViewStates.Visible;
-                    _overlayContainer.Alpha = 0f;
-                    _overlayContainer.Animate().Alpha(1f).SetDuration(200).Start();
+                    overlay.Animate()?.Cancel();
+                    overlay.Visibility = global::Android.Views.ViewStates.Visible;
+                    overlay.Alpha = 0f;
+                    overlay.Animate()?.Alpha(1f)?.SetDuration(200)?.Start();
                 });
             }
             catch { }
@@ -1102,14 +1123,15 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                if (_overlayContainer == null) return;
+                var overlay = _overlayContainer;
+                if (overlay == null) return;
                 RunOnUiThread(() =>
                 {
-                    _overlayContainer.Animate().Cancel();
-                    _overlayContainer.Animate().Alpha(0f).SetDuration(300).WithEndAction(new Java.Lang.Runnable(() =>
+                    overlay.Animate()?.Cancel();
+                    overlay.Animate()?.Alpha(0f)?.SetDuration(300)?.WithEndAction(new Java.Lang.Runnable(() =>
                     {
-                        try { _overlayContainer.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
-                    })).Start();
+                        try { overlay.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
+                    }))?.Start();
                 });
             }
             catch { }
@@ -1120,8 +1142,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 if (_overlayLocked) return;
-                _overlayHandler?.RemoveCallbacks(_overlayHideRunnable);
-                _overlayHandler?.PostDelayed(_overlayHideRunnable, OverlayTimeoutMs);
+                RemoveCallback(_overlayHandler, _overlayHideRunnable);
+                PostDelayedCallback(_overlayHandler, _overlayHideRunnable, OverlayTimeoutMs);
             }
             catch { }
         }
@@ -1368,7 +1390,7 @@ namespace VardyParty.Platforms.Android
             // Dismiss the brief stream toast — the full overlay supersedes it.
             try
             {
-                _streamToastHandler?.RemoveCallbacks(_streamToastRunnable);
+                RemoveCallback(_streamToastHandler, _streamToastRunnable);
                 if (_streamToastView != null)
                     _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
             }
@@ -1423,8 +1445,8 @@ namespace VardyParty.Platforms.Android
                 : $"Stream: {index}/{total} ({vertRes})";
 
             _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
-            _streamToastHandler.RemoveCallbacks(_streamToastRunnable);
-            _streamToastHandler.PostDelayed(_streamToastRunnable, 10_000);
+            RemoveCallback(_streamToastHandler, _streamToastRunnable);
+            PostDelayedCallback(_streamToastHandler, _streamToastRunnable, 10_000);
         }
 
         private void UpdateBackdropVisibility()
@@ -1718,9 +1740,9 @@ namespace VardyParty.Platforms.Android
                 // Reset scroll position and restart animation
                 _tickerScrollX = 0f;
                 if (_tickerInner != null) _tickerInner.TranslationX = 0f;
-                _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
-                if (_isScoresTickerVisible && _tickerRunnable != null)
-                    _tickerHandler?.PostDelayed(_tickerRunnable, 16);
+                RemoveCallback(_tickerHandler, _tickerRunnable);
+                if (_isScoresTickerVisible)
+                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             }
             catch (Exception ex)
             {
@@ -1748,7 +1770,7 @@ namespace VardyParty.Platforms.Android
                 else
                 {
                     // Stop the scroll animation when hidden
-                    _tickerHandler?.RemoveCallbacks(_tickerRunnable!);
+                    RemoveCallback(_tickerHandler, _tickerRunnable);
                 }
             }
             catch (Exception ex)
@@ -1845,6 +1867,8 @@ namespace VardyParty.Platforms.Android
 
             public bool OnTouch(global::Android.Views.View? v, global::Android.Views.MotionEvent? e)
             {
+                if (e is null)
+                    return false;
                 var scaleHandled = _scaleDetector.OnTouchEvent(e);
                 var dragHandled = _gestureDetector.OnTouchEvent(e);
                 return scaleHandled || dragHandled;
@@ -1947,7 +1971,7 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent e)
+        public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent? e)
         {
             try
             {

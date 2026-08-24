@@ -116,20 +116,20 @@ namespace VardyParty
                         refresh.Clicked += async (_, __) =>
                         {
                             Console.WriteLine("[MainPage] Refresh clicked (fallback)");
-                            await DisplayAlert("Refresh", "Refreshing background data...", "OK");
+                            await DisplayAlertAsync("Refresh", "Refreshing background data...", "OK");
                             // Do not perform heavy work on UI thread; any real refresh should call services asynchronously
                         };
 
-                        var stack = new StackLayout
+                        var stack = new VerticalStackLayout
                         {
-                            VerticalOptions = LayoutOptions.CenterAndExpand,
-                            HorizontalOptions = LayoutOptions.FillAndExpand,
+                            HorizontalOptions = LayoutOptions.Center,
+                            VerticalOptions = LayoutOptions.Center,
                             Spacing = 12,
                             Children = { label, help, refresh }
                         };
 
                         this.BackgroundColor = Colors.Black;
-                        this.Content = stack;
+                        this.Content = new Grid { Children = { stack } };
                     }
                     else
                     {

@@ -122,7 +122,7 @@ public class BuildInfoService : IBuildInfoService
     {
         try
         {
-            var path = Assembly.GetExecutingAssembly().Location;
+            var path = AppContext.BaseDirectory;
             if (string.IsNullOrWhiteSpace(path))
             {
                 return ("unknown", "unknown");

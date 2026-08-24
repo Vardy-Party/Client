@@ -276,18 +276,22 @@ namespace VardyParty.Platforms.Android
 
                             var customFactory = new HeaderInjectingDataSourceFactory(headers);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
-                            var mediaSource2 = mediaSourceFactory.CreateMediaSource(
-                                new AndroidX.Media3.Common.MediaItem.Builder()
-                                    .SetUri(m3u8Url)
-                                    .SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8)
-                                    .Build());
-                            _player.SetMediaSource(mediaSource2);
-                            _player.Prepare();
-                            _player.PlayWhenReady = true;
+                            var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
+                            headerBuilder.SetUri(m3u8Url);
+                            headerBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                            var headerItem = headerBuilder.Build()
+                                ?? throw new InvalidOperationException("MediaItem.Build returned null.");
+                            var headerSource = mediaSourceFactory.CreateMediaSource(headerItem)
+                                ?? throw new InvalidOperationException("CreateMediaSource returned null.");
+                            if (_player is not { } headerPlayer)
+                                return;
+                            headerPlayer.SetMediaSource(headerSource);
+                            headerPlayer.Prepare();
+                            headerPlayer.PlayWhenReady = true;
                             if (_playerListener != null)
                             {
-                                _player.RemoveListener(_playerListener);
-                                _player.AddListener(_playerListener);
+                                headerPlayer.RemoveListener(_playerListener);
+                                headerPlayer.AddListener(_playerListener);
                             }
 
                             _logger?.LogInformation(
@@ -310,21 +314,25 @@ namespace VardyParty.Platforms.Android
                         }
                         catch { }
 
-                        var mediaItem = new AndroidX.Media3.Common.MediaItem.Builder()
-                            .SetUri(m3u8Url)
-                            .SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8)
-                            .Build();
+                        var fallbackBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
+                        fallbackBuilder.SetUri(m3u8Url);
+                        fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                        var fallbackItem = fallbackBuilder.Build()
+                            ?? throw new InvalidOperationException("MediaItem.Build returned null.");
                         var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(dataSourceFactory)
-                            .CreateMediaSource(mediaItem);
+                            .CreateMediaSource(fallbackItem)
+                            ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 
-                        _player.SetMediaSource(mediaSource);
-                        _player.Prepare();
-                        _player.PlayWhenReady = true;
+                        if (_player is not { } fallbackPlayer)
+                            return;
+                        fallbackPlayer.SetMediaSource(mediaSource);
+                        fallbackPlayer.Prepare();
+                        fallbackPlayer.PlayWhenReady = true;
 
                         if (_playerListener != null)
                         {
-                            _player.RemoveListener(_playerListener);
-                            _player.AddListener(_playerListener);
+                            fallbackPlayer.RemoveListener(_playerListener);
+                            fallbackPlayer.AddListener(_playerListener);
                         }
 
                         _logger?.LogInformation("[NativeVideoActivity] Requested player to switch to {Url}", m3u8Url);

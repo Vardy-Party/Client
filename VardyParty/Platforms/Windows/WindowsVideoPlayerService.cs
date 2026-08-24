@@ -219,8 +219,7 @@ namespace VardyParty.Platforms.Windows
                 TypedEventHandler<MediaPlaybackSession, object>? positionChangedHandler = null;
                 TypedEventHandler<MediaPlayer, object>? mediaEndedHandler = null;
                 TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs>? mediaFailedHandler = null;
-                
-                bool metadataReported = false;
+
                 bool isPointerNearNextButton = false;
                 bool isNextStreamRequestInProgress = false;
                 bool suppressIndexDrivenSwitch = false;
@@ -718,7 +717,7 @@ namespace VardyParty.Platforms.Windows
                         string frameRateText = "unknown";
                         string vCodec = "unknown";
                         string aCodec = "unknown";
-                        AdaptiveMediaSource ams = null;
+                        AdaptiveMediaSource? ams = null;
 
                         if (mediaPlayer.Source is MediaPlaybackItem item)
                         {
@@ -1635,7 +1634,7 @@ namespace VardyParty.Platforms.Windows
                             UpdateBitrateFromAdaptiveSource(item);
                         }
                     }
-                    catch (InvalidCastException ex)
+                    catch (InvalidCastException)
                     {
                         // Silently ignore cast exceptions during position updates to avoid spam
                         // This can happen during adaptive stream switches
@@ -1769,26 +1768,28 @@ namespace VardyParty.Platforms.Windows
 
                 void ShowPlayerOverlay()
                 {
-                    if (ReferenceEquals(nativeWindow.Content, playerGrid))
+                    var content = nativeWindow?.Content;
+                    if (ReferenceEquals(content, playerGrid))
                     {
                         playerOverlayAttached = true;
                         return;
                     }
 
-                    if (nativeWindow.Content is Microsoft.UI.Xaml.UIElement currentRoot
+                    if (content is Microsoft.UI.Xaml.UIElement currentRoot
                         && !ReferenceEquals(currentRoot, playerGrid))
                     {
                         originalContent = currentRoot;
                     }
 
-                    nativeWindow.Content = playerGrid;
+                    if (nativeWindow is not null)
+                        nativeWindow.Content = playerGrid;
                     playerOverlayAttached = true;
                     WindowsEventLogger.Info("VideoPlayer", "Player grid set as window content");
                 }
 
                 void HidePlayerOverlay()
                 {
-                    if (nativeWindow.Content is Microsoft.UI.Xaml.UIElement current
+                    if (nativeWindow?.Content is Microsoft.UI.Xaml.UIElement current
                         && ReferenceEquals(current, playerGrid)
                         && originalContent is Microsoft.UI.Xaml.UIElement restored)
                     {
@@ -2264,9 +2265,9 @@ namespace VardyParty.Platforms.Windows
                                 _currentPlaybackItem = playbackItem;
 
                                 // Add mediaPlayerElement to grid now that source is set
-                                if (!playerGrid.Children.Contains(mediaPlayerElement))
+                                if (playerGrid is { } overlayGrid && !overlayGrid.Children.Contains(mediaPlayerElement))
                                 {
-                                    playerGrid.Children.Insert(0, mediaPlayerElement); // Insert at index 0 to be behind other elements
+                                    overlayGrid.Children.Insert(0, mediaPlayerElement); // Insert at index 0 to be behind other elements
                                 }
 
                                 // Extract metadata immediately when source is set so orchestrator can get it after 2.5s
@@ -2283,14 +2284,17 @@ namespace VardyParty.Platforms.Windows
                                 lastGoodPlaybackUrl = url;
 
                                 // Ensure the grid is visible and hit testable
-                                playerGrid.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                                playerGrid.IsHitTestVisible = true;
+                                if (playerGrid is { } overlay)
+                                {
+                                    overlay.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                                    overlay.IsHitTestVisible = true;
+                                }
 
                                 ShowPlayerOverlay();
                                 WindowsEventLogger.Info("VideoPlayer", $"Playback source attached for {title}");
 
                                 // Force layout update
-                                nativeWindow.Activate();
+                                nativeWindow?.Activate();
                             }
                             catch (Exception ex)
                             {

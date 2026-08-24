@@ -8,7 +8,7 @@ namespace VardyParty.Platforms.Android
 {
     class ActivityInjectionCallbacks : Java.Lang.Object, Application.IActivityLifecycleCallbacks
     {
-        public void OnActivityCreated(Activity activity, Bundle savedInstanceState)
+        public void OnActivityCreated(Activity activity, Bundle? savedInstanceState)
         {
             try
             {
