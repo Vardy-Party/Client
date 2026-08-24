@@ -919,13 +919,13 @@ namespace VardyParty.Platforms.Android
                 else
                 {
                     // Android 10 and below - Use SystemUiVisibility flags
-                    #pragma warning disable CS0618 // Type or member is obsolete
+#pragma warning disable CS0618 // Type or member is obsolete
                     window.DecorView.SystemUiVisibility = (global::Android.Views.StatusBarVisibility)(
                         global::Android.Views.SystemUiFlags.Fullscreen |
                         global::Android.Views.SystemUiFlags.HideNavigation |
                         global::Android.Views.SystemUiFlags.Immersive |
                         global::Android.Views.SystemUiFlags.ImmersiveSticky);
-                    #pragma warning restore CS0618
+#pragma warning restore CS0618
                 }
 
                 _logger?.LogInformation("[NativeVideoActivity] System UI hidden for full-screen video");

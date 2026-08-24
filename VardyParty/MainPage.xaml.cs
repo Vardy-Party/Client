@@ -25,7 +25,7 @@ namespace VardyParty
         {
             Console.WriteLine("[MainPage] ctor start");
             Console.WriteLine($"[MainPage] IsTv={MauiProgram.IsTv}, IsWebViewAvailable={MauiProgram.IsWebViewAvailable}");
-            
+
             try
             {
                 InitializeComponent();
@@ -38,7 +38,7 @@ namespace VardyParty
                     if (blazorWebView != null)
                     {
                         Console.WriteLine("[MainPage] BlazorWebView found, wiring events");
-                        blazorWebView.BlazorWebViewInitializing += (s, e) => 
+                        blazorWebView.BlazorWebViewInitializing += (s, e) =>
                         {
                             Console.WriteLine("[MainPage] BlazorWebViewInitializing");
                         };
@@ -64,7 +64,7 @@ namespace VardyParty
                             }
 #endif
                         };
-                        blazorWebView.UrlLoading += (s, e) => 
+                        blazorWebView.UrlLoading += (s, e) =>
                         {
                             Console.WriteLine($"[MainPage] UrlLoading: {e.Url}");
                         };

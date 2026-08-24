@@ -23,7 +23,7 @@ public interface IStreamResolver
         int batchSize = 3,
         CancellationToken cancellationToken = default,
         Action<int>? onTotalStreamsKnown = null);
-    
+
     /// <summary>
     /// Resolves m3u8 URL for a single stream
     /// Used when user selects a stream to play (m3u8 URLs are single-use)

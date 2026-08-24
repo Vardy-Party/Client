@@ -213,22 +213,22 @@ namespace VardyParty
 
             if (segments[0].Equals("player", StringComparison.OrdinalIgnoreCase))
             {
-            if (segments.Count >= 4)
-            {
-                var league = Uri.UnescapeDataString(segments[1]);
-                var home = Uri.UnescapeDataString(segments[2]);
-                var away = Uri.UnescapeDataString(segments[3]);
-                if (selection != null)
+                if (segments.Count >= 4)
                 {
-                    selection.LastLeague = league;
-                    selection.LastHomeTeam = home;
-                    selection.LastAwayTeam = away;
-                    selection.LastRoute = "/";
+                    var league = Uri.UnescapeDataString(segments[1]);
+                    var home = Uri.UnescapeDataString(segments[2]);
+                    var away = Uri.UnescapeDataString(segments[3]);
+                    if (selection != null)
+                    {
+                        selection.LastLeague = league;
+                        selection.LastHomeTeam = home;
+                        selection.LastAwayTeam = away;
+                        selection.LastRoute = "/";
+                    }
+                    return "/";
                 }
-                return "/";
-            }
 
-            return "/";
+                return "/";
             }
 
             if (segments[0].Equals("streams", StringComparison.OrdinalIgnoreCase))

@@ -318,27 +318,27 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
 
         if (string.IsNullOrWhiteSpace(home) || string.IsNullOrWhiteSpace(away))
         {
-             return;
+            return;
         }
 
         string ExtractScore(string marker)
         {
-             int rangeLen = end - start;
-             if (rangeLen <= 0) return string.Empty;
+            int rangeLen = end - start;
+            if (rangeLen <= 0) return string.Empty;
 
-             int mIdx = html.IndexOf(marker, start, rangeLen, StringComparison.Ordinal);
-             if (mIdx < 0) return string.Empty;
+            int mIdx = html.IndexOf(marker, start, rangeLen, StringComparison.Ordinal);
+            if (mIdx < 0) return string.Empty;
 
-             int valStart = html.IndexOf('>', mIdx, end - mIdx);
-             if (valStart < 0) return string.Empty;
-             valStart++;
+            int valStart = html.IndexOf('>', mIdx, end - mIdx);
+            if (valStart < 0) return string.Empty;
+            valStart++;
 
-             if (valStart >= end) return string.Empty;
+            if (valStart >= end) return string.Empty;
 
-             int valEnd = html.IndexOf('<', valStart, end - valStart);
-             if (valEnd < 0) return string.Empty;
+            int valEnd = html.IndexOf('<', valStart, end - valStart);
+            if (valEnd < 0) return string.Empty;
 
-             return html.Substring(valStart, valEnd - valStart);
+            return html.Substring(valStart, valEnd - valStart);
         }
 
         int? homeScore = TryParseInt(ExtractScore("HomeScore"));
@@ -626,71 +626,71 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             var isPenalties = status == "Penalties" || (hasProgressContainer && ProgressContains("penalties"));
             if (isPenalties && string.IsNullOrEmpty(penaltyWinner))
             {
-                 isFinished = false;
-                 isInProgress = true;
-                 status = "Penalties";
-                 minute = null;
+                isFinished = false;
+                isInProgress = true;
+                status = "Penalties";
+                minute = null;
             }
 
             if (eventStatusMap.TryGetValue(id, out var statusMap))
             {
-                 // If we haven't found a minute yet, try to parse it from periodLabel
-                 if (!minute.HasValue && !string.IsNullOrEmpty(statusMap.periodLabel))
-                 {
-                     var periodText = statusMap.periodLabel;
-                     // Try to parse injury time format: "90+8'" or "90+8"
-                     var injMatch = InjuryTimePlainRegex.Match(periodText);
-                     if (injMatch.Success)
-                     {
-                         var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
-                         var e = TryParseInt(injMatch.Groups[2].Value) ?? 0;
-                         minute = m * 100 + e;
-                         minuteStatus = $"{m}+{e}'";
-                         isInProgress = true;
-                         hasProgress = true;
-                     }
-                     else
-                     {
-                         // Try to parse simple minute format: "68'" or "68 minutes"
-                         var minMatch = MinuteApostropheRegex.Match(periodText);
-                         if (!minMatch.Success)
-                         {
-                             minMatch = MinuteWordsRegex.Match(periodText);
-                         }
-                         if (minMatch.Success)
-                         {
-                             minute = TryParseInt(minMatch.Groups[1].Value);
-                             if (minute.HasValue)
-                             {
-                                 minuteStatus = $"{minute}'";
-                                 isInProgress = true;
-                                 hasProgress = true;
-                             }
-                         }
-                     }
-                 }
-                 
-                 if (string.IsNullOrEmpty(status))
-                 {
-                     // BBC lifecycle enums (PreEvent/MidEvent/PostEvent) are not display statuses.
-                     // Only promote human-readable map statuses such as Postponed.
-                     var mapStatus = statusMap.status ?? string.Empty;
-                     if (mapStatus.IndexOf("Postponed", StringComparison.OrdinalIgnoreCase) >= 0)
-                     {
-                         status = "Postponed";
-                         isPostponed = true;
-                         hasProgress = false;
-                         isFinished = false;
-                         isInProgress = false;
-                         isHalf = false;
-                         minute = null;
-                     }
-                     else if (OrdinalStatusRegex.IsMatch(mapStatus))
-                     {
-                         status = mapStatus;
-                         minute = 0;
-                     }
-                 }
+                // If we haven't found a minute yet, try to parse it from periodLabel
+                if (!minute.HasValue && !string.IsNullOrEmpty(statusMap.periodLabel))
+                {
+                    var periodText = statusMap.periodLabel;
+                    // Try to parse injury time format: "90+8'" or "90+8"
+                    var injMatch = InjuryTimePlainRegex.Match(periodText);
+                    if (injMatch.Success)
+                    {
+                        var m = TryParseInt(injMatch.Groups[1].Value) ?? 0;
+                        var e = TryParseInt(injMatch.Groups[2].Value) ?? 0;
+                        minute = m * 100 + e;
+                        minuteStatus = $"{m}+{e}'";
+                        isInProgress = true;
+                        hasProgress = true;
+                    }
+                    else
+                    {
+                        // Try to parse simple minute format: "68'" or "68 minutes"
+                        var minMatch = MinuteApostropheRegex.Match(periodText);
+                        if (!minMatch.Success)
+                        {
+                            minMatch = MinuteWordsRegex.Match(periodText);
+                        }
+                        if (minMatch.Success)
+                        {
+                            minute = TryParseInt(minMatch.Groups[1].Value);
+                            if (minute.HasValue)
+                            {
+                                minuteStatus = $"{minute}'";
+                                isInProgress = true;
+                                hasProgress = true;
+                            }
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(status))
+                {
+                    // BBC lifecycle enums (PreEvent/MidEvent/PostEvent) are not display statuses.
+                    // Only promote human-readable map statuses such as Postponed.
+                    var mapStatus = statusMap.status ?? string.Empty;
+                    if (mapStatus.IndexOf("Postponed", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        status = "Postponed";
+                        isPostponed = true;
+                        hasProgress = false;
+                        isFinished = false;
+                        isInProgress = false;
+                        isHalf = false;
+                        minute = null;
+                    }
+                    else if (OrdinalStatusRegex.IsMatch(mapStatus))
+                    {
+                        status = mapStatus;
+                        minute = 0;
+                    }
+                }
             }
 
             // Fix precedence: If ET is detected, don't just show minute

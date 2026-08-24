@@ -14,17 +14,17 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
 
     private static string BuildDedupKey(EnrichedStream stream) =>
         StreamUrlNormalizer.NormalizeForDedup(stream.ResolvedM3U8Url);
-    
-    private readonly BehaviorSubject<IReadOnlyList<EnrichedStream>> _healthyStreamsSubject = 
+
+    private readonly BehaviorSubject<IReadOnlyList<EnrichedStream>> _healthyStreamsSubject =
         new(new List<EnrichedStream>().AsReadOnly());
     public IObservable<IReadOnlyList<EnrichedStream>> HealthyStreamsUpdated => _healthyStreamsSubject;
-    
+
     private readonly BehaviorSubject<int> _currentIndexSubject = new(-1);
     public IObservable<int> CurrentStreamIndexChanged => _currentIndexSubject;
-    
+
     private readonly BehaviorSubject<EnrichedStream?> _currentStreamSubject = new(null);
     public IObservable<EnrichedStream?> CurrentStreamChanged => _currentStreamSubject;
-    
+
     private readonly BehaviorSubject<PlayerOverlayInfo?> _overlayInfoSubject = new(null);
     public IObservable<PlayerOverlayInfo?> OverlayInfoChanged => _overlayInfoSubject;
 
@@ -55,7 +55,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             }
 
             _healthyStreams.Add(stream);
-            
+
             // If this is the first stream, set it as current
             if (_currentStreamIndex == -1)
             {
@@ -64,7 +64,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 var cur = _healthyStreams[_currentStreamIndex];
                 _currentStreamSubject.OnNext(cur);
             }
-            
+
             _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
 
             // Always update overlay info so UI sees new totals and current stream metadata
@@ -91,7 +91,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             if (_healthyStreams.Count == 0) return false;
-            
+
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return SwitchToStream(nextIndex);
         }
@@ -102,7 +102,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             if (_healthyStreams.Count == 0) return false;
-            
+
             int prevIndex = (_currentStreamIndex - 1 + _healthyStreams.Count) % _healthyStreams.Count;
             return SwitchToStream(prevIndex);
         }
@@ -149,7 +149,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         {
             if (_currentStreamIndex < 0 || _currentStreamIndex >= _healthyStreams.Count)
                 return null;
-            
+
             return _healthyStreams[_currentStreamIndex];
         }
     }
@@ -160,7 +160,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         {
             if (_healthyStreams.Count == 0)
                 return null;
-            
+
             // Get the next stream without switching to it
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return nextIndex < _healthyStreams.Count ? _healthyStreams[nextIndex] : null;
