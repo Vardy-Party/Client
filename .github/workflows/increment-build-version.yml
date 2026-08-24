@@ -2,6 +2,10 @@ name: Increment Build Version
 
 # After CI succeeds on main, bump ApplicationVersion only (no semver change).
 # Feature branches never get version commits — that was the PR fan-out / storm cause.
+#
+# main is protected: "Changes must be made through a pull request" (GH006).
+# A direct git push origin main therefore fails after a successful bump.
+# Open a bot PR and squash-merge it so the new build number actually lands on main.
 on:
   workflow_run:
     workflows:
@@ -18,6 +22,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   increment-build-version:
@@ -46,16 +51,55 @@ jobs:
         id: version
         run: |
           CURRENT=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
+          if [[ -z "${CURRENT}" ]]; then
+            echo "::error::Could not read ApplicationVersion from Version.props"
+            exit 1
+          fi
           NEW_VERSION=$((CURRENT + 1))
           sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "::notice::Incremented ApplicationVersion ${CURRENT} → ${NEW_VERSION}"
 
-      - name: Commit and push
+      - name: Commit, open PR, and squash-merge to main
         if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Actions"
+          set -euo pipefail
+
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          BRANCH="ci/increment-application-version-${NEW_VERSION}"
+          TITLE="ci: auto-increment ApplicationVersion to ${NEW_VERSION}"
+          BODY="Automated ApplicationVersion bump after CI succeeded on main.
+
+          main is protected (GH006: changes must be made through a pull request), so this workflow cannot push directly. Squash-merging this PR lands build ${NEW_VERSION} on main for the next packaged release.
+
+          GITHUB_TOKEN merges do not re-trigger workflows, so this does not loop CI/CD."
+
+          git checkout -B "$BRANCH"
           git add Version.props
-          git commit -m "ci: auto-increment ApplicationVersion to ${{ steps.version.outputs.new_version }}"
-          git push origin main
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "HEAD:${BRANCH}"
+
+          PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "${PR_NUMBER}" ]]; then
+            if ! PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"); then
+              echo "::error::Could not create the version-bump PR. Enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests', then re-run this workflow."
+              exit 1
+            fi
+            echo "::notice::Opened ${PR_URL}"
+          else
+            echo "::notice::Reusing existing PR #${PR_NUMBER}"
+          fi
+
+          # Squash keeps the ci: auto-increment* subject so the skip guard still matches.
+          # gh pr merge with no number uses the PR for the current branch.
+          if ! gh pr merge --squash --delete-branch --subject "$TITLE"; then
+            echo "::error::Opened a version-bump PR but could not squash-merge it onto main. If required status checks or reviews block github-actions[bot], allow that actor to bypass those rules for this path, or merge the PR manually."
+            exit 1
+          fi
+
+          echo "::notice::ApplicationVersion ${NEW_VERSION} is on main"
