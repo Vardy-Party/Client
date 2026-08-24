@@ -129,8 +129,18 @@ public class StreamResolutionOrchestrator(
             }
             else if (playbackResult != null && !playbackResult.Success)
             {
-                await HandlePlaybackFailureAsync(game, streamSwitchingService.GetCurrentStream()!, playbackResult,
-                    cancellationToken);
+                var current = streamSwitchingService.GetCurrentStream();
+                if (current == null)
+                {
+                    // Native session already drained the pool; resume candidate testing.
+                    selectionCoordinator.ResumeTesting();
+                    _status = "Testing resumed";
+                    PublishProgress();
+                }
+                else
+                {
+                    await HandlePlaybackFailureAsync(game, current, playbackResult, cancellationToken);
+                }
             }
         }
 

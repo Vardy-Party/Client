@@ -13,6 +13,7 @@ using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
 using VardyParty.Services;
 using VardyParty.Models;
+using VardyParty.Playback;
 using Microsoft.Extensions.Logging;
 using System.Threading;
 using VardyParty.Health;
@@ -20,7 +21,7 @@ using VardyParty.Health;
 namespace VardyParty.Platforms.Android
 {
     [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
-    public class NativeVideoActivity : Activity
+    public partial class NativeVideoActivity : Activity
     {
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
         public NativeVideoActivity() : this(ResolveSwitching(), ResolveLogger()) { }
@@ -149,12 +150,7 @@ namespace VardyParty.Platforms.Android
         public void SetPreparingForTests(bool preparing) => _isPreparing = preparing;
         public void SetCurrentPlaybackUrlForTests(string? url) => _m3u8Url = url ?? string.Empty;
         public bool CanSwitchTo(string candidateUrl)
-        {
-            if (string.IsNullOrEmpty(candidateUrl)) return false;
-            if (_isPreparing) return false;
-            if (string.Equals(_m3u8Url, candidateUrl, StringComparison.OrdinalIgnoreCase)) return false;
-            return true;
-        }
+            => PlaybackPolicy.CanAttach(_m3u8Url, candidateUrl, _isPreparing);
 
         private static IStreamSwitchingService? ResolveSwitching()
         {
@@ -205,7 +201,6 @@ namespace VardyParty.Platforms.Android
         private IStreamSwitchingService? _switching;
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
-        private StreamMetricsWindow _metricsWindow = new();
         private Timer? _healthReportTimer;
         private bool _isPreparing;
         private IDisposable? _healthySub;
@@ -245,7 +240,6 @@ namespace VardyParty.Platforms.Android
         private int _lastToastIndex = -1;
         private int _lastToastTotal = -1;
         private bool _playbackResultReported;
-        private bool _isAutoSwitchingOnPlaybackError;
         private const int PlayerStateIdle = 1;
         private const int PlayerStateBuffering = 2;
         private const int PlayerStateReady = 3;
@@ -647,7 +641,7 @@ namespace VardyParty.Platforms.Android
             if (!string.IsNullOrEmpty(_m3u8Url))
             {
                 _logger?.LogInformation("[NativeVideoActivity] Starting initial playback: {Url}", _m3u8Url);
-                SwitchToStreamUrl(_m3u8Url);
+                AttachViaSession(_m3u8Url, usedCachedUrl: true);
             }
 
             HideOverlayAnimated();
@@ -666,6 +660,7 @@ namespace VardyParty.Platforms.Android
                 {
                     try
                     {
+                        SyncHealthyStreamCount();
                         RunOnUiThread(() =>
                         {
                             UpdateOverlayFromCurrentStream();
@@ -690,6 +685,7 @@ namespace VardyParty.Platforms.Android
                 });
 
                 UpdateOverlayFromCurrentStream();
+                SyncHealthyStreamCount();
             }
             catch (Exception ex)
             {
@@ -750,6 +746,11 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                if (_suppressIndexDrivenSwitch)
+                {
+                    return;
+                }
+
                 var current = _switching?.GetCurrentStream();
                 var url = current?.ResolvedM3U8Url;
                 if (string.IsNullOrWhiteSpace(url))
@@ -763,7 +764,7 @@ namespace VardyParty.Platforms.Android
                 }
 
                 _logger?.LogInformation("[NativeVideoActivity] Switching player to current stream URL {Url}", url);
-                SwitchToStreamUrl(url);
+                AttachViaSession(url, usedCachedUrl: true);
             }
             catch (Exception ex)
             {
@@ -771,86 +772,7 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        public void SwitchToStreamUrl(string m3u8Url)
-        {
-            try
-            {
-                RunOnUiThread(() =>
-                {
-                    try
-                    {
-                        if (_player == null)
-                        {
-                            _logger?.LogWarning("[NativeVideoActivity] Player null - cannot switch");
-                            return;
-                        }
-
-                        _isPreparing = true;
-                        _m3u8Url = m3u8Url;
-
-                        var dataSourceFactory = new DefaultHttpDataSource.Factory();
-                        // Include both Referer and User-Agent headers - many HLS hosts require both
-                        try
-                        {
-                            // Use a custom data source factory that injects headers on every request
-                            var headers = new System.Collections.Generic.Dictionary<string, string?>
-                            {
-                                ["Referer"] = _refererUrl ?? string.Empty,
-                                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            };
-                            // Log the headers we will use to play the stream so we can verify requests in network traces
-                            try { _logger?.LogInformation("[NativeVideoActivity] Playing stream. m3u8={Url} Referer={Referer} UserAgent={UA}", m3u8Url, headers.ContainsKey("Referer") ? headers["Referer"] : string.Empty, headers.ContainsKey("User-Agent") ? headers["User-Agent"] : string.Empty); } catch { }
-                            var customFactory = new HeaderInjectingDataSourceFactory(headers);
-                            var mediaSourceFactory = new HlsMediaSource.Factory(customFactory);
-                            var mediaSource2 = mediaSourceFactory.CreateMediaSource(
-                                new MediaItem.Builder().SetUri(m3u8Url).SetMimeType(MimeTypes.ApplicationM3u8).Build());
-                            _player.SetMediaSource(mediaSource2);
-                            _player.Prepare();
-                            _player.PlayWhenReady = true;
-                            if (_playerListener != null)
-                            {
-                                _player.RemoveListener(_playerListener);
-                                _player.AddListener(_playerListener);
-                            }
-                            _logger?.LogInformation("[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory)", m3u8Url);
-                            return;
-                        }
-                        catch
-                        {
-                            // Fallback to setting user agent only if default properties not available
-                            try { dataSourceFactory.SetUserAgent("VardyParty/1.0"); } catch { }
-                        }
-
-                        // Log the fallback UA/referer when using the default factory
-                        try { _logger?.LogInformation("[NativeVideoActivity] Playing stream (fallback factory). m3u8={Url} Referer={Referer} UserAgent={UA}", m3u8Url, _refererUrl ?? string.Empty, "VardyParty/1.0"); } catch { }
-                        var mediaItem = new MediaItem.Builder().SetUri(m3u8Url).SetMimeType(MimeTypes.ApplicationM3u8).Build();
-                        var mediaSource = new HlsMediaSource.Factory(dataSourceFactory).CreateMediaSource(mediaItem);
-
-                        _player.SetMediaSource(mediaSource);
-                        _player.Prepare();
-                        _player.PlayWhenReady = true;
-
-                        // Listen for state change to clear preparing flag
-                        if (_playerListener != null)
-                        {
-                            _player.RemoveListener(_playerListener);
-                            _player.AddListener(_playerListener);
-                        }
-
-                        _logger?.LogInformation("[NativeVideoActivity] Requested player to switch to {Url}", m3u8Url);
-                    }
-                    catch (Exception ex)
-                    {
-                        _isPreparing = false;
-                        _logger?.LogError(ex, "[NativeVideoActivity] SwitchToStreamUrl failed");
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "[NativeVideoActivity] SwitchToStreamUrl outer exception");
-            }
-        }
+        public void SwitchToStreamUrl(string m3u8Url) => AttachViaSession(m3u8Url, usedCachedUrl: true);
 
         private void StopAndReleasePlayer(bool release)
         {
@@ -1295,6 +1217,22 @@ namespace VardyParty.Platforms.Android
             return metrics;
         }
 
+        // Marshal a function onto the Android UI thread and return its result as a Task.
+        private Task<T> RunOnUiThreadAsync<T>(Func<T> func)
+        {
+            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                RunOnUiThread(() =>
+                {
+                    try { tcs.TrySetResult(func()); }
+                    catch (Exception ex) { tcs.TrySetException(ex); }
+                });
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+            return tcs.Task;
+        }
+
         private void StartHealthReporting()
         {
             if (_healthReporter == null) return;
@@ -1303,18 +1241,23 @@ namespace VardyParty.Platforms.Android
             {
                 try
                 {
-                    var metrics = BuildPlaybackMetrics();
-                    _metricsWindow.ResetIfExpired();
-                    if (_metricsWindow.BufferingEvents > 0)
+                    // BuildPlaybackMetrics reads ExoPlayer properties which must be accessed on the
+                    // main thread. Marshal the read to the UI thread, then continue on the pool thread.
+                    var metrics = await RunOnUiThreadAsync(() => BuildPlaybackMetrics());
+                    var window = _session.MetricsWindow;
+                    window.ResetIfExpired();
+                    if (window.BufferingEvents > 0)
                     {
                         metrics.IsBuffering = true;
                     }
-                    if (metrics.BitrateKbps.HasValue)
-                    {
-                        _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
-                    }
 
                     await _healthReporter.ReportPlaybackMetricsAsync(_m3u8Url, _refererUrl, metrics: metrics);
+
+                    var generation = CurrentAttachGeneration;
+                    var bitrate = metrics.BitrateKbps;
+                    var buffering = metrics.IsBuffering;
+                    RunOnUiThread(() =>
+                        DispatchEngine(MediaEngineEvent.Metrics(generation, bitrate, buffering)));
                 }
                 catch { }
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -1326,77 +1269,9 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics();
-                if (metrics.BitrateKbps.HasValue)
-                {
-                    _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
-                }
-
                 _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics: metrics);
             }
             catch { }
-        }
-
-        private void ReportBuffering()
-        {
-            if (_healthReporter == null) return;
-            try
-            {
-                var metrics = BuildPlaybackMetrics(isBuffering: true);
-                _metricsWindow.AddBufferingEvent();
-                if (metrics.BitrateKbps.HasValue)
-                {
-                    _metricsWindow.AddBitrate(metrics.BitrateKbps.Value);
-                }
-
-                _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics: metrics);
-            }
-            catch { }
-        }
-
-        private void ReportPlaybackError(string? error)
-        {
-            if (_healthReporter == null) return;
-            try
-            {
-                _metricsWindow.AddError();
-                _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error: error);
-            }
-            catch { }
-        }
-
-        private void TryAutoSwitchFromPlaybackError(string? error)
-        {
-            try
-            {
-                if (_isAutoSwitchingOnPlaybackError)
-                {
-                    return;
-                }
-
-                _isAutoSwitchingOnPlaybackError = true;
-                _logger?.LogWarning("[NativeVideoActivity] Playback error detected; requesting next stream. Error={Error}", error ?? string.Empty);
-
-                var requestTask = VardyParty.Platforms.Android.AndroidVideoPlayerService.RequestNextStream();
-                if (requestTask != null)
-                {
-                    requestTask.ContinueWith(_ =>
-                    {
-                        try { _isAutoSwitchingOnPlaybackError = false; } catch { }
-                    }, TaskScheduler.Default);
-                }
-                else if (_switching?.SwitchToNextStream() == true)
-                {
-                    _isAutoSwitchingOnPlaybackError = false;
-                }
-                else
-                {
-                    _isAutoSwitchingOnPlaybackError = false;
-                }
-            }
-            catch
-            {
-                _isAutoSwitchingOnPlaybackError = false;
-            }
         }
 
         private static string? CodecMimeTypeToFriendlyName(string? mimeType, bool isAudio)
@@ -1446,18 +1321,6 @@ namespace VardyParty.Platforms.Android
             }
 
             return mimeType;
-        }
-
-        private void EvaluateHealthAndSwitchIfNeeded()
-        {
-            try
-            {
-                if (_metricsWindow.IsHealthDeclined())
-                {
-                    VardyParty.Platforms.Android.AndroidVideoPlayerService.RequestNextStream().ContinueWith(_ => { });
-                }
-            }
-            catch { }
         }
 
         private bool TryActivateFocusedMenuItem()
@@ -1898,7 +1761,7 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                if (_switching != null)
+                if (_switching is not null)
                 {
                     bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
                     if (!wasVisible)
@@ -1906,7 +1769,7 @@ namespace VardyParty.Platforms.Android
                         _suppressOverlayShow = true;
                     }
 
-                    _switching.SwitchToNextStream();
+                    DispatchEngine(MediaEngineEvent.UserNext());
 
                     try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
 
@@ -1935,7 +1798,7 @@ namespace VardyParty.Platforms.Android
                         _suppressOverlayShow = true;
                     }
 
-                    _switching.SwitchToPreviousStream();
+                    DispatchEngine(MediaEngineEvent.UserPrevious());
 
                     try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
 
@@ -2136,15 +1999,7 @@ namespace VardyParty.Platforms.Android
 
                             if (_switching != null)
                             {
-                                var requestTask = VardyParty.Platforms.Android.AndroidVideoPlayerService.RequestNextStream();
-                                if (requestTask != null)
-                                {
-                                    requestTask.ContinueWith(_ => { }, TaskScheduler.Default);
-                                }
-                                else
-                                {
-                                    _switching.SwitchToNextStream();
-                                }
+                                DispatchEngine(MediaEngineEvent.UserNext());
                             }
 
                             try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
@@ -2186,8 +2041,7 @@ namespace VardyParty.Platforms.Android
                         }
 
                         try { _switching?.Cleanup(); } catch { }
-                        ReportPlaybackClosed("User closed video player");
-                        Finish();
+                        DispatchEngine(MediaEngineEvent.UserClose());
                         return true;
                 }
             }
@@ -2224,8 +2078,8 @@ namespace VardyParty.Platforms.Android
                     _activity._isBuffering = false;
                     _activity.HideBufferingIndicator();
                     _activity._isPreparing = false;
-                    _activity._isAutoSwitchingOnPlaybackError = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
+                    _activity.DispatchEngine(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
                     // Update overlay UI now that player is ready
@@ -2264,25 +2118,17 @@ namespace VardyParty.Platforms.Android
                 {
                     _activity._logger?.LogInformation("[NativeVideoActivity] Playback ended");
                     _metadataReported = false;
-                    // Playback ended - free in-memory manifest entry for current URL to reduce memory
                     try
                     {
-                        var svc = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
-                        try
+                        if (!string.IsNullOrEmpty(_activity._m3u8Url) && _activity._inMemoryManifestMap != null)
                         {
-                            try
-                            {
-                                if (!string.IsNullOrEmpty(_activity._m3u8Url) && _activity._inMemoryManifestMap != null)
-                                {
-                                    _activity._inMemoryManifestMap.TryRemove(_activity._m3u8Url, out _);
-                                    global::Android.Util.Log.Info("VardyParty", $"[NativeVideoActivity] Cleared in-memory manifest for {_activity._m3u8Url}");
-                                }
-                            }
-                            catch { }
+                            _activity._inMemoryManifestMap.TryRemove(_activity._m3u8Url, out _);
+                            global::Android.Util.Log.Info("VardyParty", $"[NativeVideoActivity] Cleared in-memory manifest for {_activity._m3u8Url}");
                         }
-                        catch { }
                     }
                     catch { }
+
+                    _activity.DispatchEngine(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
             }
 
@@ -2311,14 +2157,14 @@ namespace VardyParty.Platforms.Android
                         _activity._isBuffering = true;
                         _activity.ShowBufferingIndicator();
                         _activity.HideOverlayAnimated();
-                        _activity.ReportBuffering();
-                        _activity.EvaluateHealthAndSwitchIfNeeded();
+                        _activity.DispatchEngine(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
                     }
                     else if (_activity._player?.PlaybackState == PlayerStateReady)
                     {
                         _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
                         _activity._isBuffering = false;
                         _activity.HideBufferingIndicator();
+                        _activity.DispatchEngine(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
                     }
 
                     var last = _activity._lastOverlayInfo;
@@ -2354,8 +2200,7 @@ namespace VardyParty.Platforms.Android
                     _activity._isBuffering = false;
                     _activity._isPreparing = false;
                     _activity.HideBufferingIndicator();
-                    _activity.ReportPlaybackError(message);
-                    _activity.TryAutoSwitchFromPlaybackError(message);
+                    _activity.DispatchEngine(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
                 catch { }
             }
