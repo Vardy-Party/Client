@@ -87,12 +87,24 @@ jobs:
         run: dotnet workload install maui-android --ignore-failed-sources
       # - name: Restore dependencies
       #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
-      - name: Run StyleCop analyzers
-        run: find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true
-        continue-on-error: true
+      # Warnings-as-errors + code-style enforcement. Android Release packaging is
+      # not the point of this job: skip signing/AOT/trim so a missing keystore
+      # cannot fail Code Quality, matching the Build Android job flags.
+      - name: Run analyzers (warnings as errors)
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            echo "::group::Build ${proj}"
+            dotnet build "$proj" -c Release \
+              /p:TreatWarningsAsErrors=true \
+              /p:EnforceCodeStyleInBuild=true \
+              /p:AndroidKeyStore=false \
+              /p:RunAotCompilation=false \
+              /p:PublishTrimmed=false
+            echo "::endgroup::"
+          done < <(find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0)
       - name: Check code formatting
         run: dotnet format --verify-no-changes --verbosity diagnostic
-        continue-on-error: true
 
   build-windows:
     name: Build Windows

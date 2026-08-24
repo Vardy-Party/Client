@@ -20,7 +20,7 @@ namespace VardyParty.Platforms.Windows
                     var width = session.NaturalVideoWidth;
                     var height = session.NaturalVideoHeight;
                     var state = session.PlaybackState.ToString();
-                    
+
                     // Get additional info from MediaPlaybackItem if available
                     string frameRateText = "unknown";
                     string vCodec = "unknown";
@@ -85,7 +85,7 @@ namespace VardyParty.Platforms.Windows
                     string bitrateText = "unknown";
                     if (ams != null && ams.CurrentDownloadBitrate > 0)
                         bitrateText = $"{ams.CurrentDownloadBitrate / 1024.0:0.0} kbps";
-                    
+
                     sb.AppendLine($"Bitrate: {bitrateText}");
                     sb.AppendLine($"Video Codec: {vCodec}");
                     sb.AppendLine($"Audio Codec: {aCodec}");
@@ -202,18 +202,18 @@ namespace VardyParty.Platforms.Windows
                 try { playerGrid.Focus(Microsoft.UI.Xaml.FocusState.Programmatic); } catch { }
             }
 
-                private void ShowNextButtonChrome()
-                {
-                    if (nextButtonHotZone.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
-                    nextButtonContainer.Opacity = 1;
-                }
+            private void ShowNextButtonChrome()
+            {
+                if (nextButtonHotZone.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
+                nextButtonContainer.Opacity = 1;
+            }
 
-                private void HideNextButtonChrome()
-                {
-                    nextButtonContainer.Opacity = 0;
-                    nextButton.Background = nextBgNormal;
-                    nextButtonHintText.Opacity = 0;
-                }
+            private void HideNextButtonChrome()
+            {
+                nextButtonContainer.Opacity = 0;
+                nextButton.Background = nextBgNormal;
+                nextButtonHintText.Opacity = 0;
+            }
 
             private void UpdateStreamInfo()
             {

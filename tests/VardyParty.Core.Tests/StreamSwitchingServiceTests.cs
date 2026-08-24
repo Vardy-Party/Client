@@ -71,8 +71,8 @@ namespace VardyParty.Core.Tests
             var svc = new StreamSwitchingService();
             PlayerOverlayInfo? lastOverlay = null;
             svc.OverlayInfoChanged.Subscribe(info => lastOverlay = info);
-            svc.Initialize("L","H","A");
-            var s1 = MakeStream("http://a","ChannelA", 2500, "1080p");
+            svc.Initialize("L", "H", "A");
+            var s1 = MakeStream("http://a", "ChannelA", 2500, "1080p");
             svc.AddHealthyStream(s1);
             var overlayAfterAdd = lastOverlay;
 
@@ -91,8 +91,8 @@ namespace VardyParty.Core.Tests
             var svc = new StreamSwitchingService();
             PlayerOverlayInfo? lastOverlay = null;
             svc.OverlayInfoChanged.Subscribe(info => lastOverlay = info);
-            svc.Initialize("L","H","A");
-            var s = MakeStream("http://a","ChannelA", 2500, "1080p");
+            svc.Initialize("L", "H", "A");
+            var s = MakeStream("http://a", "ChannelA", 2500, "1080p");
 
             // Act
             svc.AddHealthyStream(s);
@@ -113,9 +113,9 @@ namespace VardyParty.Core.Tests
             var svc = new StreamSwitchingService();
             PlayerOverlayInfo? lastOverlay = null;
             svc.OverlayInfoChanged.Subscribe(info => lastOverlay = info);
-            svc.Initialize("L","H","A");
-            var s1 = MakeStream("http://a","ChannelA", 2500, "1080p");
-            var s2 = MakeStream("http://b","ChannelB", 1500, "720p");
+            svc.Initialize("L", "H", "A");
+            var s1 = MakeStream("http://a", "ChannelA", 2500, "1080p");
+            var s2 = MakeStream("http://b", "ChannelB", 1500, "720p");
             svc.AddHealthyStream(s1);
             svc.AddHealthyStream(s2);
 

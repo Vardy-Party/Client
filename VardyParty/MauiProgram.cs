@@ -152,7 +152,7 @@ public static class MauiProgram
             }
         });
 #endif
-        
+
         // Load appsettings.json from embedded resources (works on all platforms: Android, iOS, macOS, MSIX, etc.)
         try
         {
@@ -171,7 +171,7 @@ public static class MauiProgram
         {
             Console.WriteLine($"[MauiProgram] Error loading embedded appsettings.json: {ex.Message}");
         }
-        
+
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
 #if DEBUG
         // Default to production; set VARDYPARTY_DEBUG_API=local|preview to override.

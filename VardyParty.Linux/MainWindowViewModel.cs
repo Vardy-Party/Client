@@ -469,7 +469,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             var fileName = Path.GetFileName(relativePath);
             var fullPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "images", "leagues", fileName);
-            
+
             if (!File.Exists(fullPath))
             {
                 _logger.LogInformation("League logo not found for {ImagePath}", fullPath);

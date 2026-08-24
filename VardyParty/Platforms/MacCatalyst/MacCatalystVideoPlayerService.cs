@@ -101,7 +101,7 @@ namespace VardyParty.Platforms.MacCatalyst
                 var root = window?.RootViewController;
                 if (root != null)
                 {
-                    root.PresentViewController(controller, true, () => 
+                    root.PresentViewController(controller, true, () =>
                     {
                         player.Play();
                         statusObserver?.Dispose();
@@ -211,7 +211,7 @@ namespace VardyParty.Platforms.MacCatalyst
                 0x76703039 => "VP9",       // 'vp09'
                 0x56503830 => "VP8",       // 'VP80'
                 0x61763031 => "AV1",       // 'av01'
-                
+
                 // Common audio codecs
                 0x6d703461 => "AAC",       // 'mp4a'
                 0x616c6163 => "AAC-LC",    // 'alac'
@@ -220,7 +220,7 @@ namespace VardyParty.Platforms.MacCatalyst
                 0x6f707573 => "Opus",      // 'opus'
                 0x666c6163 => "FLAC",      // 'flac'
                 0x2e6d7033 => "MP3",       // '.mp3'
-                
+
                 _ => null
             };
         }

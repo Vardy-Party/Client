@@ -84,7 +84,7 @@ namespace VardyParty.Platforms.Windows
             {
                 _logger.LogWarning(ex, "GetCurrentMetrics: Failed to update bitrate");
             }
-            
+
             _logger.LogInformation($"GetCurrentMetrics returning: Resolution={_currentMetrics?.Resolution}, Bitrate={_currentMetrics?.BitrateKbps}, Framerate={_currentMetrics?.Framerate}");
             return _currentMetrics;
         }

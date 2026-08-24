@@ -11,12 +11,12 @@ public class EnrichedStream
     /// The original stream from the API
     /// </summary>
     public required Stream Stream { get; set; }
-    
+
     /// <summary>
     /// Current resolution status of the m3u8 URL
     /// </summary>
     public StreamResolutionStatus Status { get; set; } = StreamResolutionStatus.Pending;
-    
+
     /// <summary>
     /// The resolved m3u8 URL (after calling GetM3U8UrlAsync on the API)
     /// Null until successfully resolved
@@ -35,12 +35,12 @@ public class EnrichedStream
     /// Populated after m3u8 is resolved and tested
     /// </summary>
     public StreamHealth? Health { get; set; }
-    
+
     /// <summary>
     /// Error message if resolution or testing failed
     /// </summary>
     public string? ErrorMessage { get; set; }
-    
+
     /// <summary>
     /// Returns the quality label if metadata is available
     /// (e.g., "1080p 60fps 5000kbps")
@@ -52,7 +52,7 @@ public class EnrichedStream
             var label = Health.GetQualityLabel();
             return string.IsNullOrEmpty(label) ? "Unknown Quality" : label;
         }
-        
+
         return Status switch
         {
             StreamResolutionStatus.Pending => "Loading...",
@@ -62,7 +62,7 @@ public class EnrichedStream
             _ => "Unknown"
         };
     }
-    
+
     /// <summary>
     /// Returns whether this stream is ready for playback
     /// (m3u8 resolved AND health check passed)
@@ -79,17 +79,17 @@ public enum StreamResolutionStatus
     /// Waiting to resolve the m3u8 URL
     /// </summary>
     Pending,
-    
+
     /// <summary>
     /// M3U8 URL has been resolved but health test is pending
     /// </summary>
     Resolved,
-    
+
     /// <summary>
     /// M3U8 URL resolved and health test passed
     /// </summary>
     Healthy,
-    
+
     /// <summary>
     /// M3U8 resolution or health test failed
     /// </summary>
