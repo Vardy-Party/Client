@@ -200,20 +200,19 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private static async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
+        private async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
         {
             if (current.Stream == null)
             {
                 return null;
             }
 
-            var api = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IApiService)) as IApiService;
-            if (api == null)
+            if (_api == null)
             {
                 return null;
             }
 
-            return await api.ResolveM3U8ForPlaybackAsync(
+            return await _api.ResolveM3U8ForPlaybackAsync(
                 current.Stream,
                 current.Referer ?? string.Empty);
         }
@@ -225,7 +224,7 @@ namespace VardyParty.Platforms.Android
             {
                 _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error: error);
             }
-            catch { }
+            catch (Exception ex) { LogIgnored("ReportPlaybackError", ex); }
         }
 
         private void PostHealthBuffering()
@@ -236,7 +235,7 @@ namespace VardyParty.Platforms.Android
                 var metrics = BuildPlaybackMetrics(isBuffering: true);
                 _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics: metrics);
             }
-            catch { }
+            catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }
 
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
@@ -273,7 +272,7 @@ namespace VardyParty.Platforms.Android
                                     headers["Referer"],
                                     headers["User-Agent"]);
                             }
-                            catch { }
+                            catch (Exception ex) { LogIgnored("LogPlaybackHeaders", ex); }
 
                             var customFactory = new HeaderInjectingDataSourceFactory(headers);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
@@ -300,9 +299,10 @@ namespace VardyParty.Platforms.Android
                                 m3u8Url);
                             return;
                         }
-                        catch
+                        catch (Exception ex)
                         {
-                            try { dataSourceFactory.SetUserAgent("VardyParty/1.0"); } catch { }
+                            LogIgnored("HeaderInjectingFactory", ex);
+                            try { dataSourceFactory.SetUserAgent("VardyParty/1.0"); } catch (Exception uaEx) { LogIgnored("SetUserAgent", uaEx); }
                         }
 
                         try
@@ -313,7 +313,7 @@ namespace VardyParty.Platforms.Android
                                 _refererUrl ?? string.Empty,
                                 "VardyParty/1.0");
                         }
-                        catch { }
+                        catch (Exception ex) { LogIgnored("LogFallbackPlaybackHeaders", ex); }
 
                         var fallbackBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                         fallbackBuilder.SetUri(m3u8Url);

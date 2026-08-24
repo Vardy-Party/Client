@@ -3,6 +3,7 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty.Orchestrators;
 using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
@@ -25,7 +26,10 @@ namespace VardyParty.Platforms.Android
                 if (activity is NativeVideoActivity nva)
                 {
                     var health = provider.GetService<IStreamHealthReporter>();
-                    nva.InjectServices(switching, logger, health);
+                    var enriched = provider.GetService<IEnrichedGameService>();
+                    var api = provider.GetService<IApiService>();
+                    var orchestrator = provider.GetService<IStreamResolutionOrchestrator>();
+                    nva.InjectServices(switching, logger, health, enriched, api, orchestrator);
                 }
             }
             catch (Exception ex)

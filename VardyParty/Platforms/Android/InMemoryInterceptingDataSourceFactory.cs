@@ -59,7 +59,10 @@ namespace VardyParty.Platforms.Android
                     else break;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                global::Android.Util.Log.Warn("VardyParty", $"[InMemoryDataSource] EnsureSizeLimitAndExpiry failed: {ex.Message}");
+            }
         }
         // Track seen requests globally to detect first-segment requests
         private static System.Collections.Concurrent.ConcurrentDictionary<string, bool> _seenRequests = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
@@ -100,7 +103,10 @@ namespace VardyParty.Platforms.Android
                     return _stream.Length;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                global::Android.Util.Log.Warn("VardyParty", $"[InMemoryDataSource] Open in-memory lookup failed: {ex.Message}");
+            }
             // Log first-time requests for diagnostics and fallback hits
             try
             {

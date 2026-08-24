@@ -44,19 +44,19 @@ internal static class WindowsScoresTickerTrackBuilder
     {
         track.Children.Clear();
 
-        AppendParts(track, singleCopy);
+        var copyA = CreateCopyPanel();
+        AppendParts(copyA, singleCopy);
+        track.Children.Add(copyA);
         if (!loopForScroll)
         {
             return;
         }
 
-        AppendParts(track, InternationalTeamDisplay.SeparatorParts());
-        AppendParts(track, singleCopy);
-        AppendParts(track, InternationalTeamDisplay.SeparatorParts());
+        track.Children.Add(CreateSeparatorElement());
+        var copyB = CreateCopyPanel();
+        AppendParts(copyB, singleCopy);
+        track.Children.Add(copyB);
     }
-
-    public static bool ShouldLoopForScroll(double singleCopyWidth, double viewportWidth) =>
-        viewportWidth > 0 && singleCopyWidth > viewportWidth;
 
     public static void MeasureTrack(StackPanel track, double viewportHeight, out double fullWidth)
     {
@@ -66,6 +66,39 @@ internal static class WindowsScoresTickerTrackBuilder
         {
             fullWidth = track.ActualWidth;
         }
+    }
+
+    public static void MeasureLoop(StackPanel track, double viewportHeight, out double contentWidth, out double loopPeriod)
+    {
+        MeasureTrack(track, viewportHeight, out _);
+        contentWidth = ReadChildWidth(track, 0);
+        var gapWidth = ReadChildWidth(track, 1);
+        loopPeriod = track.Children.Count >= 2
+            ? TickerMarquee.LoopPeriod(contentWidth, gapWidth)
+            : contentWidth;
+    }
+
+    private static StackPanel CreateCopyPanel() =>
+        new()
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = WinVerticalAlignment.Center
+        };
+
+    private static double ReadChildWidth(StackPanel track, int index)
+    {
+        if (index < 0 || index >= track.Children.Count)
+        {
+            return 0;
+        }
+
+        if (track.Children[index] is not Microsoft.UI.Xaml.FrameworkElement child)
+        {
+            return 0;
+        }
+
+        var width = child.DesiredSize.Width;
+        return width > 0 ? width : child.ActualWidth;
     }
 
     public static void LayoutTrack(StackPanel track, double viewportWidth, double viewportHeight, bool centerWhenFits = false)

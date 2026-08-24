@@ -140,12 +140,7 @@
                 var game = games[i];
                 var idx = i;
                 var isSelected = IsSelected(game);
-                // TV: autofocus first card for D-pad entry only — never ties to .selected.
-                // .selected comes from explicit OK/click (selectedGame), not games[0] auto-init.
-                var shouldFocus = focusPending && (
-                    MauiProgram.IsTv
-                        ? (!anySelected && (_focusedCardIndex >= 0 ? idx == _focusedCardIndex : idx == 0))
-                        : (isSelected || (!anySelected && i == 0)));
+                var shouldFocus = ShouldFocusCard(idx, anySelected, isSelected);
                 var leagueLogo = LeagueLogoMapper.GetLogoForLeague(game);
 
                 <GameCard @key="GameKey(game)"
@@ -244,16 +239,9 @@
 
 @code {
     private AppMenu? appMenu;
-    private GameCard?[] _cardRefs = [];
-    private int _focusedCardIndex = -1;
     private readonly List<Game> games = new();
     private bool isLoading = true;
-    private bool focusPending = true;
-    private bool signInContinueFocusPending;
-    private bool authCancelFocusPending;
     private bool authReady;
-    private ElementReference signInContinueButtonRef;
-    private ElementReference authCancelButtonRef;
 
     private static string GetPlatformShellClass()
     {
@@ -294,46 +282,9 @@
     // Indicates we have finished testing all streams for the currently selected game
     private bool _resolutionExhausted;
 
-    private async Task EscapeGridToMenu(int fromIndex = 0)
-    {
-        // Record which card triggered the escape so ArrowRight from menu returns to it.
-        _focusedCardIndex = fromIndex;
-        if (appMenu != null)
-            await appMenu.FocusMenuButtonAsync();
-    }
-
-    private async Task FocusCardAsync(int index)
-    {
-        if (index < 0 || index >= games.Count) return;
-        _focusedCardIndex = index;
-        if (index < _cardRefs.Length && _cardRefs[index] != null)
-        {
-            await _cardRefs[index]!.FocusAsync();
-        }
-        else
-        {
-            // Ref not available yet (e.g. after a games update) — use focusPending
-            // to trigger ShouldFocus on the next render.
-            focusPending = true;
-            await InvokeAsync(StateHasChanged);
-        }
-    }
-
-    public async Task ReturnFocusToGridAsync()
-    {
-        var target = _focusedCardIndex >= 0 && _focusedCardIndex < games.Count
-            ? _focusedCardIndex : 0;
-        await FocusCardAsync(target);
-    }
-
-    private void ResizeCardRefs()
-    {
-        if (_cardRefs.Length == games.Count) return;
-        // Preserve existing refs for indices that are still valid.
-        var next = new GameCard?[games.Count];
-        Array.Copy(_cardRefs, next, Math.Min(_cardRefs.Length, next.Length));
-        _cardRefs = next;
-    }
+    // True only after an explicit card click (or D-pad OK). OnAfterRender must not
+    // treat EnsureInitialSelection / first-card focus as "resume after native player".
+    private bool _userInitiatedResolution;
 
     private void PublishHomeUiUpdate()
     {
@@ -444,6 +395,7 @@
         // Ensure we fully stop resolution and clear selection so OnAfterRender does not restart it
         Selection.CurrentGame = null;
         selectedGame = null;
+        _userInitiatedResolution = false;
         // Give feedback to user via logging (avoid referencing Android UI types in shared component)
         Logger.LogInformation("[Home] Stream discovery cancelled by Back");
         InvokeAsync(() =>
@@ -624,6 +576,7 @@
         games.Clear();
         Selection.CurrentGame = null;
         selectedGame = null;
+        _userInitiatedResolution = false;
         statusMessage = string.Empty;
         authStatusMessage = string.Empty;
         isAuthenticated = false;
@@ -673,6 +626,7 @@
 
         _progressSubscription = null;
         _resolutionExhausted = true;
+        _userInitiatedResolution = false;
         Selection.CurrentGame = null;
         selectedGame = null;
         isResolvingStreams = false;
@@ -683,61 +637,30 @@
         InvokeAsync(StateHasChanged);
     }
 
-    private void OnCardFocusDelivered()
-    {
-        focusPending = false;
-    }
-
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Android TV / D-pad: put focus on Sign in — Continue when that CTA is visible.
-        // Without this, the header menu button typically owns first focus.
-        if (signInContinueFocusPending
-            && !isAuthenticated
-            && !isAuthenticating
-            && deviceCode == null)
-        {
-            try
-            {
-                await signInContinueButtonRef.FocusAsync();
-                signInContinueFocusPending = false;
-            }
-            catch
-            {
-                // Element may not be ready yet; retry on next render.
-            }
-        }
-
-        if (authCancelFocusPending && !isAuthenticated && deviceCode != null)
-        {
-            try
-            {
-                await authCancelButtonRef.FocusAsync();
-                authCancelFocusPending = false;
-            }
-            catch
-            {
-            }
-        }
+        await ApplyPendingAuthFocusAsync();
 
         // If user returned from native player (selectedGame still set) restart stream resolution
         // so UI resumes discovering streams automatically.
         try
         {
-            if (!isResolvingStreams && selectedGame != null)
+            if (!isResolvingStreams && selectedGame != null && _userInitiatedResolution)
             {
                 // Do not restart if we've already exhausted resolution for this selection
                 if (_resolutionExhausted)
                 {
                     selectedGame = null;
                     Selection.CurrentGame = null;
+                    _userInitiatedResolution = false;
                 }
                 else
                 {
                     // Only restart resolution if the user did not explicitly cancel (Selection.CurrentGame indicates intent)
                     if (Selection.CurrentGame != null && Selection.CurrentGame == selectedGame)
                     {
-                        // Restart resolution in background
+                        Logger.LogInformation("[Home] Resuming stream resolution after native player for {Home} vs {Away}",
+                            selectedGame.DisplayHome, selectedGame.DisplayAway);
                         _ = StartStreamResolution(selectedGame);
                     }
                     else
@@ -745,12 +668,14 @@
                         // Clear selection if we should not restart
                         selectedGame = null;
                         Selection.CurrentGame = null;
+                        _userInitiatedResolution = false;
                     }
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.LogDebug(ex, "[Home] Resume-after-player check failed");
         }
     }
 
@@ -816,43 +741,18 @@
             return;
         }
 
-        // TV: D-pad focus is the navigation cue. Never auto-select games[0] — that left a
-        // sticky .selected ring that did not move when the user chose another match.
-        // Rebind an explicit OK/click selection onto refreshed Game instances only.
-        if (MauiProgram.IsTv)
+        // Never auto-select games[0]. That left a sticky .selected ring and, on Windows,
+        // OnAfterRender treated CurrentGame as "resume after player" and started playback
+        // without a click. Rebind an explicit OK/click selection onto refreshed instances only.
+        if (selectedGame != null)
         {
-            if (selectedGame != null)
-            {
-                var match = FindMatchingGame(selectedGame);
-                selectedGame = match;
-                Selection.CurrentGame = match;
-            }
-            else
-            {
-                // Drop any leftover CurrentGame so IsSelected cannot stick on games[0].
-                Selection.CurrentGame = null;
-            }
-
-            return;
-        }
-
-        if (selectedGame == null || Selection.CurrentGame == null)
-        {
-            Selection.CurrentGame = games[0];
-            selectedGame = games[0];
-            return;
-        }
-
-        var existing = FindMatchingGame(selectedGame);
-        if (existing == null)
-        {
-            Selection.CurrentGame = games[0];
-            selectedGame = games[0];
+            var match = FindMatchingGame(selectedGame);
+            selectedGame = match;
+            Selection.CurrentGame = match;
         }
         else
         {
-            Selection.CurrentGame = existing;
-            selectedGame = existing;
+            Selection.CurrentGame = null;
         }
     }
 
@@ -907,6 +807,7 @@
         }
 
         // Explicit user choice — drives .selected (IsSelected). Do this before overlay render.
+        _userInitiatedResolution = true;
         selectedGame = game;
         Selection.CurrentGame = game;
         isResolvingStreams = true;
@@ -964,6 +865,7 @@
                 {
                     Selection.CurrentGame = null;
                     selectedGame = null;
+                    _userInitiatedResolution = false;
                     return;
                 }
 

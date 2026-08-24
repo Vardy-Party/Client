@@ -13,6 +13,7 @@ using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
 using VardyParty.Services;
 using VardyParty.Models;
+using VardyParty.Orchestrators;
 using VardyParty.Playback;
 using Microsoft.Extensions.Logging;
 using System.Threading;
@@ -60,7 +61,10 @@ namespace VardyParty.Platforms.Android
                 // default: return original token trimmed
                 return codec;
             }
-            catch { return codec; }
+            catch
+            {
+                return codec;
+            }
         }
 
         private async Task AttemptManifestFallbackAsync(string m3u8Url)
@@ -82,7 +86,8 @@ namespace VardyParty.Platforms.Android
                 if (!resp.IsSuccessStatusCode)
                 {
                     _logger?.LogWarning("[NativeVideoActivity] Manifest fallback download failed: {Status}", resp.StatusCode);
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback failed" }); } catch { }
+                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback failed" }); }
+                    catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
                     return;
                 }
 
@@ -90,7 +95,8 @@ namespace VardyParty.Platforms.Android
                 if (string.IsNullOrWhiteSpace(content))
                 {
                     _logger?.LogWarning("[NativeVideoActivity] Manifest fallback empty content");
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest empty" }); } catch { }
+                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest empty" }); }
+                    catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
                     return;
                 }
 
@@ -134,30 +140,45 @@ namespace VardyParty.Platforms.Android
                         catch (Exception ex)
                         {
                             _logger?.LogWarning(ex, "[NativeVideoActivity] Fallback play failed (in-memory)");
-                            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Fallback play failed" }); } catch { }
+                            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Fallback play failed" }); }
+                            catch (Exception innerEx) { LogIgnored("ReportPlaybackResult", innerEx); }
                         }
                     });
                 }
                 catch (Exception ex)
                 {
                     _logger?.LogWarning(ex, "[NativeVideoActivity] Manifest fallback in-memory exception");
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); } catch { }
+                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); }
+                    catch (Exception innerEx) { LogIgnored("ReportPlaybackResult", innerEx); }
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Manifest fallback exception");
-                try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); } catch { }
+                try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); }
+                catch (Exception reportEx) { LogIgnored("ReportPlaybackResult", reportEx); }
             }
         }
 
         // Support post-construction injection for true constructor-like DI via activity factory / lifecycle hook
-        public void InjectServices(IStreamSwitchingService? switching, ILogger<NativeVideoActivity>? logger, IStreamHealthReporter? healthReporter = null)
+        public void InjectServices(
+            IStreamSwitchingService? switching,
+            ILogger<NativeVideoActivity>? logger,
+            IStreamHealthReporter? healthReporter = null,
+            IEnrichedGameService? enrichedGames = null,
+            IApiService? api = null,
+            IStreamResolutionOrchestrator? orchestrator = null)
         {
             if (switching != null) _switching = switching;
             if (logger != null) _logger = logger;
             if (healthReporter != null) _healthReporter = healthReporter;
+            if (enrichedGames != null) _enrichedGames = enrichedGames;
+            if (api != null) _api = api;
+            if (orchestrator != null) _orchestrator = orchestrator;
         }
+
+        private void LogIgnored(string operation, Exception ex)
+            => _logger?.LogDebug(ex, "[NativeVideoActivity] {Operation} failed", operation);
 
         // Test helpers / query methods to allow unit testing decision logic without running Android UI
         public void SetPreparingForTests(bool preparing) => _isPreparing = preparing;
@@ -230,6 +251,9 @@ namespace VardyParty.Platforms.Android
         private IStreamSwitchingService? _switching;
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
+        private IEnrichedGameService? _enrichedGames;
+        private IApiService? _api;
+        private IStreamResolutionOrchestrator? _orchestrator;
         private Timer? _healthReportTimer;
         private bool _isPreparing;
         private IDisposable? _healthySub;
@@ -281,7 +305,8 @@ namespace VardyParty.Platforms.Android
             HideSystemUI();
 
             // Allow activity factory to inject services for constructor-like DI
-            try { AndroidActivityFactory.Inject(this); } catch { }
+            try { AndroidActivityFactory.Inject(this); }
+            catch (Exception ex) { LogIgnored("AndroidActivityFactory.Inject", ex); }
 
             _isTvDevice = MauiProgram.IsTv;
 
@@ -523,10 +548,9 @@ namespace VardyParty.Platforms.Android
 
                 try
                 {
-                    var streamResolutionOrchestrator = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Orchestrators.IStreamResolutionOrchestrator)) as VardyParty.Orchestrators.IStreamResolutionOrchestrator;
-                    if (streamResolutionOrchestrator != null)
+                    if (_orchestrator != null)
                     {
-                        await streamResolutionOrchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
+                        await _orchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
                         if (_reportStatusView != null) _reportStatusView.Text = "Stream reported";
                     }
                     else if (_reportStatusView != null)
@@ -534,12 +558,13 @@ namespace VardyParty.Platforms.Android
                         _reportStatusView.Text = "Report unavailable";
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogIgnored("ReportCurrentStreamAsBad", ex);
                     if (_reportStatusView != null) _reportStatusView.Text = "Report failed";
                 }
 
-                try { await Task.Delay(900); } catch { }
+                try { await Task.Delay(900); } catch (Exception ex) { LogIgnored("ReportStatusDelay", ex); }
                 if (_reportStatusView != null) _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
                 HideMenu();
             };
@@ -607,17 +632,40 @@ namespace VardyParty.Platforms.Android
             _tickerHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _tickerRunnable = new Java.Lang.Runnable(() =>
             {
-                if (_tickerInner == null || _tickerText1 == null) return;
+                if (_tickerInner == null || _tickerText1 == null || _scoresTickerContainer == null) return;
                 var text1Width = _tickerText1.Width;
                 if (text1Width <= 0)
                 {
-                    // View not laid out yet — wait and retry
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 32);
                     return;
                 }
-                _tickerScrollX += _tickerPixelsPerFrame;
-                if (_tickerScrollX >= text1Width)
-                    _tickerScrollX -= text1Width; // seamless reset
+
+                var gap = _tickerText1.PaddingRight;
+                var contentWidth = Math.Max(0, text1Width - gap);
+                var viewportWidth = Math.Max(_scoresTickerContainer.Width, _scoresTickerContainer.MeasuredWidth)
+                    - _scoresTickerContainer.PaddingLeft
+                    - _scoresTickerContainer.PaddingRight;
+
+                if (!TickerMarquee.ShouldLoop(contentWidth, viewportWidth))
+                {
+                    _tickerScrollX = 0f;
+                    _tickerInner.TranslationX = 0f;
+                    if (_tickerText2 != null)
+                    {
+                        _tickerText2.Visibility = global::Android.Views.ViewStates.Gone;
+                    }
+
+                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
+                    return;
+                }
+
+                if (_tickerText2 != null)
+                {
+                    _tickerText2.Visibility = global::Android.Views.ViewStates.Visible;
+                }
+
+                var period = TickerMarquee.LoopPeriod(contentWidth, gap);
+                _tickerScrollX = (float)TickerMarquee.WrapPositive(_tickerScrollX + _tickerPixelsPerFrame, period);
                 _tickerInner.TranslationX = -_tickerScrollX;
                 PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             });
@@ -696,7 +744,7 @@ namespace VardyParty.Platforms.Android
                             ShowStreamToastIfNeeded();
                         });
                     }
-                    catch { }
+                    catch (Exception ex) { LogIgnored("HealthyStreamsUpdated", ex); }
                 });
 
                 _indexSub = _switching.CurrentStreamIndexChanged.Subscribe(_ =>
@@ -710,7 +758,7 @@ namespace VardyParty.Platforms.Android
                             ShowStreamToastIfNeeded();
                         });
                     }
-                    catch { }
+                    catch (Exception ex) { LogIgnored("CurrentStreamIndexChanged", ex); }
                 });
 
                 UpdateOverlayFromCurrentStream();
@@ -719,55 +767,6 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to subscribe to stream switching");
-            }
-        }
-
-        private void UpdateOverlayFromCurrentStream()
-        {
-            try
-            {
-                var info = BuildOverlayInfoFromCurrentStream();
-                if (info == null)
-                {
-                    return;
-                }
-
-                AndroidVideoPlayerService.SetOverlayInfo(info);
-                UpdateOverlayText(info);
-            }
-            catch { }
-        }
-
-        private PlayerOverlayInfo? BuildOverlayInfoFromCurrentStream()
-        {
-            try
-            {
-                var current = _switching?.GetCurrentStream();
-                if (current == null)
-                {
-                    return null;
-                }
-
-                return new PlayerOverlayInfo
-                {
-                    Index = _switching?.GetCurrentStreamIndex() ?? 0,
-                    Total = _switching?.GetHealthyStreams().Count ?? 0,
-                    Channel = current.Stream?.Channel,
-                    BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                    Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                    M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
-                    RefererUrl = _refererUrl,
-                    BufferPercent = _player?.BufferedPercentage,
-                    FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                    VideoCodec = MapCodecToFriendlyName(current.Health?.VideoCodec),
-                    AudioCodec = MapCodecToFriendlyName(current.Health?.AudioCodec),
-                    AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                    Title = current.Stream?.Channel
-                };
-            }
-            catch
-            {
-                return null;
             }
         }
 
@@ -846,7 +845,8 @@ namespace VardyParty.Platforms.Android
         {
             if (_playbackResultReported) return;
             _playbackResultReported = true;
-            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = message }); } catch { }
+            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = message }); }
+            catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
         }
 
         protected override void OnPause()
@@ -936,242 +936,6 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private void ApplySourceBadge(string? label)
-        {
-            if (_sourceBadgeView == null)
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(label))
-            {
-                _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
-                return;
-            }
-
-            _sourceBadgeView.Text = label;
-            if (string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase))
-            {
-                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#1e3a5f"));
-                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#93c5fd"));
-            }
-            else
-            {
-                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#3b0764"));
-                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#d8b4fe"));
-            }
-
-            _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Visible;
-        }
-
-        private static string? BuildAspect(string? resolution)
-        {
-            if (string.IsNullOrEmpty(resolution)) return null;
-            var parts = resolution.Split('x');
-            if (parts.Length != 2) return null;
-            if (!int.TryParse(parts[0], out var w)) return null;
-            if (!int.TryParse(parts[1], out var h)) return null;
-            int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
-            var g = gcd(w, h);
-            return $"{w / g}:{h / g}";
-        }
-
-        private void UpdateOverlayText(VardyParty.Models.PlayerOverlayInfo? info)
-        {
-            if (info == null)
-            {
-                if (_titleView != null) _titleView.Text = string.Empty;
-                if (_statusView != null) _statusView.Text = string.Empty;
-                if (_indexView != null) _indexView.Text = string.Empty;
-                if (_sourceBadgeView != null) _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
-                if (_qualityView != null) _qualityView.Text = string.Empty;
-                if (_resBrView != null) _resBrView.Text = string.Empty;
-                return;
-            }
-
-            _lastOverlayInfo = info;
-
-            // Top line should be game title (Home vs Away) when provided
-            var channel = info.Title ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
-            var statusLine = $"{VardyParty.Resources.Strings.Resources.StatusLabel}: {_playbackStateText}";
-            var indexLine = info.Total > 0 ? string.Format(VardyParty.Resources.Strings.Resources.StreamIndexFormat, info.Index, info.Total) : string.Empty;
-
-            // Try to obtain a quality/health label from the current enriched stream if present
-            string qualityLabel = string.Empty;
-            try
-            {
-                var current = _switching?.GetCurrentStream();
-                if (current != null)
-                {
-                    qualityLabel = current.GetQualityDisplay();
-                }
-            }
-            catch { }
-
-            var resolution = info.Resolution ?? string.Empty;
-            var aspectRatio = info.AspectRatio ?? string.Empty;
-            var br = info.BitrateKbps.HasValue ? $"{info.BitrateKbps} kbps" : string.Empty;
-            var fr = info.FrameRate.HasValue ? $"{info.FrameRate:0.##} fps" : string.Empty;
-            var buf = info.BufferPercent.HasValue ? $"Buffer {info.BufferPercent}%" : string.Empty;
-            var m3u8 = info.M3u8Url ?? string.Empty;
-            var referer = info.RefererUrl ?? string.Empty;
-            string StripQuery(string url)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-                try
-                {
-                    var uri = new Uri(url);
-                    var builder = new UriBuilder(uri) { Query = string.Empty };
-                    return builder.Uri.ToString();
-                }
-                catch
-                {
-                    var idx = url.IndexOf('?', StringComparison.Ordinal);
-                    return idx >= 0 ? url.Substring(0, idx) : url;
-                }
-            }
-            string RefererHost(string url)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-                return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
-            }
-            if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {StripQuery(m3u8)}";
-            if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {RefererHost(referer)}";
-            // If video surface size is available, include resolution/framerate placeholder
-            var resDetails = string.Empty;
-            try
-            {
-                if (_videoWidth.HasValue && _videoHeight.HasValue)
-                {
-                    resDetails = $"{_videoWidth}x{_videoHeight}";
-                }
-            }
-            catch { }
-
-            if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channel);
-            if (_statusView != null) _statusView.Text = statusLine;
-            if (_indexView != null) _indexView.Text = indexLine;
-            ApplySourceBadge(_switching?.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
-            if (_qualityView != null) _qualityView.Text = qualityLabel;
-            // Build lines: resolution (+fr), bitrate, buffer each on its own line
-            var lines = new List<string>();
-            var resLine = string.Empty;
-            if (!string.IsNullOrEmpty(resDetails) || !string.IsNullOrEmpty(resolution))
-            {
-                // Frame rate appears after an @ symbol following resolution
-                if (!string.IsNullOrEmpty(fr) && !string.IsNullOrEmpty(resolution))
-                    resLine = $"{resolution} @ {info.FrameRate:0.##} fps";
-                else if (!string.IsNullOrEmpty(resolution))
-                    resLine = resolution;
-                else if (!string.IsNullOrEmpty(resDetails))
-                    resLine = resDetails;
-            }
-            if (!string.IsNullOrEmpty(resLine)) lines.Add(resLine);
-            if (!string.IsNullOrEmpty(aspectRatio)) lines.Add($"Aspect ratio: {aspectRatio}");
-            if (!string.IsNullOrEmpty(br)) lines.Add(br);
-            if (!string.IsNullOrEmpty(buf)) lines.Add(buf);
-
-            // Codec line
-            var codecLineParts = new List<string>();
-            if (!string.IsNullOrEmpty(info.VideoCodec)) codecLineParts.Add($"Video: {info.VideoCodec}");
-            if (!string.IsNullOrEmpty(info.AudioCodec)) codecLineParts.Add($"Audio: {info.AudioCodec}");
-            if (codecLineParts.Count > 0) lines.Add(string.Join(" / ", codecLineParts));
-
-            // m3u8 and referer each on their own lines
-            if (!string.IsNullOrEmpty(m3u8)) lines.Add(m3u8);
-            if (!string.IsNullOrEmpty(referer)) lines.Add(referer);
-
-            if (_resBrView != null) _resBrView.Text = string.Join("\n", lines);
-
-            // Control whether updating overlay should show it. If suppressed (e.g. switching via Right while overlay hidden),
-            // update texts but do not reveal the overlay.
-            if (!_suppressOverlayShow)
-            {
-                if (_isBuffering)
-                {
-                    HideOverlayAnimated();
-                    return;
-                }
-
-                if (_isInfoVisible)
-                {
-                    ShowOverlayAnimated();
-                    if (!_overlayLocked) ScheduleHideOverlay();
-                }
-            }
-            else
-            {
-                // Clear suppression after applying update so future updates behave normally
-                _suppressOverlayShow = false;
-            }
-        }
-
-        private void ShowBufferingIndicator()
-        {
-            try
-            {
-                if (_bufferingIndicator == null) return;
-                RunOnUiThread(() => _bufferingIndicator.Visibility = global::Android.Views.ViewStates.Visible);
-            }
-            catch { }
-        }
-
-        private void HideBufferingIndicator()
-        {
-            try
-            {
-                if (_bufferingIndicator == null) return;
-                RunOnUiThread(() => _bufferingIndicator.Visibility = global::Android.Views.ViewStates.Gone);
-            }
-            catch { }
-        }
-
-        private void ShowOverlayAnimated()
-        {
-            try
-            {
-                var overlay = _overlayContainer;
-                if (overlay == null) return;
-                RunOnUiThread(() =>
-                {
-                    overlay.Animate()?.Cancel();
-                    overlay.Visibility = global::Android.Views.ViewStates.Visible;
-                    overlay.Alpha = 0f;
-                    overlay.Animate()?.Alpha(1f)?.SetDuration(200)?.Start();
-                });
-            }
-            catch { }
-        }
-
-        private void HideOverlayAnimated()
-        {
-            try
-            {
-                var overlay = _overlayContainer;
-                if (overlay == null) return;
-                RunOnUiThread(() =>
-                {
-                    overlay.Animate()?.Cancel();
-                    overlay.Animate()?.Alpha(0f)?.SetDuration(300)?.WithEndAction(new Java.Lang.Runnable(() =>
-                    {
-                        try { overlay.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
-                    }))?.Start();
-                });
-            }
-            catch { }
-        }
-
-        private void ScheduleHideOverlay()
-        {
-            try
-            {
-                if (_overlayLocked) return;
-                RemoveCallback(_overlayHandler, _overlayHideRunnable);
-                PostDelayedCallback(_overlayHandler, _overlayHideRunnable, OverlayTimeoutMs);
-            }
-            catch { }
-        }
-
         private PlaybackMetrics BuildPlaybackMetrics(bool isBuffering = false)
         {
             var metrics = new PlaybackMetrics
@@ -1258,7 +1022,7 @@ namespace VardyParty.Platforms.Android
             {
                 VardyParty.Platforms.Android.AndroidVideoPlayerService.UpdateMetrics(metrics);
             }
-            catch { }
+            catch (Exception ex) { LogIgnored("UpdateMetrics", ex); }
 
             return metrics;
         }
@@ -1305,7 +1069,10 @@ namespace VardyParty.Platforms.Android
                     RunOnUiThread(() =>
                         _engine.Raise(MediaEngineEvent.Metrics(generation, bitrate, buffering)));
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    LogIgnored("StartHealthReporting", ex);
+                }
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
         }
 
@@ -1317,7 +1084,10 @@ namespace VardyParty.Platforms.Android
                 var metrics = BuildPlaybackMetrics();
                 _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics: metrics);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LogIgnored("ReportPlaybackStarted", ex);
+            }
         }
 
         private static string? CodecMimeTypeToFriendlyName(string? mimeType, bool isAudio)
@@ -1369,707 +1139,6 @@ namespace VardyParty.Platforms.Android
             return mimeType;
         }
 
-        private bool TryActivateFocusedMenuItem()
-        {
-            if (!_isMenuVisible || _menuPanel == null) return false;
-
-            var focusedView = CurrentFocus;
-            if (focusedView is not global::Android.Views.View view) return false;
-            if (view is not global::Android.Widget.Button button) return false;
-
-            var parent = view.Parent;
-            while (parent != null)
-            {
-                if (ReferenceEquals(parent, _menuPanel))
-                {
-                    button.PerformClick();
-                    return true;
-                }
-
-                parent = (parent as global::Android.Views.View)?.Parent;
-            }
-
-            return false;
-        }
-
-        private void ShowMenu()
-        {
-            _isMenuVisible = true;
-            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Visible;
-            _videoInfoButton?.Post(() => _videoInfoButton.RequestFocus());
-            UpdateBackdropVisibility();
-        }
-
-        private void HideMenu()
-        {
-            _isMenuVisible = false;
-            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Gone;
-            UpdateBackdropVisibility();
-        }
-
-        private void ShowInfoOverlay()
-        {
-            _isInfoVisible = true;
-            _overlayLocked = true;
-            // Dismiss the brief stream toast — the full overlay supersedes it.
-            try
-            {
-                RemoveCallback(_streamToastHandler, _streamToastRunnable);
-                if (_streamToastView != null)
-                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
-            }
-            catch { }
-            ShowOverlayAnimated();
-            UpdateBackdropVisibility();
-        }
-
-        private void HideInfoOverlay()
-        {
-            _isInfoVisible = false;
-            _overlayLocked = false;
-            HideOverlayAnimated();
-            UpdateBackdropVisibility();
-        }
-
-        private void ShowStreamToastIfNeeded()
-        {
-            if (_streamToastView == null || _streamToastHandler == null || _streamToastRunnable == null) return;
-            if (_switching == null) return;
-
-            // Don't show the toast if the detailed info overlay is already open.
-            if (_isInfoVisible) return;
-
-            var index = _switching.GetCurrentStreamIndex();
-            var total = _switching.GetHealthyStreams().Count;
-            if (total <= 0) return;
-
-            // Only flash when something meaningful changed.
-            if (index == _lastToastIndex && total == _lastToastTotal) return;
-            _lastToastIndex = index;
-            _lastToastTotal = total;
-
-            // Build text — match Windows: "Stream: x/y (res)" where resolution is optional.
-            var current = _switching.GetCurrentStream();
-            string? vertRes = null;
-            try
-            {
-                var res = current?.Health?.Resolution ?? current?.Stream?.Resolution;
-                if (!string.IsNullOrEmpty(res))
-                {
-                    var m = System.Text.RegularExpressions.Regex.Match(res, @"\d{3,4}[xX](\d{3,4})");
-                    if (m.Success) vertRes = $"{m.Groups[1].Value}p";
-                }
-                if (vertRes == null && _videoHeight.HasValue)
-                    vertRes = $"{_videoHeight}p";
-            }
-            catch { }
-
-            _streamToastView.Text = string.IsNullOrEmpty(vertRes)
-                ? $"Stream: {index}/{total}"
-                : $"Stream: {index}/{total} ({vertRes})";
-
-            _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
-            RemoveCallback(_streamToastHandler, _streamToastRunnable);
-            PostDelayedCallback(_streamToastHandler, _streamToastRunnable, 10_000);
-        }
-
-        private void UpdateBackdropVisibility()
-        {
-            if (_menuBackdrop == null) return;
-            _menuBackdrop.Visibility = (_isMenuVisible || _isInfoVisible) && !_isTvDevice
-                ? global::Android.Views.ViewStates.Visible
-                : global::Android.Views.ViewStates.Gone;
-        }
-
-        private void SubscribeToGamesSnapshot()
-        {
-            try
-            {
-                var enriched = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IEnrichedGameService)) as IEnrichedGameService;
-                if (enriched == null) return;
-
-                _gamesSub = enriched.GamesStream.Subscribe(dict =>
-                {
-                    if (dict == null) return;
-                    lock (_gamesLock)
-                    {
-                        _latestGamesByLeague = dict.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
-                    }
-
-                    if (_isScoresTickerVisible)
-                    {
-                        RunOnUiThread(UpdateScoresTickerText);
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Unable to subscribe to enriched games stream");
-            }
-        }
-
-        private List<string> BuildSameLeagueInPlayScoreLines()
-        {
-            Dictionary<string, List<Game>>? snapshot;
-            lock (_gamesLock)
-            {
-                snapshot = _latestGamesByLeague == null
-                    ? null
-                    : _latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value.ToList());
-            }
-
-            if (snapshot == null || snapshot.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            bool SameTeam(string left, string right) =>
-                string.Equals((left ?? string.Empty).Trim(), (right ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
-
-            bool IsCurrentGame(Game game)
-            {
-                var home = game.DisplayHome;
-                var away = game.DisplayAway;
-                return (SameTeam(home, _currentHomeTeam) && SameTeam(away, _currentAwayTeam))
-                    || (SameTeam(home, _currentAwayTeam) && SameTeam(away, _currentHomeTeam));
-            }
-
-            bool IsSameLeague(Game game) => ScoresTickerPolicy.IsSameLeague(game, _currentLeague);
-
-            return snapshot.Values
-                .SelectMany(g => g)
-                .Where(IsSameLeague)
-                .Where(ScoresTickerPolicy.IsInPlay)
-                .Where(g => !IsCurrentGame(g))
-                .OrderByDescending(g => g.LiveMinuteForOrdering)
-                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(FormatTickerLine)
-                .ToList();
-        }
-
-        private List<string> BuildAllLeaguesInPlayScoreLines()
-        {
-            var games = GetGamesSnapshot();
-            if (games.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            return games
-                .Where(ScoresTickerPolicy.IsInPlay)
-                .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(g => g.LiveMinuteForOrdering)
-                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(g => $"[{g.DisplayLeague}] {FormatTickerLine(g)}")
-                .ToList();
-        }
-
-        private List<string> BuildFinishedScoreLines()
-        {
-            var games = GetGamesSnapshot();
-            if (games.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            return games
-                .Where(g => ScoresTickerPolicy.IsFinishedWithScore(g))
-                .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(g => g.StartUtcForOrdering)
-                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(g => $"[{g.DisplayLeague}] {FormatTickerLine(g)}")
-                .ToList();
-        }
-
-        private List<string> BuildUpcomingScoreLines()
-        {
-            var games = GetGamesSnapshot();
-            if (games.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            return games
-                .Where(ScoresTickerPolicy.IsUpcoming)
-                .OrderBy(g => g.StartUtcForOrdering)
-                .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                .Select(g => $"[{g.DisplayLeague}] {FormatUpcomingLine(g)}")
-                .ToList();
-        }
-
-        private List<Game> GetGamesSnapshot()
-        {
-            lock (_gamesLock)
-            {
-                return _latestGamesByLeague == null
-                    ? new List<Game>()
-                    : _latestGamesByLeague.Values.SelectMany(v => v).ToList();
-            }
-        }
-
-        private static string FormatScore(Game game)
-        {
-            var homeScore = game.HomeScore?.ToString() ?? "-";
-            var awayScore = game.AwayScore?.ToString() ?? "-";
-
-            var score = $"{homeScore}-{awayScore}";
-            if (game.AggregateHomeScore.HasValue || game.AggregateAwayScore.HasValue)
-            {
-                var aggregateHome = game.AggregateHomeScore?.ToString() ?? "-";
-                var aggregateAway = game.AggregateAwayScore?.ToString() ?? "-";
-                score += $" agg {aggregateHome}-{aggregateAway}";
-            }
-
-            return score;
-        }
-
-        private static string FormatTickerLine(Game game)
-        {
-            var status = game.DisplayStatusText();
-            if (string.IsNullOrWhiteSpace(status))
-            {
-                status = game.IsFinished ? "FT" : "Live";
-            }
-
-            var international = InternationalTeamDisplay.IsInternationalGame(game);
-            var home = FormatTeamForDisplay(game.DisplayHome, international);
-            var away = FormatTeamForDisplay(game.DisplayAway, international);
-            return $"{home} {FormatScore(game)} {away} ({status})";
-        }
-
-        private static string FormatUpcomingLine(Game game)
-        {
-            var localKickoff = game.Start.Kind == DateTimeKind.Utc ? game.Start.ToLocalTime() : game.Start;
-            var kickoffText = localKickoff == default ? "TBD" : localKickoff.ToString("HH:mm");
-            var international = InternationalTeamDisplay.IsInternationalGame(game);
-            var home = FormatTeamForDisplay(game.DisplayHome, international);
-            var away = FormatTeamForDisplay(game.DisplayAway, international);
-            return $"{kickoffText} {home} vs {away}";
-        }
-
-        private static string FormatTeamForDisplay(string? teamName, bool international)
-        {
-            return InternationalTeamDisplay.FormatTeamName(teamName, international);
-        }
-
-        private string BuildOverlayGameTitle(string fallbackChannel)
-        {
-            if (!string.IsNullOrWhiteSpace(_currentHomeTeam) && !string.IsNullOrWhiteSpace(_currentAwayTeam))
-            {
-                var international = InternationalTeamDisplay.IsInternationalMatch(
-                    _currentLeague, _currentHomeTeam, _currentAwayTeam);
-                var home = FormatTeamForDisplay(_currentHomeTeam, international);
-                var away = FormatTeamForDisplay(_currentAwayTeam, international);
-                return InternationalTeamDisplay.FormatMatchTitle(home, away, international: false);
-            }
-
-            return string.IsNullOrEmpty(_gameTitle) ? fallbackChannel : _gameTitle;
-        }
-
-        private static void ConfigureEmojiFriendlyTextView(TextView? textView)
-        {
-            if (textView == null) return;
-
-            try
-            {
-                var typeface = global::Android.Graphics.Typeface.Create("sans-serif", global::Android.Graphics.TypefaceStyle.Normal);
-                if (typeface != null)
-                {
-                    textView.SetTypeface(typeface, global::Android.Graphics.TypefaceStyle.Normal);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private void CycleScoresTickerMode()
-        {
-            _scoresTickerMode = ScoresTickerPolicy.Next(_scoresTickerMode);
-
-            if (_isScoresTickerVisible)
-            {
-                UpdateScoresTickerText();
-            }
-        }
-
-        private void UpdateScoresTickerText()
-        {
-            try
-            {
-                string title;
-                List<string> lines;
-
-                switch (_scoresTickerMode)
-                {
-                    case ScoresTickerMode.AllLeaguesInPlay:
-                        title = "All leagues in-play";
-                        lines = BuildAllLeaguesInPlayScoreLines();
-                        break;
-                    case ScoresTickerMode.AllFinished:
-                        title = "Finished games";
-                        lines = BuildFinishedScoreLines();
-                        break;
-                    case ScoresTickerMode.AllUpcoming:
-                        title = "Upcoming games";
-                        lines = BuildUpcomingScoreLines();
-                        break;
-                    default:
-                        title = string.IsNullOrWhiteSpace(_currentLeague) ? "In-play games" : $"In-play: {_currentLeague}";
-                        lines = BuildSameLeagueInPlayScoreLines();
-                        break;
-                }
-
-                var emptyMessage = _scoresTickerMode switch
-                {
-                    ScoresTickerMode.AllLeaguesInPlay => "No in-play games right now.",
-                    ScoresTickerMode.AllFinished => "No finished games right now.",
-                    ScoresTickerMode.AllUpcoming => "No remaining unstarted games today.",
-                    _ => "No other in-play games in this league right now."
-                };
-
-                var message = lines.Count == 0 ? emptyMessage : string.Join(InternationalTeamDisplay.TickerSeparator, lines);
-                var fullText = $"{title}: {message}";
-                if (_tickerText1 != null) _tickerText1.Text = fullText;
-                if (_tickerText2 != null) _tickerText2.Text = fullText;
-                // Reset scroll position and restart animation
-                _tickerScrollX = 0f;
-                if (_tickerInner != null) _tickerInner.TranslationX = 0f;
-                RemoveCallback(_tickerHandler, _tickerRunnable);
-                if (_isScoresTickerVisible)
-                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to update same-league ticker text");
-            }
-        }
-
-        private void ToggleSameLeagueScoresTicker()
-        {
-            try
-            {
-                _isScoresTickerVisible = !_isScoresTickerVisible;
-                if (_scoresTickerContainer != null)
-                {
-                    _scoresTickerContainer.Visibility = _isScoresTickerVisible
-                        ? global::Android.Views.ViewStates.Visible
-                        : global::Android.Views.ViewStates.Gone;
-                }
-
-                if (_isScoresTickerVisible)
-                {
-                    _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                    UpdateScoresTickerText(); // also starts the runnable
-                }
-                else
-                {
-                    // Stop the scroll animation when hidden
-                    RemoveCallback(_tickerHandler, _tickerRunnable);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to toggle same-league ticker");
-            }
-        }
-
-        public void SwipeToNextStream()
-        {
-            try
-            {
-                if (_switching is not null)
-                {
-                    bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
-                    if (!wasVisible)
-                    {
-                        _suppressOverlayShow = true;
-                    }
-
-                    DispatchEngine(MediaEngineEvent.UserNext());
-
-                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
-
-                    if (wasVisible)
-                    {
-                        ShowOverlayAnimated();
-                        if (!_overlayLocked) ScheduleHideOverlay();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToNextStream failed");
-            }
-        }
-
-        public void SwipeToPreviousStream()
-        {
-            try
-            {
-                if (_switching != null)
-                {
-                    bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
-                    if (!wasVisible)
-                    {
-                        _suppressOverlayShow = true;
-                    }
-
-                    DispatchEngine(MediaEngineEvent.UserPrevious());
-
-                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
-
-                    if (wasVisible)
-                    {
-                        ShowOverlayAnimated();
-                        if (!_overlayLocked) ScheduleHideOverlay();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToPreviousStream failed");
-            }
-        }
-
-        private void SetupPinchZoom(FrameLayout container, PlayerView playerView)
-        {
-            try
-            {
-                playerView.ResizeMode = AspectRatioFrameLayout.ResizeModeFit;
-                var scaleGestureDetector = new global::Android.Views.ScaleGestureDetector(this, new PinchZoomListener(container));
-                var gestureDetector = new global::Android.Views.GestureDetector(this, new DragGestureListener(this, container));
-                container.SetOnTouchListener(new ZoomAndDragTouchListener(scaleGestureDetector, gestureDetector));
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to setup pinch-zoom");
-            }
-        }
-
-        private class ZoomAndDragTouchListener : Java.Lang.Object, global::Android.Views.View.IOnTouchListener
-        {
-            private readonly global::Android.Views.ScaleGestureDetector _scaleDetector;
-            private readonly global::Android.Views.GestureDetector _gestureDetector;
-
-            public ZoomAndDragTouchListener(
-                global::Android.Views.ScaleGestureDetector scaleDetector,
-                global::Android.Views.GestureDetector gestureDetector)
-            {
-                _scaleDetector = scaleDetector;
-                _gestureDetector = gestureDetector;
-            }
-
-            public bool OnTouch(global::Android.Views.View? v, global::Android.Views.MotionEvent? e)
-            {
-                if (e is null)
-                    return false;
-                var scaleHandled = _scaleDetector.OnTouchEvent(e);
-                var dragHandled = _gestureDetector.OnTouchEvent(e);
-                return scaleHandled || dragHandled;
-            }
-        }
-
-        private class DragGestureListener : global::Android.Views.GestureDetector.SimpleOnGestureListener
-        {
-            private readonly NativeVideoActivity _activity;
-            private readonly FrameLayout _container;
-            private float _translationX;
-            private float _translationY;
-
-            public DragGestureListener(NativeVideoActivity activity, FrameLayout container)
-            {
-                _activity = activity;
-                _container = container;
-            }
-
-            public override bool OnScroll(global::Android.Views.MotionEvent? e1, global::Android.Views.MotionEvent? e2, float distanceX, float distanceY)
-            {
-                if (_container.ScaleX <= 1.0f) return false;
-
-                _translationX -= distanceX;
-                _translationY -= distanceY;
-
-                var scale = _container.ScaleX;
-                var maxTranslationX = (_container.Width * (scale - 1f)) / 2f;
-                var maxTranslationY = (_container.Height * (scale - 1f)) / 2f;
-
-                _translationX = Math.Max(-maxTranslationX, Math.Min(_translationX, maxTranslationX));
-                _translationY = Math.Max(-maxTranslationY, Math.Min(_translationY, maxTranslationY));
-
-                _container.TranslationX = _translationX;
-                _container.TranslationY = _translationY;
-                return true;
-            }
-
-            private const int SwipeThreshold = 100;
-            private const int SwipeVelocityThreshold = 100;
-
-            public override bool OnFling(global::Android.Views.MotionEvent? e1, global::Android.Views.MotionEvent? e2, float velocityX, float velocityY)
-            {
-                if (e1 == null || e2 == null) return false;
-                if (_container.ScaleX > 1.0f) return false;
-
-                float diffX = e2.GetX() - e1.GetX();
-                float diffY = e2.GetY() - e1.GetY();
-
-                if (Math.Abs(diffX) > Math.Abs(diffY))
-                {
-                    if (Math.Abs(diffX) > SwipeThreshold && Math.Abs(velocityX) > SwipeVelocityThreshold)
-                    {
-                        if (diffX > 0)
-                        {
-                            _activity.RunOnUiThread(() => _activity.SwipeToPreviousStream());
-                        }
-                        else
-                        {
-                            _activity.RunOnUiThread(() => _activity.SwipeToNextStream());
-                        }
-                        return true;
-                    }
-                }
-                return false;
-            }
-        }
-
-        private class PinchZoomListener : global::Android.Views.ScaleGestureDetector.SimpleOnScaleGestureListener
-        {
-            private readonly FrameLayout _container;
-            private float _scaleFactor = 1.0f;
-            private const float MinScale = 1.0f;
-            private const float MaxScale = 4.0f;
-
-            public PinchZoomListener(FrameLayout container)
-            {
-                _container = container;
-            }
-
-            public override bool OnScale(global::Android.Views.ScaleGestureDetector? detector)
-            {
-                if (detector == null) return false;
-
-                _scaleFactor *= detector.ScaleFactor;
-                _scaleFactor = Math.Max(MinScale, Math.Min(_scaleFactor, MaxScale));
-
-                _container.PivotX = detector.FocusX;
-                _container.PivotY = detector.FocusY;
-                _container.ScaleX = _scaleFactor;
-                _container.ScaleY = _scaleFactor;
-
-                if (_scaleFactor <= 1.01f)
-                {
-                    _container.TranslationX = 0f;
-                    _container.TranslationY = 0f;
-                }
-
-                return true;
-            }
-        }
-
-        public override bool OnKeyDown(global::Android.Views.Keycode keyCode, global::Android.Views.KeyEvent? e)
-        {
-            try
-            {
-                switch (keyCode)
-                {
-                    case global::Android.Views.Keycode.DpadCenter:
-                    case global::Android.Views.Keycode.Enter:
-                        if (_isTvDevice)
-                        {
-                            if (_isMenuVisible)
-                            {
-                                if (TryActivateFocusedMenuItem())
-                                {
-                                    return true;
-                                }
-
-                                HideMenu();
-                                return true;
-                            }
-
-                            if (_isInfoVisible)
-                            {
-                                HideInfoOverlay();
-                                return true;
-                            }
-
-                            ShowMenu();
-                            return true;
-                        }
-
-                        if (_isInfoVisible)
-                        {
-                            HideInfoOverlay();
-                        }
-                        else
-                        {
-                            ShowInfoOverlay();
-                        }
-                        return true;
-
-                    case global::Android.Views.Keycode.DpadRight:
-                        try
-                        {
-                            bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
-                            if (!wasVisible)
-                            {
-                                _suppressOverlayShow = true;
-                            }
-
-                            if (_switching != null)
-                            {
-                                DispatchEngine(MediaEngineEvent.UserNext());
-                            }
-
-                            try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); } catch { }
-
-                            if (wasVisible)
-                            {
-                                ShowOverlayAnimated();
-                                if (!_overlayLocked) ScheduleHideOverlay();
-                            }
-                        }
-                        catch { }
-                        return true;
-
-                    case global::Android.Views.Keycode.DpadDown:
-                        if (_isScoresTickerVisible)
-                        {
-                            CycleScoresTickerMode();
-                            return true;
-                        }
-                        break;
-
-                    case global::Android.Views.Keycode.Back:
-                        if (_isMenuVisible)
-                        {
-                            HideMenu();
-                            return true;
-                        }
-
-                        if (_isInfoVisible)
-                        {
-                            HideInfoOverlay();
-                            return true;
-                        }
-
-                        if (_isScoresTickerVisible)
-                        {
-                            ToggleSameLeagueScoresTicker();
-                            return true;
-                        }
-
-                        try { _switching?.Cleanup(); } catch { }
-                        DispatchEngine(MediaEngineEvent.UserClose());
-                        return true;
-                }
-            }
-            catch { }
-
-            return base.OnKeyDown(keyCode, e);
-        }
-
         private class InternalPlayerListener : Java.Lang.Object, IPlayerListener
         {
             private readonly NativeVideoActivity _activity;
@@ -2090,7 +1159,7 @@ namespace VardyParty.Platforms.Android
                         _ => VardyParty.Resources.Strings.Resources.StatusPlaying
                     };
                 }
-                catch { }
+                catch (Exception ex) { _activity.LogIgnored("OnPlaybackStateChanged", ex); }
 
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
@@ -2117,7 +1186,7 @@ namespace VardyParty.Platforms.Android
                                 _activity._videoHeight = videoSize.Height;
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { _activity.LogIgnored("CaptureVideoSize", ex); }
                         _activity.RunOnUiThread(() => _activity.UpdateOverlayText(info));
                     }
                 }
@@ -2131,7 +1200,7 @@ namespace VardyParty.Platforms.Android
                             _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { _activity.LogIgnored("UpdateOverlayOnStateChange", ex); }
                 }
 
                 if (playbackState == PlayerStateEnded)
@@ -2146,7 +1215,7 @@ namespace VardyParty.Platforms.Android
                             global::Android.Util.Log.Info("VardyParty", $"[NativeVideoActivity] Cleared in-memory manifest for {_activity._m3u8Url}");
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { _activity.LogIgnored("ClearInMemoryManifest", ex); }
 
                     _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
@@ -2193,7 +1262,7 @@ namespace VardyParty.Platforms.Android
                         _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
                     }
                 }
-                catch { }
+                catch (Exception ex) { _activity.LogIgnored("OnIsLoadingChanged", ex); }
             }
             public void OnAudioAttributesChanged(AndroidX.Media3.Common.AudioAttributes? attributes) { }
             public void OnAudioSessionIdChanged(int audioSessionId) { }
@@ -2222,7 +1291,7 @@ namespace VardyParty.Platforms.Android
                     _activity.HideBufferingIndicator();
                     _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
-                catch { }
+                catch (Exception ex) { _activity.LogIgnored("OnPlayerErrorChanged", ex); }
             }
             public void OnPlaylistMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
             public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) { }
