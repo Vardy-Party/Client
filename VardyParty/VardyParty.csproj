@@ -76,10 +76,6 @@
         <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
 
-    <PropertyGroup>
-      <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))</BuildTimestamp>
-    </PropertyGroup>
-
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
       <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
@@ -90,6 +86,10 @@
 
     <!-- GenerateBuildInfo: always on Debug; Release via RunGenerateBuildInfo=true (CI publish). -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true' Or '$(Configuration)' == 'Debug'">
+      <!-- Capture UTC now at target run time (not project-eval time) so package stamps are accurate. -->
+      <PropertyGroup>
+        <BuildTimestamp>$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) UTC</BuildTimestamp>
+      </PropertyGroup>
       <Exec Command="git rev-parse --short HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" IgnoreExitCode="true">
         <Output TaskParameter="ConsoleOutput" PropertyName="GitHashOutput" />
       </Exec>
@@ -98,15 +98,20 @@
         <GitHash Condition=" '$(GitHash)' == '' ">unknown</GitHash>
       </PropertyGroup>
       <ItemGroup>
-        <_BuildInfoLine Include="Commit=$(GitHash);Built=$(BuildTimestamp)" />
+        <!-- Semicolon would split into two MSBuild items; write one key per line instead. -->
+        <_BuildInfoLine Include="Commit=$(GitHash)" />
+        <_BuildInfoLine Include="Built=$(BuildTimestamp)" />
       </ItemGroup>
       <WriteLinesToFile File="$(MSBuildProjectDirectory)\Resources\Raw\buildinfo.txt" Lines="@(_BuildInfoLine)" Overwrite="true" />
+      <Message Importance="high" Text="GenerateBuildInfo: $(BuildTimestamp) commit=$(GitHash)" />
     </Target>
 
     <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true -->
-    <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateSplash)' == 'true'">
+    <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" DependsOnTargets="GenerateBuildInfo" Condition="'$(RunGenerateSplash)' == 'true'">
       <PropertyGroup>
         <SplashFile>$(MSBuildProjectDirectory)\Resources\Splash\vardyparty_splash_generated.svg</SplashFile>
+        <BuildTimestamp Condition="'$(BuildTimestamp)' == ''">$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) UTC</BuildTimestamp>
+        <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
       </PropertyGroup>
       <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
       <ItemGroup>
@@ -151,18 +156,17 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- App Icon - Custom VardyParty Icon -->
+        <!-- App Icon: Windows keeps splash-derived tiles; Android/iOS use adaptive square icon -->
         <MauiIcon Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'" Include="Resources\Splash\vardyparty_splash.svg" Color="#003090" />
-
-        <!-- Splash Screen - Custom VardyParty Splash -->
-        <!-- Use generated splash with build info -->
+        <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#003090" ForegroundScale="0.92" />
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
         <Content Include="Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
         
-        <!-- Android TV Banner -->
+        <!-- Android TV Banner (wide asset — not the phone launcher icon) -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
+
 
         <!-- Custom Fonts -->
         <MauiFont Include="Resources\Fonts\*" />
@@ -340,6 +344,44 @@
       <Copy SourceFiles="@(_AppXWwwroot)"
             DestinationFiles="@(_AppXWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
             SkipUnchangedFiles="false" />
+      <!-- Unpackaged dotnet run resolves HostPage from OutputPath\wwwroot; mirror AppX Blazor assets there. -->
+      <ItemGroup>
+        <_AppXFramework Include="$(_AppXRoot)wwwroot\_framework\**\*.*" Condition="Exists('$(_AppXRoot)wwwroot\_framework')" />
+      </ItemGroup>
+      <Copy SourceFiles="@(_AppXFramework)"
+            DestinationFiles="@(_AppXFramework->'$(_WinOutputRoot)wwwroot\_framework\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="false"
+            Condition="'@(_AppXFramework)' != ''" />
+      <Copy SourceFiles="$(_AppXRoot)wwwroot\index.html"
+            DestinationFiles="$(_WinOutputRoot)wwwroot\index.html"
+            SkipUnchangedFiles="false"
+            Condition="Exists('$(_AppXRoot)wwwroot\index.html')" />
+      <Copy SourceFiles="$(_AppXRoot)wwwroot\VardyParty.styles.css"
+            DestinationFiles="$(_WinOutputRoot)wwwroot\VardyParty.styles.css"
+            SkipUnchangedFiles="false"
+            Condition="Exists('$(_AppXRoot)wwwroot\VardyParty.styles.css')" />
+      <!-- Maui splash/tile PNGs: refresh AppX from resizetizer, then mirror beside AppxManifest for loose-register. -->
+      <ItemGroup>
+        <_ResizetizerPng Include="$(IntermediateOutputPath)resizetizer\sp\*.png;$(IntermediateOutputPath)resizetizer\r\*.png" />
+        <_MsixAssetBase Include="vardyparty_splashStoreLogo;vardyparty_splashMediumTile;vardyparty_splashLogo;vardyparty_splashSmallTile;vardyparty_splashWideTile;vardyparty_splashLargeTile;vardyparty_splash_generatedSplashScreen" />
+        <_MsixAssetScale100 Include="@(_MsixAssetBase->'$(_AppXRoot)%(Identity).scale-100.png')"
+                             Condition="Exists('$(_AppXRoot)%(Identity).scale-100.png')">
+          <_Dest>$(_AppXRoot)%(Identity).png</_Dest>
+        </_MsixAssetScale100>
+        <_AppXLooseAsset Include="$(_AppXRoot)*.png;$(_AppXRoot)resources.pri" />
+      </ItemGroup>
+      <Copy SourceFiles="@(_ResizetizerPng)"
+            DestinationFolder="$(_AppXRoot)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_ResizetizerPng)' != ''" />
+      <Copy SourceFiles="@(_MsixAssetScale100)"
+            DestinationFiles="%(_MsixAssetScale100._Dest)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_MsixAssetScale100)' != ''" />
+      <Copy SourceFiles="@(_AppXLooseAsset)"
+            DestinationFolder="$(_WinOutputRoot)"
+            SkipUnchangedFiles="false"
+            Condition="'@(_AppXLooseAsset)' != ''" />
     </Target>
 
     <!-- Keep MSIX loose-layout wwwroot in sync with league logo assets (AppX folder is not always refreshed on incremental builds). -->

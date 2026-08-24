@@ -7,6 +7,12 @@ public class StreamHealthReport
     [JsonPropertyName("streamUrl")]
     public string StreamUrl { get; set; } = string.Empty;
 
+    /// <summary>
+    /// MadPlay / v2 player label when multiple streams share the same page URL.
+    /// </summary>
+    [JsonPropertyName("streamName")]
+    public string? StreamName { get; set; }
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty; // "working" | "failed" | "buffering" | "unknown"
 
@@ -58,6 +64,9 @@ public class RecommendationItem
     [JsonPropertyName("url")]
     public string Url { get; set; } = string.Empty;
 
+    [JsonPropertyName("streamName")]
+    public string? StreamName { get; set; }
+
     [JsonPropertyName("meta")]
     public StreamMeta? Meta { get; set; }
 }
@@ -93,6 +102,9 @@ public class StreamStats
 {
     [JsonPropertyName("streamUrl")]
     public string StreamUrl { get; set; } = string.Empty;
+
+    [JsonPropertyName("streamName")]
+    public string? StreamName { get; set; }
 
     [JsonPropertyName("successCount")]
     public int SuccessCount { get; set; }

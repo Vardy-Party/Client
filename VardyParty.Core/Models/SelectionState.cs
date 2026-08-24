@@ -9,4 +9,9 @@ public class SelectionState
     public string LastRoute { get; set; } = string.Empty;
     public string PreviousRoute { get; set; } = string.Empty;
     public Game? CurrentGame { get; set; }
+
+    /// <summary>
+    /// Stream currently playing or being health-reported (for v2 streamName identity).
+    /// </summary>
+    public Stream? CurrentStream { get; set; }
 }

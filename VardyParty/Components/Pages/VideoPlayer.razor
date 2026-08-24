@@ -20,6 +20,10 @@
         <div class="stream-info-overlay">
             <div class="stream-info-content">
                 <div class="stream-counter">@displayState.DisplayText</div>
+                @if (!string.IsNullOrEmpty(displayState.CurrentStreamSourceLabel))
+                {
+                    <span class="source-badge source-badge-@displayState.CurrentStreamSourceLabel.ToLowerInvariant()">@displayState.CurrentStreamSourceLabel</span>
+                }
                 <div class="stream-channel">@displayState.CurrentStreamChannel</div>
             </div>
         </div>
@@ -80,6 +84,7 @@
         public int TotalHealthyStreams { get; set; }
         public int CurrentStreamIndex { get; set; }
         public string CurrentStreamChannel { get; set; } = string.Empty;
+        public string CurrentStreamSourceLabel { get; set; } = string.Empty;
         public bool IsVisible { get; set; }
         
         public string DisplayText => IsVisible 
@@ -133,6 +138,7 @@
             TotalHealthyStreams = streams.Count,
             CurrentStreamIndex = currentIndex,
             CurrentStreamChannel = currentStream?.Stream.Channel ?? "Unknown",
+            CurrentStreamSourceLabel = currentStream?.Stream.CatalogSourceBadgeLabel ?? string.Empty,
             IsVisible = streams.Count > 0
         };
         
@@ -231,16 +237,8 @@
 
     private void NavigateToStreamsWithError(string message)
     {
-        var league = string.IsNullOrEmpty(AppSelectionState.LastLeague) ? League : AppSelectionState.LastLeague;
-        var home = string.IsNullOrEmpty(AppSelectionState.LastHomeTeam) ? HomeTeam : AppSelectionState.LastHomeTeam;
-        var away = string.IsNullOrEmpty(AppSelectionState.LastAwayTeam) ? AwayTeam : AppSelectionState.LastAwayTeam;
-        var encodedLeague = Uri.EscapeDataString(league);
-        var encodedHome = Uri.EscapeDataString(home);
-        var encodedAway = Uri.EscapeDataString(away);
         var encodedMessage = Uri.EscapeDataString(message ?? "Stream unavailable");
-        var route = $"/streams/{encodedLeague}/{encodedHome}/{encodedAway}?error={encodedMessage}";
-        AppSelectionState.LastRoute = route;
-        Navigation.NavigateTo(route, replace: true);
+        Navigation.NavigateTo($"/?error={encodedMessage}", replace: true);
     }
 
     private void SetupRemoteKeyHandlers()

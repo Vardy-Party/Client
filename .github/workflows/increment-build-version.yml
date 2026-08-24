@@ -1,0 +1,61 @@
+name: Increment Build Version
+
+# After CI succeeds on main, bump ApplicationVersion only (no semver change).
+# Feature branches never get version commits — that was the PR fan-out / storm cause.
+on:
+  workflow_run:
+    workflows:
+      - "CI - Build & Test"
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: increment-build-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  increment-build-version:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip bot re-entry
+        id: guard
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          if [[ "${MSG}" == ci:\ bump* || "${MSG}" == ci:\ auto-increment* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping — HEAD is already a version commit (${MSG})"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Increment ApplicationVersion
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        id: version
+        run: |
+          CURRENT=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
+          NEW_VERSION=$((CURRENT + 1))
+          sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Incremented ApplicationVersion ${CURRENT} → ${NEW_VERSION}"
+
+      - name: Commit and push
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Actions"
+          git add Version.props
+          git commit -m "ci: auto-increment ApplicationVersion to ${{ steps.version.outputs.new_version }}"
+          git push origin main

@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using QRCoder;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -35,6 +36,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IAuthLoginService _authLoginService;
     private readonly IAuthTokenProvider _authTokenProvider;
     private readonly IEnrichedGameService _enrichedGameService;
+    private readonly ILeagueFilterService _leagueFilter;
     private readonly IStreamResolutionOrchestrator _streamResolutionOrchestrator;
     private readonly SelectionState _selectionState;
     private readonly IServiceProvider _serviceProvider;
@@ -61,6 +63,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         IAuthLoginService authLoginService,
         IAuthTokenProvider authTokenProvider,
         IEnrichedGameService enrichedGameService,
+        ILeagueFilterService leagueFilter,
         IStreamResolutionOrchestrator streamResolutionOrchestrator,
         SelectionState selectionState,
         IServiceProvider serviceProvider,
@@ -70,6 +73,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _authLoginService = authLoginService;
         _authTokenProvider = authTokenProvider;
         _enrichedGameService = enrichedGameService;
+        _leagueFilter = leagueFilter;
         _streamResolutionOrchestrator = streamResolutionOrchestrator;
         _selectionState = selectionState;
         _serviceProvider = serviceProvider;
@@ -103,7 +107,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var displayGames = dict.ToDisplay();
+            var displayGames = _leagueFilter.FilterGames(dict.ToDisplay());
             _ = Task.Run(async () =>
             {
                 var items = await BuildDisplayGamesAsync(displayGames);
@@ -279,7 +283,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
             var apiService = _serviceProvider.GetRequiredService<IApiService>();
             var gamesByLeague = await apiService.GetAllGamesAsync(true);
-            var items = await BuildDisplayGamesAsync(gamesByLeague.ToDisplay());
+            var items = await BuildDisplayGamesAsync(_leagueFilter.FilterGames(gamesByLeague.ToDisplay()));
             ApplyDisplayGames(items);
             StatusMessage = $"Loaded {Games.Count} games";
         }
@@ -703,20 +707,21 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         DeviceQrCode = null;
     }
 
-    private async Task<Bitmap?> GenerateQrCodeAsync(string value)
+    private Task<Bitmap?> GenerateQrCodeAsync(string value)
     {
         try
         {
-            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={Uri.EscapeDataString(value)}";
-            using var httpClient = new HttpClient();
-            var bytes = await httpClient.GetByteArrayAsync(qrUrl);
-            await using var stream = new MemoryStream(bytes);
-            return new Bitmap(stream);
+            using var qrGenerator = new QRCodeGenerator();
+            var qrData = qrGenerator.CreateQrCode(value, QRCodeGenerator.ECCLevel.Q);
+            var pngQr = new PngByteQRCode(qrData);
+            var pngBytes = pngQr.GetGraphic(8);
+            using var stream = new MemoryStream(pngBytes);
+            return Task.FromResult<Bitmap?>(new Bitmap(stream));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to generate device-flow QR code");
-            return null;
+            return Task.FromResult<Bitmap?>(null);
         }
     }
 

@@ -31,7 +31,8 @@ namespace VardyParty.Platforms.MacCatalyst
             Func<Task>? onNextStreamRequested = null,
             string? league = null,
             string? homeTeam = null,
-            string? awayTeam = null)
+            string? awayTeam = null,
+            IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             var tcs = new TaskCompletionSource<PlaybackResult>();
 
@@ -196,7 +197,7 @@ namespace VardyParty.Platforms.MacCatalyst
             // Report metadata if this is the first time we have format info
             if (!metadataReported && _currentMetrics?.Resolution.HasValue == true && healthReporter != null)
             {
-                _ = healthReporter.ReportPlaybackStartedAsync(m3u8Url, refererUrl, _currentMetrics);
+                _ = healthReporter.ReportPlaybackStartedAsync(m3u8Url, refererUrl, metrics: _currentMetrics);
             }
         }
 

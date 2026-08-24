@@ -1,9 +1,11 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using VardyParty;
 using VardyParty.Components.Pages;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
@@ -17,6 +19,7 @@ using VardyParty.Platforms.Android;
 #endif
 using VardyParty.Providers;
 using VardyParty.Resolvers;
+using VardyParty.MauiServices;
 using VardyParty.Services;
 #if WINDOWS
 using Microsoft.Maui.Handlers;
@@ -60,6 +63,14 @@ public static class MauiProgram
     {
         var handler = new HttpClientHandler();
 
+#if !DEBUG
+        if (apiSettings.IgnoreSslCertificateErrors)
+        {
+            Console.WriteLine("[MauiProgram] IgnoreSslCertificateErrors is ignored in Release builds");
+            apiSettings.IgnoreSslCertificateErrors = false;
+        }
+#endif
+
         if (!apiSettings.IgnoreSslCertificateErrors)
         {
             return handler;
@@ -90,6 +101,9 @@ public static class MauiProgram
 
     public static MauiApp CreateMauiApp()
     {
+#if WINDOWS
+        WindowsEventLogger.Info("MauiProgram", "CreateMauiApp starting");
+#endif
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
@@ -159,6 +173,25 @@ public static class MauiProgram
         }
         
         builder.Configuration.AddSecrets(Assembly.GetExecutingAssembly());
+#if DEBUG
+        // Default to production; set VARDYPARTY_DEBUG_API=local|preview to override.
+        var debugApiTarget = Environment.GetEnvironmentVariable("VARDYPARTY_DEBUG_API");
+        var debugBaseUrl = debugApiTarget?.Trim().ToLowerInvariant() switch
+        {
+            "local" => builder.Configuration["Api:HeadlessBaseUrl-Local"],
+            "preview" => builder.Configuration["Api:HeadlessBaseUrl-Preview"],
+            "production" or "prod" => builder.Configuration["Api:HeadlessBaseUrl"],
+            _ => builder.Configuration["Api:HeadlessBaseUrl"],
+        };
+        if (!string.IsNullOrWhiteSpace(debugBaseUrl))
+        {
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Api:HeadlessBaseUrl"] = debugBaseUrl
+            });
+            Console.WriteLine($"[MauiProgram] DEBUG: Using API at {debugBaseUrl} (target={debugApiTarget ?? "production"})");
+        }
+#endif
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
                           ?? throw new InvalidOperationException("Missing Api configuration section.");
 
@@ -197,13 +230,13 @@ public static class MauiProgram
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.Windows.WindowsVideoPlayerService>();
-            // Register windows overlay close service for native close control in overlay
             builder.Services.AddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
 #elif IOS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.iOS.IosVideoPlayerService>();
 #elif MACCATALYST
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.MacCatalyst.MacCatalystVideoPlayerService>();
 #endif
+        builder.Services.TryAddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Services.NullOverlayCloseService>();
 
         builder.Services.AddTransient<M3U8HttpHandler>();
 
@@ -221,6 +254,8 @@ public static class MauiProgram
             .AddSingleton<IBbcHtmlParser, BbcHtmlParser>()
             .AddSingleton<IStreamDeduplicator, StreamDeduplicator>()
             .AddSingleton<IEnrichedGameService, EnrichedGameService>()
+            .AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>()
+            .AddSingleton<ILeagueFilterService, LeagueFilterService>()
             .AddSingleton<IHomePagePresentationService, HomePagePresentationService>()
             .AddSingleton<IStreamSwitchingService, StreamSwitchingService>()
             .AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>()
@@ -249,7 +284,13 @@ public static class MauiProgram
             .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
         builder.Services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
+            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings))
+            .ConfigureHttpClient(client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    VardyPartyClientApiVersion.HeaderName,
+                    VardyPartyClientApiVersion.DefaultHeaderValue);
+            });
         builder.Services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {

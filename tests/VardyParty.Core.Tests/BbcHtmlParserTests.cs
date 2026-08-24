@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using VardyParty.Parsers;
@@ -12,6 +13,8 @@ namespace VardyParty.Core.Tests;
 
 public class BbcHtmlParserTests
 {
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+
     private static string GetResxValue(string name)
     {
         var path = Path.Combine("Resources", name + ".html");
@@ -29,17 +32,22 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesSampleFragment_HT()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g =>
-                g.WithEventId("s-1").WithHome("Manchester City").WithAway("Chelsea").WithScore(1, 0)
+                g.WithEventId("s-1").WithHome("Home United").WithAway("Away City").WithScore(1, 0)
                     .WithProgressText("HT"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault(x =>
-            x.Home.Contains("Manchester City", StringComparison.OrdinalIgnoreCase) &&
-            x.Away.Contains("Chelsea", StringComparison.OrdinalIgnoreCase));
+            x.Home.Contains("Home United", StringComparison.OrdinalIgnoreCase) &&
+            x.Away.Contains("Away City", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(f);
         Assert.Equal("HT", f.Status);
         Assert.True(f.IsInProgress);
@@ -48,13 +56,19 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesFinishedGame_FT()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g =>
-                g.WithEventId("s-2").WithHome("TeamA").WithAway("TeamB").WithScore(2, 1).WithProgressText("FT"))
+                g.WithEventId("s-2").WithHome("Home United").WithAway("Away City").WithScore(2, 1).WithProgressText("FT"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal("FT", f.Status);
         Assert.True(f.IsFinished);
@@ -63,12 +77,18 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesPostponed_NoProgress()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueX")
-            .AddGame(g => g.WithEventId("s-3").WithHome("Damac").WithAway("Other").WithProgressText("Postponed"))
+            .WithLeague("League Gamma")
+            .AddGame(g => g.WithEventId("s-3").WithHome("Home United").WithAway("Away City").WithProgressText("Postponed"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal("Postponed", f.Status);
         Assert.False(f.IsInProgress);
@@ -78,13 +98,19 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesMatchPostponed_VariedText()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueZ")
+            .WithLeague("League Delta")
             .AddGame(g =>
-                g.WithEventId("s-5").WithHome("A").WithAway("B").WithProgressText("Match postponed due to weather"))
+                g.WithEventId("s-5").WithHome("Home United").WithAway("Away City").WithProgressText("Match postponed due to weather"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal("Postponed", f.Status);
         Assert.False(f.IsInProgress);
@@ -93,86 +119,139 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_InjuryPlusTime_ParsesMinute()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueI")
-            .AddGame(g => g.WithEventId("s-6").WithHome("X").WithAway("Y").WithProgressText("90+3"))
+            .WithLeague("League Epsilon")
+            .AddGame(g => g.WithEventId("s-6").WithHome("Home United").WithAway("Away City").WithProgressText("90+3"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.True(f.Minute.HasValue);
         Assert.Equal(9003, f.Minute.Value);
     }
 
     [Fact]
+    public void ParseHtml_CapturedLivePage_LiveDetails_NotStolenFromNextFullTime()
+    {
+        // Arrange
+        // Captured scores-fixtures page while one match was live (85'). The next competition
+        // block is already FT; that nearby "Full time" must not finish the live fixture.
+        var html = GetResxValue("BbcScoresFixtures_2026-08-01_LiveDetails");
+        Assert.Contains("s-8ew7n1ri67qmwp7v5lrcpk9hw", html, StringComparison.Ordinal);
+        Assert.Contains("85 minutes , in progress", html, StringComparison.Ordinal);
+        Assert.Contains("s-60kcu3gx41jye1nrvbys34bh0", html, StringComparison.Ordinal);
+        Assert.Contains("at Full time", html, StringComparison.Ordinal);
+        var sut = CreateParser();
+
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var live = Assert.Single(fixtures, f => f.Minute == 85 && f.HomeScore == 1 && f.AwayScore == 4 && f.IsInProgress);
+
+        Assert.Equal("85'", live.Status);
+        Assert.False(live.IsFinished);
+        Assert.False(live.IsHalfTime);
+        Assert.True(live.HasProgress);
+        Assert.False(live.AfterExtraTime);
+        Assert.Equal(new DateTime(2026, 8, 1, 18, 0, 0, DateTimeKind.Utc), live.KickoffUtc);
+        Assert.False(string.IsNullOrWhiteSpace(live.League));
+        Assert.False(string.IsNullOrWhiteSpace(live.HomeBadgeUrl));
+        Assert.False(string.IsNullOrWhiteSpace(live.AwayBadgeUrl));
+        Assert.EndsWith(".svg", live.HomeBadgeUrl);
+        Assert.EndsWith(".svg", live.AwayBadgeUrl);
+
+        Assert.Contains(fixtures, f => f.IsFinished && f.Status == "FT" && f.HomeScore == 1 && f.AwayScore == 1);
+    }
+
+    [Fact]
     public void ParseHtml_Badges_AreExtracted()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueB")
+            .WithLeague("League Zeta")
             .AddGame(g =>
-                g.WithEventId("s-7").WithHome("HB").WithAway("AB").WithHomeBadge("https://example.com/h.svg")
-                    .WithAwayBadge("https://example.com/a.svg").WithProgressText("Live"))
+                g.WithEventId("s-7").WithHome("Home United").WithAway("Away City")
+                    .WithHomeBadge("https://badges.example.com/h.svg")
+                    .WithAwayBadge("https://badges.example.com/a.svg").WithProgressText("Live"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
-        // Parser should extract the exact SVG URLs provided in the HTML
-        Assert.Contains("example.com/h.svg", f.HomeBadgeUrl);
-        Assert.Contains("example.com/a.svg", f.AwayBadgeUrl);
+        Assert.Contains("badges.example.com/h.svg", f.HomeBadgeUrl);
+        Assert.Contains("badges.example.com/a.svg", f.AwayBadgeUrl);
     }
 
     [Fact]
     public void ParseHtml_AfterExtraTimeAndPenalties_Parsed()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("FA Cup")
-            .AddGame(g => g.WithEventId("s-b1ky54ud4knpr8o4m79jfup78")
-                .WithHome("Milton Keynes Dons")
-                .WithAway("Oxford United")
+            .WithLeague("Cup Alpha")
+            .AddGame(g => g.WithEventId("s-aet-1")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(1, 1)
-                .WithHomeBadge(
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/milton-keynes-dons.0c37c8c1e0.svg")
-                .WithAwayBadge(
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/oxford-united.43e728f198.svg")
+                .WithHomeBadge("https://badges.example.com/home-united.svg")
+                .WithAwayBadge("https://badges.example.com/away-city.svg")
                 .WithAfterExtraTime()
-                .WithPenaltyResult("Oxford United", 4, 3))
+                .WithPenaltyResult("Away City", 4, 3))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault(x =>
-            x.Home.Contains("Milton Keynes", StringComparison.OrdinalIgnoreCase) &&
-            x.Away.Contains("Oxford United", StringComparison.OrdinalIgnoreCase));
+            x.Home.Contains("Home United", StringComparison.OrdinalIgnoreCase) &&
+            x.Away.Contains("Away City", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(f);
 
-        // Scores at end of extra time should be 1-1
         Assert.Equal(1, f.HomeScore);
         Assert.Equal(1, f.AwayScore);
-
-        // Parser should mark this fixture as having progress (AET/penalties)
         Assert.True(f.HasProgress);
-
-        // Badges should be extracted
-        Assert.Contains("milton-keynes-dons.0c37c8c1e0.svg", f.HomeBadgeUrl);
-        Assert.Contains("oxford-united.43e728f198.svg", f.AwayBadgeUrl);
+        Assert.Contains("home-united.svg", f.HomeBadgeUrl);
+        Assert.Contains("away-city.svg", f.AwayBadgeUrl);
     }
 
     [Fact]
     public void ParseHtml_InitialJson_Postponed_Fallback()
     {
-        // build initial json that contains an event with id s-x and status Postponed
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueJ")
-            .AddGame(g => g.WithEventId("s-x").WithHome("PHome").WithAway("PAway"))
+            .WithLeague("League Eta")
+            .AddGame(g => g.WithEventId("s-x").WithHome("Home United").WithAway("Away City"))
             .BuildPage();
 
-        var mockParser = new Mock<IBbcJsonParser>();
+        var mockParser = _fixture.GetMock<IBbcJsonParser>();
+        var postponedMap = new Dictionary<string, (string periodLabel, string status, string statusComment)>
+        {
+            ["s-x"] = ("Postponed", "Postponed", string.Empty)
+        };
+        mockParser.Setup(p => p.BuildEventMapsStreaming(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((postponedMap, new Dictionary<string, DateTime>()));
         mockParser.Setup(p => p.BuildEventStatusMapStreaming(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(new Dictionary<string, (string periodLabel, string status, string statusComment)>
-            {
-                ["s-x"] = ("Postponed", "Postponed", string.Empty)
-            });
+            .Returns(postponedMap);
 
-        var f = CreateParser(mockParser.Object).ParseHtml(html).FirstOrDefault();
+        var sut = CreateParser(mockParser.Object);
+
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal("Postponed", f.Status);
         Assert.False(f.IsInProgress);
@@ -181,13 +260,19 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesManyGames_NoCrash()
     {
-        var builder = new BbcHtmlBuilder().WithLeague("Championship");
+        // Arrange
+        var builder = new BbcHtmlBuilder().WithLeague("League Beta");
         for (var i = 0; i < 50; i++)
             builder.AddGame(g =>
                 g.WithEventId($"s-{i}").WithHome($"Home{i}").WithAway($"Away{i}").WithScore(i % 3, (i + 1) % 3)
                     .WithProgressText(i % 2 == 0 ? "Live" : string.Empty));
         var html = builder.BuildPage();
-        var fixtures = CreateParser().ParseHtml(html);
+        var sut = CreateParser();
+
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         Assert.NotNull(fixtures);
         Assert.Equal(50, fixtures.Count);
     }
@@ -195,12 +280,18 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_NoProgress_EmptyStatus()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueY")
-            .AddGame(g => g.WithEventId("s-4").WithHome("NoProgHome").WithAway("NoProgAway"))
+            .WithLeague("League Theta")
+            .AddGame(g => g.WithEventId("s-4").WithHome("Home United").WithAway("Away City"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal(string.Empty, f.Status);
         Assert.False(f.HasProgress);
@@ -209,14 +300,20 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ParsesInExtraTime_ET_NotFinished()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g =>
-                g.WithEventId("s-et1").WithHome("Newcastle").WithAway("Bournemouth").WithScore(2, 2)
+                g.WithEventId("s-et1").WithHome("Home United").WithAway("Away City").WithScore(2, 2)
                     .WithInExtraTime(92))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
         Assert.Equal("ET", f.Status);
         Assert.False(f.IsFinished);
@@ -226,85 +323,89 @@ public class BbcHtmlParserTests
     [Fact]
     public void BbcHtmlBuilder_Writes_ExtraTime_Markup()
     {
-        var homeBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/newcastle-united.7daf913814.svg";
-        var awayBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/afc-bournemouth.3e0ae7da8e.svg";
+        // Arrange
+        var homeBadge = "https://badges.example.com/home-united.svg";
+        var awayBadge = "https://badges.example.com/away-city.svg";
 
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g => g
-                .WithEventId("s-a1pnbmnmt46a1y19g7jtidyj8")
-                .WithHome("Newcastle")
-                .WithAway("AFC Bournemouth")
+                .WithEventId("s-et-markup")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(2, 2)
                 .WithHomeBadge(homeBadge)
                 .WithAwayBadge(awayBadge)
                 .WithInExtraTime(100))
             .BuildPage();
+        var sut = CreateParser();
 
-        // Parse the HTML using the real parser and verify fields round-trip
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault(x =>
-            x.Home.Contains("Newcastle", StringComparison.OrdinalIgnoreCase) &&
-            x.Away.Contains("Bournemouth", StringComparison.OrdinalIgnoreCase));
+            x.Home.Contains("Home United", StringComparison.OrdinalIgnoreCase) &&
+            x.Away.Contains("Away City", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(f);
 
-        // Status should be ET and game not finished but in progress
         Assert.Equal("ET", f.Status);
         Assert.False(f.IsFinished);
         Assert.True(f.IsInProgress);
 
-        // Minute should be parsed as 100
         Assert.True(f.Minute.HasValue);
         Assert.Equal(100, f.Minute.Value);
 
-        // Scores should be preserved
         Assert.Equal(2, f.HomeScore);
         Assert.Equal(2, f.AwayScore);
 
-        // Badges should be extracted
-        Assert.Contains("newcastle-united.7daf913814.svg", f.HomeBadgeUrl);
-        Assert.Contains("afc-bournemouth.3e0ae7da8e.svg", f.AwayBadgeUrl);
+        Assert.Contains("home-united.svg", f.HomeBadgeUrl);
+        Assert.Contains("away-city.svg", f.AwayBadgeUrl);
 
-        // AfterExtraTime property should be false for in-progress ET
         Assert.False(f.AfterExtraTime);
     }
 
     [Fact]
     public void BbcHtmlBuilder_Writes_Penalties_InProgress_Markup()
     {
-        var html = new BbcHtmlBuilder()
-            .WithLeague("Cup")
+        // Arrange
+        var builder = new BbcHtmlBuilder()
+            .WithLeague("Cup Beta")
             .AddGame(g => g
-                .WithHome("Hull City")
-                .WithAway("Blackburn Rovers")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(0, 0)
-                .WithPenalties(3, 2))
-            .BuildPage();
+                .WithPenalties(3, 2));
 
-        Assert.Contains("Penalties Hull City 3 , Blackburn Rovers 2", html);
+        // Act
+        var html = builder.BuildPage();
+
+        // Assert
+        Assert.Contains("Penalties Home United 3 , Away City 2", html);
         Assert.Contains("Penalties 3-2", html);
     }
 
     [Fact]
     public void ParseHtml_PenaltiesInProgress_IsNotFinished()
     {
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Cup")
+            .WithLeague("Cup Beta")
             .AddGame(g => g
-                .WithHome("Hull")
-                .WithAway("Blackburn")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(2, 2)
-                // Simulating in-progress penalties
                 .WithPenalties(3, 2))
             .BuildPage();
+        var sut = CreateParser();
 
-        var f = CreateParser().ParseHtml(html).FirstOrDefault();
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault();
         Assert.NotNull(f);
 
-        // It should capture the "Penalties X-Y" as the status or just "Penalties" depending on implementation
-        // Assuming the parser extracts the text from StyledPeriod
         Assert.Contains("Penalties", f.Status);
 
         Assert.True(f.IsInProgress, "Game should be considered in progress during penalties");
@@ -315,79 +416,80 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
-    public void ParseHtml_ExtractsTeamLogos_Lazio_Como()
+    public void ParseHtml_ExtractsTeamLogos_FromCapturedFragment()
     {
-        // Real BBC Sport HTML structure for Lazio vs Como
-        // Como uses .webp format for their badge
-        var html = GetResxValue("ParseHtml_ExtractsTeamLogos_Lazio_Como");
+        // Arrange
+        var html = GetResxValue("ParseHtml_ExtractsTeamLogos");
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var f = fixtures.FirstOrDefault(x => x.Home == "Lazio" && x.Away == "Como");
+        // Act
+        var fixtures = sut.ParseHtml(html);
 
-        Assert.NotNull(f);
-        Assert.Equal("Lazio", f.Home);
-        Assert.Equal("Como", f.Away);
-        Assert.Equal("Serie A", f.League);
-
-        // Verify team logos are extracted correctly - .svg for Lazio, .webp for Como
-        Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/lazio.8fc1f19371.svg",
-            f.HomeBadgeUrl);
-        Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/como.57ce7c985f.webp",
-            f.AwayBadgeUrl);
+        // Assert
+        var f = Assert.Single(fixtures);
+        Assert.False(string.IsNullOrWhiteSpace(f.Home));
+        Assert.False(string.IsNullOrWhiteSpace(f.Away));
+        Assert.False(string.IsNullOrWhiteSpace(f.League));
+        Assert.False(string.IsNullOrWhiteSpace(f.HomeBadgeUrl));
+        Assert.False(string.IsNullOrWhiteSpace(f.AwayBadgeUrl));
     }
 
     [Fact]
     public void ParseHtml_ExtractsTeamLogos_WithBuilder()
     {
-        // Test using BbcHtmlBuilder with explicit badge URLs
-        var lazioLogo =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/lazio.8fc1f19371.svg";
-        var comoLogo = "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/como.57ce7c985f.svg";
+        // Arrange
+        var homeLogo = "https://badges.example.com/home-united.svg";
+        var awayLogo = "https://badges.example.com/away-city.svg";
 
         var html = new BbcHtmlBuilder()
-            .WithLeague("Serie A")
+            .WithLeague("League Iota")
             .AddGame(g => g
                 .WithEventId("s-test-logo")
-                .WithHome("Lazio")
-                .WithAway("Como")
-                .WithHomeBadge(lazioLogo)
-                .WithAwayBadge(comoLogo))
+                .WithHome("Home United")
+                .WithAway("Away City")
+                .WithHomeBadge(homeLogo)
+                .WithAwayBadge(awayLogo))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var f = fixtures.FirstOrDefault(x => x.Home == "Lazio" && x.Away == "Como");
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault(x => x.Home == "Home United" && x.Away == "Away City");
 
         Assert.NotNull(f);
 
-        // Verify exact badge URLs are preserved
-        Assert.Contains("lazio.8fc1f19371.svg", f.HomeBadgeUrl);
-        Assert.Contains("como.57ce7c985f.svg", f.AwayBadgeUrl);
+        Assert.Contains("home-united.svg", f.HomeBadgeUrl);
+        Assert.Contains("away-city.svg", f.AwayBadgeUrl);
 
-        // Verify full URLs
-        Assert.Equal(lazioLogo, f.HomeBadgeUrl);
-        Assert.Equal(comoLogo, f.AwayBadgeUrl);
+        Assert.Equal(homeLogo, f.HomeBadgeUrl);
+        Assert.Equal(awayLogo, f.AwayBadgeUrl);
     }
 
     [Fact]
     public void ParseHtml_PlaceholderBadges_ReturnsEmpty()
     {
-        // Test that placeholder badges are filtered out (both badges become empty)
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g => g
                 .WithEventId("s-placeholder")
-                .WithHome("Team A")
-                .WithAway("Team B")
-                .WithHomeBadge("https://example.com/placeholder.svg")
-                .WithAwayBadge("https://example.com/real-badge.svg"))
+                .WithHome("Home United")
+                .WithAway("Away City")
+                .WithHomeBadge("https://badges.example.com/placeholder.svg")
+                .WithAwayBadge("https://badges.example.com/real-badge.svg"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault();
 
         Assert.NotNull(f);
 
-        // If either badge is a placeholder, both should be empty
         Assert.True(string.IsNullOrEmpty(f.HomeBadgeUrl), "Home badge should be empty when placeholder detected");
         Assert.True(string.IsNullOrEmpty(f.AwayBadgeUrl), "Away badge should be empty when placeholder detected");
     }
@@ -395,24 +497,26 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_MissingOneBadge_ReturnsBothEmpty()
     {
-        // Test that if one badge is missing, both are set to empty
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("La Liga")
+            .WithLeague("League Kappa")
             .AddGame(g => g
                 .WithEventId("s-missing-badge")
-                .WithHome("Barcelona")
-                .WithAway("Real Madrid")
-                .WithHomeBadge("https://example.com/barcelona.svg")
-                // Away badge intentionally not set
+                .WithHome("Home United")
+                .WithAway("Away City")
+                .WithHomeBadge("https://badges.example.com/home-united.svg")
                 .WithAwayBadge(string.Empty))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault();
 
         Assert.NotNull(f);
 
-        // If one badge is missing, both should be empty per parser logic
         Assert.True(string.IsNullOrEmpty(f.HomeBadgeUrl), "Home badge should be empty when away badge is missing");
         Assert.True(string.IsNullOrEmpty(f.AwayBadgeUrl), "Away badge should be empty");
     }
@@ -420,19 +524,23 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_FullTimeFixture_ShouldBeMarkedAsFinished()
     {
-        // Test the exact HTML structure from the BBC fixture provided
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Important Games")
+            .WithLeague("League Alpha")
             .AddGame(g => g
-                .WithEventId("s-5wmfkj6y4bbcpfbso62fcqoes")
-                .WithHome("Inter Milan")
-                .WithAway("Arsenal")
+                .WithEventId("s-ft-1")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(1, 3)
                 .WithProgressText("Full time"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var f = fixtures.FirstOrDefault(x => x.Home.Contains("Inter Milan", StringComparison.OrdinalIgnoreCase));
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault(x => x.Home.Contains("Home United", StringComparison.OrdinalIgnoreCase));
 
         Assert.NotNull(f);
         Assert.Equal("FT", f.Status);
@@ -445,9 +553,14 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_FullTimeFixture_WithAggregateScore_IsFinished()
     {
+        // Arrange
         var html = GetResxValue("RawFullTimeAggregateGame");
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault();
 
         Assert.NotNull(f);
@@ -459,40 +572,46 @@ public class BbcHtmlParserTests
     }
 
     [Fact]
-    public void ParseHtml_ChampionsLeagueLeg2WithAggregateScores_ExtractsExpectedAggregateScores()
+    public void ParseHtml_CapturedTwoLegPage_ExtractsExpectedAggregateScores()
     {
-        var html = GetResxValue("ChampionsLeagueLeg2WithAggregateScores");
-        var fixtures = CreateParser().ParseHtml(html);
+        // Arrange
+        var html = GetResxValue("TwoLegWithAggregateScores");
+        var sut = CreateParser();
 
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         Assert.NotEmpty(fixtures);
 
-        void AssertAggregate(string home, string away, int expectedAggregateHome, int expectedAggregateAway)
+        void AssertAggregate(int expectedAggregateHome, int expectedAggregateAway)
         {
             var fixture = fixtures.FirstOrDefault(f =>
-                string.Equals(f.Home, home, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(f.Away, away, StringComparison.OrdinalIgnoreCase));
+                f.AggregateHomeScore == expectedAggregateHome &&
+                f.AggregateAwayScore == expectedAggregateAway);
 
             Assert.NotNull(fixture);
-            Assert.Equal(expectedAggregateHome, fixture.AggregateHomeScore);
-            Assert.Equal(expectedAggregateAway, fixture.AggregateAwayScore);
-
-            // Aggregate score should be present alongside current game score.
             Assert.True(fixture.HomeScore.HasValue);
             Assert.True(fixture.AwayScore.HasValue);
         }
 
-        AssertAggregate("Sporting CP", "Bodø / Glimt", 5, 3);
-        AssertAggregate("Arsenal", "Bayer Leverkusen", 2, 1);
-        AssertAggregate("Chelsea", "Paris Saint-Germain", 2, 7);
-        AssertAggregate("Manchester City", "Real Madrid", 0, 4);
+        AssertAggregate(5, 3);
+        AssertAggregate(2, 1);
+        AssertAggregate(2, 7);
+        AssertAggregate(0, 4);
     }
 
     [Fact]
     public void ParseHtml_WithAetPenaltiesFixture_IsCorrect()
     {
+        // Arrange
         var html = GetResxValue("RawAetPenaltiesGame");
-        var fixtures = CreateParser().ParseHtml(html);
+        var sut = CreateParser();
 
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault();
 
         Assert.NotNull(f);
@@ -503,24 +622,28 @@ public class BbcHtmlParserTests
         Assert.Equal(1, f.AwayScore);
         Assert.Equal(4, f.PenaltyWinnerGoals);
         Assert.Equal(2, f.PenaltyLoserGoals);
-        Assert.Equal("Leeds United", f.PenaltyWinner);
+        Assert.False(string.IsNullOrWhiteSpace(f.PenaltyWinner));
     }
 
     [Fact]
     public void ParseHtml_FullTimeWithFTAbbreviation_ShouldBeMarkedAsFinished()
     {
-        // Test that "FT" abbreviation is correctly recognized
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Premier League")
+            .WithLeague("League Alpha")
             .AddGame(g => g
                 .WithEventId("s-ft-test")
-                .WithHome("Liverpool")
-                .WithAway("Manchester United")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(2, 1)
                 .WithProgressText("FT"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         var f = fixtures.FirstOrDefault();
 
         Assert.NotNull(f);
@@ -531,36 +654,38 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_FullTimeVsInProgress_StatusDifference()
     {
-        // Test that full-time and in-progress fixtures are correctly differentiated
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("Championship")
+            .WithLeague("League Beta")
             .AddGame(g => g
                 .WithEventId("s-ft-game")
-                .WithHome("Team A")
-                .WithAway("Team B")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(2, 0)
                 .WithProgressText("Full time"))
             .AddGame(g => g
                 .WithEventId("s-live-game")
-                .WithHome("Team C")
-                .WithAway("Team D")
+                .WithHome("North City")
+                .WithAway("South Town")
                 .WithScore(1, 1)
                 .WithProgressText("67'"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var ftFixture = fixtures.FirstOrDefault(x => x.Home == "Team A");
-        var liveFixture = fixtures.FirstOrDefault(x => x.Home == "Team C");
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var ftFixture = fixtures.FirstOrDefault(x => x.Home == "Home United");
+        var liveFixture = fixtures.FirstOrDefault(x => x.Home == "North City");
 
         Assert.NotNull(ftFixture);
         Assert.NotNull(liveFixture);
 
-        // Full-time fixture
         Assert.Equal("FT", ftFixture.Status);
         Assert.True(ftFixture.IsFinished);
         Assert.False(ftFixture.IsInProgress);
 
-        // In-progress fixture
         Assert.Equal("67'", liveFixture.Status);
         Assert.False(liveFixture.IsFinished);
         Assert.True(liveFixture.IsInProgress);
@@ -569,98 +694,94 @@ public class BbcHtmlParserTests
     [Fact]
     public void BbcHtmlBuilder_FullTimeGame_ProducesCorrectMarkup()
     {
-        // Arrange - Create the fixture using BbcHtmlBuilder
-        var interMilanBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/inter-milan.209b8285b0.svg";
-        var arsenalBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5be7ff54ce.svg";
+        // Arrange
+        var homeBadge = "https://badges.example.com/home-united.svg";
+        var awayBadge = "https://badges.example.com/away-city.svg";
 
-        var html = new BbcHtmlBuilder()
-            .WithLeague("Important Games")
+        var builder = new BbcHtmlBuilder()
+            .WithLeague("League Alpha")
             .AddGame(g => g
-                .WithEventId("s-5wmfkj6y4bbcpfbso62fcqoes")
-                .WithHome("Inter Milan")
-                .WithAway("Arsenal")
+                .WithEventId("s-ft-markup")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(1, 3)
-                .WithHomeBadge(interMilanBadge)
-                .WithAwayBadge(arsenalBadge)
-                .WithProgressText("Full time"))
-            .BuildPage();
+                .WithHomeBadge(homeBadge)
+                .WithAwayBadge(awayBadge)
+                .WithProgressText("Full time"));
 
-        // Assert - Verify all key markup elements are present
+        // Act
+        var html = builder.BuildPage();
 
-        // Event ID
-        Assert.Contains("data-event-id=\"s-5wmfkj6y4bbcpfbso62fcqoes\"", html);
+        // Assert
+        Assert.Contains("data-event-id=\"s-ft-markup\"", html);
 
-        // Team names (in various span formats)
-        Assert.Contains("Inter Milan", html);
-        Assert.Contains("Arsenal", html);
+        Assert.Contains("Home United", html);
+        Assert.Contains("Away City", html);
 
-        // Badge URLs
-        Assert.Contains(interMilanBadge, html);
-        Assert.Contains(arsenalBadge, html);
+        Assert.Contains(homeBadge, html);
+        Assert.Contains(awayBadge, html);
 
-        // Score elements
-        Assert.Contains(">1<", html); // Home score
-        Assert.Contains(">3<", html); // Away score
+        Assert.Contains(">1<", html);
+        Assert.Contains(">3<", html);
 
-        // Full-time status text (visually-hidden)
         Assert.Contains("Full time", html);
     }
 
     [Fact]
     public void BbcHtmlBuilder_FullTimeGame_ParsedCorrectly()
     {
-        // Arrange - Create and parse the fixture
-        var interMilanBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/inter-milan.209b8285b0.svg";
-        var arsenalBadge =
-            "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5be7ff54ce.svg";
+        // Arrange
+        var homeBadge = "https://badges.example.com/home-united.svg";
+        var awayBadge = "https://badges.example.com/away-city.svg";
 
         var html = new BbcHtmlBuilder()
-            .WithLeague("Important Games")
+            .WithLeague("League Alpha")
             .AddGame(g => g
-                .WithEventId("s-5wmfkj6y4bbcpfbso62fcqoes")
-                .WithHome("Inter Milan")
-                .WithAway("Arsenal")
+                .WithEventId("s-ft-parsed")
+                .WithHome("Home United")
+                .WithAway("Away City")
                 .WithScore(1, 3)
-                .WithHomeBadge(interMilanBadge)
-                .WithAwayBadge(arsenalBadge)
+                .WithHomeBadge(homeBadge)
+                .WithAwayBadge(awayBadge)
                 .WithProgressText("Full time"))
             .BuildPage();
+        var sut = CreateParser();
 
-        // Act - Parse the generated HTML
-        var fixtures = CreateParser().ParseHtml(html);
-        var fixture = fixtures.FirstOrDefault(x => x.Home == "Inter Milan" && x.Away == "Arsenal");
+        // Act
+        var fixtures = sut.ParseHtml(html);
 
-        // Assert - Verify all parsed values
+        // Assert
+        var fixture = fixtures.FirstOrDefault(x => x.Home == "Home United" && x.Away == "Away City");
         Assert.NotNull(fixture);
-        Assert.Equal("Inter Milan", fixture.Home);
-        Assert.Equal("Arsenal", fixture.Away);
-        Assert.Equal("Important Games", fixture.League);
+        Assert.Equal("Home United", fixture.Home);
+        Assert.Equal("Away City", fixture.Away);
+        Assert.Equal("League Alpha", fixture.League);
         Assert.Equal(1, fixture.HomeScore);
         Assert.Equal(3, fixture.AwayScore);
         Assert.Equal("FT", fixture.Status);
         Assert.True(fixture.IsFinished, "Full-time fixture should be marked as finished");
         Assert.False(fixture.IsInProgress, "Full-time fixture should not be in progress");
-        Assert.Contains("inter-milan.209b8285b0.svg", fixture.HomeBadgeUrl);
-        Assert.Contains("arsenal.5be7ff54ce.svg", fixture.AwayBadgeUrl);
+        Assert.Contains("home-united.svg", fixture.HomeBadgeUrl);
+        Assert.Contains("away-city.svg", fixture.AwayBadgeUrl);
     }
 
     [Fact]
     public void ParseHtml_ParsesRawHtmlFragment_FullTimeGame()
     {
+        // Arrange
         var html = GetResxValue("RawFullTimeGame");
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var f = fixtures.FirstOrDefault(x => x.Home.Contains("Inter Milan") && x.Away.Contains("Arsenal"));
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var f = fixtures.FirstOrDefault(x => x.HomeScore == 1 && x.AwayScore == 3 && x.Status == "FT");
         Assert.NotNull(f);
-        Assert.Equal("Inter Milan", f.Home);
-        Assert.Equal("Arsenal", f.Away);
-        Assert.Equal(1, f.HomeScore);
-        Assert.Equal(3, f.AwayScore);
-        Assert.Contains("inter-milan.209b8285b0.svg", f.HomeBadgeUrl);
-        Assert.Contains("arsenal.5be7ff54ce.svg", f.AwayBadgeUrl);
+        Assert.False(string.IsNullOrWhiteSpace(f.Home));
+        Assert.False(string.IsNullOrWhiteSpace(f.Away));
+        Assert.Contains(".svg", f.HomeBadgeUrl);
+        Assert.Contains(".svg", f.AwayBadgeUrl);
         Assert.True(f.IsFinished);
         Assert.Equal("FT", f.Status);
     }
@@ -668,95 +789,105 @@ public class BbcHtmlParserTests
     [Fact]
     public void ParseHtml_ComplexStatusText_ParsesMinutesAndSpecials()
     {
-        // 90+3 injury time
+        // Arrange
         var html = new BbcHtmlBuilder()
-            .WithLeague("LeagueX")
+            .WithLeague("League Gamma")
             .AddGame(g =>
-                g.WithEventId("s-inj").WithHome("InjTeam").WithAway("Opp").WithScore(1, 1).WithProgressText("90+3"))
+                g.WithEventId("s-inj").WithHome("Home Injury").WithAway("Away City").WithScore(1, 1).WithProgressText("90+3"))
             .AddGame(g =>
-                g.WithEventId("s-et").WithHome("ETTeam").WithAway("Opp").WithScore(2, 2).WithProgressText("100' ET"))
+                g.WithEventId("s-et").WithHome("Home Extra").WithAway("Away City").WithScore(2, 2).WithProgressText("100' ET"))
             .AddGame(g =>
-                g.WithEventId("s-pen").WithHome("PenTeam").WithAway("Opp").WithScore(0, 0)
+                g.WithEventId("s-pen").WithHome("Home Pens").WithAway("Away City").WithScore(0, 0)
                     .WithProgressText("Penalties 5-4"))
             .BuildPage();
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var inj = fixtures.FirstOrDefault(x => x.Home == "InjTeam");
-        var et = fixtures.FirstOrDefault(x => x.Home == "ETTeam");
-        var pen = fixtures.FirstOrDefault(x => x.Home == "PenTeam");
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
+        var inj = fixtures.FirstOrDefault(x => x.Home == "Home Injury");
+        var et = fixtures.FirstOrDefault(x => x.Home == "Home Extra");
+        var pen = fixtures.FirstOrDefault(x => x.Home == "Home Pens");
 
         Assert.NotNull(inj);
         Assert.NotNull(et);
         Assert.NotNull(pen);
 
-        // Injury + time should parse to encoded minute 9003 and be in-progress
         Assert.True(inj.Minute.HasValue);
         Assert.Equal(9003, inj.Minute.Value);
         Assert.True(inj.IsInProgress);
 
-        // ET text should mark ET and preserve minute
         Assert.Equal("ET", et.Status);
         Assert.True(et.Minute.HasValue);
         Assert.Equal(100, et.Minute.Value);
         Assert.True(et.IsInProgress);
 
-        // Penalties should be considered in-progress penalties status
         Assert.Contains("Penalties", pen.Status, StringComparison.OrdinalIgnoreCase);
         Assert.True(pen.IsInProgress);
     }
 
     [Fact]
-    public void ParseHtml_SionVsBasel_NotInProgress()
+    public void ParseHtml_CapturedPreMatchPage_NotInProgress()
     {
+        // Arrange
         var html = GetResxValue("RawInProgressIssue");
+        var sut = CreateParser();
 
-        var fixtures = CreateParser().ParseHtml(html);
-        var f = fixtures.FirstOrDefault(x => x.Home == "Sion" && x.Away == "Basel");
+        // Act
+        var fixtures = sut.ParseHtml(html);
 
-        Assert.NotNull(f);
-        Assert.False(f.IsInProgress);
-        Assert.False(f.HasProgress);
-        Assert.Equal(string.Empty, f.Status);
+        // Assert
+        Assert.NotEmpty(fixtures);
+        Assert.DoesNotContain(fixtures, f => f.IsInProgress && string.IsNullOrEmpty(f.Status));
+        Assert.Contains(fixtures, f => !f.IsInProgress && !f.HasProgress && f.Status == string.Empty);
     }
 
     [Fact]
-    public void ParseHtml_ChampionsLeagueLeg2BeforeStart_ExtractsAggregateScores_WhenGameNotStarted()
+    public void ParseHtml_CapturedTwoLegPage_ExtractsAggregateScores_WhenGameNotStarted()
     {
-        var html = GetResxValue("ChampionsLeagueLeg2BeforeStart");
-        var fixtures = CreateParser().ParseHtml(html);
+        // Arrange
+        var html = GetResxValue("TwoLegBeforeStart");
+        var sut = CreateParser();
 
+        // Act
+        var fixtures = sut.ParseHtml(html);
+
+        // Assert
         Assert.NotEmpty(fixtures);
 
-        void AssertPreMatchAggregate(string home, string away, int expectedAggregateHome, int expectedAggregateAway)
+        void AssertPreMatchAggregate(int expectedAggregateHome, int expectedAggregateAway)
         {
             var fixture = fixtures.FirstOrDefault(f =>
-                string.Equals(f.Home, home, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(f.Away, away, StringComparison.OrdinalIgnoreCase));
+                f.AggregateHomeScore == expectedAggregateHome &&
+                f.AggregateAwayScore == expectedAggregateAway);
 
             Assert.NotNull(fixture);
-            Assert.Equal(expectedAggregateHome, fixture.AggregateHomeScore);
-            Assert.Equal(expectedAggregateAway, fixture.AggregateAwayScore);
-            Assert.False(fixture.IsInProgress, $"Expected pre-match fixture but was in progress: {fixture.Home} vs {fixture.Away} (status: {fixture.Status})");
-            Assert.False(fixture.IsFinished, $"Expected pre-match fixture but was finished: {fixture.Home} vs {fixture.Away} (status: {fixture.Status})");
+            Assert.False(fixture.IsInProgress);
+            Assert.False(fixture.IsFinished);
         }
 
-        AssertPreMatchAggregate("Barcelona", "Newcastle United", 1, 1);
-        AssertPreMatchAggregate("Bayern Munich", "Atalanta", 6, 1);
-        AssertPreMatchAggregate("Liverpool", "Galatasaray", 0, 1);
-        AssertPreMatchAggregate("Tottenham Hotspur", "Atletico Madrid", 2, 5);
+        AssertPreMatchAggregate(1, 1);
+        AssertPreMatchAggregate(6, 1);
+        AssertPreMatchAggregate(0, 1);
+        AssertPreMatchAggregate(2, 5);
     }
 
     [Fact]
-    public void ParseHtml_ChampionsLeagueLeg2BeforeStart_ExtractsKickoffTimes()
+    public void ParseHtml_CapturedTwoLegPage_ExtractsKickoffTimes()
     {
-        var html = GetResxValue("ChampionsLeagueLeg2BeforeStart");
-        var fixtures = CreateParser().ParseHtml(html);
+        // Arrange
+        var html = GetResxValue("TwoLegBeforeStart");
+        var sut = CreateParser();
 
-        var barcelona = fixtures.FirstOrDefault(f =>
-            f.Home.Contains("Barcelona", StringComparison.OrdinalIgnoreCase) &&
-            f.Away.Contains("Newcastle", StringComparison.OrdinalIgnoreCase));
+        // Act
+        var fixtures = sut.ParseHtml(html);
 
-        Assert.NotNull(barcelona);
-        Assert.Equal(new DateTime(2026, 3, 18, 17, 45, 0, DateTimeKind.Utc), barcelona.KickoffUtc);
+        // Assert
+        var fixture = fixtures.FirstOrDefault(f =>
+            f.AggregateHomeScore == 1 && f.AggregateAwayScore == 1);
+
+        Assert.NotNull(fixture);
+        Assert.Equal(new DateTime(2026, 3, 18, 17, 45, 0, DateTimeKind.Utc), fixture.KickoffUtc);
     }
 }

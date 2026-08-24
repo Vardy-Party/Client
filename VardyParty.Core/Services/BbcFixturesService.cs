@@ -18,6 +18,9 @@ public class BbcFixturesService(
     private readonly TimeSpan _callTimeout = TimeSpan.FromSeconds(bbcFixturesSettings.Value?.CallTimeoutSeconds ?? 30);
     private readonly int _maxRetries = bbcFixturesSettings.Value?.MaxRetries ?? 3;
 
+    // HTML parse is CPU-bound; parallel day parses on Android TV thrash a weak core and inflate wall-clock to ~80s+.
+    private static readonly SemaphoreSlim ParseGate = new(1, 1);
+
     public Task<List<BbcFixture>> GetRollingWindowFixturesAsync(CancellationToken cancellationToken = default)
     {
         var pageDates = BbcFixtureSchedule.GetRollingWindowPageDates(DateTime.UtcNow);
@@ -33,8 +36,10 @@ public class BbcFixturesService(
             return [];
         }
 
-        var fetchTasks = fixturePageDates
-            .Distinct()
+        var dates = fixturePageDates.Distinct().ToArray();
+
+        // IO-bound fetches can overlap; CPU-bound parses are serialized via ParseGate inside GetFixturesAsync.
+        var fetchTasks = dates
             .Select(date => GetFixturesAsync(date, cancellationToken))
             .ToArray();
 
@@ -54,17 +59,33 @@ public class BbcFixturesService(
             attempt++;
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                cts.CancelAfter(_callTimeout);
-                var swHttp = Stopwatch.StartNew();
-                var html = await http.GetStringAsync(url, cts.Token);
-                swHttp.Stop();
-                logger.LogInformation("[BBC] HTTP fetch for {Date} took {Elapsed}ms. Parse start.",
-                    fixturePageDate, swHttp.ElapsedMilliseconds);
+                string html;
+                using (var httpCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    httpCts.CancelAfter(_callTimeout);
+                    var swHttp = Stopwatch.StartNew();
+                    html = await http.GetStringAsync(url, httpCts.Token);
+                    swHttp.Stop();
+                    logger.LogInformation("[BBC] HTTP fetch for {Date} took {Elapsed}ms. Parse start.",
+                        fixturePageDate, swHttp.ElapsedMilliseconds);
+                }
 
-                return await Task.Run(() => bbcHtmlParser.ParseHtml(html, cts.Token), cts.Token);
+                // Parse outside the HTTP timeout so a large match day is not cancelled mid-scan at 20s.
+                await ParseGate.WaitAsync(cancellationToken);
+                try
+                {
+                    return await Task.Run(() => bbcHtmlParser.ParseHtml(html, cancellationToken), cancellationToken);
+                }
+                finally
+                {
+                    ParseGate.Release();
+                }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
             {
                 logger.LogWarning("[BBC] Operation cancelled / timed out for {Date}", fixturePageDate);
                 return [];

@@ -22,30 +22,37 @@ namespace VardyParty.Core.Tests;
 
 public class RefererHandlingTests
 {
-    private readonly Fixture _fixture = new();
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
     public async Task ResolveStreams_PassesPlayRefererToHealthChecker()
     {
         // Arrange
-        var stream = new Stream { Url = "http://source.example/stream1", Channel = "C1" };
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "http://source.example/stream1")
+            .With(s => s.Channel, "C1")
+            .Create();
         var handler = new FakeHttpHandler();
         var playUrl = $"https://api.test/play/{Uri.EscapeDataString(stream.Url)}";
-        // ReSharper disable once InconsistentNaming
-        var m3u8Resp = new M3U8Response { Url = "https://cdn.test/playlist.m3u8" };
+        var m3u8Resp = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "https://cdn.test/playlist.m3u8")
+            .With(r => r.RequestHeaders, new Dictionary<string, string>
+            {
+                ["referer"] = "https://player.example/player.html"
+            })
+            .Create();
         handler.AddResponse(playUrl, new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(m3u8Resp), Encoding.UTF8, "application/json")
         });
 
         var healthChecker = new CapturingHealthChecker();
-        var localLanPlayService = new Mock<ILocalLanPlayService>();
+        var localLanPlayService = _fixture.GetMock<ILocalLanPlayService>();
         localLanPlayService
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = "https://cdn.test/playlist.m3u8" });
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8Resp);
 
-        var resolver =
-            new StreamResolver(healthChecker, localLanPlayService.Object, NullLogger<StreamResolver>.Instance);
+        var resolver = new StreamResolver(healthChecker, localLanPlayService.Object, NullLogger<StreamResolver>.Instance);
 
         // Act
         var list = new List<EnrichedStream>();
@@ -56,8 +63,9 @@ public class RefererHandlingTests
 
         // Assert
         Assert.Single(list);
-        Assert.Equal(stream.Url, healthChecker.CapturedReferer);
+        Assert.Equal("https://player.example/player.html", healthChecker.CapturedReferer);
         Assert.Equal("https://cdn.test/playlist.m3u8", healthChecker.CapturedM3U8);
+        Assert.Equal("https://player.example/player.html", list[0].Referer);
     }
 
     [Fact]

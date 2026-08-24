@@ -42,9 +42,27 @@ namespace VardyParty
                         {
                             Console.WriteLine("[MainPage] BlazorWebViewInitializing");
                         };
-                        blazorWebView.BlazorWebViewInitialized += (s, e) => 
+                        blazorWebView.BlazorWebViewInitialized += (s, e) =>
                         {
                             Console.WriteLine("[MainPage] BlazorWebViewInitialized - SUCCESS!");
+#if ANDROID
+                            try
+                            {
+                                if (e.WebView is Android.Webkit.WebView web)
+                                {
+                                    web.Focusable = true;
+                                    web.FocusableInTouchMode = true;
+                                    web.RequestFocus();
+                                    // Helps D-pad move between tabindex=0 game cards on Android TV.
+                                    web.Settings.SetSupportMultipleWindows(false);
+                                    Console.WriteLine($"[MainPage] WebView focusable (IsTv={MauiProgram.IsTv})");
+                                }
+                            }
+                            catch (Exception focusEx)
+                            {
+                                Console.WriteLine($"[MainPage] WebView focus setup failed: {focusEx.Message}");
+                            }
+#endif
                         };
                         blazorWebView.UrlLoading += (s, e) => 
                         {
@@ -98,20 +116,20 @@ namespace VardyParty
                         refresh.Clicked += async (_, __) =>
                         {
                             Console.WriteLine("[MainPage] Refresh clicked (fallback)");
-                            await DisplayAlert("Refresh", "Refreshing background data...", "OK");
+                            await DisplayAlertAsync("Refresh", "Refreshing background data...", "OK");
                             // Do not perform heavy work on UI thread; any real refresh should call services asynchronously
                         };
 
-                        var stack = new StackLayout
+                        var stack = new VerticalStackLayout
                         {
-                            VerticalOptions = LayoutOptions.CenterAndExpand,
-                            HorizontalOptions = LayoutOptions.FillAndExpand,
+                            HorizontalOptions = LayoutOptions.Center,
+                            VerticalOptions = LayoutOptions.Center,
                             Spacing = 12,
                             Children = { label, help, refresh }
                         };
 
                         this.BackgroundColor = Colors.Black;
-                        this.Content = stack;
+                        this.Content = new Grid { Children = { stack } };
                     }
                     else
                     {
@@ -153,6 +171,56 @@ namespace VardyParty
             return false;
 #endif
         }
+
+#if ANDROID
+        /// <summary>
+        /// Clicks the currently focused DOM element in the Blazor WebView.
+        /// Used for Android TV remotes where OK/Enter focuses a control but does not fire click.
+        /// Returns true when the click script was scheduled (caller should consume the key).
+        /// Must not block the UI thread waiting for EvaluateJavascript — that deadlocks the
+        /// callback and made every TV OK time out after 250ms with no click.
+        /// </summary>
+        public bool TryClickFocusedWebElement()
+        {
+            try
+            {
+                if (blazorWebView?.Handler?.PlatformView is not Android.Webkit.WebView web)
+                {
+                    return false;
+                }
+
+                // closest() covers focus on children inside buttons / role=button game cards.
+                const string js =
+                    "(function(){var el=document.activeElement;" +
+                    "if(!el)return 'none';" +
+                    "var t=el.closest('button,a,[role=\"button\"]');" +
+                    "if(!t)return 'skip';" +
+                    "t.click();" +
+                    "try{t.scrollIntoView({block:'nearest',inline:'nearest'});}catch(e){}" +
+                    "return (t.tagName||'').toLowerCase();})();";
+
+                web.EvaluateJavascript(js, JsLogCallback.Instance);
+                Console.WriteLine("[MainPage] TryClickFocusedWebElement scheduled");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainPage] TryClickFocusedWebElement failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private sealed class JsLogCallback : Java.Lang.Object, Android.Webkit.IValueCallback
+        {
+            public static readonly JsLogCallback Instance = new();
+
+            public void OnReceiveValue(Java.Lang.Object? value)
+            {
+                var normalized = (value?.ToString() ?? string.Empty).Trim().Trim('"');
+                Console.WriteLine($"[MainPage] TryClickFocusedWebElement result={normalized}");
+            }
+        }
+#endif
 
         public void NavigateToRoute(string route)
         {

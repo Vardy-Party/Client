@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="456" height="456" viewBox="0 0 456 456">
+  <!-- Adaptive-icon foreground: ball fills most of the safe zone -->
+  <g transform="translate(228, 228)">
+    <circle cx="0" cy="0" r="168" fill="#0052B4" stroke="#003090" stroke-width="8"/>
+    <path d="M 0,-143 L 47,-59 L 0,-14 L -47,-59 Z" fill="#003090"/>
+    <path d="M 47,-59 L 118,-76 L 131,0 L 59,30 L 0,-14 Z" fill="#E8E8E8"/>
+    <path d="M -47,-59 L -118,-76 L -131,0 L -59,30 L 0,-14 Z" fill="#E8E8E8"/>
+    <path d="M 59,30 L 87,104 L 30,143 L -30,143 L -59,30 Z" fill="#E8E8E8"/>
+    <path d="M 0,-14 L 59,30 L -59,30 Z" fill="#D5D5D5"/>
+  </g>
+</svg>

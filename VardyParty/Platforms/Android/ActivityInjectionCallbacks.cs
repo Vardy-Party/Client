@@ -8,13 +8,16 @@ namespace VardyParty.Platforms.Android
 {
     class ActivityInjectionCallbacks : Java.Lang.Object, Application.IActivityLifecycleCallbacks
     {
-        public void OnActivityCreated(Activity activity, Bundle savedInstanceState)
+        public void OnActivityCreated(Activity activity, Bundle? savedInstanceState)
         {
             try
             {
                 AndroidActivityFactory.Inject(activity);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ActivityInjectionCallbacks] Inject failed: {ex.Message}");
+            }
         }
 
         public void OnActivityDestroyed(Activity activity) { }

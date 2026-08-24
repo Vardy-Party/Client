@@ -41,6 +41,9 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
     <PackageReference Include="Svg.Controls.Skia.Avalonia" Version="11.3.9.2" />
+    <PackageReference Include="QRCoder" Version="1.7.0" />
+    <!-- Avalonia.FreeDesktop pulls Tmds.DBus.Protocol 0.21.2 (GHSA-xrw6-gwf8-vvr9). Pin the 0.21.3 backport. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
   </ItemGroup>
 
   <ItemGroup>

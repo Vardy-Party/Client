@@ -19,11 +19,13 @@ public class Auth0AuthService(
     private const string AccessTokenKey = "Auth0.AccessToken";
     private const string RefreshTokenKey = "Auth0.RefreshToken";
     private const string ExpiresAtKey = "Auth0.ExpiresAt";
+    private const string LastRefreshedAtKey = "Auth0.LastRefreshedAt";
 
     private readonly SemaphoreSlim _loginLock = new(1, 1);
     private string? _accessToken;
     private Auth0Settings _auth0Settings = auth0Settings.Value;
     private DateTimeOffset _expiresAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastRefreshedAt = DateTimeOffset.MinValue;
     private string? _refreshToken;
     private bool _tokenLoaded;
 
@@ -33,6 +35,7 @@ public class Auth0AuthService(
     {
         if (_auth0Settings == null) return new AuthLoginResult(false, null, "Auth0 settings are missing.");
 
+        await EnsureTokenReadyAsync(cancellationToken, forceRefresh: false);
         if (HasValidToken) return new AuthLoginResult(true, _accessToken, null);
 
         await _loginLock.WaitAsync(cancellationToken);
@@ -105,10 +108,11 @@ public class Auth0AuthService(
                 return new AuthLoginResult(false, null, null);
             }
 
-            // AccessToken is already scoped to the audience since we included it in the scope during login
-            var expiresIn = loginResult.AccessTokenExpiration != null
-                ? (int)Math.Max(0, (loginResult.AccessTokenExpiration - DateTimeOffset.UtcNow).TotalSeconds)
-                : 3600;
+            // AccessTokenExpiration is DateTimeOffset (never null); default means the IdP omitted expiry.
+            var expiration = loginResult.AccessTokenExpiration;
+            var expiresIn = expiration == default
+                ? 3600
+                : (int)Math.Max(0, (expiration - DateTimeOffset.UtcNow).TotalSeconds);
 
             logger.LogInformation("[Auth0] Setting token with {ExpiresIn}s expiry", expiresIn);
             await SaveTokensAsync(loginResult.AccessToken, expiresIn, loginResult.RefreshToken);
@@ -128,11 +132,19 @@ public class Auth0AuthService(
 
     public async Task<AuthDeviceLoginResult?> StartDeviceLoginAsync(CancellationToken cancellationToken = default)
     {
-        if (_auth0Settings == null) return null;
+        if (_auth0Settings == null)
+        {
+            logger.LogWarning("[Auth0] Device login missing Auth0 settings instance");
+            throw new InvalidOperationException("Auth0 is not configured on this device build.");
+        }
 
         var clientId = _auth0Settings.ClientId;
         var domain = _auth0Settings.Domain;
-        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(domain)) return null;
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(domain))
+        {
+            logger.LogWarning("[Auth0] Device login missing ClientId/Domain");
+            throw new InvalidOperationException("Auth0 is not configured on this device build.");
+        }
 
         var client = httpClientFactory.CreateClient();
         var endpoint = BuildAuth0Url(domain, "/oauth/device/code");
@@ -144,16 +156,39 @@ public class Auth0AuthService(
         if (!string.IsNullOrWhiteSpace(_auth0Settings.Audience))
             form.Add(new KeyValuePair<string, string>("audience", _auth0Settings.Audience));
 
-        if (!string.IsNullOrWhiteSpace(_auth0Settings.Scope))
-            form.Add(new KeyValuePair<string, string>("scope", _auth0Settings.Scope));
+        form.Add(new KeyValuePair<string, string>("scope", AuthTokenLifetime.EnsureOfflineAccess(_auth0Settings.Scope)));
 
+        logger.LogInformation("[Auth0] Requesting device code from {Endpoint}", endpoint);
         using var response = await client.PostAsync(endpoint, new FormUrlEncodedContent(form), cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        var payload = await response.Content.ReadFromJsonAsync<DeviceCodeResponse>(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var authError = TryReadOAuthError(body);
+            logger.LogWarning(
+                "[Auth0] Device code request failed: {Status} {Error} {Description} body={Body}",
+                (int)response.StatusCode,
+                authError?.Error,
+                authError?.ErrorDescription,
+                body.Length > 300 ? body[..300] : body);
+
+            var message = !string.IsNullOrWhiteSpace(authError?.ErrorDescription)
+                ? authError.ErrorDescription
+                : !string.IsNullOrWhiteSpace(authError?.Error)
+                    ? authError.Error
+                    : $"Sign-in failed ({(int)response.StatusCode}). Check Auth0 device-code grant.";
+            throw new InvalidOperationException(message);
+        }
+
+        var payload = System.Text.Json.JsonSerializer.Deserialize<DeviceCodeResponse>(body);
         if (payload == null || string.IsNullOrWhiteSpace(payload.DeviceCode) ||
             string.IsNullOrWhiteSpace(payload.UserCode) ||
-            string.IsNullOrWhiteSpace(payload.VerificationUri)) return null;
+            string.IsNullOrWhiteSpace(payload.VerificationUri))
+        {
+            logger.LogWarning("[Auth0] Device code response missing required fields: {Body}",
+                body.Length > 300 ? body[..300] : body);
+            throw new InvalidOperationException("Auth0 device sign-in returned an incomplete response.");
+        }
 
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(payload.ExpiresIn);
         var deviceCode = new AuthDeviceCode(
@@ -165,6 +200,7 @@ public class Auth0AuthService(
             payload.Interval <= 0 ? 5 : payload.Interval,
             expiresAt);
 
+        logger.LogInformation("[Auth0] Device code issued. UserCode={UserCode}", deviceCode.UserCode);
         return new AuthDeviceLoginResult(deviceCode);
     }
 
@@ -238,22 +274,29 @@ public class Auth0AuthService(
         return new AuthLoginResult(false, null, "Device code expired.");
     }
 
-    public async Task<string?> GetAccessTokenAsync(CancellationToken cancellationToken = default)
+    public async Task<string?> GetAccessTokenAsync(CancellationToken cancellationToken = default, bool forceRefresh = false)
     {
-        await EnsureTokenLoadedAsync(cancellationToken);
+        await EnsureTokenReadyAsync(cancellationToken, forceRefresh);
         return HasValidToken ? _accessToken : null;
     }
 
     public async Task<bool> IsAuthenticatedAsync()
     {
-        await EnsureTokenLoadedAsync(CancellationToken.None);
-        return HasValidToken;
+        await EnsureTokenReadyAsync(CancellationToken.None, forceRefresh: false);
+        return HasValidToken || !string.IsNullOrWhiteSpace(_refreshToken);
     }
 
     public async Task LogoutAsync()
     {
-        await ClearTokensAsync();
-        _auth0Settings = null;
+        await _loginLock.WaitAsync();
+        try
+        {
+            await ClearTokensCoreAsync();
+        }
+        finally
+        {
+            _loginLock.Release();
+        }
     }
 
     private bool IsExpired(Auth0Settings? settings)
@@ -263,10 +306,51 @@ public class Auth0AuthService(
         return _expiresAt <= DateTimeOffset.UtcNow.AddSeconds(Math.Abs(leeway));
     }
 
-    private async Task EnsureTokenLoadedAsync(CancellationToken cancellationToken)
-    {
-        if (_tokenLoaded) return;
+    private bool NeedsAccessTokenRefresh(bool forceRefresh)
+        => forceRefresh
+           || AuthTokenLifetime.ShouldRefreshAccessToken(
+               _expiresAt,
+               DateTimeOffset.UtcNow,
+               _auth0Settings?.TokenLeewaySeconds ?? AuthTokenLifetime.DefaultLeewaySeconds,
+               _lastRefreshedAt,
+               _auth0Settings?.SlidingRefreshAfterSeconds ?? AuthTokenLifetime.DefaultSlidingRefreshAfterSeconds);
 
+    private async Task EnsureTokenReadyAsync(CancellationToken cancellationToken, bool forceRefresh)
+    {
+        if (_tokenLoaded
+            && !forceRefresh
+            && !NeedsAccessTokenRefresh(forceRefresh: false)
+            && (HasValidToken || string.IsNullOrWhiteSpace(_refreshToken)))
+        {
+            return;
+        }
+
+        await _loginLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_tokenLoaded)
+            {
+                await LoadTokensFromSecureStorageAsync();
+                _tokenLoaded = true;
+                if (_lastRefreshedAt == DateTimeOffset.MinValue)
+                    _lastRefreshedAt = DateTimeOffset.UtcNow;
+            }
+
+            if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
+                return;
+
+            var outcome = await RefreshAccessTokenAsync(cancellationToken);
+            if (outcome == AuthTokenRefreshOutcome.Rejected)
+                await ClearTokensCoreAsync();
+        }
+        finally
+        {
+            _loginLock.Release();
+        }
+    }
+
+    private async Task LoadTokensFromSecureStorageAsync()
+    {
         try
         {
             _accessToken = await SecureStorage.Default.GetAsync(AccessTokenKey);
@@ -274,20 +358,14 @@ public class Auth0AuthService(
             var expiresRaw = await SecureStorage.Default.GetAsync(ExpiresAtKey);
             if (long.TryParse(expiresRaw, out var unixSeconds))
                 _expiresAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+
+            var lastRefreshedRaw = await SecureStorage.Default.GetAsync(LastRefreshedAtKey);
+            if (long.TryParse(lastRefreshedRaw, out var lastRefreshedSeconds))
+                _lastRefreshedAt = DateTimeOffset.FromUnixTimeSeconds(lastRefreshedSeconds);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[Auth0] Failed to load tokens from secure storage");
-        }
-        finally
-        {
-            _tokenLoaded = true;
-        }
-
-        if (!HasValidToken && !string.IsNullOrWhiteSpace(_refreshToken))
-        {
-            var refreshed = await RefreshAccessTokenAsync(cancellationToken);
-            if (!refreshed) await ClearTokensAsync();
         }
     }
 
@@ -295,16 +373,16 @@ public class Auth0AuthService(
     {
         _accessToken = accessToken;
         _expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn > 0 ? expiresIn : 3600);
-        _refreshToken = refreshToken;
+        _refreshToken = AuthTokenLifetime.CoalesceRefreshToken(refreshToken, _refreshToken);
+        _lastRefreshedAt = DateTimeOffset.UtcNow;
 
         try
         {
             await SecureStorage.Default.SetAsync(AccessTokenKey, _accessToken);
             await SecureStorage.Default.SetAsync(ExpiresAtKey, _expiresAt.ToUnixTimeSeconds().ToString());
+            await SecureStorage.Default.SetAsync(LastRefreshedAtKey, _lastRefreshedAt.ToUnixTimeSeconds().ToString());
             if (!string.IsNullOrWhiteSpace(_refreshToken))
                 await SecureStorage.Default.SetAsync(RefreshTokenKey, _refreshToken);
-            else
-                SecureStorage.Default.Remove(RefreshTokenKey);
         }
         catch (Exception ex)
         {
@@ -312,11 +390,12 @@ public class Auth0AuthService(
         }
     }
 
-    private Task ClearTokensAsync()
+    private Task ClearTokensCoreAsync()
     {
         _accessToken = null;
         _refreshToken = null;
         _expiresAt = DateTimeOffset.MinValue;
+        _lastRefreshedAt = DateTimeOffset.MinValue;
         _tokenLoaded = true;
 
         try
@@ -324,6 +403,7 @@ public class Auth0AuthService(
             SecureStorage.Default.Remove(AccessTokenKey);
             SecureStorage.Default.Remove(RefreshTokenKey);
             SecureStorage.Default.Remove(ExpiresAtKey);
+            SecureStorage.Default.Remove(LastRefreshedAtKey);
         }
         catch (Exception ex)
         {
@@ -333,9 +413,10 @@ public class Auth0AuthService(
         return Task.CompletedTask;
     }
 
-    private async Task<bool> RefreshAccessTokenAsync(CancellationToken cancellationToken)
+    private async Task<AuthTokenRefreshOutcome> RefreshAccessTokenAsync(CancellationToken cancellationToken)
     {
-        if (_auth0Settings == null || string.IsNullOrWhiteSpace(_refreshToken)) return false;
+        if (_auth0Settings == null || string.IsNullOrWhiteSpace(_refreshToken))
+            return AuthTokenRefreshOutcome.TransientFailure;
 
         try
         {
@@ -356,18 +437,19 @@ public class Auth0AuthService(
             if (response.IsSuccessStatusCode && tokenPayload != null &&
                 !string.IsNullOrWhiteSpace(tokenPayload.AccessToken))
             {
-                await SaveTokensAsync(tokenPayload.AccessToken, tokenPayload.ExpiresIn,
-                    tokenPayload.RefreshToken ?? _refreshToken);
-                return true;
+                await SaveTokensAsync(tokenPayload.AccessToken, tokenPayload.ExpiresIn, tokenPayload.RefreshToken);
+                return AuthTokenRefreshOutcome.Success;
             }
 
             logger.LogWarning("[Auth0] Failed to refresh access token. Error: {Error}", tokenPayload?.Error);
-            return false;
+            return AuthTokenLifetime.IsRefreshRejected(tokenPayload?.Error)
+                ? AuthTokenRefreshOutcome.Rejected
+                : AuthTokenRefreshOutcome.TransientFailure;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[Auth0] Refresh token request failed");
-            return false;
+            return AuthTokenRefreshOutcome.TransientFailure;
         }
     }
 
@@ -384,7 +466,7 @@ public class Auth0AuthService(
             ClientId = settings.ClientId,
             RedirectUri = settings.RedirectUri,
             PostLogoutRedirectUri = settings.PostLogoutRedirectUri,
-            Scope = settings.Scope
+            Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope)
         };
 
         // Use a SocketsHttpHandler with an IPv4-preferring ConnectCallback.
@@ -444,6 +526,19 @@ public class Auth0AuthService(
         };
     }
 
+    private static OAuthErrorResponse? TryReadOAuthError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<OAuthErrorResponse>(body);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string BuildAuth0Url(string domain, string path)
     {
         var normalized = domain.Trim();
@@ -452,6 +547,13 @@ public class Auth0AuthService(
         return $"https://{normalized}{path}";
     }
 
+
+    private sealed class OAuthErrorResponse
+    {
+        [JsonPropertyName("error")] public string? Error { get; init; }
+
+        [JsonPropertyName("error_description")] public string? ErrorDescription { get; init; }
+    }
 
     private sealed class DeviceCodeResponse
     {
