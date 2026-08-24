@@ -326,11 +326,11 @@ namespace VardyParty.Platforms.Android
             _playerListener = new InternalPlayerListener(this);
             // disable built-in controller (remove play/prev/next/seek UI)
             try { _playerView.UseController = false; } catch { }
-            
+
             // Wrap PlayerView in a container for proper pinch-to-zoom
             var playerContainer = new FrameLayout(this);
             playerContainer.AddView(_playerView);
-            
+
             // Enable pinch-to-zoom for phone users (Lubo!)
             SetupPinchZoom(playerContainer, _playerView);
 
@@ -987,7 +987,7 @@ namespace VardyParty.Platforms.Android
                     {
                         global::Android.Util.Log.Debug("VardyParty", $"[Android] Framerate not available (Format.FrameRate: {format.FrameRate})");
                     }
-                    
+
                     if (!string.IsNullOrEmpty(metrics.VideoCodec))
                     {
                         global::Android.Util.Log.Debug("VardyParty", $"[Android] Video codec: {metrics.VideoCodec}");
@@ -1098,12 +1098,12 @@ namespace VardyParty.Platforms.Android
             }
 
             var lower = mimeType.ToLowerInvariant();
-            
+
             // Extract codec part from MIME type (e.g., "video/avc" -> "avc", "audio/mp4a-latm" -> "mp4a-latm")
             if (lower.Contains("/"))
             {
                 var codec = lower.Split('/')[1];
-                
+
                 // Video codecs
                 if (!isAudio)
                 {
@@ -1229,7 +1229,7 @@ namespace VardyParty.Platforms.Android
                 {
                     _metadataReported = true;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Tracks changed - reporting playback started with metadata");
-                    
+
                     // Now extract real metadata from the player and report
                     _activity.ReportPlaybackStarted();
                 }
