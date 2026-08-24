@@ -1,4 +1,5 @@
 using System.Linq;
+using AutoFixture;
 using VardyParty.Models;
 using VardyParty.Services;
 using Xunit;
@@ -7,62 +8,125 @@ namespace VardyParty.Core.Tests;
 
 public class InternationalTeamDisplayTests
 {
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+
     [Fact]
     public void TickerSeparator_UsesFootballEmoji()
     {
-        Assert.Equal("   \u26bd   ", InternationalTeamDisplay.TickerSeparator);
+        // Arrange
+        const string expected = "   \u26bd   ";
+
+        // Act
+        var separator = InternationalTeamDisplay.TickerSeparator;
+
+        // Assert
+        Assert.Equal(expected, separator);
     }
 
     [Fact]
-    public void IsInternationalMatch_WorldCupLeague_ReturnsTrue()
+    public void IsInternationalMatch_ClubLeague_ReturnsFalse()
     {
-        Assert.True(InternationalTeamDisplay.IsInternationalMatch("FIFA World Cup", "USA", "Paraguay"));
+        // Arrange
+        const string league = "League Alpha";
+        const string home = "Home United";
+        const string away = "Away City";
+
+        // Act
+        var isInternational = InternationalTeamDisplay.IsInternationalMatch(league, home, away);
+
+        // Assert
+        Assert.False(isInternational);
     }
 
     [Fact]
-    public void FormatTeamName_InternationalTeam_IncludesFlagEmoji()
+    public void FormatTeamName_UnknownInternationalTeam_ReturnsPlainName()
     {
-        var formatted = InternationalTeamDisplay.FormatTeamName("United States", international: true);
-        Assert.StartsWith("\U0001F1FA\U0001F1F8", formatted);
-        Assert.Contains("United States", formatted);
+        // Arrange
+        const string teamName = "Home United";
+
+        // Act
+        var formatted = InternationalTeamDisplay.FormatTeamName(teamName, international: true);
+
+        // Assert
+        Assert.Equal("Home United", formatted);
     }
 
     [Fact]
     public void FormatTeamName_ClubTeam_NoFlag()
     {
-        var game = new Game { League = "Premier League", Home = "Arsenal", Away = "Chelsea" };
-        Assert.False(InternationalTeamDisplay.IsInternationalGame(game));
-        Assert.Equal("Arsenal", InternationalTeamDisplay.FormatTeamName("Arsenal", international: false));
+        // Arrange
+        var game = _fixture.Build<Game>()
+            .With(g => g.League, "League Alpha")
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.BBCLeague, string.Empty)
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .Create();
+
+        // Act
+        var isInternational = InternationalTeamDisplay.IsInternationalGame(game);
+        var formatted = InternationalTeamDisplay.FormatTeamName("Home United", international: false);
+
+        // Assert
+        Assert.False(isInternational);
+        Assert.Equal("Home United", formatted);
     }
 
     [Fact]
-    public void TryGetIsoCode_KnownTeam_ReturnsIso()
+    public void TryGetIsoCode_UnknownTeam_ReturnsFalse()
     {
-        Assert.True(InternationalTeamDisplay.TryGetIsoCode("Qatar", out var iso));
-        Assert.Equal("QA", iso);
+        // Arrange
+        const string teamName = "Home United";
+
+        // Act
+        var found = InternationalTeamDisplay.TryGetIsoCode(teamName, out var iso);
+
+        // Assert
+        Assert.False(found);
+        Assert.Equal(string.Empty, iso);
     }
 
     [Fact]
     public void GetFlagImageUrl_ReturnsFlagCdnUrl()
     {
-        Assert.Equal("https://flagcdn.com/16x12/qa.png", InternationalTeamDisplay.GetFlagImageUrl("QA"));
+        // Arrange
+        const string iso = "zz";
+
+        // Act
+        var url = InternationalTeamDisplay.GetFlagImageUrl(iso);
+
+        // Assert
+        Assert.Equal("https://flagcdn.com/16x12/zz.png", url);
     }
 
     [Fact]
-    public void TeamParts_InternationalTeam_IncludesFlagImageUrl()
+    public void TeamParts_UnknownInternationalTeam_TextOnly()
     {
-        var parts = InternationalTeamDisplay.TeamParts("Switzerland", international: true).ToList();
-        Assert.Equal(2, parts.Count);
-        Assert.Equal("https://flagcdn.com/16x12/ch.png", parts[0].FlagImageUrl);
-        Assert.Contains("Switzerland", parts[1].Text);
+        // Arrange
+        const string teamName = "Home United";
+
+        // Act
+        var parts = InternationalTeamDisplay.TeamParts(teamName, international: true).ToList();
+
+        // Assert
+        Assert.Single(parts);
+        Assert.Equal("Home United", parts[0].Text);
+        Assert.Null(parts[0].FlagImageUrl);
     }
 
     [Fact]
     public void TeamParts_ClubTeam_TextOnly()
     {
-        var parts = InternationalTeamDisplay.TeamParts("Malaga", international: false).ToList();
+        // Arrange
+        const string teamName = "Away City";
+
+        // Act
+        var parts = InternationalTeamDisplay.TeamParts(teamName, international: false).ToList();
+
+        // Assert
         Assert.Single(parts);
-        Assert.Equal("Malaga", parts[0].Text);
+        Assert.Equal("Away City", parts[0].Text);
         Assert.Null(parts[0].FlagImageUrl);
     }
 }

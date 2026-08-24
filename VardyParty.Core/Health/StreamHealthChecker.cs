@@ -137,7 +137,7 @@ public class StreamHealthChecker(
             return StreamHealthStatus.InvalidManifest;
         }
 
-        string content;
+        string? content;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);

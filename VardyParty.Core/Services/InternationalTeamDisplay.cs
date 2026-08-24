@@ -231,7 +231,7 @@ public static class InternationalTeamDisplay
         return IsoToFlagEmoji(iso);
     }
 
-    private static string? GetIsoCode(string teamName)
+    private static string? GetIsoCode(string? teamName)
     {
         var normalized = Normalize(teamName);
         if (string.IsNullOrEmpty(normalized)) return null;

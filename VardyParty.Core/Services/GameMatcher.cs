@@ -434,7 +434,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         return string.IsNullOrEmpty(f.Status) ? string.Empty : f.Status;
     }
 
-    private static string Key(string home, string away) => $"{NormalizeTeamName(home)}|{NormalizeTeamName(away)}";
+    private static string Key(string? home, string? away) => $"{NormalizeTeamName(home)}|{NormalizeTeamName(away)}";
 
     private static string NormalizeTeamName(string? name)
     {

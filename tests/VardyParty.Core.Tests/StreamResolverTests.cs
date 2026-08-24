@@ -1,8 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging.Abstractions;
+using AutoFixture;
 using Moq;
 using VardyParty.Health;
 using VardyParty.Models;
@@ -14,23 +15,28 @@ namespace VardyParty.Core.Tests;
 
 public class StreamResolverTests
 {
-    private readonly Mock<IStreamHealthChecker> _healthCheckerMock = new();
-    private readonly Mock<ILocalLanPlayService> _localLanPlayServiceMock = new();
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+    private readonly Mock<IStreamHealthChecker> _healthChecker;
+    private readonly Mock<ILocalLanPlayService> _localLanPlay;
 
-    private StreamResolver Sut => new(
-        _healthCheckerMock.Object,
-        _localLanPlayServiceMock.Object,
-        NullLogger<StreamResolver>.Instance);
+    public StreamResolverTests()
+    {
+        _healthChecker = _fixture.GetMock<IStreamHealthChecker>();
+        _localLanPlay = _fixture.GetMock<ILocalLanPlayService>();
+    }
+
+    private StreamResolver Sut => _fixture.Create<StreamResolver>();
 
     [Fact]
     public async Task ResolveStreamsIncrementallyAsync_EmptyList_YieldsNothing()
     {
-        var results = new List<EnrichedStream>();
-        await foreach (var stream in Sut.ResolveStreamsIncrementallyAsync([]))
-        {
-            results.Add(stream);
-        }
+        // Arrange
+        var sut = Sut;
 
+        // Act
+        var results = await CollectAsync(sut.ResolveStreamsIncrementallyAsync([]));
+
+        // Assert
         Assert.Empty(results);
     }
 
@@ -38,36 +44,35 @@ public class StreamResolverTests
     public async Task ResolveStreamsIncrementallyAsync_SingleStream_ResolvesAndTests()
     {
         // Arrange
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-        // ReSharper disable once InconsistentNaming
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8?token=abc";
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "http://stream.com/1")
+            .With(s => s.Channel, "Channel1")
+            .Create();
+        var m3u8 = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "http://m3u8.com/playlist.m3u8?token=abc")
+            .Create();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .With(h => h.Url, m3u8.Url)
+            .With(h => h.Resolution, "1920x1080")
+            .With(h => h.FrameRate, 30)
+            .With(h => h.Bitrate, 5000)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
-
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth
-            {
-                Status = StreamHealthStatus.Healthy,
-                Url = m3u8Url,
-                Resolution = "1920x1080",
-                FrameRate = 30,
-                Bitrate = 5000
-            });
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
         // Act
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
         // Assert
         Assert.Single(results);
         Assert.Equal(stream.Channel, results[0].Stream.Channel);
-        Assert.Equal(m3u8Url, results[0].ResolvedM3U8Url);
+        Assert.Equal(m3u8.Url, results[0].ResolvedM3U8Url);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
         Assert.NotNull(results[0].Health);
     }
@@ -76,24 +81,21 @@ public class StreamResolverTests
     public async Task ResolveStreamsIncrementallyAsync_MultipleStreams_ProcessesInBatches()
     {
         // Arrange
-        var streams = Enumerable.Range(1, 5)
-            .Select(i => new Stream { Url = $"http://stream.com/{i}", Channel = $"Channel{i}" })
-            .ToList();
+        var streams = _fixture.CreateMany<Stream>(5).ToList();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = "http://m3u8.com/playlist.m3u8" });
-
-        _healthCheckerMock
+            .ReturnsAsync(m3u8);
+        _healthChecker
             .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.Healthy });
+            .ReturnsAsync(health);
 
         // Act
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync(streams, 2))
-        {
-            results.Add(enriched);
-        }
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync(streams, 2));
 
         // Assert
         Assert.Equal(5, results.Count);
@@ -104,18 +106,13 @@ public class StreamResolverTests
     public async Task ResolveStreamsIncrementallyAsync_FailedM3U8Resolution_MarksFailed()
     {
         // Arrange
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-
-        _localLanPlayServiceMock
+        var stream = _fixture.Create<Stream>();
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((M3U8Response?)null);
 
         // Act
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
         // Assert
         Assert.Single(results);
@@ -124,49 +121,51 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_SegmentUnreachable_StillTrustsLocalServiceM3U8()
+    public async Task ResolveStreamsIncrementallyAsync_SegmentUnreachable_MarksFailed()
     {
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8";
+        // Arrange
+        var stream = _fixture.Create<Stream>();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.SegmentUnreachable)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.SegmentUnreachable });
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
-
+        // Assert
         Assert.Single(results);
-        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        Assert.Equal(StreamResolutionStatus.Failed, results[0].Status);
     }
 
     [Fact]
     public async Task ResolveStreamsIncrementallyAsync_InvalidManifestHealthCheck_MarksFailed()
     {
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8";
+        // Arrange
+        var stream = _fixture.Create<Stream>();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.InvalidManifest)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.InvalidManifest });
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
-
+        // Assert
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Failed, results[0].Status);
     }
@@ -174,14 +173,17 @@ public class StreamResolverTests
     [Fact]
     public async Task ResolveM3U8UrlAsync_ResolutionFails_ReturnsNull()
     {
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-
-        _localLanPlayServiceMock
+        // Arrange
+        var stream = _fixture.Create<Stream>();
+        var referer = _fixture.Create<Uri>().ToString();
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((M3U8Response?)null);
 
-        var result = await Sut.ResolveM3U8UrlAsync(stream, "http://example.com");
+        // Act
+        var result = await Sut.ResolveM3U8UrlAsync(stream, referer);
 
+        // Assert
         Assert.Null(result);
     }
 
@@ -189,100 +191,110 @@ public class StreamResolverTests
     public async Task ResolveM3U8UrlAsync_ResolutionSucceeds_ReturnsUrl()
     {
         // Arrange
-        var stream = new Stream { Url = "http://stream.com/1", Channel = "Channel1" };
-        // ReSharper disable once InconsistentNaming
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8";
-
-        _localLanPlayServiceMock
+        var stream = _fixture.Create<Stream>();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var referer = _fixture.Create<Uri>().ToString();
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+            .ReturnsAsync(m3u8);
 
         // Act
-        var result = await Sut.ResolveM3U8UrlAsync(stream, "http://example.com");
+        var result = await Sut.ResolveM3U8UrlAsync(stream, referer);
 
         // Assert
-        Assert.Equal(m3u8Url, result);
+        Assert.Equal(m3u8.Url, result);
     }
 
     [Fact]
     public async Task ResolveStreamsIncrementallyAsync_V2PlayerStream_PassesLabelToLocalService()
     {
-        var stream = new Stream
-        {
-            Url = "https://madplay.example/match",
-            Channel = "Fubo US",
-            PlayerStream = "Fubo US",
-            ResolutionStrategy = "v2",
-            StreamStatus = "ready"
-        };
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8";
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.PlayerStream, "Channel North")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
 
-        _localLanPlayServiceMock
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, "Fubo US", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, stream.PlayerStream, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.Healthy });
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
-
+        // Assert
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
-        _localLanPlayServiceMock.Verify(
-            s => s.ResolveM3U8UrlAsync(stream.Url, "Fubo US", It.IsAny<CancellationToken>()),
+        _localLanPlay.Verify(
+            s => s.ResolveM3U8UrlAsync(stream.Url, stream.PlayerStream, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_HealthProbeUnreachable_StillTrustsLocalServiceM3U8()
+    public async Task ResolveStreamsIncrementallyAsync_HealthProbeUnreachable_MarksFailed()
     {
-        var stream = new Stream { Url = "https://madplay.example/match", Channel = "TyR", PlayerStream = "TyR" };
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8?token=abc";
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel East")
+            .With(s => s.PlayerStream, "Channel East")
+            .Create();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.SegmentUnreachable)
+            .With(h => h.Url, m3u8.Url)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.SegmentUnreachable, Url = m3u8Url });
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
-
+        // Assert
         Assert.Single(results);
-        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
-        Assert.Equal(m3u8Url, results[0].ResolvedM3U8Url);
+        Assert.Equal(StreamResolutionStatus.Failed, results[0].Status);
+        Assert.Equal(m3u8.Url, results[0].ResolvedM3U8Url);
     }
 
     [Fact]
     public async Task ResolveStreamsIncrementallyAsync_HealthProbeInvalidManifest_StillFails()
     {
-        var stream = new Stream { Url = "https://madplay.example/match", Channel = "TyR" };
-        const string m3u8Url = "http://m3u8.com/playlist.m3u8";
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel East")
+            .Create();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.InvalidManifest)
+            .With(h => h.Url, m3u8.Url)
+            .Create();
 
-        _localLanPlayServiceMock
+        _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new M3U8Response { Url = m3u8Url });
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
 
-        _healthCheckerMock
-            .Setup(h => h.CheckStreamHealthAsync(m3u8Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new StreamHealth { Status = StreamHealthStatus.InvalidManifest, Url = m3u8Url });
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
 
-        var results = new List<EnrichedStream>();
-        await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([stream]))
-        {
-            results.Add(enriched);
-        }
-
+        // Assert
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Failed, results[0].Status);
     }
@@ -290,45 +302,93 @@ public class StreamResolverTests
     [Fact]
     public void EnrichedStream_IsReadyForPlayback_ReturnsTrueWhenHealthy()
     {
-        var enriched = new EnrichedStream
-        {
-            Stream = new Stream { Url = "http://example.com/stream", Channel = "Test" },
-            Status = StreamResolutionStatus.Healthy,
-            ResolvedM3U8Url = "http://example.com/playlist.m3u8",
-            Health = new StreamHealth { Status = StreamHealthStatus.Healthy }
-        };
+        // Arrange
+        var stream = _fixture.Create<Stream>();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, stream)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.ResolvedM3U8Url, m3u8.Url)
+            .With(e => e.Health, _fixture.Build<StreamHealth>()
+                .With(h => h.Status, StreamHealthStatus.Healthy)
+                .Create())
+            .Create();
 
-        Assert.True(enriched.IsReadyForPlayback);
+        // Act
+        var ready = enriched.IsReadyForPlayback;
+
+        // Assert
+        Assert.True(ready);
     }
 
     [Fact]
     public void EnrichedStream_GetQualityDisplay_ShowsQualityWhenHealthy()
     {
-        var enriched = new EnrichedStream
-        {
-            Stream = new Stream { Channel = "Test" },
-            Status = StreamResolutionStatus.Healthy,
-            Health = new StreamHealth
-            {
-                Status = StreamHealthStatus.Healthy,
-                Resolution = "1920x1080",
-                FrameRate = 60,
-                Bitrate = 8000
-            }
-        };
+        // Arrange
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .With(h => h.Resolution, "1920x1080")
+            .With(h => h.FrameRate, 60)
+            .With(h => h.Bitrate, 8000)
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Create<Stream>())
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Health, health)
+            .Create();
 
-        Assert.Equal("1080p 60fps 8000kbps", enriched.GetQualityDisplay());
+        // Act
+        var display = enriched.GetQualityDisplay();
+
+        // Assert
+        Assert.Equal("1080p 60fps 8000kbps", display);
     }
 
     [Fact]
     public void EnrichedStream_GetQualityDisplay_ShowsStatusWhenPending()
     {
-        var enriched = new EnrichedStream
-        {
-            Stream = new Stream { Channel = "Test" },
-            Status = StreamResolutionStatus.Pending
-        };
+        // Arrange
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Create<Stream>())
+            .With(e => e.Status, StreamResolutionStatus.Pending)
+            .Without(e => e.Health)
+            .Create();
 
-        Assert.Equal("Loading...", enriched.GetQualityDisplay());
+        // Act
+        var display = enriched.GetQualityDisplay();
+
+        // Assert
+        Assert.Equal("Loading...", display);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_CountdownStream_IsSkippedWithoutResolve()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.StreamStatus, "countdown")
+            .Create();
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(StreamResolutionStatus.Failed, results[0].Status);
+        Assert.Contains("countdown", results[0].ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        _localLanPlay.Verify(
+            s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private static async Task<List<EnrichedStream>> CollectAsync(IAsyncEnumerable<EnrichedStream> source)
+    {
+        var results = new List<EnrichedStream>();
+        await foreach (var item in source)
+            results.Add(item);
+        return results;
     }
 }

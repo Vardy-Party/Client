@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Subjects;
-using System.Threading.Tasks;
+using AutoFixture;
 using VardyParty.Models;
 using VardyParty.Services;
 using Xunit;
@@ -11,6 +11,8 @@ namespace VardyParty.Core.Tests
 {
     public class HomePagePresentationServiceTests
     {
+        private readonly IFixture _fixture = AutoMoqFixture.Create();
+
         private class StubEnriched : IEnrichedGameService, IDisposable
         {
             private readonly Subject<Dictionary<string, List<Game>>?> _subject = new Subject<Dictionary<string, List<Game>>?>();
@@ -32,7 +34,11 @@ namespace VardyParty.Core.Tests
         {
             public IReadOnlySet<string> DefaultHiddenLeagues => LeagueFilterDefaults.HiddenLeagues;
             public IReadOnlySet<string> HiddenLeagues => new HashSet<string>();
-            public event Action? Changed;
+            public event Action? Changed
+            {
+                add { }
+                remove { }
+            }
 
             public bool IsLeagueVisible(string? league) => true;
 
@@ -51,18 +57,31 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void SubscribesAndPublishesDisplayGroups()
         {
+            // Arrange
             var stub = new StubEnriched();
             var svc = new HomePagePresentationService(stub, new PassthroughLeagueFilter());
-
             List<Game>? received = null;
             var sub = svc.DisplayStream.Subscribe(list => received = list);
-
             var now = DateTime.UtcNow;
-            var g1 = new Game { Home = "A", Away = "B", Start = now.AddMinutes(-10), IsFinished = false };
-            var dict = new Dictionary<string, List<Game>> { ["L"] = new List<Game> { g1 } };
+            var g1 = _fixture.Build<Game>()
+                .With(g => g.Home, "Home United")
+                .With(g => g.Away, "Away City")
+                .With(g => g.Start, now.AddMinutes(-10))
+                .With(g => g.IsFinished, false)
+                .With(g => g.IsInProgress, false)
+                .With(g => g.IsHalfTime, false)
+                .With(g => g.Minute, (int?)null)
+                .With(g => g.StatusText, string.Empty)
+                .With(g => g.BBCHome, string.Empty)
+                .With(g => g.BBCAway, string.Empty)
+                .With(g => g.BBCLeague, string.Empty)
+                .Create();
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = new List<Game> { g1 } };
 
+            // Act
             stub.Push(dict);
 
+            // Assert
             Assert.NotNull(received);
             Assert.Single(received);
 
@@ -74,24 +93,56 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void RepublishesWhenLeagueFilterChanges()
         {
+            // Arrange
             var stub = new StubEnriched();
             var filter = new LeagueFilterService(new InMemoryLeagueFilterPreferencesStore());
             var svc = new HomePagePresentationService(stub, filter);
-
             var received = new List<List<Game>>();
             var sub = svc.DisplayStream.Subscribe(list => received.Add(list));
-
             var now = DateTime.UtcNow;
+            var hiddenLeague = LeagueFilterDefaults.HiddenLeagues.First();
+            const string visibleLeague = "League Alpha";
+            var visibleGame = _fixture.Build<Game>()
+                .With(g => g.League, visibleLeague)
+                .With(g => g.Home, "Home United")
+                .With(g => g.Away, "Away City")
+                .With(g => g.Start, now.AddMinutes(-10))
+                .With(g => g.IsFinished, false)
+                .With(g => g.IsInProgress, false)
+                .With(g => g.IsHalfTime, false)
+                .With(g => g.Minute, (int?)null)
+                .With(g => g.StatusText, string.Empty)
+                .With(g => g.BBCHome, string.Empty)
+                .With(g => g.BBCAway, string.Empty)
+                .With(g => g.BBCLeague, string.Empty)
+                .Create();
+            var hiddenGame = _fixture.Build<Game>()
+                .With(g => g.League, hiddenLeague)
+                .With(g => g.Home, "North FC")
+                .With(g => g.Away, "South FC")
+                .With(g => g.Start, now.AddMinutes(-10))
+                .With(g => g.IsFinished, false)
+                .With(g => g.IsInProgress, false)
+                .With(g => g.IsHalfTime, false)
+                .With(g => g.Minute, (int?)null)
+                .With(g => g.StatusText, string.Empty)
+                .With(g => g.BBCHome, string.Empty)
+                .With(g => g.BBCAway, string.Empty)
+                .With(g => g.BBCLeague, string.Empty)
+                .Create();
             var dict = new Dictionary<string, List<Game>>
             {
-                ["Premier League"] = new List<Game> { new() { League = "Premier League", Home = "A", Away = "B", Start = now.AddMinutes(-10), IsFinished = false } },
-                ["NBA"] = new List<Game> { new() { League = "NBA", Home = "C", Away = "D", Start = now.AddMinutes(-10), IsFinished = false } }
+                [visibleLeague] = new List<Game> { visibleGame },
+                [hiddenLeague] = new List<Game> { hiddenGame }
             };
-
             stub.Push(dict);
-            Assert.Single(received.Last());
+            var countAfterPush = received.Last().Count;
 
-            filter.SetLeagueVisible("NBA", true);
+            // Act
+            filter.SetLeagueVisible(hiddenLeague, true);
+
+            // Assert
+            Assert.Equal(1, countAfterPush);
             Assert.Equal(2, received.Last().Count);
 
             sub.Dispose();

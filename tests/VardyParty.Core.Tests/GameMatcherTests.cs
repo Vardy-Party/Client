@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.Extensions.Logging.Abstractions;
+using AutoFixture;
 using VardyParty.Models;
 using VardyParty.Services;
 using Xunit;
@@ -10,18 +10,47 @@ namespace VardyParty.Core.Tests
 {
     public class GameMatcherTests
     {
+        private readonly IFixture _fixture = AutoMoqFixture.Create();
+
         [Fact]
         public void ExactMatch_EnrichesProperties_InProgress()
         {
-            var games = new List<Game> { new Game { Home = "Team A", Away = "Team B" } };
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Team A", "Team B", DateTime.UtcNow, "Live", false, true, false, 22, 0, 10, "homebadge", "awaybadge", "League", true)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "Live",
+                    IsFinished = false,
+                    IsInProgress = true,
+                    IsHalfTime = false,
+                    Minute = 22,
+                    HomeScore = 0,
+                    AwayScore = 10,
+                    HomeBadgeUrl = "homebadge",
+                    AwayBadgeUrl = "awaybadge",
+                    League = "League Alpha",
+                    HasProgress = true
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Equal(0, g.HomeScore);
             Assert.Equal(10, g.AwayScore);
@@ -29,21 +58,48 @@ namespace VardyParty.Core.Tests
             Assert.True(g.IsInProgress);
             Assert.False(g.IsFinished);
             Assert.Equal("homebadge", g.HomeBadgeUrl);
-            Assert.Equal("League", g.BBCLeague);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
         public void ExactMatch_EnrichesProperties_Finished()
         {
-            var games = new List<Game> { new Game { Home = "Team A", Away = "Team B" } };
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Team A", "Team B", DateTime.UtcNow, "Live", true, false, false, null, 0, 10, "homebadge", "awaybadge", "League", true)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "Live",
+                    IsFinished = true,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = 0,
+                    AwayScore = 10,
+                    HomeBadgeUrl = "homebadge",
+                    AwayBadgeUrl = "awaybadge",
+                    League = "League Alpha",
+                    HasProgress = true
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Equal(0, g.HomeScore);
             Assert.Equal(10, g.AwayScore);
@@ -51,388 +107,568 @@ namespace VardyParty.Core.Tests
             Assert.False(g.IsInProgress);
             Assert.True(g.IsFinished);
             Assert.Equal("homebadge", g.HomeBadgeUrl);
-            Assert.Equal("League", g.BBCLeague);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
         public void FuzzyMatch_Acronym_Matches()
         {
-            var games = new List<Game> { new Game { Home = "PSG", Away = "Marseille" } };
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "HU")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Paris Saint-Germain", "Marseille", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Ligue 1", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>. Instance);
-            matcher.EnrichGames(games, bbc, "Ligue 1");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Paris Saint-Germain", g.BBCHome);
-            Assert.Equal("Ligue 1", g.BBCLeague);
+            Assert.Equal("Home United", g.BBCHome);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
-        public void FuzzyMatch_ManUnited_To_ManchesterUnited_Brighton()
+        public void FuzzyMatch_ShortPrefix_MatchesExpandedName()
         {
-            var games = new List<Game> { new Game { Home = "Man United", Away = "Brighton" } };
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Riv Home")
+                    .With(g => g.Away, "Bright")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Manchester United", "Brighton & Hove Albion", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Premier League", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "River Home",
+                    Away = "Bright Shore",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Premier League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Manchester United", g.BBCHome);
-            Assert.Equal("Brighton & Hove Albion", g.BBCAway);
-            Assert.Equal("Premier League", g.BBCLeague);
+            Assert.Equal("River Home", g.BBCHome);
+            Assert.Equal("Bright Shore", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
-        public void FuzzyMatch_AlHazm_Matches_AlHazem()
+        public void FuzzyMatch_ShortAlPrefix_DoesNotTreatAlAsStopword()
         {
-            // Verifies fix for issue where "Al" was treated as a stopword, causing short names like "Hazm" vs "Hazem"
-            // to have disproportionately high Levenshtein penalties.
-            
-            // API: "Al Hazm" v " Al Najma" (Note the leading space in API Away team to simulate data issues)
-            var games = new List<Game> { new Game { Home = "Al Hazm", Away = " Al Najma" } };
+            // Verifies "Al" is not treated as a stopword, so short names like "Rivem" vs "Riveme"
+            // do not take a disproportionate Levenshtein penalty.
 
-            // BBC: "Al Hazem" v "Al Najma"
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Al Rivem")
+                    .With(g => g.Away, " Al Southa")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Al Hazem", "Al Najma", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Saudi League", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Al Riveme",
+                    Away = "Al Southa",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Beta",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Saudi League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Beta");
 
+            // Assert
             var g = games.First();
-            // If matched, enriched fields like BBCLeague (and potentially others) will be populated
-            Assert.Equal("Al Hazem", g.BBCHome);
-            Assert.Equal("Al Najma", g.BBCAway);
-            Assert.Equal("Saudi League", g.BBCLeague);
+            Assert.Equal("Al Riveme", g.BBCHome);
+            Assert.Equal("Al Southa", g.BBCAway);
+            Assert.Equal("League Beta", g.BBCLeague);
         }
 
         [Fact]
         public void EnrichGame_PostponedStatus_MapsToGameStatus()
         {
             // Arrange
-            var games = new List<Game> { new Game { Home = "Team A", Away = "Team B" } };
-            // BbcFixture with Status="Postponed" and HasProgress=false (as per BbcFixturesService logic)
-            // Constructor: (Home, Away, Start, Status, IsFinished, IsInProgress, IsHalfTime, Minute, HomeScore, AwayScore, HomeBadge, AwayBadge, League, HasProgress, AfterExtraTime, PenWinner, PenWinGoals, PenLoseGoals)
-            // Note: BbcFixture constructor signature might vary, checking GameMatcherTests.cs usage:
-            // new BbcFixture("Team A", "Team B", DateTime.UtcNow, "Live", false, true, false, 22, 0, 10, "homebadge", "awaybadge", "League", true)
-            // It seems the constructor has many arguments. I will try to match the one used in other tests but adapting for Postponed.
-            
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture(
-                    "Team A", 
-                    "Team B", 
-                    DateTime.UtcNow, 
-                    "Postponed", // Status
-                    false, // IsFinished
-                    false, // IsInProgress
-                    false, // IsHalfTime
-                    null, // Minute
-                    null, // HomeScore
-                    null, // AwayScore
-                    "homebadge", 
-                    "awaybadge", 
-                    "League", 
-                    false, // HasProgress - IMPORTANT: Service sets this to false for postponed
-                    false, // AfterExtraTime
-                    string.Empty, // PenWinner
-                    null, // PenWinGoals
-                    null // PenLoseGoals
-                )
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "Postponed",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "homebadge",
+                    AwayBadgeUrl = "awaybadge",
+                    League = "League Alpha",
+                    HasProgress = false,
+                    AfterExtraTime = false,
+                    PenaltyWinner = string.Empty,
+                    PenaltyWinnerGoals = null,
+                    PenaltyLoserGoals = null
+                }
             };
-
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
+            var matcher = _fixture.Create<GameMatcher>();
 
             // Act
-            matcher.EnrichGames(games, bbc, "League");
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
             // Assert
             var g = games.First();
-            Assert.Equal("Team A", g.BBCHome); // Verify match occurred
+            Assert.Equal("Home United", g.BBCHome);
             Assert.Equal("Postponed", g.StatusText);
-            // Also check boolean flags if any
             Assert.True(g.IsPostponed, "Game.IsPostponed should be true");
         }
 
         [Fact]
-        public void FuzzyMatch_IstanbulBasaksehir_Matches()
+        public void FuzzyMatch_Diacritics_MatchesAsciiForm()
         {
-            // API: "Istanbul Basaksehir" v "Fatih Karagumruk"
-            var games = new List<Game> { new Game { Home = "Istanbul Basaksehir", Away = "Fatih Karagumruk" } };
-
-            // BBC: "?stanbul Ba?ak?ehir" v "Fatih Karagümrük"
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Iskandir")
+                    .With(g => g.Away, "Karagul")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("İstanbul Başakşehir", "Fatih Karagümrük", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Turkish Super Lig", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "İskandir",
+                    Away = "Karagül",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Beta",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Turkish Super Lig");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Beta");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("İstanbul Başakşehir", g.BBCHome);
-            Assert.Equal("Fatih Karagümrük", g.BBCAway);
-            Assert.Equal("Turkish Super Lig", g.BBCLeague);
+            Assert.Equal("İskandir", g.BBCHome);
+            Assert.Equal("Karagül", g.BBCAway);
+            Assert.Equal("League Beta", g.BBCLeague);
         }
 
         [Fact]
-        public void FuzzyMatch_Cagilari_Matches_Cagliari()
+        public void FuzzyMatch_SingleLetterTypo_Matches()
         {
-            // API: "Cagilari" (Typo) v "Juventus"
-            var games = new List<Game> { new Game { Home = "Cagilari", Away = "Juventus" } };
-
-            // BBC: "Cagliari" v "Juventus"
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Rivertn")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Cagliari", "Juventus", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Serie A", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Riverton",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Serie A");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Cagliari", g.BBCHome);
-            Assert.Equal("Juventus", g.BBCAway);
-            Assert.Equal("Serie A", g.BBCLeague);
+            Assert.Equal("Riverton", g.BBCHome);
+            Assert.Equal("Away City", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
-        public void FuzzyMatch_AtleticoMadrid_DeportivoAlaves_Matches_Alaves()
+        public void FuzzyMatch_ExtraQualifier_MatchesShorterAway()
         {
-            // API: "Atletico Madrid" v "Deportivo Alaves"
-            var games = new List<Game> { new Game { Home = "Atletico Madrid", Away = "Deportivo Alaves" } };
-
-            // BBC: "Atletico Madrid" v "Alavés"
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Metro Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Atletico Madrid", "Alavés", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "La Liga", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "La Liga");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Atletico Madrid", g.BBCHome);
-            Assert.Equal("Alavés", g.BBCAway);
-            Assert.Equal("La Liga", g.BBCLeague);
+            Assert.Equal("Home United", g.BBCHome);
+            Assert.Equal("Away City", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
         }
 
         [Fact]
-        public void FuzzyMatch_Besiktas_Matches_Besiktas_WithTurkishCharacter()
+        public void FuzzyMatch_SpecialCharacter_MatchesAsciiForm()
         {
-            // API: "Besiktas" v "Kayserispor" (Latin characters)
-            var games = new List<Game> { new Game { Home = "Besiktas", Away = "Kayserispor" } };
-
-            // BBC: "Beşiktaş" v "Kayserispor" (Turkish ş character)
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Besika")
+                    .With(g => g.Away, "Southria")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Beşiktaş", "Kayserispor", DateTime.UtcNow, "", false, false, false, null, null, null, string.Empty, string.Empty, "Turkish Super Lig", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Beşika",
+                    Away = "Southria",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Beta",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Turkish Super Lig");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Beta");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Beşiktaş", g.BBCHome);
-            Assert.Equal("Kayserispor", g.BBCAway);
-            Assert.Equal("Turkish Super Lig", g.BBCLeague);
+            Assert.Equal("Beşika", g.BBCHome);
+            Assert.Equal("Southria", g.BBCAway);
+            Assert.Equal("League Beta", g.BBCLeague);
         }
 
         [Fact]
-        public void ExactMatch_Lazio_Como_EnrichesWithBadgeUrls()
+        public void ExactMatch_EnrichesWithBadgeUrls()
         {
-            // API Game: Lazio vs Como from footybite.to
+            // Arrange
             var apiStartTime = new DateTime(2026, 1, 19, 19, 45, 0, DateTimeKind.Utc);
-            var games = new List<Game> 
-            { 
-                new Game 
-                { 
-                    Home = "Lazio", 
-                    Away = "Como",
-                    Start = apiStartTime,
-                    League = "Serie A"
-                } 
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, apiStartTime)
+                    .With(g => g.League, "League Alpha")
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
             };
-
-            // BBC Fixture: Lazio vs Como with badge URLs from BBC Sport
             var bbcKickoff = new DateTime(2026, 1, 19, 19, 45, 0, DateTimeKind.Utc);
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture(
-                    "Lazio", 
-                    "Como", 
-                    bbcKickoff, 
-                    "", // Status
-                    false, // IsFinished
-                    false, // IsInProgress
-                    false, // IsHalfTime
-                    null, // Minute
-                    null, // HomeScore
-                    null, // AwayScore
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/lazio.8fc1f19371.svg", // HomeBadgeUrl
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/como.57ce7c985f.webp", // AwayBadgeUrl
-                    "Serie A", 
-                    false // HasProgress
-                )
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = bbcKickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "https://badges.example/home-united.svg",
+                    AwayBadgeUrl = "https://badges.example/away-city.webp",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Serie A");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            
-            // Verify exact match occurred
-            Assert.Equal("Lazio", g.BBCHome);
-            Assert.Equal("Como", g.BBCAway);
-            Assert.Equal("Serie A", g.BBCLeague);
-            
-            // Verify badge URLs were enriched from BBC fixture
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/lazio.8fc1f19371.svg", g.HomeBadgeUrl);
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/como.57ce7c985f.webp", g.AwayBadgeUrl);
+            Assert.Equal("Home United", g.BBCHome);
+            Assert.Equal("Away City", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
+            Assert.Equal("https://badges.example/home-united.svg", g.HomeBadgeUrl);
+            Assert.Equal("https://badges.example/away-city.webp", g.AwayBadgeUrl);
         }
 
         [Fact]
-        public void FuzzyMatch_Kobenhavn_Matches_Copenhagen()
+        public void FuzzyMatch_Abbreviation_MatchesExpandedName()
         {
-            // API Game: "Kobenhavn" vs "Napoli" (Danish club name in native spelling)
+            // Arrange
             var apiStartTime = new DateTime(2026, 1, 20, 20, 0, 0, DateTimeKind.Utc);
-            var games = new List<Game> 
-            { 
-                new Game 
-                { 
-                    Home = "Kobenhavn", 
-                    Away = "Napoli",
-                    Start = apiStartTime,
-                    League = "UEFA Champions League"
-                } 
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home Utd")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, apiStartTime)
+                    .With(g => g.League, "Cup Gamma")
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
             };
-
-            // BBC Fixture: "Copenhagen" vs "Napoli" (English club name)
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture(
-                    "Copenhagen", 
-                    "Napoli", 
-                    apiStartTime, 
-                    "20:00", 
-                    false, 
-                    false, 
-                    false, 
-                    null, 
-                    null, 
-                    null,
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/fc-copenhagen.476d1e3526.svg",
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/napoli.29b133b9ff.svg",
-                    "UEFA Champions League",
-                    false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = apiStartTime,
+                    Status = "20:00",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "https://badges.example/home-united.svg",
+                    AwayBadgeUrl = "https://badges.example/away-city.svg",
+                    League = "Cup Gamma",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "UEFA Champions League");
+            // Act
+            matcher.EnrichGames(games, bbc, "Cup Gamma");
 
+            // Assert
             var g = games.First();
-            
-            // Verify fuzzy match occurred
-            Assert.Equal("Copenhagen", g.BBCHome);
-            Assert.Equal("Napoli", g.BBCAway);
-            Assert.Equal("UEFA Champions League", g.BBCLeague);
-            
-            // Verify badge URLs were enriched from BBC fixture
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/fc-copenhagen.476d1e3526.svg", g.HomeBadgeUrl);
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/napoli.29b133b9ff.svg", g.AwayBadgeUrl);
+            Assert.Equal("Home United", g.BBCHome);
+            Assert.Equal("Away City", g.BBCAway);
+            Assert.Equal("Cup Gamma", g.BBCLeague);
+            Assert.Equal("https://badges.example/home-united.svg", g.HomeBadgeUrl);
+            Assert.Equal("https://badges.example/away-city.svg", g.AwayBadgeUrl);
         }
 
         [Fact]
-        public void FuzzyMatch_Internazionale_Matches_InterMilan()
+        public void FuzzyMatch_LongForm_MatchesContainedShortName()
         {
-            // API Game: "Internazionale" vs "Arsenal" (Italian full club name)
+            // Arrange
             var apiStartTime = new DateTime(2026, 1, 20, 20, 0, 0, DateTimeKind.Utc);
-            var games = new List<Game> 
-            { 
-                new Game 
-                { 
-                    Home = "Internazionale", 
-                    Away = "Arsenal",
-                    Start = apiStartTime,
-                    League = "UEFA Champions League"
-                } 
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home International")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, apiStartTime)
+                    .With(g => g.League, "Cup Gamma")
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
             };
-
-            // BBC Fixture: "Inter Milan" vs "Arsenal" (English/shortened club name)
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture(
-                    "Inter Milan", 
-                    "Arsenal", 
-                    apiStartTime, 
-                    "20:00", 
-                    false, 
-                    false, 
-                    false, 
-                    null, 
-                    null, 
-                    null,
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/inter-milan.209b8285b0.svg",
-                    "https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5be7ff54ce.svg",
-                    "UEFA Champions League",
-                    false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home",
+                    Away = "Away City",
+                    KickoffUtc = apiStartTime,
+                    Status = "20:00",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "https://badges.example/home.svg",
+                    AwayBadgeUrl = "https://badges.example/away-city.svg",
+                    League = "Cup Gamma",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "UEFA Champions League");
+            // Act
+            matcher.EnrichGames(games, bbc, "Cup Gamma");
 
+            // Assert
             var g = games.First();
-            
-            // Verify fuzzy match occurred
-            Assert.Equal("Inter Milan", g.BBCHome);
-            Assert.Equal("Arsenal", g.BBCAway);
-            Assert.Equal("UEFA Champions League", g.BBCLeague);
-            
-            // Verify badge URLs were enriched from BBC fixture
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/inter-milan.209b8285b0.svg", g.HomeBadgeUrl);
-            Assert.Equal("https://static.files.bbci.co.uk/core/website/assets/static/sport/football/arsenal.5be7ff54ce.svg", g.AwayBadgeUrl);
+            Assert.Equal("Home", g.BBCHome);
+            Assert.Equal("Away City", g.BBCAway);
+            Assert.Equal("Cup Gamma", g.BBCLeague);
+            Assert.Equal("https://badges.example/home.svg", g.HomeBadgeUrl);
+            Assert.Equal("https://badges.example/away-city.svg", g.AwayBadgeUrl);
         }
 
         [Fact]
         public void ExactMatch_EnrichesAggregateScores()
         {
-            var games = new List<Game> { new Game { Home = "Team A", Away = "Team B" } };
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture(
-                    "Team A",
-                    "Team B",
-                    DateTime.UtcNow,
-                    "FT",
-                    true,
-                    false,
-                    false,
-                    null,
-                    1,
-                    0,
-                    "",
-                    "",
-                    "League",
-                    true,
-                    false,
-                    "",
-                    null,
-                    null,
-                    5,
-                    3)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "FT",
+                    IsFinished = true,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = 1,
+                    AwayScore = 0,
+                    HomeBadgeUrl = "",
+                    AwayBadgeUrl = "",
+                    League = "League Alpha",
+                    HasProgress = true,
+                    AfterExtraTime = false,
+                    PenaltyWinner = "",
+                    PenaltyWinnerGoals = null,
+                    PenaltyLoserGoals = null,
+                    AggregateHomeScore = 5,
+                    AggregateAwayScore = 3
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Equal(5, g.AggregateHomeScore);
             Assert.Equal(3, g.AggregateAwayScore);
@@ -441,56 +677,99 @@ namespace VardyParty.Core.Tests
         }
 
         [Fact]
-        public void FuzzyMatch_Usa_Matches_UnitedStates()
+        public void FuzzyMatch_Acronym_AdoptsBbcKickoff()
         {
+            // Arrange
             var apiWrongStart = new DateTime(2026, 6, 12, 0, 0, 0, DateTimeKind.Utc);
-            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc); // 02:00 BST on 13 June
+            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc);
             var games = new List<Game>
             {
-                new Game { Home = "USA", Away = "Paraguay", Start = apiWrongStart, ApiLeague = "Important Games", League = "Important Games" }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "HU")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, apiWrongStart)
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("United States", "Paraguay", bbcKickoff, "", false, false, false, null,
-                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = bbcKickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home-united.svg",
+                    AwayBadgeUrl = "away-city.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("United States", g.BBCHome);
-            Assert.Equal("FIFA World Cup", g.BBCLeague);
+            Assert.Equal("Home United", g.BBCHome);
+            Assert.Equal("League Alpha", g.BBCLeague);
             Assert.Equal(bbcKickoff, g.Start);
         }
 
         [Fact]
         public void FutureKickoff_WithStaleMinuteZero_IsScheduledUpcoming()
         {
+            // Arrange
             var now = DateTime.UtcNow;
             var futureKickoff = now.AddHours(2);
             var games = new List<Game>
             {
-                new Game
-                {
-                    Home = "USA",
-                    Away = "Paraguay",
-                    Start = futureKickoff,
-                    Minute = 0,
-                    IsInProgress = true,
-                    IsFinished = true,
-                    League = "FIFA World Cup"
-                }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, futureKickoff)
+                    .With(g => g.Minute, 0)
+                    .With(g => g.IsInProgress, true)
+                    .With(g => g.IsFinished, true)
+                    .With(g => g.League, "Cup Gamma")
+                    .With(g => g.ApiLeague, string.Empty)
+                    .With(g => g.StatusText, string.Empty)
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("United States", "Paraguay", futureKickoff, "", false, false, false, null,
-                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = futureKickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home-united.svg",
+                    AwayBadgeUrl = "away-city.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.False(g.IsInProgress);
             Assert.False(g.IsFinished);
@@ -501,197 +780,365 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void IsScheduledUpcoming_FutureKickoff_IgnoresStaleInProgressFlag()
         {
+            // Arrange
             var now = DateTime.UtcNow;
             var futureKickoff = now.AddHours(2);
-            var game = new Game
-            {
-                Home = "USA",
-                Away = "Paraguay",
-                Start = futureKickoff,
-                IsInProgress = true,
-                IsFinished = true,
-                Minute = 0,
-                League = "FIFA World Cup"
-            };
+            var game = _fixture.Build<Game>()
+                .With(g => g.Home, "Home United")
+                .With(g => g.Away, "Away City")
+                .With(g => g.Start, futureKickoff)
+                .With(g => g.IsInProgress, true)
+                .With(g => g.IsFinished, true)
+                .With(g => g.Minute, 0)
+                .With(g => g.League, "Cup Gamma")
+                .With(g => g.ApiLeague, string.Empty)
+                .With(g => g.StatusText, string.Empty)
+                .Create();
 
-            Assert.True(game.IsScheduledUpcoming(now));
+            // Act
+            var isUpcoming = game.IsScheduledUpcoming(now);
+
+            // Assert
+            Assert.True(isUpcoming);
         }
 
         [Fact]
-        public void ExactMatch_Usa_ResolvesKickoffFromDuplicateBbcVariant()
+        public void ExactMatch_ResolvesKickoffFromDuplicateBbcVariant()
         {
+            // Arrange
             var apiWrongStart = new DateTime(2026, 6, 12, 0, 0, 0, DateTimeKind.Utc);
-            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc); // 02:00 BST on 13 June
+            var bbcKickoff = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc);
             var games = new List<Game>
             {
-                new Game { Home = "USA", Away = "Paraguay", Start = apiWrongStart, ApiLeague = "Important Games", League = "Important Games" }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, apiWrongStart)
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("USA", "Paraguay", DateTime.MinValue, "", false, false, false, null,
-                    null, null, string.Empty, string.Empty, "Important Games", false),
-                new BbcFixture("United States", "Paraguay", bbcKickoff, "", false, false, false, null,
-                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.MinValue,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                },
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home Utd",
+                    Away = "Away City",
+                    KickoffUtc = bbcKickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home-united.svg",
+                    AwayBadgeUrl = "away-city.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Equal(bbcKickoff, g.Start);
-            Assert.Equal("United States", g.BBCHome);
+            Assert.Equal("Home Utd", g.BBCHome);
         }
 
         [Fact]
-        public void ImportantGames_InternationalFixture_MapsToFifaWorldCup()
+        public void FeaturedBucket_NonClubSides_KeepsBbcLeague()
         {
+            // Arrange
             var games = new List<Game>
             {
-                new Game
-                {
-                    Home = "Canada",
-                    Away = "Bosnia and Herzegovina",
-                    ApiLeague = "Important Games",
-                    League = "Important Games",
-                    Start = DateTime.UtcNow
-                }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Northland")
+                    .With(g => g.Away, "Southria")
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .With(g => g.Start, DateTime.UtcNow)
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Canada", "Bosnia and Herzegovina", DateTime.UtcNow, "", false, false, false, null,
-                    null, null, "home.svg", "away.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Northland",
+                    Away = "Southria",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home.svg",
+                    AwayBadgeUrl = "away.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("FIFA World Cup", g.BBCLeague);
-            Assert.Equal("FIFA World Cup", g.League);
+            Assert.Equal("League Alpha", g.BBCLeague);
+            Assert.Equal("League Alpha", g.League);
         }
 
         [Fact]
-        public void ImportantGames_ClubFixture_KeepsBbcLeague()
+        public void FeaturedBucket_ClubSides_KeepsBbcLeague()
         {
+            // Arrange
             var games = new List<Game>
             {
-                new Game
-                {
-                    Home = "Real Madrid",
-                    Away = "Barcelona",
-                    ApiLeague = "Important Games",
-                    League = "Important Games",
-                    Start = DateTime.UtcNow
-                }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .With(g => g.Start, DateTime.UtcNow)
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Real Madrid", "Barcelona", DateTime.UtcNow, "", false, false, false, null,
-                    null, null, "home.svg", "away.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home.svg",
+                    AwayBadgeUrl = "away.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Important Games", g.BBCLeague);
-            Assert.Equal("Important Games", g.League);
+            Assert.Equal("League Alpha", g.BBCLeague);
+            Assert.Equal("League Alpha", g.League);
         }
 
         [Fact]
-        public void FuzzyMatch_KoreaRepublic_Matches_SouthKorea()
+        public void FuzzyMatch_RepublicQualifier_MatchesShortName()
         {
+            // Arrange
             var kickoff = new DateTime(2026, 6, 18, 23, 0, 0, DateTimeKind.Utc);
             var games = new List<Game>
             {
-                new Game { Home = "Mexico", Away = "Korea Republic", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Southria")
+                    .With(g => g.Away, "Northland Republic")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .Create()
             };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Mexico", "South Korea", kickoff, "", false, false, false, null,
-                    null, null, "mexico.svg", "south-korea.svg", "Important Games", false)
-            };
-
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
-
-            var g = games.First();
-            Assert.Equal("Mexico", g.BBCHome);
-            Assert.Equal("South Korea", g.BBCAway);
-            Assert.Equal("FIFA World Cup", g.BBCLeague);
-        }
-
-        [Fact]
-        public void FuzzyMatch_IvoryCoast_Matches_CoteDIvoire()
-        {
-            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
-            var games = new List<Game>
-            {
-                new Game { Home = "Ivory Coast", Away = "Ecuador", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
-            };
-            var bbc = new List<BbcFixture>
-            {
-                new BbcFixture("Côte d'Ivoire", "Ecuador", kickoff, "", false, false, false, null,
-                    null, null, "ivory-coast.svg", "ecuador.svg", "Important Games", false)
-            };
-
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
-
-            var g = games.First();
-            Assert.Equal("Côte d'Ivoire", g.BBCHome);
-            Assert.Equal("Ecuador", g.BBCAway);
-            Assert.Equal("FIFA World Cup", g.BBCLeague);
-        }
-
-        [Fact]
-        public void FuzzyMatch_IvoryCoast_Matches_CoteDIvoire_WithoutDiacritics()
-        {
-            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
-            var games = new List<Game>
-            {
-                new Game { Home = "Ivory Coast", Away = "Ecuador", Start = kickoff, ApiLeague = "Important Games", League = "Important Games" }
-            };
-            var bbc = new List<BbcFixture>
-            {
-                new BbcFixture("Cote d'Ivoire", "Ecuador", kickoff, "", false, false, false, null,
-                    null, null, "ivory-coast.svg", "ecuador.svg", "Important Games", false)
-            };
-
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Important Games");
-
-            var g = games.First();
-            Assert.Equal("Cote d'Ivoire", g.BBCHome);
-            Assert.Equal("Ecuador", g.BBCAway);
-        }
-
-        [Fact]
-        public void LebanesePremierLeague_KeepsApiLeague_WhenBbcWouldBeLessSpecific()
-        {
-            var games = new List<Game>
-            {
-                new Game
+                _fixture.Create<BbcFixture>() with
                 {
-                    Home = "Al Nejmeh",
-                    Away = "Al Ahed",
-                    ApiLeague = "Lebanese Premier League",
-                    League = "Lebanese Premier League",
-                    Start = DateTime.UtcNow
+                    Home = "Southria",
+                    Away = "Northland",
+                    KickoffUtc = kickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "southria.svg",
+                    AwayBadgeUrl = "northland.svg",
+                    League = "League Alpha",
+                    HasProgress = false
                 }
             };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
+
+            // Assert
+            var g = games.First();
+            Assert.Equal("Southria", g.BBCHome);
+            Assert.Equal("Northland", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
+        }
+
+        [Fact]
+        public void FuzzyMatch_DiacriticHome_MatchesAsciiHome()
+        {
+            // Arrange
+            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Cote Avon")
+                    .With(g => g.Away, "Southria")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .Create()
+            };
             var bbc = new List<BbcFixture>
             {
-                new BbcFixture("Al Nejmeh", "Al Ahed", DateTime.UtcNow, "", false, false, false, null,
-                    null, null, string.Empty, string.Empty, "Premier League", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Côte Avon",
+                    Away = "Southria",
+                    KickoffUtc = kickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "cote-avon.svg",
+                    AwayBadgeUrl = "southria.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             };
+            var matcher = _fixture.Create<GameMatcher>();
 
-            var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-            matcher.EnrichGames(games, bbc, "Lebanese Premier League");
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
-            Assert.Equal("Lebanese Premier League", g.BBCLeague);
-            Assert.Equal("Lebanese Premier League", g.League);
+            Assert.Equal("Côte Avon", g.BBCHome);
+            Assert.Equal("Southria", g.BBCAway);
+            Assert.Equal("League Alpha", g.BBCLeague);
+        }
+
+        [Fact]
+        public void FuzzyMatch_AsciiHome_MatchesAsciiHome()
+        {
+            // Arrange
+            var kickoff = new DateTime(2026, 6, 18, 19, 0, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Cote Avon")
+                    .With(g => g.Away, "Southria")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.League, "League Alpha")
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Cote Avon",
+                    Away = "Southria",
+                    KickoffUtc = kickoff,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "cote-avon.svg",
+                    AwayBadgeUrl = "southria.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames(games, bbc, "League Alpha");
+
+            // Assert
+            var g = games.First();
+            Assert.Equal("Cote Avon", g.BBCHome);
+            Assert.Equal("Southria", g.BBCAway);
+        }
+
+        [Fact]
+        public void ApiLeague_KeepsMoreSpecificName_WhenBbcIsSubstring()
+        {
+            // Arrange
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.ApiLeague, "Northern League Alpha")
+                    .With(g => g.League, "Northern League Alpha")
+                    .With(g => g.Start, DateTime.UtcNow)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames(games, bbc, "Northern League Alpha");
+
+            // Assert
+            var g = games.First();
+            Assert.Equal("Northern League Alpha", g.BBCLeague);
+            Assert.Equal("Northern League Alpha", g.League);
         }
     }
 }

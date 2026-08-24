@@ -2,6 +2,7 @@ using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
+using VardyParty.Playback;
 using VardyParty.Providers;
 using VardyParty.Services;
 using StreamModel = VardyParty.Models.Stream;
@@ -296,7 +297,7 @@ public class StreamResolutionOrchestrator(
         {
             logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
             var freshUrl = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
-            if (!string.IsNullOrEmpty(freshUrl) && !string.Equals(freshUrl, m3u8Url, StringComparison.OrdinalIgnoreCase))
+            if (PlaybackPolicy.ShouldAcceptFreshM3U8(m3u8Url, freshUrl))
             {
                 enrichedStream.ResolvedM3U8Url = freshUrl;
                 // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.

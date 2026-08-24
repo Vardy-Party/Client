@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -17,22 +18,24 @@ namespace VardyParty.Core.Tests;
 
 public class BbcFixturesServiceTests
 {
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+
     [Fact]
     public async Task GetRollingWindowFixturesAsync_FetchesTodayAndTomorrowUkPages()
     {
+        // Arrange
         var requestedUrls = new List<string>();
         var handler = new StubHttpHandler(requestedUrls);
         var httpClient = new HttpClient(handler);
-        var parser = new Mock<IBbcHtmlParser>();
+        var parser = _fixture.GetMock<IBbcHtmlParser>();
         parser.Setup(x => x.ParseHtml(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns<string, CancellationToken>((_, _) => []);
 
-        var settings = new BbcFixturesSettings
-        {
-            CallTimeoutSeconds = 5,
-            MaxRetries = 0,
-            RefreshSchedule = 300
-        };
+        var settings = _fixture.Build<BbcFixturesSettings>()
+            .With(s => s.CallTimeoutSeconds, 5)
+            .With(s => s.MaxRetries, 0)
+            .With(s => s.RefreshSchedule, 300)
+            .Create();
 
         var service = new BbcFixturesService(
             httpClient,
@@ -41,8 +44,11 @@ public class BbcFixturesServiceTests
             parser.Object);
 
         var pageDates = BbcFixtureSchedule.GetRollingWindowPageDates(DateTime.UtcNow);
+
+        // Act
         await service.GetFixturesForDatesAsync(pageDates);
 
+        // Assert
         Assert.Equal(pageDates.Count, requestedUrls.Count);
         Assert.All(requestedUrls, url => Assert.Contains("/sport/football/scores-fixtures/", url));
         Assert.NotEqual(requestedUrls[0], requestedUrls[1]);
@@ -51,26 +57,55 @@ public class BbcFixturesServiceTests
     [Fact]
     public async Task GetFixturesForDatesAsync_MergesDuplicateFixturesPreferringKickoff()
     {
+        // Arrange
         var handler = new StubHttpHandler(["https://example.com/today", "https://example.com/tomorrow"]);
         var httpClient = new HttpClient(handler);
-        var parser = new Mock<IBbcHtmlParser>();
+        var parser = _fixture.GetMock<IBbcHtmlParser>();
         parser.SetupSequence(x => x.ParseHtml(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns([
-                new BbcFixture("United States", "Paraguay", DateTime.MinValue, "", false, false, false, null,
-                    null, null, string.Empty, string.Empty, "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.MinValue,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             ])
             .Returns([
-                new BbcFixture("United States", "Paraguay",
-                    new DateTime(2026, 6, 12, 23, 0, 0, DateTimeKind.Utc), "", false, false, false, null,
-                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = new DateTime(2026, 6, 12, 23, 0, 0, DateTimeKind.Utc),
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home.svg",
+                    AwayBadgeUrl = "away.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             ]);
 
-        var settings = new BbcFixturesSettings
-        {
-            CallTimeoutSeconds = 5,
-            MaxRetries = 0,
-            RefreshSchedule = 300
-        };
+        var settings = _fixture.Build<BbcFixturesSettings>()
+            .With(s => s.CallTimeoutSeconds, 5)
+            .With(s => s.MaxRetries, 0)
+            .With(s => s.RefreshSchedule, 300)
+            .Create();
 
         var service = new BbcFixturesService(
             httpClient,
@@ -78,37 +113,68 @@ public class BbcFixturesServiceTests
             NullLogger<BbcFixturesService>.Instance,
             parser.Object);
 
+        // Act
         var fixtures = await service.GetFixturesForDatesAsync(
             [new DateOnly(2026, 6, 12), new DateOnly(2026, 6, 13)]);
 
+        // Assert
         var fixture = Assert.Single(fixtures);
         Assert.Equal(new DateTime(2026, 6, 12, 23, 0, 0, DateTimeKind.Utc), fixture.KickoffUtc);
-        Assert.Equal("usa.svg", fixture.HomeBadgeUrl);
+        Assert.Equal("home.svg", fixture.HomeBadgeUrl);
     }
 
     [Fact]
-    public async Task GetFixturesForDatesAsync_MergesUsaAliasVariantsPreferringKickoff()
+    public async Task GetFixturesForDatesAsync_MergesNormalizedNameVariantsPreferringKickoff()
     {
+        // Arrange
         var handler = new StubHttpHandler(["https://example.com/today", "https://example.com/tomorrow"]);
         var httpClient = new HttpClient(handler);
-        var parser = new Mock<IBbcHtmlParser>();
+        var parser = _fixture.GetMock<IBbcHtmlParser>();
         parser.SetupSequence(x => x.ParseHtml(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns([
-                new BbcFixture("USA", "Paraguay", DateTime.MinValue, "", false, false, false, null,
-                    null, null, string.Empty, string.Empty, "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home Utd",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.MinValue,
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = string.Empty,
+                    AwayBadgeUrl = string.Empty,
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             ])
             .Returns([
-                new BbcFixture("United States", "Paraguay",
-                    new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc), "", false, false, false, null,
-                    null, null, "usa.svg", "paraguay.svg", "Important Games", false)
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc),
+                    Status = "",
+                    IsFinished = false,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = null,
+                    AwayScore = null,
+                    HomeBadgeUrl = "home.svg",
+                    AwayBadgeUrl = "away.svg",
+                    League = "League Alpha",
+                    HasProgress = false
+                }
             ]);
 
-        var settings = new BbcFixturesSettings
-        {
-            CallTimeoutSeconds = 5,
-            MaxRetries = 0,
-            RefreshSchedule = 300
-        };
+        var settings = _fixture.Build<BbcFixturesSettings>()
+            .With(s => s.CallTimeoutSeconds, 5)
+            .With(s => s.MaxRetries, 0)
+            .With(s => s.RefreshSchedule, 300)
+            .Create();
 
         var service = new BbcFixturesService(
             httpClient,
@@ -116,12 +182,14 @@ public class BbcFixturesServiceTests
             NullLogger<BbcFixturesService>.Instance,
             parser.Object);
 
+        // Act
         var fixtures = await service.GetFixturesForDatesAsync(
             [new DateOnly(2026, 6, 12), new DateOnly(2026, 6, 13)]);
 
+        // Assert
         var fixture = Assert.Single(fixtures);
         Assert.Equal(new DateTime(2026, 6, 13, 1, 0, 0, DateTimeKind.Utc), fixture.KickoffUtc);
-        Assert.Equal("usa.svg", fixture.HomeBadgeUrl);
+        Assert.Equal("home.svg", fixture.HomeBadgeUrl);
     }
 
     private sealed class StubHttpHandler(List<string> requestedUrls) : HttpMessageHandler

@@ -1,3 +1,4 @@
+using AutoFixture;
 using VardyParty.Models;
 using Xunit;
 
@@ -5,43 +6,60 @@ namespace VardyParty.Core.Tests;
 
 public class StreamCatalogSourceTests
 {
-    [Fact]
-    public void ResolveCatalogSource_TagsFootybitexUrlAsFbEvenWhenSourceSaysMp()
-    {
-        var stream = new Stream
-        {
-            Url = "https://www.footybitex.com/game/Argentina-vs-Cape-Verde/71210",
-            Source = "mp",
-            ResolutionStrategy = "v2"
-        };
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
 
-        Assert.Equal("fb", stream.ResolveCatalogSource());
-        Assert.Equal("FB", stream.CatalogSourceBadgeLabel);
+    [Fact]
+    public void ResolveCatalogSource_TagsNonMpHostUrlAsFbEvenWhenSourceSaysMp()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/game/home-united-vs-away-city/71210")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, "v2")
+            .Create();
+
+        // Act
+        var source = stream.ResolveCatalogSource();
+        var badge = stream.CatalogSourceBadgeLabel;
+
+        // Assert
+        Assert.Equal("fb", source);
+        Assert.Equal("FB", badge);
     }
 
     [Fact]
-    public void ResolveCatalogSource_TagsMpoutqnUrlAsMp()
+    public void ResolveCatalogSource_TagsV2StrategyAsMpWhenUrlIsEmpty()
     {
-        var stream = new Stream
-        {
-            Url = "https://jack09eo.mpoutqn4vebroad.my/football/fifa-world-cup-4374999/argentina-vs-cabo-verde.html",
-            Source = "fb"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, string.Empty)
+            .With(s => s.Source, "fb")
+            .With(s => s.ResolutionStrategy, "v2")
+            .Create();
 
-        Assert.Equal("mp", stream.ResolveCatalogSource());
-        Assert.Equal("V2", stream.CatalogSourceBadgeLabel);
+        // Act
+        var source = stream.ResolveCatalogSource();
+        var badge = stream.CatalogSourceBadgeLabel;
+
+        // Assert
+        Assert.Equal("mp", source);
+        Assert.Equal("V2", badge);
     }
 
     [Fact]
     public void ResolveCatalogSource_UsesV2StrategyOnlyWhenUrlIsMpHost()
     {
-        var stream = new Stream
-        {
-            Url = "https://live.example/stream",
-            ResolutionStrategy = "v2",
-            Source = "mp"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/stream")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Source, "mp")
+            .Create();
 
-        Assert.Equal("fb", stream.ResolveCatalogSource());
+        // Act
+        var source = stream.ResolveCatalogSource();
+
+        // Assert
+        Assert.Equal("fb", source);
     }
 }

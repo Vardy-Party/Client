@@ -14,9 +14,31 @@
 | `IMediaEngine` | `VardyParty.Core/Playback/IMediaEngine.cs` | Slim OS contract (Attach/Stop/events/metrics only) |
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
 | Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → session → pool/health/attach |
-| Tests | `tests/VardyParty.Core.Tests/Playback*.cs`, `StreamMetricsWindowTests.cs` | Table-driven policy + session + host commands |
+| Tests | `tests/VardyParty.Core.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop |
 
-**Next:** Wire Windows `WindowsVideoPlayerService` to the same controller; delete `RecoverFromFailed*`. Keep WinUI as attach/stop/events only.
+**Next:** Wire Windows `WindowsVideoPlayerService` to the same controller; delete `RecoverFromFailed*`. Keep WinUI as attach/stop/events only. OS adapters should implement `IMediaEngine` (facts only) — do not put ExoPlayer/WinUI into Core tests.
+
+---
+
+## Testing seam (OS vs Core)
+
+Business recovery must stay under Core tests. OS decoder/chrome differences are large (ExoPlayer vs WinUI AdaptiveMediaSource, TV remote, request headers, Activity vs MediaPlayer). Those do **not** belong in `VardyParty.Core.Tests`.
+
+**Do test via a common interface:**
+
+```
+ExoPlayer / WinUI / FakeMediaEngine  →  IMediaEngine (facts only)
+                                         ↓
+                              PlaybackSessionController
+                                         ↓
+                         host executes PlaybackCommand (pool, resolve, health)
+```
+
+`FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android does. When Windows is wired, it should use that same loop.
+
+**Do not share one fat player interface** (`INativeVideoPlayerService` stays a MAUI launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
+
+Remaining Core test gaps (not OS): orchestrator cache→fresh retry with a fake `INativeVideoPlayerService`; health streamKey (page vs M3U8); Home vs `/player` dual path.
 
 ---
 

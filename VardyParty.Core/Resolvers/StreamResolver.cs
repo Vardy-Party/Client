@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
+using VardyParty.Playback;
 using VardyParty.Services;
 using Stream = VardyParty.Models.Stream;
 
@@ -99,7 +100,7 @@ public class StreamResolver(
     {
         var enriched = new EnrichedStream { Stream = stream, Status = StreamResolutionStatus.Pending };
 
-        if (stream.IsCountdown)
+        if (PlaybackPolicy.ShouldSkipCountdown(stream.IsCountdown))
         {
             enriched.Status = StreamResolutionStatus.Failed;
             enriched.ErrorMessage = "Stream page is in countdown (not started yet)";
@@ -165,7 +166,7 @@ public class StreamResolver(
 
     private static string? GetPlayerStreamName(Stream stream)
     {
-        if (!stream.RequiresV2StreamSelection || stream.IsCountdown)
+        if (!stream.RequiresV2StreamSelection || PlaybackPolicy.ShouldSkipCountdown(stream.IsCountdown))
         {
             return null;
         }

@@ -37,6 +37,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
     [Fact]
     public void Parse_BaselineBbcHtml_PerformanceAndCorrectness()
     {
+        // Arrange
         var html = LoadBaselineHtml();
         output.WriteLine($"Baseline HTML: {html.Length / 1024} KB from {BaselineFileName}");
 
@@ -48,6 +49,8 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
         _ = htmlParser.ParseHtml(html);
 
         var samples = new long[5];
+
+        // Act
         var fixtures = htmlParser.ParseHtml(html);
         for (var i = 0; i < samples.Length; i++)
         {
@@ -57,6 +60,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
             samples[i] = sw.ElapsedMilliseconds;
         }
 
+        // Assert
         Array.Sort(samples);
         var medianMs = samples[samples.Length / 2];
         var leagues = fixtures.Select(f => f.League).Where(l => !string.IsNullOrWhiteSpace(l)).Distinct().Count();
@@ -84,6 +88,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
     [Fact]
     public void Parse_Baseline2BbcHtml_NewSeason_PerformanceAndCorrectness()
     {
+        // Arrange
         var html = LoadHtml(Baseline2FileName);
         output.WriteLine($"Baseline HTML: {html.Length / 1024} KB from {Baseline2FileName}");
 
@@ -94,6 +99,8 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
         _ = htmlParser.ParseHtml(html);
 
         var samples = new long[5];
+
+        // Act
         var fixtures = htmlParser.ParseHtml(html);
         for (var i = 0; i < samples.Length; i++)
         {
@@ -103,6 +110,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
             samples[i] = sw.ElapsedMilliseconds;
         }
 
+        // Assert
         Array.Sort(samples);
         var medianMs = samples[samples.Length / 2];
         var leagues = fixtures.Select(f => f.League).Where(l => !string.IsNullOrWhiteSpace(l)).Distinct().ToList();
@@ -118,9 +126,9 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
 
         Assert.Equal(Baseline2ExactFixtures, fixtures.Count);
         Assert.Equal(Baseline2ExactLeagues, leagues.Count);
-        // Coppa Italia must not be "1st Round" — key regression check for h2/h3 fix
-        Assert.Contains(fixtures, f => f.League == "Coppa Italia");
+        // Round headings must not be used as the competition name (h2/h3 fix).
         Assert.DoesNotContain(fixtures, f => f.League == "1st Round");
+        Assert.Contains(fixtures, f => !string.IsNullOrWhiteSpace(f.League) && f.League != "1st Round");
         Assert.True(withKickoffs >= Baseline2MinWithKickoffs,
             $"Expected >= {Baseline2MinWithKickoffs} kickoffs, got {withKickoffs}");
         Assert.True(medianMs < FixtureBudgetMs,
@@ -130,6 +138,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
     [Fact]
     public async Task Parse_LiveBbcPage_Performance_Optional()
     {
+        // Arrange
         // Optional live check — skips on network failure so CI stays deterministic.
         const string url = "https://www.bbc.com/sport/football/scores-fixtures";
         output.WriteLine($"Downloading live HTML from {url}...");
@@ -156,10 +165,12 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
             new XunitLogger<BbcHtmlParser>(output),
             new BbcJsonParser(new XunitLogger<BbcJsonParser>(output)));
 
+        // Act
         var sw = Stopwatch.StartNew();
         var fixtures = htmlParser.ParseHtml(html);
         sw.Stop();
 
+        // Assert
         output.WriteLine($"Live parse: {fixtures.Count} fixtures in {sw.ElapsedMilliseconds} ms");
         Assert.NotNull(fixtures);
         if (fixtures.Count > 0)

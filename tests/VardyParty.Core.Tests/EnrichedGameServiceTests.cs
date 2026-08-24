@@ -16,34 +16,36 @@ namespace VardyParty.Core.Tests;
 
 public class EnrichedGameServiceTests
 {
-    private readonly Fixture _fixture = new();
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
     public async Task RefreshAsync_MergesApiAndBbc()
     {
-        var apiMock = new Mock<IApiService>();
-        var bbcMock = new Mock<IBbcFixturesService>();
+        // Arrange
+        var api = _fixture.GetMock<IApiService>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.Start, DateTime.UtcNow)
+            .Create();
+        const string league = "League Alpha";
 
-        var bbcFixturesSettings = _fixture.Create<BbcFixturesSettings>();
-        var gamesApiSettings = _fixture.Create<GamesApiSettings>();
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .ReturnsAsync(new Dictionary<string, List<Game>> { [league] = [game] });
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
 
-        var games = new Dictionary<string, List<Game>>
-        {
-            ["PL"] = new() { new Game { Home = "TeamA", Away = "TeamB", Start = DateTime.UtcNow } }
-        };
-        apiMock.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>())).ReturnsAsync(games);
-
-        bbcMock.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<BbcFixture>());
-
-        var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-        var svc = new EnrichedGameService(apiMock.Object, bbcMock.Object, matcher,
-            Options.Create(bbcFixturesSettings), Options.Create(gamesApiSettings),
+        var svc = new EnrichedGameService(
+            api.Object,
+            bbc.Object,
+            _fixture.Create<GameMatcher>(),
+            Options.Create(_fixture.Create<BbcFixturesSettings>()),
+            Options.Create(_fixture.Create<GamesApiSettings>()),
             NullLogger<EnrichedGameService>.Instance);
 
-        // Collect emissions
         var emissions = new List<Dictionary<string, List<Game>>>();
-        Exception streamError = null;
+        Exception? streamError = null;
         var subscription = svc.GamesStream.Subscribe(
             g => { if (g != null && g.Count > 0) emissions.Add(g); },
             ex => streamError = ex
@@ -51,10 +53,9 @@ public class EnrichedGameServiceTests
 
         try
         {
-            // Start the background polling
+            // Act
             svc.StartBackgroundPolling();
-            
-            // Wait for at least one emission
+
             for (int i = 0; i < 50 && emissions.Count == 0; i++)
             {
                 await Task.Delay(100);
@@ -63,12 +64,13 @@ public class EnrichedGameServiceTests
             if (streamError != null)
                 throw new Exception($"Stream error: {streamError.Message}", streamError);
 
+            // Assert
             Assert.NotEmpty(emissions);
             var result = emissions[0];
-            
+
             Assert.NotEmpty(result);
-            Assert.True(result.ContainsKey("PL"), $"Expected 'PL' key but got: {string.Join(", ", result.Keys)}");
-            Assert.Single(result["PL"]);
+            Assert.True(result.ContainsKey(league), $"Expected '{league}' key but got: {string.Join(", ", result.Keys)}");
+            Assert.Single(result[league]);
         }
         finally
         {
@@ -80,24 +82,26 @@ public class EnrichedGameServiceTests
     [Fact]
     public async Task RefreshAsync_HandlesExceptionsGracefully()
     {
-        var apiMock = new Mock<IApiService>();
-        apiMock.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>())).ThrowsAsync(new Exception("Fail"));
+        // Arrange
+        var api = _fixture.GetMock<IApiService>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>())).ThrowsAsync(_fixture.Create<Exception>());
 
-        var bbcMock = new Mock<IBbcFixturesService>();
-        var bbcFixturesSettings = _fixture.Create<BbcFixturesSettings>();
-        var gamesApiSettings = _fixture.Create<GamesApiSettings>();
-
-        var matcher = new GameMatcher(NullLogger<GameMatcher>.Instance);
-        var svc = new EnrichedGameService(apiMock.Object, bbcMock.Object, matcher, Options.Create(bbcFixturesSettings),
-            Options.Create(gamesApiSettings),
+        var svc = new EnrichedGameService(
+            api.Object,
+            bbc.Object,
+            _fixture.Create<GameMatcher>(),
+            Options.Create(_fixture.Create<BbcFixturesSettings>()),
+            Options.Create(_fixture.Create<GamesApiSettings>()),
             NullLogger<EnrichedGameService>.Instance);
 
         Dictionary<string, List<Game>>? current = null;
         svc.GamesStream.Subscribe(g => current = g);
 
-        // Wait for stream to potentially emit or error
+        // Act
         await Task.Delay(500);
 
+        // Assert
         Assert.Null(current);
     }
 }

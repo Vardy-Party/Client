@@ -12,11 +12,14 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void BuildEventStatusMapStreaming_ParsesInitialJson_Postponed()
         {
+            // Arrange
             var json = "{\"events\":[{\"id\":\"s-x\",\"status\":\"Postponed\",\"periodLabel\":{\"value\":\"Postponed\"}}]}";
             var html = new BbcHtmlBuilder().WithInitialJson(json).BuildPage();
 
+            // Act
             var map = _parser.BuildEventStatusMapStreaming(html);
 
+            // Assert
             Assert.True(map.ContainsKey("s-x"));
             Assert.Equal("Postponed", map["s-x"].status);
             Assert.Equal("Postponed", map["s-x"].periodLabel);
@@ -25,6 +28,7 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void BuildEventStatusMapStreaming_ParsesEscapedInitialData_LikeBbc()
         {
+            // Arrange
             // BBC serves __INITIAL_DATA__ as an escaped JSON string assignment.
             // Literal page text resembles: __INITIAL_DATA__="{\"id\":\"s-...\",\"status\":\"MidEvent\",...}"
             var html =
@@ -35,8 +39,10 @@ namespace VardyParty.Core.Tests
                 "\\\"statusComment\\\":{\\\"value\\\":\\\"87 minutes\\\"}" +
                 "}\"";
 
+            // Act
             var map = _parser.BuildEventStatusMapStreaming(html);
 
+            // Assert
             Assert.True(map.ContainsKey("s-escaped1"));
             Assert.Equal("MidEvent", map["s-escaped1"].status);
             Assert.Equal("87'", map["s-escaped1"].periodLabel);
@@ -46,12 +52,15 @@ namespace VardyParty.Core.Tests
         [Fact]
         public void BuildEventStatusMapStreaming_MalformedJson_DoesNotThrow()
         {
+            // Arrange
             var malformed = "<script>window.__INITIAL_DATA__ = {\"events\":[{\"id\":\"s-1\",\"status\":\"Live\"}]"; // missing closing braces
 
+            // Act
             var ex = Record.Exception(() => _parser.BuildEventStatusMapStreaming(malformed));
-
-            Assert.Null(ex); // parser should swallow JSON errors
             var result = _parser.BuildEventStatusMapStreaming(malformed);
+
+            // Assert
+            Assert.Null(ex); // parser should swallow JSON errors
             Assert.True(result.ContainsKey("s-1"));
         }
     }

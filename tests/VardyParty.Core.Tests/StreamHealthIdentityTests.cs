@@ -1,3 +1,4 @@
+using AutoFixture;
 using VardyParty.Health;
 using VardyParty.Models;
 using Xunit;
@@ -6,87 +7,114 @@ namespace VardyParty.Core.Tests;
 
 public class StreamHealthIdentityTests
 {
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+
     [Fact]
     public void GetStreamName_V1Stream_ReturnsNull()
     {
-        var stream = new Stream
-        {
-            Url = "https://example.com/stream1",
-            Channel = "Server A"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/stream1")
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.ResolutionStrategy, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
 
-        Assert.Null(StreamHealthIdentity.GetStreamName(stream));
+        // Act
+        var name = StreamHealthIdentity.GetStreamName(stream);
+
+        // Assert
+        Assert.Null(name);
     }
 
     [Fact]
     public void GetStreamName_V2Stream_ReturnsPlayerStreamLabel()
     {
-        var stream = new Stream
-        {
-            Url = "https://example.com/match.html",
-            ResolutionStrategy = "v2",
-            PlayerStream = "TyR",
-            StreamStatus = "ready"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.PlayerStream, "Channel East")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
 
-        Assert.Equal("TyR", StreamHealthIdentity.GetStreamName(stream));
+        // Act
+        var name = StreamHealthIdentity.GetStreamName(stream);
+
+        // Assert
+        Assert.Equal("Channel East", name);
     }
 
     [Fact]
     public void BuildStreamKey_V2_IncludesStreamName()
     {
-        const string pageUrl = "https://example.com/match.html?x=1";
+        // Arrange
+        const string pageUrl = "https://streams.example.com/match.html?x=1";
 
-        var key = StreamHealthIdentity.BuildStreamKey(pageUrl, "TyR");
+        // Act
+        var key = StreamHealthIdentity.BuildStreamKey(pageUrl, "Channel East");
 
-        Assert.Equal("https://example.com/match.html::TyR", key);
+        // Assert
+        Assert.Equal("https://streams.example.com/match.html::Channel East", key);
     }
 
     [Fact]
     public void BuildStreamKey_V1_UsesUrlOnly()
     {
-        const string url = "https://example.com/stream1";
+        // Arrange
+        const string url = "https://streams.example.com/stream1";
 
+        // Act
         var key = StreamHealthIdentity.BuildStreamKey(url, null);
 
-        Assert.Equal("https://example.com/stream1", key);
+        // Assert
+        Assert.Equal("https://streams.example.com/stream1", key);
     }
 
     [Fact]
     public void FromStream_V2_ReturnsUrlAndStreamName()
     {
-        var stream = new Stream
-        {
-            Url = "https://example.com/match.html",
-            ResolutionStrategy = "v2",
-            PlayerStream = "Fola ID",
-            StreamStatus = "ready"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.PlayerStream, "Channel West")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
 
+        // Act
         var (streamUrl, streamName) = StreamHealthIdentity.FromStream(stream);
 
-        Assert.Equal("https://example.com/match.html", streamUrl);
-        Assert.Equal("Fola ID", streamName);
+        // Assert
+        Assert.Equal("https://streams.example.com/match.html", streamUrl);
+        Assert.Equal("Channel West", streamName);
     }
 
     [Fact]
     public void MatchesRecommendation_RequiresLabel_WhenRecommendationIncludesStreamName()
     {
-        var stream = new Stream
-        {
-            Url = "https://madplay.example/match",
-            Channel = "Fubo US",
-            PlayerStream = "Fubo US",
-            ResolutionStrategy = "v2"
-        };
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.PlayerStream, "Channel North")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
 
-        Assert.True(StreamHealthIdentity.MatchesRecommendation(
+        // Act
+        var matchesNorth = StreamHealthIdentity.MatchesRecommendation(
             stream,
-            "https://madplay.example/match",
-            "Fubo US"));
-        Assert.False(StreamHealthIdentity.MatchesRecommendation(
+            "https://streams.example.com/match",
+            "Channel North");
+        var matchesEast = StreamHealthIdentity.MatchesRecommendation(
             stream,
-            "https://madplay.example/match",
-            "TyR"));
+            "https://streams.example.com/match",
+            "Channel East");
+
+        // Assert
+        Assert.True(matchesNorth);
+        Assert.False(matchesEast);
     }
 }
