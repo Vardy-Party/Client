@@ -186,6 +186,8 @@
 
     [Parameter] public EventCallback OnSignOut { get; set; }
 
+    [Parameter] public EventCallback OnReturnToGrid { get; set; }
+
 
 
     private bool isOpen;
@@ -559,11 +561,24 @@
         LeagueFilter.SetLeagueVisible(league, !LeagueFilter.IsLeagueVisible(league));
     }
 
-    private void OnMenuButtonKeyDown(KeyboardEventArgs e)
+    private void OnMenuButtonFocused()
+    {
+        // Nothing to do — focus arrival is tracked by Home via the EscapeGridToMenu callback.
+    }
+
+    private async Task OnMenuButtonKeyDown(KeyboardEventArgs e)
     {
         if (e.Key is "Enter" or " " or "Spacebar" or "NumpadEnter")
         {
             OpenMenu();
+            return;
+        }
+
+        // TV D-pad: Right from the menu button returns focus to the last focused card.
+        if (MauiProgram.IsTv && e.Key == "ArrowRight")
+        {
+            if (OnReturnToGrid.HasDelegate)
+                await OnReturnToGrid.InvokeAsync();
         }
     }
 
