@@ -1,31 +1,12 @@
 name: Increment Build Version
 
-# After CI succeeds on main for a *product* commit, allocate a unique
-# ApplicationVersion and kick off CD so that merge is packaged under that number.
+# After CI succeeds on main for a *product* commit, package that commit.
+# ApplicationVersion is set on the feature branch (pre-commit hook + PR
+# workflow) so it lands with the reviewed merge. This workflow must not open a
+# second bump PR — github-actions[bot] cannot satisfy required reviews on main.
 #
-# Chain: merge to main → CI (not cancelled) → this workflow (serialized) →
-#   bump PR (GH006: no direct push to main with GITHUB_TOKEN) → squash-merge
-#   immediately (do not wait for CI Complete) → dispatch CD with the new version.
-#
-# Why not "CI complete → CD and increment in parallel"?
-# CD would read Version.props before the bump PR lands, so two merges share
-# e.g. 149. GITHUB_TOKEN squash-merges also do not re-trigger CI/CD, so the
-# bumped number would only be used on a later merge — or never, if the bump
-# PR cannot merge (branch protection).
-#
-# Loop guard: skip when the *triggering CI commit* (not whatever HEAD is now)
-# is already a version commit. Checking HEAD would drop a second fast merge
-# after the first bump PR landed. Two increments are serialized by concurrency
-# and take max(Version.props, open bump PRs, GitHub release -bN tags)+1 so a
-# failed bump that still published a release (or left a stale branch) cannot
-# reuse that number.
-#
-# Hands-off merge: do not wait for required checks or `--auto` (repo
-# allow_auto_merge is false, and bump-PR CI is skipped / approval-gated).
-# Workflow YAML cannot override required reviews on main. If GITHUB_TOKEN
-# cannot merge, optional secret VERSION_BUMP_TOKEN (PAT or GitHub App) is
-# used with `gh pr merge --admin` to bypass required reviews and status
-# checks. Never `git push origin main` with GITHUB_TOKEN (GH006).
+# If Version.props on the merge is still behind published -bN tags, package
+# last-release+1 (does not rewrite main).
 on:
   workflow_run:
     workflows:
@@ -41,8 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   actions: write
 
 jobs:
@@ -53,11 +33,10 @@ jobs:
       CI_RUN_ID: ${{ github.event.workflow_run.id || '' }}
       PACKAGE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - name: Checkout main
+      - name: Checkout the merge being packaged
         uses: actions/checkout@v4
         with:
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Skip bot re-entry
         id: guard
@@ -66,7 +45,6 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${TRIGGER_SHA}" ]]; then
-            git fetch --depth=1 origin "${TRIGGER_SHA}"
             MSG=$(git log -1 --pretty=%s "${TRIGGER_SHA}")
           else
             MSG=$(git log -1 --pretty=%s)
@@ -78,28 +56,15 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Increment ApplicationVersion
+      - name: Resolve ApplicationVersion
         if: ${{ steps.guard.outputs.skip != 'true' }}
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          CURRENT=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
-          if [[ -z "${CURRENT}" ]]; then
-            echo "::error::Could not read ApplicationVersion from Version.props"
-            exit 1
-          fi
-
-          PENDING=$(gh pr list --base main --state open --json title --jq '
-            [
-              .[].title
-              | select(test("ci: auto-increment ApplicationVersion to [0-9]+$"))
-              | capture("to (?<n>[0-9]+)$")
-              | .n
-              | tonumber
-            ] | max // 0
-          ')
+          chmod +x scripts/sync-application-version.sh
+          COMMIT_V=$(sed -n 's/.*<ApplicationVersion>\([0-9][0-9]*\)<\/ApplicationVersion>.*/\1/p' Version.props | head -n 1)
           RELEASED=$(gh release list --limit 50 --json tagName --jq '
             [
               .[].tagName
@@ -108,106 +73,15 @@ jobs:
               | tonumber
             ] | max // 0
           ')
-          BRANCH_MAX=$(git ls-remote --heads origin 'refs/heads/ci/increment-application-version-*' \
-            | sed -n 's|.*/ci/increment-application-version-\([0-9][0-9]*\).*|\1|p' \
-            | sort -n | tail -1)
-          BRANCH_MAX="${BRANCH_MAX:-0}"
-          BASE="${CURRENT}"
-          for n in "${PENDING}" "${RELEASED}" "${BRANCH_MAX}"; do
-            if [[ -n "${n}" && "${n}" -gt "${BASE}" ]]; then
-              BASE="${n}"
-            fi
-          done
-          NEW_VERSION=$((BASE + 1))
-          sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
-          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Allocated ApplicationVersion ${CURRENT} (pending PR max ${PENDING}, released max ${RELEASED}, leftover branch max ${BRANCH_MAX}) → ${NEW_VERSION}"
-
-      - name: Commit, open PR, and squash-merge
-        if: ${{ steps.guard.outputs.skip != 'true' }}
-        id: land
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_BUMP_TOKEN: ${{ secrets.VERSION_BUMP_TOKEN }}
-          NEW_VERSION: ${{ steps.version.outputs.new_version }}
-        run: |
-          set -euo pipefail
-
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-
-          # Suffix with run id so a leftover ci/increment-application-version-N
-          # ref cannot make --force-with-lease report "stale info" on a fresh
-          # main checkout (that is why #68 never got a release).
-          BRANCH="ci/increment-application-version-${NEW_VERSION}-${GITHUB_RUN_ID}"
-          TITLE="ci: auto-increment ApplicationVersion to ${NEW_VERSION}"
-          BODY="Automated ApplicationVersion bump after CI succeeded on main.
-
-          This reserves build ${NEW_VERSION} for the package of that CI run. Increment squash-merges this PR without waiting for CI Complete (bump PRs skip the product matrix). GITHUB_TOKEN merges do not re-trigger workflows, so this does not loop CI/CD.
-
-          main is protected (GH006): this branch is opened as a PR rather than \`git push origin main\` with GITHUB_TOKEN."
-
-          git checkout -B "$BRANCH"
-          git add Version.props
-          git commit -m "$TITLE"
-          # GITHUB_TOKEN push: does not re-trigger workflows. Never push this
-          # token to protected main (GH006: changes must be made through a PR).
-          # Do not --force-with-lease: this checkout has no remote-tracking ref
-          # for the bump branch, so a leftover name is rejected as stale info
-          # and CD never runs.
-          git push origin "HEAD:${BRANCH}"
-
-          PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
-          if [[ -z "${PR_NUMBER}" ]]; then
-            if ! PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"); then
-              echo "::error::Could not create the version-bump PR. Enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests', then re-run this workflow."
-              exit 1
-            fi
-            echo "::notice::Opened ${PR_URL}"
-            PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          RELEASED="${RELEASED:-0}"
+          if [[ "${COMMIT_V}" -gt "${RELEASED}" ]]; then
+            USE="${COMMIT_V}"
           else
-            echo "::notice::Reusing existing PR #${PR_NUMBER}"
+            USE=$((RELEASED + 1))
+            echo "::warning::Version.props on this commit is ${COMMIT_V}, latest release is b${RELEASED}. Packaging ${USE}."
           fi
-          if [[ -z "${PR_NUMBER}" ]]; then
-            echo "::error::Version-bump PR was not found after create."
-            exit 1
-          fi
-
-          # Squash keeps the ci: auto-increment* subject so the skip guard still matches.
-          # Do not --auto (waits for CI Complete; repo allow_auto_merge is false).
-          # Do not wait for checks: merge immediately or fail with settings help.
-          merge_pr() {
-            local token="$1"
-            shift
-            GH_TOKEN="${token}" gh pr merge "${PR_NUMBER}" --squash --delete-branch --subject "${TITLE}" "$@"
-          }
-
-          MERGED=0
-          if [[ -n "${VERSION_BUMP_TOKEN}" ]]; then
-            echo "::notice::Merging PR #${PR_NUMBER} with VERSION_BUMP_TOKEN (no wait for CI; --admin bypasses required reviews and status checks)."
-            if merge_pr "${VERSION_BUMP_TOKEN}" --admin; then
-              MERGED=1
-            elif merge_pr "${VERSION_BUMP_TOKEN}"; then
-              MERGED=1
-            fi
-          fi
-
-          if [[ "${MERGED}" -eq 0 ]]; then
-            echo "::notice::Merging PR #${PR_NUMBER} with GITHUB_TOKEN (no wait for CI). Succeeds only if github-actions[bot] can bypass required reviews and status checks on main."
-            if merge_pr "${GH_TOKEN}"; then
-              MERGED=1
-            elif merge_pr "${GH_TOKEN}" --admin; then
-              MERGED=1
-            fi
-          fi
-
-          if [[ "${MERGED}" -eq 1 ]]; then
-            echo "merged=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::ApplicationVersion ${NEW_VERSION} is on main"
-          else
-            echo "merged=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Opened PR #${PR_NUMBER} but could not squash-merge it. CD will still package ApplicationVersion ${NEW_VERSION}. The job fails after CD so this is not silent."
-          fi
+          echo "new_version=${USE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Packaging ApplicationVersion ${USE} (commit ${COMMIT_V}, released max ${RELEASED})"
 
       - name: Dispatch CD for this unique version
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -226,14 +100,3 @@ jobs:
             -f application_version="${NEW_VERSION}" \
             -f package_sha="${PACKAGE_SHA}"
           echo "::notice::Dispatched CD for ApplicationVersion ${NEW_VERSION} (CI ${CI_RUN_ID}, sha ${PACKAGE_SHA})"
-
-      - name: Fail if the bump did not land on main
-        if: ${{ steps.guard.outputs.skip != 'true' && steps.land.outputs.merged != 'true' }}
-        env:
-          NEW_VERSION: ${{ steps.version.outputs.new_version }}
-        run: |
-          echo "::error::Could not squash-merge the ApplicationVersion ${NEW_VERSION} bump onto main."
-          echo "::error::Workflow YAML cannot override required reviews or required status checks on protected main."
-          echo "::error::Keep Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests' enabled (needed to open the bump PR)."
-          echo "::error::Then do ONE of: (1) on the main branch protection / ruleset, allow github-actions[bot] to bypass required pull requests, required reviews, and required status checks; or (2) add repo secret VERSION_BUMP_TOKEN (PAT or GitHub App installation token) for an actor that can bypass those rules. Re-run Increment Build Version. Do not git push to protected main with GITHUB_TOKEN (GH006)."
-          exit 1
