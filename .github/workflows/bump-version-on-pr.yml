@@ -1,0 +1,69 @@
+name: ApplicationVersion on PR
+
+# GitHub cannot run a git pre-commit on main. This is that hook: commit the
+# next ApplicationVersion onto the PR head so it merges with the product review.
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-application-version-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  bump:
+    name: Set ApplicationVersion on feature branch
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'github-actions[bot]' && !startsWith(github.head_ref, 'ci/increment-application-version-') && !startsWith(github.event.pull_request.title, 'ci: auto-increment') && !startsWith(github.event.pull_request.title, 'ci: bump') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip markdown-only PRs
+        id: skip
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          mapfile -t files < <(git diff --name-only origin/main...HEAD)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          skip=true
+          for f in "${files[@]}"; do
+            case "$f" in
+              *.md|Version.props) ;;
+              *) skip=false ;;
+            esac
+          done
+          echo "skip=${skip}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync ApplicationVersion
+        if: ${{ steps.skip.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/sync-application-version.sh
+          BEFORE=$(sed -n 's/.*<ApplicationVersion>\([0-9][0-9]*\)<\/ApplicationVersion>.*/\1/p' Version.props | head -n 1)
+          NEXT=$(./scripts/sync-application-version.sh --write)
+          if [[ "${BEFORE}" == "${NEXT}" ]]; then
+            echo "ApplicationVersion already ${NEXT}"
+            exit 0
+          fi
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Version.props
+          git commit -m "ci: set ApplicationVersion to ${NEXT} for merge to main"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+          echo "::notice::Feature branch ApplicationVersion ${BEFORE} → ${NEXT}"
