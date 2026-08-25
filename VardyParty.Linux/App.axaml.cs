@@ -123,9 +123,11 @@ public class App : Application
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
 
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
+            .ConfigurePrimaryHttpMessageHandler(() => Ipv4PreferringSocketsHttpHandler.Create());
         services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
+            .ConfigurePrimaryHttpMessageHandler(() => Ipv4PreferringSocketsHttpHandler.Create())
             .ConfigureHttpClient(client =>
             {
                 client.DefaultRequestHeaders.TryAddWithoutValidation(

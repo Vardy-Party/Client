@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
@@ -56,10 +55,8 @@ public static class MauiProgram
     // Set by Android startup to indicate whether a usable WebView implementation is present
     public static bool IsWebViewAvailable { get; set; } = false;
 
-    private static HttpClientHandler CreateHeadlessHttpClientHandler(APISettings apiSettings)
+    private static HttpMessageHandler CreateHeadlessHttpClientHandler(APISettings apiSettings)
     {
-        var handler = new HttpClientHandler();
-
 #if !DEBUG
         if (apiSettings.IgnoreSslCertificateErrors)
         {
@@ -68,32 +65,10 @@ public static class MauiProgram
         }
 #endif
 
-        if (!apiSettings.IgnoreSslCertificateErrors)
-        {
-            return handler;
-        }
-
-        if (!Uri.TryCreate(apiSettings.HeadlessBaseUrl, UriKind.Absolute, out var headlessUri) ||
-            string.IsNullOrWhiteSpace(headlessUri.Host))
-        {
-            return handler;
-        }
-
-        var allowedHost = headlessUri.Host;
-
-        handler.ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
-        {
-            if (errors == SslPolicyErrors.None)
-            {
-                return true;
-            }
-
-            var host = request?.RequestUri?.Host;
-            return !string.IsNullOrWhiteSpace(host) &&
-                   string.Equals(host, allowedHost, StringComparison.OrdinalIgnoreCase);
-        };
-
-        return handler;
+        // SocketsHttpHandler with IPv4-first connect. HttpClientHandler on Android is
+        // OkHttp, which can hang on Cloudflare AAAA when device IPv6 is broken
+        // (Nokia C12: GET /new never reached the worker; Bravia TV was fine).
+        return Ipv4PreferringSocketsHttpHandler.Create(apiSettings.IgnoreSslCertificateErrors);
     }
 
     public static MauiApp CreateMauiApp()

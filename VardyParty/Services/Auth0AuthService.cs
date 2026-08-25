@@ -1,12 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text.Json.Serialization;
 using Auth0.OidcClient;
 using Duende.IdentityModel.OidcClient;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
+using VardyParty.Hosting;
 using VardyParty.Providers;
 
 namespace VardyParty.Services;
@@ -469,61 +469,13 @@ public class Auth0AuthService(
             Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope)
         };
 
-        // Use a SocketsHttpHandler with an IPv4-preferring ConnectCallback.
-        // On some Android devices, DNS returns AAAA (IPv6) records first but
-        // IPv6 routing is broken, causing both AndroidMessageHandler (platform
-        // OkHttp) and the default SocketsHttpHandler to time out or get
-        // "Socket closed".  Explicitly resolving DNS and connecting via IPv4
-        // bypasses the broken IPv6 path.
-        options.BackchannelHandler = CreateFallbackHandler();
+        // Same IPv4-first sockets handler as catalog HTTP. On some Android
+        // devices DNS returns AAAA first but IPv6 routing is broken, so OkHttp
+        // and default SocketsHttpHandler hang or get "Socket closed".
+        options.BackchannelHandler = Ipv4PreferringSocketsHttpHandler.Create();
 
         var client = new Auth0Client(options);
         return client;
-    }
-
-    /// <summary>
-    ///     Creates a <see cref="SocketsHttpHandler" /> that tries each DNS address
-    ///     in order (typically IPv6 first) with a short per-address timeout,
-    ///     falling back to the next address when a connection fails.
-    /// </summary>
-    private static SocketsHttpHandler CreateFallbackHandler()
-    {
-        return new SocketsHttpHandler
-        {
-            ConnectTimeout = TimeSpan.FromSeconds(15),
-            ConnectCallback = async (context, cancellationToken) =>
-            {
-                var entry = await Dns.GetHostEntryAsync(context.DnsEndPoint.Host, cancellationToken);
-
-                if (entry.AddressList.Length == 0)
-                    throw new SocketException((int)SocketError.HostNotFound);
-
-                // Try each address in DNS order; if the first (often IPv6)
-                // fails within 5s, fall through to the next (often IPv4).
-                Exception? last = null;
-                foreach (var address in entry.AddressList)
-                {
-                    var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                    socket.NoDelay = true;
-                    try
-                    {
-                        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        cts.CancelAfter(TimeSpan.FromSeconds(5));
-                        await socket.ConnectAsync(
-                            new IPEndPoint(address, context.DnsEndPoint.Port),
-                            cts.Token);
-                        return new NetworkStream(socket, true);
-                    }
-                    catch (Exception ex)
-                    {
-                        socket.Dispose();
-                        last = ex;
-                    }
-                }
-
-                throw last ?? new SocketException((int)SocketError.HostUnreachable);
-            }
-        };
     }
 
     private static OAuthErrorResponse? TryReadOAuthError(string body)
