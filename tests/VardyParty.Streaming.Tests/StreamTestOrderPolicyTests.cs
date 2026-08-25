@@ -17,7 +17,7 @@ public class StreamTestOrderPolicyTests
         // Arrange
         var recommendations = new RecommendationResponse
         {
-            Confidence = "low",
+            Confidence = RecommendationConfidence.Low,
             HasData = true,
             Recommended =
             [
@@ -36,7 +36,7 @@ public class StreamTestOrderPolicyTests
     public void ShouldPreferRecommendations_EmptyOrMissingList_IsFalse()
     {
         // Arrange
-        var empty = new RecommendationResponse { Confidence = "high", HasData = true };
+        var empty = new RecommendationResponse { Confidence = RecommendationConfidence.High, HasData = true };
         RecommendationResponse? missing = null;
 
         // Act
@@ -60,7 +60,7 @@ public class StreamTestOrderPolicyTests
         };
         var recommendations = new RecommendationResponse
         {
-            Confidence = "low",
+            Confidence = RecommendationConfidence.Low,
             HasData = true,
             Recommended =
             [
@@ -91,7 +91,7 @@ public class StreamTestOrderPolicyTests
         };
         var recommendations = new RecommendationResponse
         {
-            Confidence = "medium",
+            Confidence = RecommendationConfidence.Medium,
             HasData = true,
             Recommended =
             [
@@ -143,7 +143,7 @@ public class StreamTestOrderPolicyTests
         };
         var recommendations = new RecommendationResponse
         {
-            Confidence = "high",
+            Confidence = RecommendationConfidence.High,
             HasData = true,
             Recommended =
             [
@@ -166,10 +166,10 @@ public class StreamTestOrderPolicyTests
     public void RankConfidence_OrdersHighAboveMediumAboveLow()
     {
         // Arrange
-        const string high = "high";
-        const string medium = "MEDIUM";
-        const string low = "low";
-        const string? missing = null;
+        const RecommendationConfidence high = RecommendationConfidence.High;
+        const RecommendationConfidence medium = RecommendationConfidence.Medium;
+        const RecommendationConfidence low = RecommendationConfidence.Low;
+        const RecommendationConfidence missing = RecommendationConfidence.None;
 
         // Act
         var highRank = StreamTestOrderPolicy.RankConfidence(high);
@@ -195,19 +195,19 @@ public class StreamTestOrderPolicyTests
         };
         var recommendations = new RecommendationResponse
         {
-            Confidence = "high",
+            Confidence = RecommendationConfidence.High,
             HasData = true,
             Recommended =
             [
                 new RecommendationItem
                 {
                     Url = "https://streams.example.com/stale-strong",
-                    Confidence = "low"
+                    Confidence = RecommendationConfidence.Low
                 },
                 new RecommendationItem
                 {
                     Url = "https://streams.example.com/live-recent",
-                    Confidence = "high"
+                    Confidence = RecommendationConfidence.High
                 }
             ]
         };

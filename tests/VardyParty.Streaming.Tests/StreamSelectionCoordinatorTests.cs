@@ -66,7 +66,7 @@ public class StreamSelectionCoordinatorTests
                 await Task.Delay(40);
                 return new RecommendationResponse
                 {
-                    Confidence = "low",
+                    Confidence = RecommendationConfidence.Low,
                     HasData = false
                 };
             });
@@ -106,7 +106,7 @@ public class StreamSelectionCoordinatorTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new RecommendationResponse
             {
-                Confidence = "low",
+                Confidence = RecommendationConfidence.Low,
                 HasData = true,
                 Recommended =
                 [
@@ -146,7 +146,7 @@ public class StreamSelectionCoordinatorTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new RecommendationResponse
             {
-                Confidence = "medium",
+                Confidence = RecommendationConfidence.Medium,
                 HasData = true,
                 Recommended =
                 [

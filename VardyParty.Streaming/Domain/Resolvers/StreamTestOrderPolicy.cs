@@ -14,12 +14,12 @@ public static class StreamTestOrderPolicy
     public static bool ShouldPreferRecommendations(RecommendationResponse? recommendations) =>
         recommendations?.Recommended is { Count: > 0 };
 
-    public static int RankConfidence(string? confidence) =>
-        confidence?.Trim().ToLowerInvariant() switch
+    public static int RankConfidence(RecommendationConfidence confidence) =>
+        confidence switch
         {
-            "high" => 3,
-            "medium" => 2,
-            "low" => 1,
+            RecommendationConfidence.High => 3,
+            RecommendationConfidence.Medium => 2,
+            RecommendationConfidence.Low => 1,
             _ => 0
         };
 
