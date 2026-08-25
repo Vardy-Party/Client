@@ -10,6 +10,8 @@ REM Do not pass a single -r. That produces an arm64-only APK that will not
 REM install on armeabi-v7a TVs (INSTALL_FAILED_NO_MATCHING_ABIS).
 REM After the MAUI restore, re-restore Hosting/Presentation as net10.0
 REM (NETSDK1005) and build with --no-restore.
+REM Quote RuntimeIdentifiers: cmd treats unquoted ";" as a statement separator
+REM (MSB1006 Switch: android-arm64).
 
 if exist "VardyParty.Core\VardyParty.Core.csproj" (
   echo VardyParty.Core was removed. Delete the leftover project before packaging:
@@ -46,11 +48,11 @@ if not "%~1"=="" (
 echo Device APK: armeabi-v7a (TV) + arm64-v8a (phones), AOT/trim off
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm;android-arm64
+dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers="android-arm;android-arm64"
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm;android-arm64 -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers="android-arm;android-arm64" -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :ShowApks
 exit /b %ERRORLEVEL%
