@@ -1,5 +1,6 @@
 using Auth0.OidcClient;
 using Duende.IdentityModel.OidcClient;
+using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Auth;
@@ -10,12 +11,16 @@ namespace VardyParty;
 
 public class Auth0AuthService : Auth0TokenSession
 {
+    private readonly IHttpMessageHandlerFactory _handlerFactory;
+
     public Auth0AuthService(
         ILogger<Auth0AuthService> logger,
         IOptions<Auth0Settings> auth0Settings,
-        IAuth0OAuthClient oauth)
+        IAuth0OAuthClient oauth,
+        IHttpMessageHandlerFactory handlerFactory)
         : base(logger, auth0Settings, oauth)
     {
+        _handlerFactory = handlerFactory;
     }
 
     public override async Task<AuthLoginResult> LoginInteractiveAsync(CancellationToken cancellationToken = default)
@@ -155,7 +160,8 @@ public class Auth0AuthService : Auth0TokenSession
             RedirectUri = settings.RedirectUri,
             PostLogoutRedirectUri = settings.PostLogoutRedirectUri,
             Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope),
-            BackchannelHandler = DualStackSocketsHttpHandler.Create()
+            BackchannelHandler = new NonDisposingDelegatingHandler(
+                _handlerFactory.CreateHandler(Auth0HttpClients.Name))
         };
 
         return new Auth0Client(options);

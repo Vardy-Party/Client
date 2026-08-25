@@ -4,11 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using VardyParty.Hosting;
 using VardyParty.Models;
 using VardyParty.Playback;
 using VardyParty.Ports;
@@ -19,6 +19,7 @@ namespace VardyParty.Linux.Services
     {
         private readonly ILogger<LinuxVideoPlayerService> _logger;
         private readonly IStreamSwitchingService _switching;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly PlaybackSessionController _session = new();
         private readonly DelegatingMediaEngine _engine = new();
         private LibVLC? _libVLC;
@@ -49,10 +50,14 @@ namespace VardyParty.Linux.Services
 
         public MediaPlayer? MediaPlayer => _mediaPlayer;
 
-        public LinuxVideoPlayerService(ILogger<LinuxVideoPlayerService> logger, IStreamSwitchingService switching)
+        public LinuxVideoPlayerService(
+            ILogger<LinuxVideoPlayerService> logger,
+            IStreamSwitchingService switching,
+            IHttpClientFactory httpClientFactory)
         {
             _logger = logger;
             _switching = switching;
+            _httpClientFactory = httpClientFactory;
             _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
             _engine.MetricsHandler = GetCurrentMetrics;
             _engine.AttachHandler = AttachLibVlcAsync;
@@ -419,27 +424,19 @@ namespace VardyParty.Linux.Services
 
             try
             {
-                using var handler = new HttpClientHandler
-                {
-                    AllowAutoRedirect = true
-                };
-                using var client = new HttpClient(handler)
-                {
-                    Timeout = TimeSpan.FromSeconds(12)
-                };
+                var client = _httpClientFactory.CreateClient(PlaybackHttpClients.Probe);
+                using var request = new HttpRequestMessage(HttpMethod.Get, requestedUri);
+                request.Headers.TryAddWithoutValidation(
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-                client.DefaultRequestHeaders.UserAgent.Clear();
-                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Mozilla", "5.0"));
-                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
-                if (!string.IsNullOrWhiteSpace(refererUrl))
+                if (!string.IsNullOrWhiteSpace(refererUrl) &&
+                    Uri.TryCreate(refererUrl, UriKind.Absolute, out var refererUri))
                 {
-                    client.DefaultRequestHeaders.Referrer = Uri.TryCreate(refererUrl, UriKind.Absolute, out var refererUri)
-                        ? refererUri
-                        : null;
+                    request.Headers.Referrer = refererUri;
                 }
 
-                using var response = await client.GetAsync(requestedUri, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
 
                 var finalUri = response.RequestMessage?.RequestUri ?? requestedUri;

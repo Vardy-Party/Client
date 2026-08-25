@@ -22,6 +22,10 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddHttpClient(Auth0HttpClients.Name)
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
 
+        services.AddHttpClient(PlaybackHttpClients.Probe)
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
+            .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
+
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()
