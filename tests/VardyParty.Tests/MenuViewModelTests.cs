@@ -4,6 +4,7 @@ using AutoFixture;
 using Moq;
 using VardyParty.Catalog;
 using VardyParty.Models;
+using VardyParty.Presentation;
 using Xunit;
 
 namespace VardyParty.Tests;

@@ -7,8 +7,8 @@ using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using Stream = VardyParty.Models.Stream;
+using VardyParty.Catalog;
 
 namespace VardyParty.Streaming;
 

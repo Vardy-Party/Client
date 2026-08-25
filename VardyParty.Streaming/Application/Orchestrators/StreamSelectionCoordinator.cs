@@ -1,8 +1,6 @@
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
-using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using StreamModel = VardyParty.Models.Stream;
 
 namespace VardyParty.Streaming;

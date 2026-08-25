@@ -11,6 +11,7 @@ using Moq;
 using VardyParty.Configuration;
 using VardyParty.Models;
 using Xunit;
+using VardyParty.Catalog;
 
 namespace VardyParty.Tests;
 

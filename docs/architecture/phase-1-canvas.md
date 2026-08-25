@@ -54,7 +54,7 @@ flowchart BT
 
 | Assembly | Domain | From today’s Core (and new types) |
 |---|---|---|
-| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`, `StreamCandidateRules`. No I/O, no DI graph, no playback ports. |
+| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`, `StreamCandidateRules`, `StreamHealth`, `StreamUrlNormalizer`. No I/O, no DI graph, no playback ports. |
 | **Ports** | Cross-slice contracts | `IPlaybackLauncher`, `IStreamSwitchingService` — so Streaming can start playback without referencing Playback |
 | **Auth** | Identity | `AuthTokenLifetime`, `Auth0TokenSession`, `IAuth0OAuthClient`, `IAuthLoginService`, `IAuthTokenProvider`, `Auth0ApiTokenHandler`. Hosts keep OS storage and interactive login. |
 | **Catalog** | What matches exist | `EnrichedGameService`, `HomePagePresentationService`, BBC parsers/services, `GameMatcher`, league filter/logos, display helpers, `ScoresTickerPolicy`, `TickerMarquee` |

@@ -6,6 +6,7 @@ using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using VardyParty.Auth;
 
 namespace VardyParty.Tests;
 

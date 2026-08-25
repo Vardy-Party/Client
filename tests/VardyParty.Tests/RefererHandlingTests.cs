@@ -12,10 +12,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using VardyParty.Configuration;
-using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests;
 

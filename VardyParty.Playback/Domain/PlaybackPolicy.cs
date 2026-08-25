@@ -1,4 +1,4 @@
-using VardyParty.Resolvers;
+using VardyParty.Models;
 
 namespace VardyParty.Playback;
 

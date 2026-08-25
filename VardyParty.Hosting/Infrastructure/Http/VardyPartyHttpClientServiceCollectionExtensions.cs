@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using VardyParty;
 using VardyParty.Auth;
-using VardyParty.Health;
+using VardyParty.Catalog;
+using VardyParty.Streaming;
 
 namespace VardyParty.Hosting;
 

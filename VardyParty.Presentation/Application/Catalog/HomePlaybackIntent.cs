@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Catalog;
+namespace VardyParty.Presentation;
 
 public enum ResumeAfterPlayerAction
 {

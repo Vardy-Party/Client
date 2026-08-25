@@ -7,8 +7,9 @@ using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
-using VardyParty.Health;
+using VardyParty.Models;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests;
 

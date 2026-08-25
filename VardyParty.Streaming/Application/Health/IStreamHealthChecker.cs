@@ -1,3 +1,5 @@
+using VardyParty.Models;
+
 namespace VardyParty.Streaming;
 
 public interface IStreamHealthChecker

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
+using VardyParty.Models;
 
 namespace VardyParty.Streaming;
 

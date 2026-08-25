@@ -3,6 +3,8 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty.Ports;
+using VardyParty.Streaming;
 
 namespace VardyParty.Platforms.Android
 {

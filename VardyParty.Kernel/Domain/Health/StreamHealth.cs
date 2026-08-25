@@ -1,4 +1,4 @@
-namespace VardyParty.Health;
+namespace VardyParty.Models;
 
 public class StreamHealth
 {

@@ -5,6 +5,7 @@ using AutoFixture;
 using VardyParty.Extensions;
 using VardyParty.Models;
 using Xunit;
+using VardyParty.Catalog;
 
 namespace VardyParty.Tests
 {

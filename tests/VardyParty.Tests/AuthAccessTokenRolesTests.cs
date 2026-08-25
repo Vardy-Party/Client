@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using AutoFixture;
 using Xunit;
+using VardyParty.Auth;
 
 namespace VardyParty.Tests;
 

@@ -1,5 +1,3 @@
-using VardyParty.Health;
-
 namespace VardyParty.Models;
 
 /// <summary>

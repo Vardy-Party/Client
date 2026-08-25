@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Maui.Storage;
+using VardyParty.Catalog;
 
 namespace VardyParty.MauiServices;
 

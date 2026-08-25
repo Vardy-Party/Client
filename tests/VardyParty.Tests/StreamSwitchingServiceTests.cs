@@ -4,6 +4,7 @@ using System.Linq;
 using AutoFixture;
 using VardyParty.Models;
 using Xunit;
+using VardyParty.Playback;
 
 namespace VardyParty.Tests
 {

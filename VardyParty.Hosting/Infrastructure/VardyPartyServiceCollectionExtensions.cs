@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
-using VardyParty.Health;
+using VardyParty.Catalog;
 using VardyParty.Models;
-using VardyParty.Resolvers;
+using VardyParty.Playback;
+using VardyParty.Ports;
+using VardyParty.Streaming;
 
 namespace VardyParty.Hosting;
 

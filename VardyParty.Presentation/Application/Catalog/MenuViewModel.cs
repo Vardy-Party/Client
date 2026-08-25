@@ -1,6 +1,7 @@
+using VardyParty.Catalog;
 using VardyParty.Models;
 
-namespace VardyParty.Catalog;
+namespace VardyParty.Presentation;
 
 /// <summary>
 /// Shared flyout/menu presentation. Blazor AppMenu binds to this; Linux can later.

@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
-using VardyParty.Health;
 using VardyParty.Models;
 using Stream = VardyParty.Models.Stream;
 

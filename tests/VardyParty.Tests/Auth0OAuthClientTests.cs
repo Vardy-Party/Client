@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using VardyParty.Configuration;
 using Xunit;
+using VardyParty.Auth;
 
 namespace VardyParty.Tests;
 

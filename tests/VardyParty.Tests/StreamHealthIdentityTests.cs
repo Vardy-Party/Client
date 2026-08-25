@@ -1,7 +1,7 @@
 using AutoFixture;
-using VardyParty.Health;
 using VardyParty.Models;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests;
 

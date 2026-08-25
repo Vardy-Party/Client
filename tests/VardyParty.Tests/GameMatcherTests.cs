@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
+using VardyParty.Catalog;
 using VardyParty.Models;
 using Xunit;
 

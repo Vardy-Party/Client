@@ -5,10 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
 using Moq;
-using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests;
 

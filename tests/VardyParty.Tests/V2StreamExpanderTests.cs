@@ -2,8 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests;
 

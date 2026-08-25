@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Catalog;
+namespace VardyParty.Presentation;
 
 /// <summary>
 /// Shared home-shell presentation model. Blazor (phase 1) and Avalonia bind to this;

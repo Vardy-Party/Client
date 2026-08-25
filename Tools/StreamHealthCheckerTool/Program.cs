@@ -2,9 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
-using VardyParty.Health;
 using VardyParty.Hosting;
-using VardyParty.Resolvers;
+using VardyParty.Models;
+using VardyParty.Streaming;
 
 namespace StreamHealthCheckerTool;
 

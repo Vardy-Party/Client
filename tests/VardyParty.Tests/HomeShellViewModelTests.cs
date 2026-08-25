@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using AutoFixture;
-using VardyParty.Catalog;
 using VardyParty.Models;
+using VardyParty.Presentation;
 using Xunit;
 
 namespace VardyParty.Tests;

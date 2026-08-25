@@ -4,10 +4,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using VardyParty;
+using VardyParty.Auth;
+using VardyParty.Catalog;
 using VardyParty.Components.Pages;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Hosting;
+using VardyParty.Playback;
 #if ANDROID
 using VardyParty.Platforms.Android;
 #endif

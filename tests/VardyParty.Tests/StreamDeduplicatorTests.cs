@@ -4,8 +4,8 @@ using System.Linq;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using VardyParty.Models;
-using VardyParty.Resolvers;
 using Xunit;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests
 {

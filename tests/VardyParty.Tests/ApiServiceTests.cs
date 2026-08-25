@@ -10,7 +10,7 @@ using System.Text.Json;
 using AutoFixture;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
-using VardyParty.Resolvers;
+using VardyParty.Streaming;
 
 namespace VardyParty.Tests
 {

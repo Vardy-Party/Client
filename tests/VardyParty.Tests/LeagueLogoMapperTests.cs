@@ -1,6 +1,7 @@
 using AutoFixture;
 using VardyParty.Models;
 using Xunit;
+using VardyParty.Catalog;
 
 namespace VardyParty.Tests
 {
