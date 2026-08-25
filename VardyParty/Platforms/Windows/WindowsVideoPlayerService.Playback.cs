@@ -149,84 +149,72 @@ namespace VardyParty.Platforms.Windows
 
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
             {
-                if (cmd.IsNoOp)
-                    return;
+                PlaybackCommandExecutor.Apply(cmd, new WindowsPlaybackCommandHost(this));
+            }
 
-                suppressIndexDrivenSwitch = true;
-                try
+            private sealed class WindowsPlaybackCommandHost(PlayerSession session) : IPlaybackCommandHost
+            {
+                public void BeginIndexSwitchSuppression() => session.suppressIndexDrivenSwitch = true;
+
+                public void EndIndexSwitchSuppression() => session.suppressIndexDrivenSwitch = false;
+
+                public void ClearCurrentResolvedUrl()
                 {
-                    if (cmd.ClearResolvedUrl)
-                    {
-                        var failed = switchingService?.GetCurrentStream();
-                        if (failed != null)
-                            failed.ResolvedM3U8Url = null;
-                    }
-
-                    if (cmd.RemoveCurrentFromPool)
-                        switchingService?.RemoveCurrentStream();
-
-                    SyncHealthyStreamCount();
-
-                    if (cmd.ReportFailed || cmd.ReportDeclined)
-                        ShowStreamError(cmd.Reason ?? "Playback error");
-
-                    if (cmd.RaiseBuffering)
-                        _host.BufferingStateChanged?.Invoke(_host, cmd.IsBuffering);
-
-                    if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
-                    {
-                        if (cmd.AttachIsRevert)
-                            _host._logger.LogWarning("Reverting to last good stream: {Url}", cmd.AttachUrl);
-                        _ = engine.AttachAsync(cmd.AttachUrl, _requestHeaders);
-                    }
-                    else if (cmd.AttachCurrentAfterRemove)
-                    {
-                        _ = AttachCurrentFromPoolAsync();
-                    }
-
-                    if (cmd.RetryFreshResolve)
-                        _ = RetryFreshResolveAsync();
-
-                    if (cmd.Stop)
-                    {
-                        try
-                        {
-                            mediaPlayer.Pause();
-                            mediaPlayer.Source = null;
-                        }
-                        catch (Exception ex)
-                        {
-                            _host._logger.LogWarning(ex, "Stop engine failed");
-                        }
-                    }
-
-                    if (cmd.CloseSession)
-                    {
-                        ClosePlayerSession(cmd.CloseReason ?? cmd.Reason ?? "Playback failed");
-                        return;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _host._logger.LogError(ex, "ApplyPlaybackCommand failed");
-                }
-                finally
-                {
-                    suppressIndexDrivenSwitch = false;
+                    var failed = session.switchingService?.GetCurrentStream();
+                    if (failed != null)
+                        failed.ResolvedM3U8Url = null;
                 }
 
-                if (cmd.SwitchPoolToNext)
+                public void RemoveCurrentFromPool() => session.switchingService?.RemoveCurrentStream();
+
+                public void SyncHealthyStreamCount() => session.SyncHealthyStreamCount();
+
+                public void ReportFailed(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+
+                public void ReportDeclined(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+
+                public void RaiseBuffering(bool isBuffering)
+                    => session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
+
+                public void Attach(string url, bool isRevert)
                 {
-                    if (_onNextStreamRequested != null && !isNextStreamRequestInProgress)
+                    if (isRevert)
+                        session._host._logger.LogWarning("Reverting to last good stream: {Url}", url);
+                    _ = session.engine.AttachAsync(url, session._requestHeaders);
+                }
+
+                public void AttachCurrentAfterRemove() => _ = session.AttachCurrentFromPoolAsync();
+
+                public void RetryFreshResolve() => _ = session.RetryFreshResolveAsync();
+
+                public void StopEngine()
+                {
+                    try
                     {
-                        isNextStreamRequestInProgress = true;
-                        _ = InvokeNextStreamAsync();
+                        session.mediaPlayer.Pause();
+                        session.mediaPlayer.Source = null;
+                    }
+                    catch (Exception ex)
+                    {
+                        session._host._logger.LogWarning(ex, "Stop engine failed");
                     }
                 }
-                else if (cmd.SwitchPoolToPrevious)
+
+                public void CloseSession(string reason) => session.ClosePlayerSession(reason);
+
+                public void SwitchPoolToNext()
                 {
-                    switchingService?.SwitchToPreviousStream();
+                    if (session._onNextStreamRequested != null && !session.isNextStreamRequestInProgress)
+                    {
+                        session.isNextStreamRequestInProgress = true;
+                        _ = session.InvokeNextStreamAsync();
+                    }
                 }
+
+                public void SwitchPoolToPrevious() => session.switchingService?.SwitchToPreviousStream();
+
+                public void NotifyApplyFailed(Exception exception)
+                    => session._host._logger.LogError(exception, "ApplyPlaybackCommand failed");
             }
 
             private async Task InvokeNextStreamAsync()

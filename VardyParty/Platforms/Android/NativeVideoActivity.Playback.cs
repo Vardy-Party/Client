@@ -40,99 +40,70 @@ namespace VardyParty.Platforms.Android
 
         private void ApplyPlaybackCommand(PlaybackCommand cmd)
         {
-            if (cmd.IsNoOp)
+            PlaybackCommandExecutor.Apply(cmd, new NativePlaybackCommandHost(this));
+        }
+
+        private sealed class NativePlaybackCommandHost(NativeVideoActivity activity) : IPlaybackCommandHost
+        {
+            public void BeginIndexSwitchSuppression() => activity._suppressIndexDrivenSwitch = true;
+
+            public void EndIndexSwitchSuppression() => activity._suppressIndexDrivenSwitch = false;
+
+            public void ClearCurrentResolvedUrl()
             {
-                return;
+                var failed = activity._switching?.GetCurrentStream();
+                if (failed != null)
+                {
+                    failed.ResolvedM3U8Url = null;
+                }
             }
 
-            _suppressIndexDrivenSwitch = true;
-            try
+            public void RemoveCurrentFromPool() => activity._switching?.RemoveCurrentStream();
+
+            public void SyncHealthyStreamCount() => activity.SyncHealthyStreamCount();
+
+            public void ReportFailed(string? reason) => activity.PostHealthError(reason);
+
+            public void ReportDeclined(string? reason) => activity.PostHealthError(reason);
+
+            public void RaiseBuffering(bool isBuffering)
             {
-                if (cmd.ClearResolvedUrl)
+                AndroidVideoPlayerService.ReportBufferingState(isBuffering);
+                if (isBuffering)
                 {
-                    var failed = _switching?.GetCurrentStream();
-                    if (failed != null)
-                    {
-                        failed.ResolvedM3U8Url = null;
-                    }
-                }
-
-                if (cmd.RemoveCurrentFromPool)
-                {
-                    _switching?.RemoveCurrentStream();
-                }
-
-                SyncHealthyStreamCount();
-
-                if (cmd.ReportFailed)
-                {
-                    PostHealthError(cmd.Reason);
-                }
-
-                if (cmd.ReportDeclined)
-                {
-                    PostHealthError(cmd.Reason ?? "Health declined");
-                }
-
-                if (cmd.RaiseBuffering)
-                {
-                    AndroidVideoPlayerService.ReportBufferingState(cmd.IsBuffering);
-                    if (cmd.IsBuffering)
-                    {
-                        PostHealthBuffering();
-                    }
-                }
-
-                if (cmd.AttachIsRevert && !string.IsNullOrWhiteSpace(cmd.AttachUrl))
-                {
-                    _logger?.LogWarning("[NativeVideoActivity] Reverting to last good stream: {Url}", cmd.AttachUrl);
-                    _ = _engine.AttachAsync(cmd.AttachUrl);
-                }
-                else if (!cmd.AttachIsRevert && !string.IsNullOrWhiteSpace(cmd.AttachUrl))
-                {
-                    _ = _engine.AttachAsync(cmd.AttachUrl);
-                }
-                else if (cmd.AttachCurrentAfterRemove)
-                {
-                    _ = AttachCurrentFromPoolAsync();
-                }
-
-                if (cmd.RetryFreshResolve)
-                {
-                    _ = RetryFreshResolveAsync();
-                }
-
-                if (cmd.Stop)
-                {
-                    StopAndReleasePlayer(release: false);
-                }
-
-                if (cmd.CloseSession)
-                {
-                    var reason = cmd.CloseReason ?? "Playback failed";
-                    _logger?.LogWarning("[NativeVideoActivity] Closing playback session: {Reason}", reason);
-                    ReportPlaybackClosed(reason);
-                    Finish();
-                    return;
+                    activity.PostHealthBuffering();
                 }
             }
-            catch (Exception ex)
+
+            public void Attach(string url, bool isRevert)
             {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] ApplyPlaybackCommand failed");
-            }
-            finally
-            {
-                _suppressIndexDrivenSwitch = false;
+                if (isRevert)
+                {
+                    activity._logger?.LogWarning("[NativeVideoActivity] Reverting to last good stream: {Url}", url);
+                }
+
+                _ = activity._engine.AttachAsync(url);
             }
 
-            if (cmd.SwitchPoolToNext)
+            public void AttachCurrentAfterRemove() => _ = activity.AttachCurrentFromPoolAsync();
+
+            public void RetryFreshResolve() => _ = activity.RetryFreshResolveAsync();
+
+            public void StopEngine() => activity.StopAndReleasePlayer(release: false);
+
+            public void CloseSession(string reason)
             {
-                _ = AndroidVideoPlayerService.RequestNextStream();
+                activity._logger?.LogWarning("[NativeVideoActivity] Closing playback session: {Reason}", reason);
+                activity.ReportPlaybackClosed(reason);
+                activity.Finish();
             }
-            else if (cmd.SwitchPoolToPrevious)
-            {
-                _switching?.SwitchToPreviousStream();
-            }
+
+            public void SwitchPoolToNext() => _ = AndroidVideoPlayerService.RequestNextStream();
+
+            public void SwitchPoolToPrevious() => activity._switching?.SwitchToPreviousStream();
+
+            public void NotifyApplyFailed(Exception exception)
+                => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
         private async Task AttachCurrentFromPoolAsync()

@@ -75,6 +75,33 @@ public class Auth0OAuthClientTests
         Assert.Equal("authorization_pending", result.Error);
     }
 
+    [Fact]
+    public async Task ExchangeAuthorizationCodeAsync_PostsPkceVerifier()
+    {
+        // Arrange
+        var settings = CreateNorthgateSettings();
+        var body = """{"access_token":"oak-lane-access","refresh_token":"oak-lane-refresh","expires_in":3600}""";
+        var inner = new JsonHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(inner);
+        var factory = _fixture.GetMock<IHttpClientFactory>();
+        factory.Setup(clientFactory => clientFactory.CreateClient(Auth0HttpClients.Name)).Returns(http);
+        var sut = new Auth0OAuthClient(factory.Object, NullLogger<Auth0OAuthClient>.Instance);
+
+        // Act
+        var result = await sut.ExchangeAuthorizationCodeAsync(
+            settings,
+            "oak-code",
+            "http://127.0.0.1:4280/callback",
+            "oak-verifier",
+            CancellationToken.None);
+
+        // Assert
+        Assert.True(result.IsSuccess);
+        Assert.Equal("oak-lane-access", result.AccessToken);
+        Assert.Equal("oak-lane-refresh", result.RefreshToken);
+        Assert.Contains("/oauth/token", inner.LastRequestUri?.AbsolutePath, StringComparison.Ordinal);
+    }
+
     private Auth0Settings CreateNorthgateSettings()
         => _fixture.Build<Auth0Settings>()
             .With(settings => settings.Domain, "id.northgate.test")

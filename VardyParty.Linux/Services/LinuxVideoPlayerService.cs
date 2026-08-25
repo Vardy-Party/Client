@@ -12,6 +12,7 @@ using VardyParty.Hosting;
 using VardyParty.Models;
 using VardyParty.Playback;
 using VardyParty.Ports;
+using VardyParty.Streaming;
 
 namespace VardyParty.Linux.Services
 {
@@ -20,6 +21,7 @@ namespace VardyParty.Linux.Services
         private readonly ILogger<LinuxVideoPlayerService> _logger;
         private readonly IStreamSwitchingService _switching;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IApiService _api;
         private readonly PlaybackSessionController _session = new();
         private readonly DelegatingMediaEngine _engine = new();
         private LibVLC? _libVLC;
@@ -53,11 +55,13 @@ namespace VardyParty.Linux.Services
         public LinuxVideoPlayerService(
             ILogger<LinuxVideoPlayerService> logger,
             IStreamSwitchingService switching,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            IApiService api)
         {
             _logger = logger;
             _switching = switching;
             _httpClientFactory = httpClientFactory;
+            _api = api;
             _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
             _engine.MetricsHandler = GetCurrentMetrics;
             _engine.AttachHandler = AttachLibVlcAsync;
@@ -170,51 +174,133 @@ namespace VardyParty.Linux.Services
 
         private void ApplyPlaybackCommand(PlaybackCommand cmd)
         {
-            if (cmd.IsNoOp)
-                return;
+            PlaybackCommandExecutor.Apply(cmd, new LinuxPlaybackCommandHost(this));
+        }
 
+        private sealed class LinuxPlaybackCommandHost(LinuxVideoPlayerService player) : IPlaybackCommandHost
+        {
+            public void BeginIndexSwitchSuppression()
+            {
+            }
+
+            public void EndIndexSwitchSuppression()
+            {
+            }
+
+            public void ClearCurrentResolvedUrl()
+            {
+                var failed = player._switching.GetCurrentStream();
+                if (failed != null)
+                    failed.ResolvedM3U8Url = null;
+            }
+
+            public void RemoveCurrentFromPool() => player._switching.RemoveCurrentStream();
+
+            public void SyncHealthyStreamCount()
+                => player._session.SetHealthyStreamCount(player._switching.GetHealthyStreams().Count);
+
+            public void ReportFailed(string? reason)
+                => player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
+
+            public void ReportDeclined(string? reason)
+                => player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
+
+            public void RaiseBuffering(bool isBuffering)
+                => player.BufferingStateChanged?.Invoke(player, isBuffering);
+
+            public void Attach(string url, bool isRevert)
+            {
+                if (isRevert)
+                    player._logger.LogWarning("[LinuxVideoPlayerService] Reverting to last good stream: {Url}", url);
+                _ = player._engine.AttachAsync(url, player._requestHeaders);
+            }
+
+            public void AttachCurrentAfterRemove() => _ = player.AttachCurrentFromPoolAsync();
+
+            public void RetryFreshResolve() => _ = player.RetryFreshResolveAsync();
+
+            public void StopEngine() => player._mediaPlayer?.Stop();
+
+            public void CloseSession(string reason)
+            {
+                player.PlaybackVisibilityChanged?.Invoke(player, false);
+                player._playbackTcs?.TrySetResult(PlaybackResult.Completed(reason, true));
+            }
+
+            public void SwitchPoolToNext()
+            {
+                if (player._onNextStreamRequested != null)
+                    _ = player._onNextStreamRequested();
+            }
+
+            public void SwitchPoolToPrevious() => player._switching.SwitchToPreviousStream();
+
+            public void NotifyApplyFailed(Exception exception)
+                => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
+        }
+
+        private async Task AttachCurrentFromPoolAsync()
+        {
             try
             {
-                if (cmd.ClearResolvedUrl)
+                var current = _switching.GetCurrentStream();
+                if (current == null)
+                    return;
+
+                var url = current.ResolvedM3U8Url;
+                if (string.IsNullOrWhiteSpace(url) && current.Stream != null)
                 {
-                    var failed = _switching.GetCurrentStream();
-                    if (failed != null)
-                        failed.ResolvedM3U8Url = null;
-                }
-
-                if (cmd.RemoveCurrentFromPool)
-                    _switching.RemoveCurrentStream();
-
-                _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
-
-                if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
-                    _ = _engine.AttachAsync(cmd.AttachUrl, _requestHeaders);
-                else if (cmd.AttachCurrentAfterRemove)
-                {
-                    var url = _switching.GetCurrentStream()?.ResolvedM3U8Url;
+                    url = await ResolveFreshM3U8Async(current);
                     if (!string.IsNullOrWhiteSpace(url))
-                        AttachViaSession(url, usedCachedUrl: false, force: true);
+                        current.ResolvedM3U8Url = url;
                 }
 
-                if (cmd.Stop)
-                    _mediaPlayer?.Stop();
-
-                if (cmd.CloseSession)
+                if (string.IsNullOrWhiteSpace(url))
                 {
-                    PlaybackVisibilityChanged?.Invoke(this, false);
-                    _playbackTcs?.TrySetResult(PlaybackResult.Completed(cmd.CloseReason ?? cmd.Reason ?? "Playback failed", true));
+                    _logger.LogWarning("[LinuxVideoPlayerService] No URL after remove — cannot attach next stream");
                     return;
                 }
+
+                AttachViaSession(url, usedCachedUrl: false, force: true);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
+                _logger.LogWarning(ex, "[LinuxVideoPlayerService] AttachCurrentFromPoolAsync failed");
             }
+        }
 
-            if (cmd.SwitchPoolToNext && _onNextStreamRequested != null)
-                _ = _onNextStreamRequested();
-            else if (cmd.SwitchPoolToPrevious)
-                _switching.SwitchToPreviousStream();
+        private async Task RetryFreshResolveAsync()
+        {
+            try
+            {
+                var current = _switching.GetCurrentStream();
+                var fresh = current != null ? await ResolveFreshM3U8Async(current) : null;
+                if (string.IsNullOrWhiteSpace(fresh) ||
+                    !PlaybackPolicy.ShouldAcceptFreshM3U8(_session.Snapshot.CurrentUrl, fresh))
+                {
+                    ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.NotifyFreshResolveUnavailable()));
+                    return;
+                }
+
+                if (current != null)
+                    current.ResolvedM3U8Url = fresh;
+
+                AttachViaSession(fresh, usedCachedUrl: false, force: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[LinuxVideoPlayerService] RetryFreshResolveAsync failed");
+                ApplyPlaybackCommand(PlaybackCommand.FromEffects(
+                    _session.NotifyFreshResolveUnavailable(ex.Message)));
+            }
+        }
+
+        private async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
+        {
+            if (current.Stream == null)
+                return null;
+
+            return await _api.ResolveM3U8ForPlaybackAsync(current.Stream, current.Referer ?? string.Empty);
         }
 
         private Task AttachLibVlcAsync(
