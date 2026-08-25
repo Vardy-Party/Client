@@ -1,6 +1,6 @@
 # Phase 2 (separate) — Blazor WebView → MAUI XAML
 
-**This is not part of phase 1.** Do not start it until shared view-models exist and domain assemblies are in place. Phase 1 canvas/plan: [phase-1-canvas.md](phase-1-canvas.md), [phase-1-plan.md](phase-1-plan.md).
+**This is not part of phase 1.** Do not start it until [phase-2-plan.md](phase-2-plan.md) slice 1 (Home.razor → VMs) is done. Canvas only: shared VMs exist; `Home.razor` still owns too much of the shell.
 
 On the table for **Android performance** of the **home shell**. Player chrome and scores ticker are already native.
 

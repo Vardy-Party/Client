@@ -1,6 +1,6 @@
 # Phase 1 plan — domain assemblies, shared VMs, tests
 
-Keep Android and Windows working. Do not replace Blazor WebView here ([phase 2](phase-2-webview-xaml.md)).
+Keep Android and Windows working. Do not replace Blazor WebView here. Remaining Home.razor / auth-host / PlaybackCommand / XAML work: [phase-2-plan.md](phase-2-plan.md).
 
 **Test rules (locked)** for every new `[Fact]` / `[Theory]`: `// Arrange` / `// Act` / `// Assert`; AutoFixture specimens; `_fixture.GetMock<T>()` never `new Mock<T>()`; fictional names only; test projects do **not** enable ImplicitUsings; no Python.
 
@@ -74,7 +74,7 @@ Graph is acyclic:
 - **Hosting** → Auth + Catalog + Streaming + Playback + Ports + Presentation
 - **`VardyParty.Core` removed**
 
-Still later: split `VardyParty.Tests` into per-domain test projects plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`).
+Per-domain tests plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`) — done. See `tests/VardyParty.*.Tests`.
 
 **Auth move:** device-code + refresh HTTP into an Auth token client; MAUI/Linux keep storage + interactive/PKCE. Characterization tests before moving storage (`offline_access`, sliding refresh, `invalid_grant`).
 
@@ -109,4 +109,4 @@ Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). De
 5. Kernel + Playback projects — done  
 6. Catalog + Streaming (`IGamesCatalogApi` / `IApiService`) — done  
 7. Auth + Presentation projects; delete Core — done  
-8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up
+8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up — **not in this PR**; [phase-2-plan.md](phase-2-plan.md) slice 3

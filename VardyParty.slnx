@@ -17,6 +17,7 @@
     <File Path="docs/architecture/README.md" />
     <File Path="docs/architecture/phase-1-canvas.md" />
     <File Path="docs/architecture/phase-1-plan.md" />
+    <File Path="docs/architecture/phase-2-plan.md" />
     <File Path="docs/architecture/phase-2-webview-xaml.md" />
     <File Path="docs/LINUX_IMPLEMENTATION_SUMMARY.md" />
     <File Path="docs/LINUX_SUPPORT.md" />
@@ -44,7 +45,14 @@
     <File Path="package-windows.cmd" />
     <File Path="scripts/launch-linux-app.cmd" />
   </Folder>
-  <Project Path="tests/VardyParty.Tests/VardyParty.Tests.csproj" />
+  <Project Path="tests/VardyParty.TestSupport/VardyParty.TestSupport.csproj" />
+  <Project Path="tests/VardyParty.Kernel.Tests/VardyParty.Kernel.Tests.csproj" />
+  <Project Path="tests/VardyParty.Auth.Tests/VardyParty.Auth.Tests.csproj" />
+  <Project Path="tests/VardyParty.Catalog.Tests/VardyParty.Catalog.Tests.csproj" />
+  <Project Path="tests/VardyParty.Streaming.Tests/VardyParty.Streaming.Tests.csproj" />
+  <Project Path="tests/VardyParty.Playback.Tests/VardyParty.Playback.Tests.csproj" />
+  <Project Path="tests/VardyParty.Presentation.Tests/VardyParty.Presentation.Tests.csproj" />
+  <Project Path="tests/VardyParty.Hosting.Tests/VardyParty.Hosting.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
   <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />
   <Project Path="VardyParty.Catalog/VardyParty.Catalog.csproj" />

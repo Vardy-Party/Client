@@ -186,7 +186,7 @@ public class BbcParserPerformanceTests(ITestOutputHelper output)
         if (!File.Exists(path))
             path = Path.Combine("Resources", fileName);
         if (!File.Exists(path))
-            path = Path.Combine("tests", "VardyParty.Tests", "Resources", fileName);
+            path = Path.Combine("tests", "VardyParty.Catalog.Tests", "Resources", fileName);
 
         Assert.True(File.Exists(path), $"Missing BBC baseline fixture at {path}");
         return File.ReadAllText(path);

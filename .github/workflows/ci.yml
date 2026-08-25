@@ -4,7 +4,7 @@ env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
-  TESTS_CSPROJ: "tests/VardyParty.Tests/VardyParty.Tests.csproj"
+  TESTS_DIR: "tests"
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
 
@@ -99,10 +99,22 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       # - name: Restore dependencies
       #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
-      - name: Build test project
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release
+      - name: Build test projects
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            echo "::group::Build ${proj}"
+            dotnet build "$proj" -c Release
+            echo "::endgroup::"
+          done < <(find tests -name "*Tests.csproj" -type f -print0)
       - name: Run unit tests
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet test {} -c Release --no-build --verbosity normal
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            echo "::group::Test ${proj}"
+            dotnet test "$proj" -c Release --no-build --verbosity normal
+            echo "::endgroup::"
+          done < <(find tests -name "*Tests.csproj" -type f -print0)
 
   code-quality:
     name: Code Quality

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <None Remove="Resources\BbcScoresFixtures_2026-08-01.html" />
+    <None Remove="Resources\BbcScoresFixtures_2026-08-01_LiveDetails.html" />
+    <None Remove="Resources\BbcScoresFixtures_2026-08-16.html" />
+    <None Remove="Resources\TwoLegBeforeStart.html" />
+    <None Remove="Resources\ParseHtml_ExtractsTeamLogos.html" />
+    <None Remove="Resources\RawAetPenaltiesGame.html" />
+    <None Remove="Resources\RawFullTimeAggregateGame.html" />
+    <None Remove="Resources\RawFullTimeGame.html" />
+    <None Remove="Resources\RawInProgressIssue.html" />
+    <None Remove="Resources\TwoLegWithAggregateScores.html" />
+    <Content Include="Resources\BbcScoresFixtures_2026-08-01.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\BbcScoresFixtures_2026-08-01_LiveDetails.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\BbcScoresFixtures_2026-08-16.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\TwoLegBeforeStart.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\ParseHtml_ExtractsTeamLogos.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\RawAetPenaltiesGame.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\RawFullTimeAggregateGame.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\RawFullTimeGame.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\RawInProgressIssue.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\TwoLegWithAggregateScores.html">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
+  </ItemGroup>
+</Project>

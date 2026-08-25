@@ -13,7 +13,7 @@ namespace VardyParty.Tests;
 /// AutoFixture + AutoMoq specimen factory. Tests should <c>Build</c>/<c>Create</c>/<c>GetMock</c>
 /// collaborators in the test method rather than hand-construct graphs.
 /// </summary>
-internal static class AutoMoqFixture
+public static class AutoMoqFixture
 {
     public static IFixture Create()
     {

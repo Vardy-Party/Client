@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+  </ItemGroup>
+</Project>
