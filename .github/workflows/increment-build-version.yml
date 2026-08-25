@@ -1,11 +1,27 @@
 name: Increment Build Version
 
-# After CI succeeds on main, bump ApplicationVersion only (no semver change).
-# Feature branches never get version commits — that was the PR fan-out / storm cause.
+# After CI succeeds on main for a *product* commit, allocate a unique
+# ApplicationVersion and kick off CD so that merge is packaged under that number.
 #
-# main is protected: "Changes must be made through a pull request" (GH006).
-# A direct git push origin main therefore fails after a successful bump.
-# Open a bot PR and squash-merge it so the new build number actually lands on main.
+# Chain: merge to main → CI (not cancelled) → this workflow (serialized) →
+#   bump PR (GH006: no direct push to main) → dispatch CD with the new version.
+#
+# Why not "CI complete → CD and increment in parallel"?
+# CD would read Version.props before the bump PR lands, so two merges share
+# e.g. 149. GITHUB_TOKEN squash-merges also do not re-trigger CI/CD, so the
+# bumped number would only be used on a later merge — or never, if the bump
+# PR cannot merge (branch protection).
+#
+# Loop guard: skip when the *triggering CI commit* (not whatever HEAD is now)
+# is already a version commit. Checking HEAD would drop a second fast merge
+# after the first bump PR landed. Two increments are serialized by concurrency
+# and take max(Version.props, open bump PRs)+1 so versions stay unique even
+# when a previous bump PR is still open.
+#
+# Bump still goes through a PR (no git push to protected main). If the bot
+# cannot squash-merge (reviews / required checks / auto-merge disabled), the
+# PR is left open and CD still packages this unique version. Merge the bump
+# PR so main's Version.props catches up.
 on:
   workflow_run:
     workflows:
@@ -23,11 +39,15 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   increment-build-version:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      CI_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+      PACKAGE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -37,11 +57,19 @@ jobs:
 
       - name: Skip bot re-entry
         id: guard
+        env:
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha || '' }}
         run: |
-          MSG=$(git log -1 --pretty=%s)
+          set -euo pipefail
+          if [[ -n "${TRIGGER_SHA}" ]]; then
+            git fetch --depth=1 origin "${TRIGGER_SHA}"
+            MSG=$(git log -1 --pretty=%s "${TRIGGER_SHA}")
+          else
+            MSG=$(git log -1 --pretty=%s)
+          fi
           if [[ "${MSG}" == ci:\ bump* || "${MSG}" == ci:\ auto-increment* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping — HEAD is already a version commit (${MSG})"
+            echo "::notice::Skipping — triggering commit is already a version commit (${MSG})"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -49,18 +77,35 @@ jobs:
       - name: Increment ApplicationVersion
         if: ${{ steps.guard.outputs.skip != 'true' }}
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           CURRENT=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
           if [[ -z "${CURRENT}" ]]; then
             echo "::error::Could not read ApplicationVersion from Version.props"
             exit 1
           fi
-          NEW_VERSION=$((CURRENT + 1))
+
+          PENDING=$(gh pr list --base main --state open --json title --jq '
+            [
+              .[].title
+              | select(test("ci: auto-increment ApplicationVersion to [0-9]+$"))
+              | capture("to (?<n>[0-9]+)$")
+              | .n
+              | tonumber
+            ] | max // 0
+          ')
+          BASE="${CURRENT}"
+          if [[ -n "${PENDING}" && "${PENDING}" -gt "${CURRENT}" ]]; then
+            BASE="${PENDING}"
+          fi
+          NEW_VERSION=$((BASE + 1))
           sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Incremented ApplicationVersion ${CURRENT} → ${NEW_VERSION}"
+          echo "::notice::Allocated ApplicationVersion ${CURRENT} (pending PR max ${PENDING}) → ${NEW_VERSION}"
 
-      - name: Commit, open PR, and squash-merge to main
+      - name: Commit, open PR, and try to squash-merge
         if: ${{ steps.guard.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,7 +120,9 @@ jobs:
           TITLE="ci: auto-increment ApplicationVersion to ${NEW_VERSION}"
           BODY="Automated ApplicationVersion bump after CI succeeded on main.
 
-          main is protected (GH006: changes must be made through a pull request), so this workflow cannot push directly. Squash-merging this PR lands build ${NEW_VERSION} on main for the next packaged release.
+          This reserves build ${NEW_VERSION} for the package of that CI run. CD is dispatched with this number even if branch protection blocks the bot from merging.
+
+          main is protected (GH006: changes must be made through a pull request), so this workflow cannot push directly. Please squash-merge this PR so Version.props on main matches the packaged release.
 
           GITHUB_TOKEN merges do not re-trigger workflows, so this does not loop CI/CD."
 
@@ -96,10 +143,29 @@ jobs:
           fi
 
           # Squash keeps the ci: auto-increment* subject so the skip guard still matches.
-          # gh pr merge with no number uses the PR for the current branch.
-          if ! gh pr merge --squash --delete-branch --subject "$TITLE"; then
-            echo "::error::Opened a version-bump PR but could not squash-merge it onto main. If required status checks or reviews block github-actions[bot], allow that actor to bypass those rules for this path, or merge the PR manually."
-            exit 1
+          # Do not fail the job if protection blocks the merge — CD still uses NEW_VERSION.
+          if gh pr merge --squash --delete-branch --subject "$TITLE"; then
+            echo "::notice::ApplicationVersion ${NEW_VERSION} is on main"
+          elif gh pr merge --squash --auto --delete-branch --subject "$TITLE"; then
+            echo "::warning::Enabled auto-merge for the version-bump PR. Merge it (or wait for checks) so main's Version.props catches up. Packaging will still use ${NEW_VERSION}."
+          else
+            echo "::warning::Opened a version-bump PR but could not squash-merge it onto main. If required status checks or reviews block github-actions[bot], allow that actor to bypass those rules for Version.props, enable auto-merge, or merge the PR manually. Packaging will still use ApplicationVersion ${NEW_VERSION}."
           fi
 
-          echo "::notice::ApplicationVersion ${NEW_VERSION} is on main"
+      - name: Dispatch CD for this unique version
+        if: ${{ steps.guard.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CI_RUN_ID}" ]]; then
+            echo "::warning::No CI run id (workflow_dispatch without a triggering CI). Skipping CD. Run 'CD - Package & Release' manually with ci_run_id and application_version=${NEW_VERSION}."
+            exit 0
+          fi
+          gh workflow run "CD - Package & Release" --ref main \
+            -f ci_run_id="${CI_RUN_ID}" \
+            -f produce_release_assets=true \
+            -f application_version="${NEW_VERSION}" \
+            -f package_sha="${PACKAGE_SHA}"
+          echo "::notice::Dispatched CD for ApplicationVersion ${NEW_VERSION} (CI ${CI_RUN_ID}, sha ${PACKAGE_SHA})"
