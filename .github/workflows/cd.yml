@@ -1,17 +1,18 @@
 name: CD - Package & Release
 
+# Packaging is dispatched by "Increment Build Version" after it allocates a unique
+# ApplicationVersion for a successful main CI run. Running CD in parallel with
+# increment (workflow_run on CI) packaged whatever Version.props was already on
+# main — so two fast merges shared one release tag (e.g. 1.7.116-b149).
+#
+# Manual dispatch still works (feature branches / retries). Pass application_version
+# to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
-  CI_RUN_ID: ${{ github.event.inputs.ci_run_id || github.event.workflow_run.id }}
+  CI_RUN_ID: ${{ github.event.inputs.ci_run_id }}
 on:
-  workflow_run:
-    workflows: ["CI - Build & Test"]
-    types:
-      - completed
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       ci_run_id:
@@ -23,9 +24,14 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    branches:
-      - main
+      application_version:
+        description: 'ApplicationVersion to stamp on this package (from Increment Build Version). Empty = Version.props as checked out.'
+        required: false
+        default: ''
+      package_sha:
+        description: 'Git SHA of the CI commit to check out (the merge being packaged). Empty = workflow ref.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -34,9 +40,21 @@ jobs:
   package-windows:
     name: Package Windows
     runs-on: windows-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -288,7 +306,7 @@ jobs:
           path: ./windows-artifacts
           retention-days: 30
       - name: Publish Windows package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -306,9 +324,21 @@ jobs:
   package-android:
     name: Package Android
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -481,7 +511,7 @@ jobs:
           path: ./android-package-artifacts
           retention-days: 30
       - name: Publish Android package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -499,10 +529,22 @@ jobs:
   package-ios:
     name: Package iOS
     runs-on: macos-26
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -594,7 +636,7 @@ jobs:
           path: ./VardyParty-ios-v*-b*.tar.gz
           retention-days: 30
       - name: Publish iOS package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -612,9 +654,21 @@ jobs:
   package-macos:
     name: Package macOS
     runs-on: macos-26
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -706,7 +760,7 @@ jobs:
           path: ./VardyParty-macos-v*-b*.tar.gz
           retention-days: 30
       - name: Publish macOS package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}"
@@ -724,9 +778,21 @@ jobs:
   package-linux-x64:
     name: Package Linux x64 Snap
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -945,7 +1011,7 @@ jobs:
           path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
           retention-days: 30
       - name: Publish Linux x64 package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.display }}-b${{ steps.snap_version.outputs.build }}"
@@ -963,9 +1029,21 @@ jobs:
   package-linux-arm64:
     name: Package Linux ARM64 Snap
     runs-on: ubuntu-24.04-arm
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -1184,7 +1262,7 @@ jobs:
           path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
           retention-days: 30
       - name: Publish Linux ARM64 package as Release asset
-        if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: "VardyParty v${{ steps.snap_version.outputs.display }}-b${{ steps.snap_version.outputs.build }}"
@@ -1209,9 +1287,21 @@ jobs:
       - package-macos
       - package-linux-x64
       - package-linux-arm64
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_run' || github.event.inputs.produce_release_assets == 'true') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Apply packaged ApplicationVersion
+        if: ${{ github.event.inputs.application_version != '' }}
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
+        run: |
+          set -euo pipefail
+          sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
+          rm -f Version.props.bak
+          echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Compute shared release tag
         id: release_tag
         run: |

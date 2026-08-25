@@ -23,9 +23,11 @@ on:
 
 # One run per head branch (or main ref). Duplicate PRs from the same branch
 # share this group and cancel each other instead of fan-out.
+# Do not cancel in-progress runs on main: two fast merges would otherwise share
+# one CI Complete and one ApplicationVersion / GitHub Release.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   resolve-flags:

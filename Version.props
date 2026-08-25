@@ -4,11 +4,12 @@
     Centralized version management for all VardyParty applications (MAUI and Linux/Avalonia).
     
     Version scheme:
-    - ApplicationVersion: Internal build counter (auto-incremented on successful CI for main)
+    - ApplicationVersion: Internal build counter (one unique value allocated per successful
+      product CI on main, then used by CD for that merge's GitHub Release)
     - ApplicationDisplayVersion: User-facing Major.Minor.Patch (manual "Bump Display Version" workflow)
   -->
   <PropertyGroup>
-    <!-- Internal build counter - incremented on main by Increment Build Version workflow -->
+    <!-- Internal build counter - allocated per main CI by Increment Build Version, then packaged -->
     <ApplicationVersion>149</ApplicationVersion>
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->
