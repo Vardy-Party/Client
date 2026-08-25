@@ -11,6 +11,7 @@ using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Hosting;
 using VardyParty.Playback;
+using VardyParty.Streaming;
 #if ANDROID
 using VardyParty.Platforms.Android;
 #endif
