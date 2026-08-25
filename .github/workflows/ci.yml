@@ -26,8 +26,16 @@ on:
   pull_request:
     branches:
       - main
+    # Skip when every file in the PR matches. Local packaging scripts are
+    # not invoked here (developers run package-android.cmd locally). A mixed
+    # PR (code + scripts) still runs CI — GitHub uses the whole PR diff.
     paths-ignore:
       - "Version.props"
+      - "package-android.cmd"
+      - "package-windows.cmd"
+      - "scripts/assert-android-apk-abis.ps1"
+      - "scripts/run-windows-debug.ps1"
+      - "scripts/launch-linux-app.cmd"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
