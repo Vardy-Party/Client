@@ -210,6 +210,26 @@ namespace VardyParty
             }
         }
 
+        public void RestoreWebViewFocus()
+        {
+            try
+            {
+                if (blazorWebView?.Handler?.PlatformView is not Android.Webkit.WebView web)
+                {
+                    return;
+                }
+
+                web.Focusable = true;
+                web.FocusableInTouchMode = true;
+                web.RequestFocus();
+                Console.WriteLine("[MainPage] RestoreWebViewFocus requested");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainPage] RestoreWebViewFocus failed: {ex.Message}");
+            }
+        }
+
         private sealed class JsLogCallback : Java.Lang.Object, Android.Webkit.IValueCallback
         {
             public static readonly JsLogCallback Instance = new();

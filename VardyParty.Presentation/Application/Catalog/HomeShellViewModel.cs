@@ -14,11 +14,15 @@ public sealed class HomeShellViewModel
 
     public bool UserInitiatedResolution => _intent.UserInitiatedResolution;
 
+    public bool PlayerSessionStarted => _intent.PlayerSessionStarted;
+
     public void OnUserPicked(Game game)
     {
         _intent.MarkUserInitiated();
         SelectedGame = game;
     }
+
+    public void MarkPlayerSessionStarted() => _intent.MarkPlayerSessionStarted();
 
     public void ClearSelection()
     {

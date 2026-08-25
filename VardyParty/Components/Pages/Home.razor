@@ -276,6 +276,8 @@
     private IDisposable? _progressSubscription;
 
     private Task? _streamResolutionTask;
+    private int _resolutionGeneration;
+    private bool _resolutionStartClaimed;
 
     // Indicates we have finished testing all streams for the currently selected game
     private bool _resolutionExhausted;
@@ -375,37 +377,13 @@
             return;
         }
 
+        if (!isResolvingStreams)
+        {
+            return;
+        }
+
         Logger.LogInformation("[Home] Android back pressed - canceling stream resolution if active");
-        try
-        {
-            _streamResolutionCts?.Cancel();
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            StreamResolutionOrchestrator.Reset();
-        }
-        catch
-        {
-        }
-
-        // Ensure we fully stop resolution and clear selection so OnAfterRender does not restart it
-        Selection.CurrentGame = null;
-        _homeShell.ClearSelection();
-        // Give feedback to user via logging (avoid referencing Android UI types in shared component)
-        Logger.LogInformation("[Home] Stream discovery cancelled by Back");
-        InvokeAsync(() =>
-        {
-            isResolvingStreams = false;
-            streamResolutionStatus = string.Empty;
-            totalStreamsFound = 0;
-            streamsTested = 0;
-            healthyStreamCount = 0;
-            StateHasChanged();
-        });
+        CancelStreamDiscoveryFromUser();
         try
         {
             MainActivity.SetOverlayBackSuppression(false);
@@ -598,6 +576,27 @@
     private void OnOverlayCloseRequested()
     {
         Logger.LogInformation("[Home] Overlay close requested");
+        CancelStreamDiscoveryFromUser();
+    }
+
+    private int IndexOfSelectedOrFocusedCard()
+    {
+        if (selectedGame != null)
+        {
+            var idx = games.FindIndex(g => SameGame(g, selectedGame));
+            if (idx >= 0)
+                return idx;
+        }
+
+        if (_focusedCardIndex >= 0 && _focusedCardIndex < games.Count)
+            return _focusedCardIndex;
+
+        return 0;
+    }
+
+    private void CancelStreamDiscoveryFromUser()
+    {
+        var cardIndex = IndexOfSelectedOrFocusedCard();
         try
         {
             _streamResolutionCts?.Cancel();
@@ -623,15 +622,36 @@
         }
 
         _progressSubscription = null;
+        Interlocked.Increment(ref _resolutionGeneration);
+        _resolutionStartClaimed = false;
         _resolutionExhausted = true;
         Selection.CurrentGame = null;
         _homeShell.ClearSelection();
-        isResolvingStreams = false;
-        streamResolutionStatus = string.Empty;
-        totalStreamsFound = 0;
-        streamsTested = 0;
-        healthyStreamCount = 0;
-        InvokeAsync(StateHasChanged);
+        Logger.LogInformation("[Home] Stream discovery cancelled by Back");
+
+        _ = InvokeAsync(async () =>
+        {
+            isResolvingStreams = false;
+            streamResolutionStatus = string.Empty;
+            totalStreamsFound = 0;
+            streamsTested = 0;
+            healthyStreamCount = 0;
+            SetOverlayBackSuppression(false);
+            StateHasChanged();
+            await RestoreTvGridFocusAsync(cardIndex);
+        });
+    }
+
+    private async Task RestoreTvGridFocusAsync(int cardIndex)
+    {
+        if (!MauiProgram.IsTv)
+            return;
+
+        focusPending = true;
+        await FocusCardAsync(cardIndex);
+#if ANDROID
+        MainPage.Instance?.RestoreWebViewFocus();
+#endif
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -642,8 +662,11 @@
         // so UI resumes discovering streams automatically.
         try
         {
+            var resolutionActive = isResolvingStreams
+                || _resolutionStartClaimed
+                || _streamResolutionTask is { IsCompleted: false };
             var resume = _homeShell.DecideResumeAfterPlayer(
-                isResolvingStreams, Selection.CurrentGame, _resolutionExhausted);
+                resolutionActive, Selection.CurrentGame, _resolutionExhausted);
             if (resume == ResumeAfterPlayerAction.Clear)
             {
                 Selection.CurrentGame = null;
@@ -754,7 +777,7 @@
     {
         Logger.LogInformation("[Home] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
 
-        if (_streamResolutionTask is { IsCompleted: false })
+        if (_resolutionStartClaimed || _streamResolutionTask is { IsCompleted: false })
         {
             if (selectedGame != null && SameGame(selectedGame, game))
             {
@@ -764,6 +787,9 @@
 
             _streamResolutionCts?.Cancel();
         }
+
+        var generation = Interlocked.Increment(ref _resolutionGeneration);
+        _resolutionStartClaimed = true;
 
         // Explicit user choice — drives .selected (IsSelected). Do this before overlay render.
         _homeShell.OnUserPicked(game);
@@ -777,6 +803,10 @@
 
         _progressSubscription ??= StreamResolutionOrchestrator.ProgressUpdated.Subscribe(progress =>
         {
+            if (progress.HealthyStreams > 0)
+            {
+                _homeShell.MarkPlayerSessionStarted();
+            }
 #if WINDOWS
             if (progress.HealthyStreams > 0)
             {
@@ -802,6 +832,11 @@
 
         await InvokeAsync(StateHasChanged);
 
+        if (generation != Volatile.Read(ref _resolutionGeneration))
+        {
+            return;
+        }
+
 #if WINDOWS
         try
         {
@@ -817,6 +852,11 @@
             try
             {
                 var outcome = await StreamResolutionOrchestrator.StartAsync(game, VideoPlayer, _streamResolutionCts.Token);
+                if (generation != Volatile.Read(ref _resolutionGeneration))
+                {
+                    return;
+                }
+
                 _resolutionExhausted = true;
 
                 if (outcome.UserClosed)
@@ -847,6 +887,14 @@
             catch (Exception ex)
             {
                 Logger.LogError(ex, "[Home] Error during stream resolution");
+                if (generation != Volatile.Read(ref _resolutionGeneration))
+                {
+                    return;
+                }
+
+                _resolutionExhausted = true;
+                Selection.CurrentGame = null;
+                _homeShell.ClearSelection();
                 await InvokeAsync(() =>
                 {
                     streamResolutionStatus = $"Error: {ex.Message}";
@@ -855,12 +903,16 @@
             }
             finally
             {
-                await InvokeAsync(() =>
+                if (generation == Volatile.Read(ref _resolutionGeneration))
                 {
-                    isResolvingStreams = false;
-                    SetOverlayBackSuppression(false);
-                    StateHasChanged();
-                });
+                    _resolutionStartClaimed = false;
+                    await InvokeAsync(() =>
+                    {
+                        isResolvingStreams = false;
+                        SetOverlayBackSuppression(false);
+                        StateHasChanged();
+                    });
+                }
             }
         });
     }

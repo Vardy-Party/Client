@@ -108,6 +108,15 @@ namespace VardyParty
             RemoteKeyHandler.OnStop += RemoteStopHandler;
         }
 
+        protected override void OnResume()
+        {
+            base.OnResume();
+            if (!_overlayBackSuppression)
+            {
+                MainPage.Instance?.RestoreWebViewFocus();
+            }
+        }
+
         protected override void OnDestroy()
         {
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
@@ -160,8 +169,7 @@ namespace VardyParty
             }
             catch (InvalidOperationException ex)
             {
-                Log.Warn("MainActivity", $"[MAIN] Navigation not initialized: {ex.Message}; exiting app");
-                FinishAndRemoveTask();
+                Log.Warn("MainActivity", $"[MAIN] Navigation not initialized: {ex.Message}; staying on Home");
                 return;
             }
 

@@ -233,6 +233,55 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
+    public async Task StartAsync_OverlappingCall_IsIgnoredUntilFirstCompletes()
+    {
+        // Arrange
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        var initEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseInit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(async (Game _, CancellationToken ct) =>
+            {
+                initEntered.TrySetResult();
+                await releaseInit.Task.WaitAsync(ct);
+            });
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>());
+
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var first = sut.StartAsync(game, player.Object);
+        await initEntered.Task;
+        var overlapping = await sut.StartAsync(game, player.Object);
+        releaseInit.TrySetResult();
+        var firstOutcome = await first;
+
+        // Assert
+        Assert.False(overlapping.NoWorkingStreams);
+        Assert.Null(overlapping.PlaybackResult);
+        Assert.True(firstOutcome.NoWorkingStreams);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Verify(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task StartAsync_FirstHealthyInvokesPlayer_LaterHealthyJoinPoolOnly()
     {
         // Arrange

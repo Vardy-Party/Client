@@ -62,6 +62,7 @@ public class HomeShellViewModelTests
             .With(g => g.Away, "Away City")
             .Create();
         sut.OnUserPicked(game);
+        sut.MarkPlayerSessionStarted();
 
         // Act
         var action = sut.DecideResumeAfterPlayer(
@@ -83,6 +84,7 @@ public class HomeShellViewModelTests
             .With(g => g.Away, "Away City")
             .Create();
         sut.OnUserPicked(game);
+        sut.MarkPlayerSessionStarted();
 
         // Act
         sut.ClearSelection();
@@ -90,6 +92,7 @@ public class HomeShellViewModelTests
         // Assert
         Assert.Null(sut.SelectedGame);
         Assert.False(sut.UserInitiatedResolution);
+        Assert.False(sut.PlayerSessionStarted);
         Assert.False(sut.IsSelected(game));
     }
 }

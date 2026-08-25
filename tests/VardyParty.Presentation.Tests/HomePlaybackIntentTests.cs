@@ -138,6 +138,7 @@ public class HomePlaybackIntentTests
         // Arrange
         var sut = new HomePlaybackIntent();
         sut.MarkUserInitiated();
+        sut.MarkPlayerSessionStarted();
         var game = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")
             .With(g => g.Away, "Away City")
@@ -155,11 +156,34 @@ public class HomePlaybackIntentTests
     }
 
     [Fact]
+    public void DecideResumeAfterPlayer_AfterClickBeforePlayer_DoesNotResume()
+    {
+        // Arrange
+        var sut = new HomePlaybackIntent();
+        sut.MarkUserInitiated();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+
+        // Act
+        var action = sut.DecideResumeAfterPlayer(
+            isResolvingStreams: false,
+            selectedGame: game,
+            currentGame: game,
+            resolutionExhausted: false);
+
+        // Assert
+        Assert.Equal(ResumeAfterPlayerAction.None, action);
+    }
+
+    [Fact]
     public void DecideResumeAfterPlayer_WhenExhausted_Clears()
     {
         // Arrange
         var sut = new HomePlaybackIntent();
         sut.MarkUserInitiated();
+        sut.MarkPlayerSessionStarted();
         var game = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")
             .With(g => g.Away, "Away City")
@@ -182,6 +206,7 @@ public class HomePlaybackIntentTests
         // Arrange
         var sut = new HomePlaybackIntent();
         sut.MarkUserInitiated();
+        sut.MarkPlayerSessionStarted();
         var selected = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")
             .With(g => g.Away, "Away City")
