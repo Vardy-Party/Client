@@ -11,15 +11,10 @@ env:
 # Feature-branch CI runs via pull_request only. Push is main-only so a PR push
 # does not also fire a duplicate branch push workflow.
 #
-# Version-bump PRs must not run this workflow. GitHub holds pull_request runs
-# from first-time authors (including github-actions[bot] until a bot PR has
-# been merged) at the *platform* level with conclusion action_required —
-# "This workflow is awaiting approval from a maintainer" — before any job
-# `if` is evaluated. Skipping jobs is not enough to avoid that click.
-# pull_request `paths` is an allowlist (solution, projects, source, workflows).
-# Version.props-only and package-android.cmd-only PRs do not match, so they
-# never queue. Job-level skip below is belt-and-suspenders if the workflow is
-# still triggered (extra files, merge_group, or a version commit on main).
+# Version.props-only bot bump PRs used to skip this workflow (paths allowlist).
+# ApplicationVersion now lands on the feature branch; Version.props is in the
+# allowlist so that commit still gets checks. Job-level skip still covers
+# leftover ci/increment-application-version-* / "ci: auto-increment" PRs.
 on:
   push:
     branches:
