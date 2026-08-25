@@ -77,7 +77,7 @@ public class StreamSelectionCoordinator(
                 if (StreamTestOrderPolicy.ShouldPreferRecommendations(recommendations))
                 {
                     logger.LogInformation(
-                        "[StreamSelection] Using recommendation-based test order. Confidence={Confidence}, Order={Order}",
+                        "[StreamSelection] Using recommendation-based test order. OverallConfidence={Confidence}, Order={Order}",
                         recommendations?.Confidence,
                         string.Join(",", testOrder));
                 }

@@ -162,6 +162,67 @@ public class StreamTestOrderPolicyTests
         Assert.Equal([0, 1], order);
     }
 
+    [Fact]
+    public void RankConfidence_OrdersHighAboveMediumAboveLow()
+    {
+        // Arrange
+        const string high = "high";
+        const string medium = "MEDIUM";
+        const string low = "low";
+        const string? missing = null;
+
+        // Act
+        var highRank = StreamTestOrderPolicy.RankConfidence(high);
+        var mediumRank = StreamTestOrderPolicy.RankConfidence(medium);
+        var lowRank = StreamTestOrderPolicy.RankConfidence(low);
+        var missingRank = StreamTestOrderPolicy.RankConfidence(missing);
+
+        // Assert
+        Assert.True(highRank > mediumRank);
+        Assert.True(mediumRank > lowRank);
+        Assert.True(lowRank > missingRank);
+    }
+
+    [Fact]
+    public void Build_HighConfidenceRecommendation_IsTriedBeforeLowConfidenceRecommendation()
+    {
+        // Arrange — API list can put a stale high-score stream first.
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/stale-strong", "Channel Stale"),
+            Fb("https://streams.example.com/live-recent", "Channel Live"),
+            Fb("https://streams.example.com/catalog-other", "Channel Other")
+        };
+        var recommendations = new RecommendationResponse
+        {
+            Confidence = "high",
+            HasData = true,
+            Recommended =
+            [
+                new RecommendationItem
+                {
+                    Url = "https://streams.example.com/stale-strong",
+                    Confidence = "low"
+                },
+                new RecommendationItem
+                {
+                    Url = "https://streams.example.com/live-recent",
+                    Confidence = "high"
+                }
+            ]
+        };
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([1, 0, 2], order);
+    }
+
     private Stream Fb(string url, string channel) =>
         _fixture.Build<Stream>()
             .With(s => s.Url, url)

@@ -67,6 +67,13 @@ public class RecommendationItem
     [JsonPropertyName("streamName")]
     public string? StreamName { get; set; }
 
+    /// <summary>
+    /// Per-stream freshness: high, medium, low, or none. Playback tries
+    /// high-confidence recommended streams before low-confidence ones.
+    /// </summary>
+    [JsonPropertyName("confidence")]
+    public string? Confidence { get; set; }
+
     [JsonPropertyName("meta")]
     public StreamMeta? Meta { get; set; }
 }

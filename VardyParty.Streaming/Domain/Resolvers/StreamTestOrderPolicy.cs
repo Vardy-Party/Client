@@ -4,15 +4,24 @@ using StreamModel = VardyParty.Models.Stream;
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Playback try-order: crowd-recommended streams first, then FB before MP.
-/// The control panel badges a stream as recommended whenever it is in the
-/// recommended list (successes within the 2-hour health window). Confidence
-/// is only a freshness signal and must not discard that list.
+/// Playback try-order: crowd-recommended streams first (high confidence
+/// before low), then FB before MP. The control panel badges a stream as
+/// recommended whenever it is in the recommended list; confidence ranks
+/// that list instead of discarding it.
 /// </summary>
 public static class StreamTestOrderPolicy
 {
     public static bool ShouldPreferRecommendations(RecommendationResponse? recommendations) =>
         recommendations?.Recommended is { Count: > 0 };
+
+    public static int RankConfidence(string? confidence) =>
+        confidence?.Trim().ToLowerInvariant() switch
+        {
+            "high" => 3,
+            "medium" => 2,
+            "low" => 1,
+            _ => 0
+        };
 
     public static List<int> Build(
         RecommendationResponse? recommendations,
@@ -30,7 +39,12 @@ public static class StreamTestOrderPolicy
 
         if (ShouldPreferRecommendations(recommendations))
         {
-            foreach (var recommendedItem in recommendations!.Recommended)
+            var ranked = recommendations!.Recommended
+                .Select((item, apiIndex) => (item, apiIndex))
+                .OrderByDescending(entry => RankConfidence(entry.item.Confidence))
+                .ThenBy(entry => entry.apiIndex);
+
+            foreach (var (recommendedItem, _) in ranked)
             {
                 if (string.IsNullOrWhiteSpace(recommendedItem.Url))
                 {
