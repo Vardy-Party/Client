@@ -16,8 +16,9 @@ name: Increment Build Version
 # Loop guard: skip when the *triggering CI commit* (not whatever HEAD is now)
 # is already a version commit. Checking HEAD would drop a second fast merge
 # after the first bump PR landed. Two increments are serialized by concurrency
-# and take max(Version.props, open bump PRs)+1 so versions stay unique even
-# when a previous bump PR is still open.
+# and take max(Version.props, open bump PRs, GitHub release -bN tags)+1 so a
+# failed bump that still published a release (or left a stale branch) cannot
+# reuse that number.
 #
 # Hands-off merge: do not wait for required checks or `--auto` (repo
 # allow_auto_merge is false, and bump-PR CI is skipped / approval-gated).
@@ -99,14 +100,28 @@ jobs:
               | tonumber
             ] | max // 0
           ')
+          RELEASED=$(gh release list --limit 50 --json tagName --jq '
+            [
+              .[].tagName
+              | capture("-b(?<n>[0-9]+)$")
+              | .n
+              | tonumber
+            ] | max // 0
+          ')
+          BRANCH_MAX=$(git ls-remote --heads origin 'refs/heads/ci/increment-application-version-*' \
+            | sed -n 's|.*/ci/increment-application-version-\([0-9][0-9]*\).*|\1|p' \
+            | sort -n | tail -1)
+          BRANCH_MAX="${BRANCH_MAX:-0}"
           BASE="${CURRENT}"
-          if [[ -n "${PENDING}" && "${PENDING}" -gt "${CURRENT}" ]]; then
-            BASE="${PENDING}"
-          fi
+          for n in "${PENDING}" "${RELEASED}" "${BRANCH_MAX}"; do
+            if [[ -n "${n}" && "${n}" -gt "${BASE}" ]]; then
+              BASE="${n}"
+            fi
+          done
           NEW_VERSION=$((BASE + 1))
           sed -i "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${NEW_VERSION}<\/ApplicationVersion>/" Version.props
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Allocated ApplicationVersion ${CURRENT} (pending PR max ${PENDING}) → ${NEW_VERSION}"
+          echo "::notice::Allocated ApplicationVersion ${CURRENT} (pending PR max ${PENDING}, released max ${RELEASED}, leftover branch max ${BRANCH_MAX}) → ${NEW_VERSION}"
 
       - name: Commit, open PR, and squash-merge
         if: ${{ steps.guard.outputs.skip != 'true' }}
@@ -121,7 +136,10 @@ jobs:
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          BRANCH="ci/increment-application-version-${NEW_VERSION}"
+          # Suffix with run id so a leftover ci/increment-application-version-N
+          # ref cannot make --force-with-lease report "stale info" on a fresh
+          # main checkout (that is why #68 never got a release).
+          BRANCH="ci/increment-application-version-${NEW_VERSION}-${GITHUB_RUN_ID}"
           TITLE="ci: auto-increment ApplicationVersion to ${NEW_VERSION}"
           BODY="Automated ApplicationVersion bump after CI succeeded on main.
 
@@ -134,7 +152,10 @@ jobs:
           git commit -m "$TITLE"
           # GITHUB_TOKEN push: does not re-trigger workflows. Never push this
           # token to protected main (GH006: changes must be made through a PR).
-          git push --force-with-lease origin "HEAD:${BRANCH}"
+          # Do not --force-with-lease: this checkout has no remote-tracking ref
+          # for the bump branch, so a leftover name is rejected as stale info
+          # and CD never runs.
+          git push origin "HEAD:${BRANCH}"
 
           PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [[ -z "${PR_NUMBER}" ]]; then
