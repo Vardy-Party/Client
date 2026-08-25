@@ -2,12 +2,12 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-REM Local device install: ARM 32+64, no AOT/trim (Android TV).
-REM Store/CI fat APK: package-android.cmd all
+REM Default (no args): one APK for 32-bit ARM TVs (armeabi-v7a) and 64-bit
+REM ARM phones (arm64-v8a, e.g. Nokia C12). AOT/trim off.
+REM Store/emulator fat APK: package-android.cmd all
 REM
-REM Do not pass a single -r. That produces an arm64-only APK in
-REM android-arm64\ while adb install of the leftover root APK fails with
-REM INSTALL_FAILED_NO_MATCHING_ABIS on 32-bit TVs (and stale no-ABI APKs).
+REM Do not pass a single -r. That produces an arm64-only APK that will not
+REM install on armeabi-v7a TVs (INSTALL_FAILED_NO_MATCHING_ABIS).
 REM After the MAUI restore, re-restore Hosting/Presentation as net10.0
 REM (NETSDK1005) and build with --no-restore.
 
@@ -35,10 +35,15 @@ if /I "%~1"=="all" (
   dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
   if errorlevel 1 exit /b %ERRORLEVEL%
   call :ShowApks
-  exit /b 0
+  exit /b %ERRORLEVEL%
 )
 
-echo Device APK: android-arm + android-arm64 (TV), AOT/trim off
+if not "%~1"=="" (
+  echo Unknown argument "%~1". Use no args for TV+phone ARM APK, or: package-android.cmd all
+  exit /b 1
+)
+
+echo Device APK: armeabi-v7a (TV) + arm64-v8a (phones), AOT/trim off
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
 dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm;android-arm64
@@ -48,7 +53,7 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm;android-arm64 -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :ShowApks
-exit /b 0
+exit /b %ERRORLEVEL%
 
 :RestoreDomain
 dotnet restore .\VardyParty.Hosting\VardyParty.Hosting.csproj --ignore-failed-sources
@@ -62,15 +67,12 @@ echo Signed APKs:
 dir /s /b "VardyParty\bin\Release\net10.0-android\*Signed.apk" 2>nul
 set "CANONICAL=VardyParty\bin\Release\net10.0-android\com.vardyparty-Signed.apk"
 if not exist "%CANONICAL%" (
-  set "CANONICAL=VardyParty\bin\Release\net10.0-android\android-arm64\com.vardyparty-Signed.apk"
+  echo ERROR: expected multi-ABI APK at %CANONICAL%
+  exit /b 1
 )
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\assert-android-apk-abis.ps1" -Apk "%CANONICAL%"
+if errorlevel 1 exit /b %ERRORLEVEL%
 echo.
-echo Native libs in %CANONICAL%:
-powershell -NoProfile -Command "$apk='%CANONICAL%'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk)).Entries | Where-Object { $_.FullName -like 'lib/*/*.so' } | ForEach-Object { $_.FullName.Split('/')[1] } | Sort-Object -Unique"
-echo.
-echo Install with:
+echo Install on the TV and the phone with:
 echo   adb install -r %CANONICAL%
-echo TV ABI:
-echo   adb shell getprop ro.product.cpu.abi
-echo   adb shell getprop ro.product.cpu.abilist
 exit /b 0
