@@ -1,5 +1,5 @@
 using AutoFixture;
-using VardyParty.Resolvers;
+using VardyParty.Models;
 using Xunit;
 
 namespace VardyParty.Tests;

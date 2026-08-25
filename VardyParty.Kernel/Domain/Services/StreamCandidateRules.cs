@@ -1,7 +1,7 @@
-namespace VardyParty.Ports;
+namespace VardyParty.Models;
 
 /// <summary>
-/// Stream-resolution rules shared by Catalog/Streaming without referencing Playback.
+/// Stream-resolution rules shared by Streaming and Playback.
 /// </summary>
 public static class StreamCandidateRules
 {
