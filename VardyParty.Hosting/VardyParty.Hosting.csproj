@@ -24,24 +24,12 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\VardyParty.Auth\VardyParty.Auth.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
-		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
-		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
-		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
-		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
-		<ProjectReference Include="..\VardyParty.Streaming\VardyParty.Streaming.csproj">
-			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-		</ProjectReference>
+		<ProjectReference Include="..\VardyParty.Auth\VardyParty.Auth.csproj" />
+		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
+		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />
+		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+		<ProjectReference Include="..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
 	</ItemGroup>
 
 </Project>

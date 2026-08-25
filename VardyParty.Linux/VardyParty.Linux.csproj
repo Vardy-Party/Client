@@ -47,12 +47,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared domain + composition. Strip host RID so net10.0 libraries do not restore as linux-*. -->
+    <!-- Shared domain + composition. Strip host TFM/RID so net10.0 libraries restore as net10.0. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
     <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
   </ItemGroup>
 
