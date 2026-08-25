@@ -10,6 +10,15 @@ env:
 
 # Feature-branch CI runs via pull_request only. Push is main-only so a PR push
 # does not also fire a duplicate branch push workflow.
+#
+# Version-bump PRs must not run this workflow. GitHub holds pull_request runs
+# from first-time authors (including github-actions[bot] until a bot PR has
+# been merged) at the *platform* level with conclusion action_required —
+# "This workflow is awaiting approval from a maintainer" — before any job
+# `if` is evaluated. Skipping jobs is not enough to avoid that click.
+# paths-ignore on Version.props means a Version.props-only bump PR never
+# queues CI. Job-level skip below is belt-and-suspenders if the workflow is
+# still triggered (extra files, merge_group, or a version commit on main).
 on:
   push:
     branches:
@@ -17,6 +26,8 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "Version.props"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -32,6 +43,9 @@ concurrency:
 jobs:
   resolve-flags:
     name: Resolve CI Flags
+    # Product CI only. Skip github-actions[bot] / ci/increment-application-version-*
+    # / "ci: auto-increment*" PRs, and version commits already on main.
+    if: "${{ !((github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'github-actions[bot]' || startsWith(github.head_ref, 'ci/increment-application-version-') || startsWith(github.event.pull_request.title, 'ci: auto-increment'))) || (github.event_name == 'merge_group' && startsWith(github.head_ref, 'ci/increment-application-version-')) || (github.event_name == 'push' && (startsWith(github.event.head_commit.message, 'ci: auto-increment') || startsWith(github.event.head_commit.message, 'ci: bump')))) }}"
     runs-on: ubuntu-latest
     outputs:
       skip_unittests: ${{ steps.flags.outputs.skip_unittests }}
@@ -374,7 +388,7 @@ jobs:
       - build-macos
       - build-linux
       - linux-runtime-smoke
-    if: ${{ always() }}
+    if: "${{ always() && !((github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'github-actions[bot]' || startsWith(github.head_ref, 'ci/increment-application-version-') || startsWith(github.event.pull_request.title, 'ci: auto-increment'))) || (github.event_name == 'merge_group' && startsWith(github.head_ref, 'ci/increment-application-version-')) || (github.event_name == 'push' && (startsWith(github.event.head_commit.message, 'ci: auto-increment') || startsWith(github.event.head_commit.message, 'ci: bump')))) }}"
     steps:
       - name: Check CI status
         run: |
