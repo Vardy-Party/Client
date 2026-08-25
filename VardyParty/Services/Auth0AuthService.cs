@@ -146,7 +146,7 @@ public class Auth0AuthService(
             throw new InvalidOperationException("Auth0 is not configured on this device build.");
         }
 
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(Auth0HttpClients.Name);
         var endpoint = BuildAuth0Url(domain, "/oauth/device/code");
         var form = new List<KeyValuePair<string, string>>
         {
@@ -215,7 +215,7 @@ public class Auth0AuthService(
             return new AuthLoginResult(false, null, "Auth0 settings are missing.");
 
         var interval = TimeSpan.FromSeconds(Math.Max(3, deviceCode.Interval));
-        var client = httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient(Auth0HttpClients.Name);
         var endpoint = BuildAuth0Url(domain, "/oauth/token");
 
         while (DateTimeOffset.UtcNow < deviceCode.ExpiresAt)
@@ -282,7 +282,7 @@ public class Auth0AuthService(
 
     public async Task<bool> IsAuthenticatedAsync()
     {
-        await EnsureTokenReadyAsync(CancellationToken.None, forceRefresh: false);
+        await EnsureTokensLoadedAsync();
         return HasValidToken || !string.IsNullOrWhiteSpace(_refreshToken);
     }
 
@@ -315,6 +315,28 @@ public class Auth0AuthService(
                _lastRefreshedAt,
                _auth0Settings?.SlidingRefreshAfterSeconds ?? AuthTokenLifetime.DefaultSlidingRefreshAfterSeconds);
 
+    private async Task EnsureTokensLoadedAsync()
+    {
+        if (_tokenLoaded)
+            return;
+
+        await _loginLock.WaitAsync();
+        try
+        {
+            if (_tokenLoaded)
+                return;
+
+            await LoadTokensFromSecureStorageAsync();
+            _tokenLoaded = true;
+            if (_lastRefreshedAt == DateTimeOffset.MinValue)
+                _lastRefreshedAt = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            _loginLock.Release();
+        }
+    }
+
     private async Task EnsureTokenReadyAsync(CancellationToken cancellationToken, bool forceRefresh)
     {
         if (_tokenLoaded
@@ -337,6 +359,9 @@ public class Auth0AuthService(
             }
 
             if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
+                return;
+
+            if (!AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, HasValidToken))
                 return;
 
             var outcome = await RefreshAccessTokenAsync(cancellationToken);
@@ -420,7 +445,7 @@ public class Auth0AuthService(
 
         try
         {
-            var client = httpClientFactory.CreateClient();
+            var client = httpClientFactory.CreateClient(Auth0HttpClients.Name);
             var endpoint = BuildAuth0Url(_auth0Settings.Domain, "/oauth/token");
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
@@ -469,10 +494,10 @@ public class Auth0AuthService(
             Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope)
         };
 
-        // Same IPv4-first sockets handler as catalog HTTP. On some Android
-        // devices DNS returns AAAA first but IPv6 routing is broken, so OkHttp
-        // and default SocketsHttpHandler hang or get "Socket closed".
-        options.BackchannelHandler = Ipv4PreferringSocketsHttpHandler.Create();
+        // Same dual-stack sockets handler as catalog HTTP. Android OkHttp can
+        // hang when one address family is unreachable; Happy Eyeballs races
+        // IPv6 and IPv4 instead of preferring either.
+        options.BackchannelHandler = DualStackSocketsHttpHandler.Create();
 
         var client = new Auth0Client(options);
         return client;

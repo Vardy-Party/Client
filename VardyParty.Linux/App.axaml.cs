@@ -119,15 +119,18 @@ public class App : Application
         services.AddTransient<Auth0ApiTokenHandler>();
         services.AddTransient<M3U8HttpHandler>();
 
+        services.AddHttpClient(Auth0HttpClients.Name)
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
 
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => Ipv4PreferringSocketsHttpHandler.Create());
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
         services.AddHttpClient<IApiService, ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => Ipv4PreferringSocketsHttpHandler.Create())
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
             .ConfigureHttpClient(client =>
             {
                 client.DefaultRequestHeaders.TryAddWithoutValidation(

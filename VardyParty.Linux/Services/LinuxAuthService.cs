@@ -142,7 +142,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             return null;
         }
 
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(Auth0HttpClients.Name);
         var endpoint = BuildAuth0Url(_auth0Settings.Domain, "/oauth/device/code");
         var form = new List<KeyValuePair<string, string>>
         {
@@ -186,7 +186,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         }
 
         var interval = TimeSpan.FromSeconds(Math.Max(3, deviceCode.Interval));
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(Auth0HttpClients.Name);
         var endpoint = BuildAuth0Url(_auth0Settings.Domain, "/oauth/token");
 
         while (DateTimeOffset.UtcNow < deviceCode.ExpiresAt)
@@ -247,7 +247,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
 
     public async Task<bool> IsAuthenticatedAsync()
     {
-        await EnsureTokenReadyAsync(CancellationToken.None, forceRefresh: false);
+        await EnsureTokensLoadedAsync();
         return HasValidToken || !string.IsNullOrWhiteSpace(_refreshToken);
     }
 
@@ -277,6 +277,34 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
                _lastRefreshedAt,
                _auth0Settings.SlidingRefreshAfterSeconds);
 
+    private async Task EnsureTokensLoadedAsync()
+    {
+        if (_tokenLoaded)
+        {
+            return;
+        }
+
+        await _authLock.WaitAsync();
+        try
+        {
+            if (_tokenLoaded)
+            {
+                return;
+            }
+
+            await LoadTokensFromDiskAsync(CancellationToken.None);
+            _tokenLoaded = true;
+            if (_lastRefreshedAt == DateTimeOffset.MinValue)
+            {
+                _lastRefreshedAt = DateTimeOffset.UtcNow;
+            }
+        }
+        finally
+        {
+            _authLock.Release();
+        }
+    }
+
     private async Task EnsureTokenReadyAsync(CancellationToken cancellationToken, bool forceRefresh)
     {
         if (_tokenLoaded
@@ -301,6 +329,11 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
             }
 
             if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
+            {
+                return;
+            }
+
+            if (!AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, HasValidToken))
             {
                 return;
             }
@@ -534,7 +567,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
 
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            var client = _httpClientFactory.CreateClient(Auth0HttpClients.Name);
             var endpoint = BuildAuth0Url(_auth0Settings.Domain, "/oauth/token");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -735,7 +768,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            var client = _httpClientFactory.CreateClient(Auth0HttpClients.Name);
             var endpoint = BuildAuth0Url(_auth0Settings.Domain, "/oauth/token");
 
             using var response = await client.PostAsync(endpoint, new FormUrlEncodedContent(new Dictionary<string, string?>

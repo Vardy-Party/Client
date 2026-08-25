@@ -8,45 +8,45 @@ using Xunit;
 
 namespace VardyParty.Core.Tests;
 
-public class Ipv4PreferringSocketsHttpHandlerTests
+public class DualStackSocketsHttpHandlerTests
 {
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public void OrderForConnect_PlacesIPv4AheadOfIPv6()
+    public void PlanConnect_KeepsBothFamiliesWithoutPreferringEither()
     {
         // Arrange
         var ipv6First = IPAddress.Parse("2001:db8:85a3::8a2e:370:7334");
         var ipv4 = new IPAddress([192, 0, 2, _fixture.Create<byte>()]);
         var ipv6Second = IPAddress.Parse("2001:db8::1");
-        var addresses = new[] { ipv6First, ipv4, ipv6Second };
 
         // Act
-        var ordered = Ipv4PreferringSocketsHttpHandler.OrderForConnect(addresses);
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6First, ipv4, ipv6Second]);
 
         // Assert
-        Assert.Equal([ipv4, ipv6First, ipv6Second], ordered.ToArray());
+        Assert.Equal([ipv6First, ipv6Second], plan.Ipv6);
+        Assert.Equal([ipv4], plan.Ipv4);
     }
 
     [Fact]
-    public void OrderForConnect_PreservesRelativeOrderWithinAddressFamily()
+    public void PlanConnect_PreservesRelativeOrderWithinAddressFamily()
     {
         // Arrange
         var ipv4North = new IPAddress([192, 0, 2, 10]);
         var ipv4South = new IPAddress([192, 0, 2, 20]);
         var ipv6East = IPAddress.Parse("2001:db8::10");
         var ipv6West = IPAddress.Parse("2001:db8::20");
-        var addresses = new[] { ipv6East, ipv4North, ipv6West, ipv4South };
 
         // Act
-        var ordered = Ipv4PreferringSocketsHttpHandler.OrderForConnect(addresses);
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6East, ipv4North, ipv6West, ipv4South]);
 
         // Assert
-        Assert.Equal([ipv4North, ipv4South, ipv6East, ipv6West], ordered.ToArray());
+        Assert.Equal([ipv6East, ipv6West], plan.Ipv6);
+        Assert.Equal([ipv4North, ipv4South], plan.Ipv4);
     }
 
     [Fact]
-    public void OrderForConnect_WhenOnlyIPv6_KeepsIPv6Addresses()
+    public void PlanConnect_WhenOnlyIPv6_LeavesIPv4Empty()
     {
         // Arrange
         var addresses = new List<IPAddress>
@@ -56,10 +56,11 @@ public class Ipv4PreferringSocketsHttpHandlerTests
         };
 
         // Act
-        var ordered = Ipv4PreferringSocketsHttpHandler.OrderForConnect(addresses);
+        var plan = DualStackSocketsHttpHandler.PlanConnect(addresses);
 
         // Assert
-        Assert.Equal(addresses, ordered);
+        Assert.Equal(addresses, plan.Ipv6);
+        Assert.Empty(plan.Ipv4);
     }
 
     [Fact]
@@ -69,12 +70,12 @@ public class Ipv4PreferringSocketsHttpHandlerTests
         const bool ignoreSsl = false;
 
         // Act
-        using var handler = Ipv4PreferringSocketsHttpHandler.Create(ignoreSsl);
+        using var handler = DualStackSocketsHttpHandler.Create(ignoreSsl);
 
         // Assert
         Assert.NotNull(handler.ConnectCallback);
         Assert.Null(handler.SslOptions.RemoteCertificateValidationCallback);
-        Assert.Equal(Ipv4PreferringSocketsHttpHandler.ConnectTimeout, handler.ConnectTimeout);
+        Assert.Equal(DualStackSocketsHttpHandler.ConnectTimeout, handler.ConnectTimeout);
         Assert.Equal(DecompressionMethods.GZip | DecompressionMethods.Deflate, handler.AutomaticDecompression);
     }
 
@@ -85,7 +86,7 @@ public class Ipv4PreferringSocketsHttpHandlerTests
         const bool ignoreSsl = true;
 
         // Act
-        using var handler = Ipv4PreferringSocketsHttpHandler.Create(ignoreSsl);
+        using var handler = DualStackSocketsHttpHandler.Create(ignoreSsl);
 
         // Assert
         Assert.NotNull(handler.SslOptions.RemoteCertificateValidationCallback);

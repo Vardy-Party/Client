@@ -87,6 +87,48 @@ public class AuthTokenLifetimeTests
     }
 
     [Fact]
+    public void MustRefreshBeforeUse_WhenAccessTokenStillValid_DoesNotBlock()
+    {
+        // Arrange
+        const bool forceRefresh = false;
+        const bool hasValidAccessToken = true;
+
+        // Act
+        var mustRefresh = AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, hasValidAccessToken);
+
+        // Assert
+        Assert.False(mustRefresh);
+    }
+
+    [Fact]
+    public void MustRefreshBeforeUse_WhenForced_BlocksEvenIfAccessTokenValid()
+    {
+        // Arrange
+        const bool forceRefresh = true;
+        const bool hasValidAccessToken = true;
+
+        // Act
+        var mustRefresh = AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, hasValidAccessToken);
+
+        // Assert
+        Assert.True(mustRefresh);
+    }
+
+    [Fact]
+    public void MustRefreshBeforeUse_WhenAccessTokenUnusable_Blocks()
+    {
+        // Arrange
+        const bool forceRefresh = false;
+        const bool hasValidAccessToken = false;
+
+        // Act
+        var mustRefresh = AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, hasValidAccessToken);
+
+        // Assert
+        Assert.True(mustRefresh);
+    }
+
+    [Fact]
     public void CoalesceRefreshToken_KeepsExistingWhenIncomingBlank()
     {
         // Arrange

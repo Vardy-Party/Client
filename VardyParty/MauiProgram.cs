@@ -65,10 +65,10 @@ public static class MauiProgram
         }
 #endif
 
-        // SocketsHttpHandler with IPv4-first connect. HttpClientHandler on Android is
-        // OkHttp, which can hang on Cloudflare AAAA when device IPv6 is broken
-        // (Nokia C12: GET /new never reached the worker; Bravia TV was fine).
-        return Ipv4PreferringSocketsHttpHandler.Create(apiSettings.IgnoreSslCertificateErrors);
+        // Bypass Android OkHttp (HttpClientHandler), which can hang on a
+        // black-holed address family instead of failing over. Dual-stack
+        // SocketsHttpHandler races IPv4 and IPv6; neither family is preferred.
+        return DualStackSocketsHttpHandler.Create(apiSettings.IgnoreSslCertificateErrors);
     }
 
     public static MauiApp CreateMauiApp()
@@ -232,6 +232,9 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddTransient<Auth0ApiTokenHandler>();
+
+        builder.Services.AddHttpClient(Auth0HttpClients.Name)
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
 
         builder.Services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
 

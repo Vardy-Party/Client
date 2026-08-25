@@ -58,6 +58,13 @@ public static class AuthTokenLifetime
         return utcNow - lastRefreshedAt >= TimeSpan.FromSeconds(slidingRefreshAfterSeconds);
     }
 
+    /// <summary>
+    /// Sliding refresh can be due while the access token is still usable.
+    /// Home and catalog HTTP must not wait on that network call.
+    /// </summary>
+    public static bool MustRefreshBeforeUse(bool forceRefresh, bool hasValidAccessToken)
+        => forceRefresh || !hasValidAccessToken;
+
     public static string? CoalesceRefreshToken(string? incoming, string? existing)
         => string.IsNullOrWhiteSpace(incoming) ? existing : incoming;
 
