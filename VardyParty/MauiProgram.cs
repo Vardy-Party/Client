@@ -11,14 +11,11 @@ using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Handlers;
 using VardyParty.Health;
-using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Parsers;
+using VardyParty.Hosting;
 #if ANDROID
 using VardyParty.Platforms.Android;
 #endif
 using VardyParty.Providers;
-using VardyParty.Resolvers;
 using VardyParty.MauiServices;
 using VardyParty.Services;
 #if WINDOWS
@@ -247,25 +244,12 @@ public static class MauiProgram
             .BindConfiguration<Auth0Settings>(Auth0Settings.SectionName)
             .BindConfiguration<BbcFixturesSettings>(BbcFixturesSettings.SectionName);
 
-        // Register AppSettings provider early so services can resolve it
+        builder.Services.AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>();
+        builder.Services.AddVardyPartyCore();
         builder.Services
-            .AddSingleton<IGameMatcher, GameMatcher>()
-            .AddSingleton<IBbcJsonParser, BbcJsonParser>()
-            .AddSingleton<IBbcHtmlParser, BbcHtmlParser>()
-            .AddSingleton<IStreamDeduplicator, StreamDeduplicator>()
-            .AddSingleton<IEnrichedGameService, EnrichedGameService>()
-            .AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>()
-            .AddSingleton<ILeagueFilterService, LeagueFilterService>()
-            .AddSingleton<IHomePagePresentationService, HomePagePresentationService>()
-            .AddSingleton<IStreamSwitchingService, StreamSwitchingService>()
-            .AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>()
-            .AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>()
-            .AddSingleton<IStreamHealthReporter, StreamHealthReporter>()
-            .AddSingleton<ISessionIdProvider, SessionIdProvider>()
             .AddSingleton<ICastService, CastService>()
             .AddSingleton<IBuildInfoService, BuildInfoService>()
             .AddSingleton(DeviceInfo.Current)
-            .AddSingleton<SelectionState>()
             .AddTransient<Home>()
             .AddTransient<VideoPlayer>();
 
@@ -275,8 +259,6 @@ public static class MauiProgram
         builder.Services.AddTransient<Auth0ApiTokenHandler>();
 
         builder.Services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
-        builder.Services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
-        builder.Services.AddSingleton<IStreamResolver, StreamResolver>();
 
         builder.Services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
         builder.Services.AddHttpClient<IStreamHealthService, StreamHealthService>()

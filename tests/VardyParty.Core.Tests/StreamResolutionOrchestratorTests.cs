@@ -91,7 +91,7 @@ public class StreamResolutionOrchestratorTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
         // Act
-        var outcome = await sut.StartAsync(game);
+        var outcome = await sut.StartAsync(game, player.Object);
 
         // Assert
         Assert.True(outcome.PlaybackResult?.Success);
@@ -143,7 +143,7 @@ public class StreamResolutionOrchestratorTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
         // Act
-        var outcome = await sut.StartAsync(game);
+        var outcome = await sut.StartAsync(game, player.Object);
 
         // Assert
         Assert.True(outcome.NoWorkingStreams);
@@ -210,8 +210,8 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<Action<int>?>()))
             .Returns(() => Yield(enriched));
 
-        _fixture.GetMock<INativeVideoPlayerService>()
-            .Setup(p => p.PlayVideoAsync(
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        player.Setup(p => p.PlayVideoAsync(
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -225,7 +225,7 @@ public class StreamResolutionOrchestratorTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
         // Act
-        var outcome = await sut.StartAsync(game);
+        var outcome = await sut.StartAsync(game, player.Object);
 
         // Assert
         Assert.True(outcome.UserClosed);
@@ -313,7 +313,7 @@ public class StreamResolutionOrchestratorTests
             });
 
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        var startTask = sut.StartAsync(game);
+        var startTask = sut.StartAsync(game, player.Object);
 
         // Act
         await playbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));

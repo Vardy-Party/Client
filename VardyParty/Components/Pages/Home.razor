@@ -4,6 +4,7 @@
 @inject SelectionState Selection
 @inject ILogger<Home> Logger
 @inject IStreamResolutionOrchestrator StreamResolutionOrchestrator
+@inject INativeVideoPlayerService VideoPlayer
 @inject IOverlayCloseService OverlayClose
 @inject IHomePagePresentationService HomePresentation
 @inject IAuthLoginService AuthLoginService
@@ -818,7 +819,7 @@
         {
             try
             {
-                var outcome = await StreamResolutionOrchestrator.StartAsync(game, _streamResolutionCts.Token);
+                var outcome = await StreamResolutionOrchestrator.StartAsync(game, VideoPlayer, _streamResolutionCts.Token);
                 _resolutionExhausted = true;
 
                 if (outcome.UserClosed)

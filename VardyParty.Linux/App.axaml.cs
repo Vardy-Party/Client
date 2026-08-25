@@ -11,12 +11,9 @@ using VardyParty;
 using VardyParty.Configuration;
 using VardyParty.Handlers;
 using VardyParty.Health;
+using VardyParty.Hosting;
 using VardyParty.Linux.Services;
-using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Parsers;
 using VardyParty.Providers;
-using VardyParty.Resolvers;
 using VardyParty.Services;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
@@ -114,19 +111,8 @@ public class App : Application
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
-        services.AddSingleton<IGameMatcher, GameMatcher>();
-        services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
-        services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
-        services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
-        services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
         services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
-        services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
-        services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
-        services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
-        services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
-        services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
-        services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
-        services.AddSingleton<ISessionIdProvider, SessionIdProvider>();
+        services.AddVardyPartyCore();
         services.AddSingleton<LinuxAuthService>();
         services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
         services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
@@ -134,9 +120,6 @@ public class App : Application
         services.AddTransient<M3U8HttpHandler>();
 
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
-        services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
-        services.AddSingleton<IStreamResolver, StreamResolver>();
-
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
 
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
@@ -166,7 +149,6 @@ public class App : Application
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             });
 
-        services.AddSingleton<SelectionState>();
         services.AddSingleton<INativeVideoPlayerService, LinuxVideoPlayerService>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<MainWindow>();

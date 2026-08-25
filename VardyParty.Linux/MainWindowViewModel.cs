@@ -570,7 +570,9 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _selectionState.CurrentGame = item.Game;
             StatusMessage = $"Resolving streams for {item.HomeTeam} vs {item.AwayTeam}...";
 
-            var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, _streamResolutionCts.Token);
+            var player = _videoPlayerService
+                ?? throw new InvalidOperationException("Native video player is not available.");
+            var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, player, _streamResolutionCts.Token);
             if (outcome.PlaybackResult is { Success: false })
             {
                 StatusMessage = outcome.PlaybackResult.Message ?? "Playback failed";

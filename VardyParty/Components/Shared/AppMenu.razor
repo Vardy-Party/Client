@@ -1,3 +1,4 @@
+@using VardyParty.Catalog
 @using VardyParty.Models
 
 @using VardyParty.Providers
@@ -137,7 +138,7 @@
                             @foreach (var league in knownLeagues)
                             {
                                 var leagueName = league;
-                                var visible = LeagueFilter.IsLeagueVisible(leagueName);
+                                var visible = _menu!.IsLeagueVisible(leagueName);
                                 <li @key="leagueName">
                                     <button type="button"
                                             class="league-filter-item@(visible ? " league-filter-item-active" : string.Empty)"
@@ -199,6 +200,7 @@
     private BuildInfo? buildInfo;
 
     private IReadOnlyList<string> knownLeagues = Array.Empty<string>();
+    private MenuViewModel? _menu;
 
     private IDisposable? _gamesSubscription;
 
@@ -248,6 +250,7 @@
 
     {
 
+        _menu = new MenuViewModel(LeagueFilter);
         buildInfo = await BuildInfoService.GetAsync();
 
         isAuthenticated = IsAuthenticated || await AuthTokenProvider.IsAuthenticatedAsync();
@@ -417,7 +420,8 @@
 
     {
 
-        knownLeagues = LeagueFilter.GetKnownLeagues(gamesByLeague);
+        _menu!.RefreshKnownLeagues(gamesByLeague);
+        knownLeagues = _menu.KnownLeagues;
 
         _ = InvokeAsync(StateHasChanged);
 
@@ -558,7 +562,7 @@
         lastToggleLeague = league;
         lastToggleTimestampMs = nowMs;
         restoreFocusLeague = league;
-        LeagueFilter.SetLeagueVisible(league, !LeagueFilter.IsLeagueVisible(league));
+        _menu!.ToggleLeague(league);
     }
 
     private void OnMenuButtonFocused()
@@ -595,7 +599,7 @@
 
     {
 
-        LeagueFilter.SetLeaguesVisible(knownLeagues, true);
+        _menu!.ShowAllLeagues();
 
     }
 
@@ -605,7 +609,7 @@
 
     {
 
-        LeagueFilter.ResetToDefaults();
+        _menu!.ResetToDefaults();
 
     }
 

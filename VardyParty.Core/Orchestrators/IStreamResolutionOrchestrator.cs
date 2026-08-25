@@ -1,4 +1,5 @@
 using VardyParty.Models;
+using VardyParty.Playback;
 
 namespace VardyParty.Orchestrators;
 
@@ -6,7 +7,10 @@ public interface IStreamResolutionOrchestrator
 {
     IObservable<StreamResolutionProgress> ProgressUpdated { get; }
 
-    Task<StreamResolutionOutcome> StartAsync(Game game, CancellationToken cancellationToken = default);
+    Task<StreamResolutionOutcome> StartAsync(
+        Game game,
+        IPlaybackLauncher launcher,
+        CancellationToken cancellationToken = default);
 
     Task ReportCurrentStreamAsBadAsync(string? reason = null, CancellationToken cancellationToken = default);
 

@@ -66,5 +66,6 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\VardyParty.Core\VardyParty.Core.csproj" />
+		<ProjectReference Include="..\..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
 	</ItemGroup>
 </Project>
