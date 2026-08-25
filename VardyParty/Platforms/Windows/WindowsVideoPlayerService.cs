@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Controls;
-using VardyParty.Services;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
@@ -13,9 +12,11 @@ using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using VardyParty.Extensions;
-using VardyParty.Health;
 using VardyParty.Models;
 using VardyParty.Playback;
+using VardyParty.Ports;
+using VardyParty.Streaming;
+using VardyParty.Catalog;
 using System.Text.RegularExpressions;
 
 namespace VardyParty.Platforms.Windows

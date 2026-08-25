@@ -47,8 +47,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Reference to shared Core library -->
-    <ProjectReference Include="..\VardyParty.Core\VardyParty.Core.csproj" />
+    <!-- Shared domain + composition. Strip host TFM/RID so net10.0 libraries restore as net10.0. -->
+    <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>

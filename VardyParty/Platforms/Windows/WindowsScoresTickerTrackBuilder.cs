@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using VardyParty.Services;
 using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
 using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinImage = Microsoft.UI.Xaml.Controls.Image;
@@ -10,6 +9,7 @@ using WinSolidColorBrush = Microsoft.UI.Xaml.Media.SolidColorBrush;
 using WinStretch = Microsoft.UI.Xaml.Media.Stretch;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using WinSize = global::Windows.Foundation.Size;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Windows;
 

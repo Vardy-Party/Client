@@ -1,4 +1,4 @@
-namespace VardyParty.Services;
+namespace VardyParty;
 
 public sealed class NullOverlayCloseService : IOverlayCloseService
 {

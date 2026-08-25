@@ -17,13 +17,15 @@ using LibVLCSharp.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using VardyParty.Catalog;
 using VardyParty.Configuration;
 using VardyParty.Extensions;
 using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Providers;
 using VardyParty.Linux.Services;
-using VardyParty.Services;
+using VardyParty.Presentation;
+using VardyParty.Playback;
+using VardyParty.Auth;
+using VardyParty.Streaming;
 
 namespace VardyParty.Linux;
 
@@ -42,6 +44,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly Auth0Settings _auth0Settings;
     private readonly ILogger<MainWindowViewModel> _logger;
+    private readonly HomeShellViewModel _homeShell = new();
     private readonly Dictionary<string, IImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _isBusy;
@@ -281,7 +284,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var apiService = _serviceProvider.GetRequiredService<IApiService>();
+            var apiService = _serviceProvider.GetRequiredService<IGamesCatalogApi>();
             var gamesByLeague = await apiService.GetAllGamesAsync(true);
             var items = await BuildDisplayGamesAsync(_leagueFilter.FilterGames(gamesByLeague.ToDisplay()));
             ApplyDisplayGames(items);
@@ -564,10 +567,13 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _streamResolutionCts?.Dispose();
             _streamResolutionCts = new CancellationTokenSource();
 
+            _homeShell.OnUserPicked(item.Game);
             _selectionState.CurrentGame = item.Game;
             StatusMessage = $"Resolving streams for {item.HomeTeam} vs {item.AwayTeam}...";
 
-            var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, _streamResolutionCts.Token);
+            var player = _videoPlayerService
+                ?? throw new InvalidOperationException("Native video player is not available.");
+            var outcome = await _streamResolutionOrchestrator.StartAsync(item.Game, player, _streamResolutionCts.Token);
             if (outcome.PlaybackResult is { Success: false })
             {
                 StatusMessage = outcome.PlaybackResult.Message ?? "Playback failed";

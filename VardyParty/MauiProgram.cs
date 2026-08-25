@@ -1,26 +1,21 @@
-using System.Net;
-using System.Net.Security;
 using System.Reflection;
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using VardyParty;
+using VardyParty.Auth;
+using VardyParty.Catalog;
 using VardyParty.Components.Pages;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
-using VardyParty.Handlers;
-using VardyParty.Health;
-using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Parsers;
+using VardyParty.Hosting;
+using VardyParty.Playback;
+using VardyParty.Streaming;
 #if ANDROID
 using VardyParty.Platforms.Android;
 #endif
-using VardyParty.Providers;
-using VardyParty.Resolvers;
 using VardyParty.MauiServices;
-using VardyParty.Services;
 #if WINDOWS
 using Microsoft.Maui.Handlers;
 using Microsoft.Maui.LifecycleEvents;
@@ -59,10 +54,8 @@ public static class MauiProgram
     // Set by Android startup to indicate whether a usable WebView implementation is present
     public static bool IsWebViewAvailable { get; set; } = false;
 
-    private static HttpClientHandler CreateHeadlessHttpClientHandler(APISettings apiSettings)
+    private static bool AllowIgnoreSslCertificateErrors(APISettings apiSettings)
     {
-        var handler = new HttpClientHandler();
-
 #if !DEBUG
         if (apiSettings.IgnoreSslCertificateErrors)
         {
@@ -70,33 +63,7 @@ public static class MauiProgram
             apiSettings.IgnoreSslCertificateErrors = false;
         }
 #endif
-
-        if (!apiSettings.IgnoreSslCertificateErrors)
-        {
-            return handler;
-        }
-
-        if (!Uri.TryCreate(apiSettings.HeadlessBaseUrl, UriKind.Absolute, out var headlessUri) ||
-            string.IsNullOrWhiteSpace(headlessUri.Host))
-        {
-            return handler;
-        }
-
-        var allowedHost = headlessUri.Host;
-
-        handler.ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
-        {
-            if (errors == SslPolicyErrors.None)
-            {
-                return true;
-            }
-
-            var host = request?.RequestUri?.Host;
-            return !string.IsNullOrWhiteSpace(host) &&
-                   string.Equals(host, allowedHost, StringComparison.OrdinalIgnoreCase);
-        };
-
-        return handler;
+        return apiSettings.IgnoreSslCertificateErrors;
     }
 
     public static MauiApp CreateMauiApp()
@@ -230,15 +197,13 @@ public static class MauiProgram
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.Windows.WindowsVideoPlayerService>();
-            builder.Services.AddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
+            builder.Services.AddSingleton<IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
 #elif IOS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.iOS.IosVideoPlayerService>();
 #elif MACCATALYST
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.MacCatalyst.MacCatalystVideoPlayerService>();
 #endif
-        builder.Services.TryAddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Services.NullOverlayCloseService>();
-
-        builder.Services.AddTransient<M3U8HttpHandler>();
+        builder.Services.TryAddSingleton<IOverlayCloseService, NullOverlayCloseService>();
 
         builder.Services
             .BindConfiguration<APISettings>(APISettings.SectionName)
@@ -247,64 +212,19 @@ public static class MauiProgram
             .BindConfiguration<Auth0Settings>(Auth0Settings.SectionName)
             .BindConfiguration<BbcFixturesSettings>(BbcFixturesSettings.SectionName);
 
-        // Register AppSettings provider early so services can resolve it
+        builder.Services.AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>();
+        builder.Services.AddVardyParty();
         builder.Services
-            .AddSingleton<IGameMatcher, GameMatcher>()
-            .AddSingleton<IBbcJsonParser, BbcJsonParser>()
-            .AddSingleton<IBbcHtmlParser, BbcHtmlParser>()
-            .AddSingleton<IStreamDeduplicator, StreamDeduplicator>()
-            .AddSingleton<IEnrichedGameService, EnrichedGameService>()
-            .AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>()
-            .AddSingleton<ILeagueFilterService, LeagueFilterService>()
-            .AddSingleton<IHomePagePresentationService, HomePagePresentationService>()
-            .AddSingleton<IStreamSwitchingService, StreamSwitchingService>()
-            .AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>()
-            .AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>()
-            .AddSingleton<IStreamHealthReporter, StreamHealthReporter>()
-            .AddSingleton<ISessionIdProvider, SessionIdProvider>()
             .AddSingleton<ICastService, CastService>()
             .AddSingleton<IBuildInfoService, BuildInfoService>()
             .AddSingleton(DeviceInfo.Current)
-            .AddSingleton<SelectionState>()
             .AddTransient<Home>()
             .AddTransient<VideoPlayer>();
 
         builder.Services.AddSingleton<Auth0AuthService>();
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
-        builder.Services.AddTransient<Auth0ApiTokenHandler>();
-
-        builder.Services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
-        builder.Services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
-        builder.Services.AddSingleton<IStreamResolver, StreamResolver>();
-
-        builder.Services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
-        builder.Services.AddHttpClient<IStreamHealthService, StreamHealthService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings));
-        builder.Services.AddHttpClient<IApiService, ApiService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => CreateHeadlessHttpClientHandler(apiSettings))
-            .ConfigureHttpClient(client =>
-            {
-                client.DefaultRequestHeaders.TryAddWithoutValidation(
-                    VardyPartyClientApiVersion.HeaderName,
-                    VardyPartyClientApiVersion.DefaultHeaderValue);
-            });
-        builder.Services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            });
-        builder.Services.AddHttpClient("StreamApi")
-            .AddHttpMessageHandler<M3U8HttpHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                AllowAutoRedirect = true,
-                UseCookies = true
-            });
+        builder.Services.AddVardyPartyHttpClients(AllowIgnoreSslCertificateErrors(apiSettings));
 #if DEBUG
         builder.Services.AddBlazorWebViewDeveloperTools();
 #endif

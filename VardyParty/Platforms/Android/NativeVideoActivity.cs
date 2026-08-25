@@ -11,13 +11,13 @@ using AndroidX.Media3.ExoPlayer.Hls;
 using AndroidX.Media3.DataSource;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
-using VardyParty.Services;
 using VardyParty.Models;
-using VardyParty.Orchestrators;
 using VardyParty.Playback;
 using Microsoft.Extensions.Logging;
 using System.Threading;
-using VardyParty.Health;
+using VardyParty.Ports;
+using VardyParty.Streaming;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {

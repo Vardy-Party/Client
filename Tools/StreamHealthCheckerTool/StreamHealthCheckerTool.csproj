@@ -10,7 +10,8 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\VardyParty.Core\VardyParty.Core.csproj" />
+		<ProjectReference Include="..\..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
+		<ProjectReference Include="..\..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>
