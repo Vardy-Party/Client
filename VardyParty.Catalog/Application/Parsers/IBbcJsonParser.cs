@@ -1,4 +1,4 @@
-namespace VardyParty.Parsers;
+namespace VardyParty.Catalog;
 
 public interface IBbcJsonParser
 {

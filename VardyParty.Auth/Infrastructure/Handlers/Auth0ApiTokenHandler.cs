@@ -1,9 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
-using VardyParty.Providers;
 
-namespace VardyParty.Services;
+namespace VardyParty.Auth;
 
 public class Auth0ApiTokenHandler(
     IAuthTokenProvider tokenProvider,

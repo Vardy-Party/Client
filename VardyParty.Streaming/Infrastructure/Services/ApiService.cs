@@ -10,7 +10,7 @@ using VardyParty.Models;
 using VardyParty.Resolvers;
 using Stream = VardyParty.Models.Stream;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 public class ApiService(
     HttpClient httpClient,

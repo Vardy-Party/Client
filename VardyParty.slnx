@@ -44,11 +44,12 @@
     <File Path="package-windows.cmd" />
     <File Path="scripts/launch-linux-app.cmd" />
   </Folder>
-  <Project Path="tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj" />
+  <Project Path="tests/VardyParty.Tests/VardyParty.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
   <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />
   <Project Path="VardyParty.Catalog/VardyParty.Catalog.csproj" />
   <Project Path="VardyParty.Kernel/VardyParty.Kernel.csproj" />
+  <Project Path="VardyParty.Ports/VardyParty.Ports.csproj" />
   <Project Path="VardyParty.Playback/VardyParty.Playback.csproj" />
   <Project Path="VardyParty.Presentation/VardyParty.Presentation.csproj" />
   <Project Path="VardyParty.Streaming/VardyParty.Streaming.csproj" />

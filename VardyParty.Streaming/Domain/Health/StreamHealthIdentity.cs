@@ -1,7 +1,7 @@
 using VardyParty.Models;
 using StreamModel = VardyParty.Models.Stream;
 
-namespace VardyParty.Health;
+namespace VardyParty.Streaming;
 
 public static class StreamHealthIdentity
 {

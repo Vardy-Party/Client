@@ -1,7 +1,7 @@
 using VardyParty.Models;
-using VardyParty.Playback;
+using VardyParty.Ports;
 
-namespace VardyParty.Orchestrators;
+namespace VardyParty.Streaming;
 
 public interface IStreamResolutionOrchestrator
 {

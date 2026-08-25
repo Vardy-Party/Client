@@ -4,7 +4,7 @@ env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
-  TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
+  TESTS_CSPROJ: "tests/VardyParty.Tests/VardyParty.Tests.csproj"
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
 
@@ -176,6 +176,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -189,6 +190,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/
@@ -243,6 +246,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -256,6 +260,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/
@@ -307,6 +313,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -320,6 +327,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/
@@ -365,6 +374,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -378,6 +388,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/
@@ -421,6 +433,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -434,6 +447,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/
@@ -451,6 +466,7 @@ jobs:
             VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
+            VardyParty.Ports/
             VardyParty.Playback/
             VardyParty.Presentation/
             VardyParty.Hosting/
@@ -464,6 +480,8 @@ jobs:
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
             !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
             !VardyParty.Playback/bin/
             !VardyParty.Playback/obj/
             !VardyParty.Presentation/bin/

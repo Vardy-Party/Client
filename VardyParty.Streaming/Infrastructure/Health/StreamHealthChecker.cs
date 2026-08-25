@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
 
-namespace VardyParty.Health;
+namespace VardyParty.Streaming;
 
 public class StreamHealthChecker(
     HttpClient httpClient,

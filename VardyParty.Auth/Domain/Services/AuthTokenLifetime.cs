@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace VardyParty.Services;
+namespace VardyParty.Auth;
 
 /// <summary>
 /// Access-token expiry and sliding refresh rules shared by MAUI and Linux Auth0 hosts.

@@ -8,7 +8,7 @@ using VardyParty.Configuration;
 using VardyParty.LocalService.Client.Discovery;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// Client-side Local LAN Play Service discovery and resolution.

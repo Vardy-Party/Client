@@ -1,6 +1,6 @@
 using VardyParty.Playback;
 
-namespace VardyParty.Services
+namespace VardyParty.Playback
 {
     /// <summary>
     /// Legacy switch-eligibility helper. Prefer <see cref="PlaybackPolicy.CanAttach"/>.

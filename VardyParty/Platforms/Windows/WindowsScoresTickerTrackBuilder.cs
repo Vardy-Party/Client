@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using VardyParty.Services;
 using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
 using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinImage = Microsoft.UI.Xaml.Controls.Image;

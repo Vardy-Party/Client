@@ -1,4 +1,4 @@
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public class InMemoryLeagueFilterPreferencesStore : ILeagueFilterPreferencesStore
 {

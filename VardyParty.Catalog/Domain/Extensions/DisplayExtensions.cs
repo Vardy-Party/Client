@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using VardyParty.Catalog;
 using VardyParty.Models;
-using VardyParty.Services;
 
 namespace VardyParty.Extensions
 {

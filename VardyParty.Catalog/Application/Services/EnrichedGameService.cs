@@ -6,7 +6,7 @@ using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public class EnrichedGameService(
     IGamesCatalogApi api,

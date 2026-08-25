@@ -1,9 +1,7 @@
-using VardyParty.Models;
-using VardyParty.Playback;
+using VardyParty.Ports;
 
-namespace VardyParty.Services
+namespace VardyParty.Playback;
+
+public interface INativeVideoPlayerService : IPlaybackLauncher
 {
-    public interface INativeVideoPlayerService : IPlaybackLauncher
-    {
-    }
 }

@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Resolvers;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// Deduplicates streams by their base m3u8 URL, keeping only the best variant per unique URL

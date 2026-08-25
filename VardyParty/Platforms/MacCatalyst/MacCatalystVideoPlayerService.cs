@@ -7,7 +7,6 @@ using ObjCRuntime;
 using UIKit;
 using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Services;
 
 namespace VardyParty.Platforms.MacCatalyst
 {

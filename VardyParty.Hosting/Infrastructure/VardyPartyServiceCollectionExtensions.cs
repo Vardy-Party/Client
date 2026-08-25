@@ -1,11 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Parsers;
-using VardyParty.Providers;
 using VardyParty.Resolvers;
-using VardyParty.Services;
 
 namespace VardyParty.Hosting;
 

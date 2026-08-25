@@ -1,4 +1,4 @@
-namespace VardyParty.Services
+namespace VardyParty.Playback
 {
     public class StreamMetricsWindow
     {

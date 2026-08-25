@@ -2,13 +2,11 @@ using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Playback;
-using VardyParty.Providers;
+using VardyParty.Ports;
 using VardyParty.Resolvers;
-using VardyParty.Services;
 using StreamModel = VardyParty.Models.Stream;
 
-namespace VardyParty.Orchestrators;
+namespace VardyParty.Streaming;
 
 public class StreamResolutionOrchestrator(
     IApiService apiService,

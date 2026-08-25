@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Orchestrators;
+namespace VardyParty.Streaming;
 
 public interface IStreamSelectionCoordinator
 {

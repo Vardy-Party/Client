@@ -2,10 +2,9 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Services;
 using Stream = VardyParty.Models.Stream;
 
-namespace VardyParty.Resolvers;
+namespace VardyParty.Streaming;
 
 public class StreamResolver(
     IStreamHealthChecker healthChecker,

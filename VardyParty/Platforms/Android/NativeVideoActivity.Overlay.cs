@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using Android.Widget;
 using VardyParty.Models;
-using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
 {

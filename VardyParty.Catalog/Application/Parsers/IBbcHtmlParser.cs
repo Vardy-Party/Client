@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Parsers;
+namespace VardyParty.Catalog;
 
 public interface IBbcHtmlParser
 {

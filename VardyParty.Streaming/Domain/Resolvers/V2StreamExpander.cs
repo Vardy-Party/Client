@@ -1,7 +1,7 @@
 using VardyParty.Models;
 using StreamModel = VardyParty.Models.Stream;
 
-namespace VardyParty.Resolvers;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// Expands v2 API stream entries (one page URL, many player labels) into per-label candidates.

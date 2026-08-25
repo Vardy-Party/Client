@@ -5,7 +5,6 @@ using VardyParty.Exceptions;
 using VardyParty.Health;
 using VardyParty.Hosting;
 using VardyParty.Resolvers;
-using VardyParty.Services;
 
 namespace StreamHealthCheckerTool;
 

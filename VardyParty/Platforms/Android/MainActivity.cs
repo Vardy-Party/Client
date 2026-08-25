@@ -97,7 +97,7 @@ namespace VardyParty
                 try
                 {
                     var services = IPlatformApplication.Current?.Services;
-                    var switching = services?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                    var switching = services?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
                     switching?.Cleanup();
                 }
                 catch { }

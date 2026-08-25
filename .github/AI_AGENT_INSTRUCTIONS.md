@@ -64,7 +64,7 @@ VardyParty-Client/
 │  └─ ...
 │
 ├─ tests/
-│  └─ VardyParty.Core.Tests/
+│  └─ VardyParty.Tests/
 │
 ├─ Version.props                  ← VERSION SOURCE OF TRUTH (DO NOT EDIT MANUALLY)
 ├─ VardyParty.sln

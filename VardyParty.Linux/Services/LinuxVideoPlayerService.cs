@@ -11,7 +11,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using VardyParty.Models;
 using VardyParty.Playback;
-using VardyParty.Services;
 
 namespace VardyParty.Linux.Services
 {

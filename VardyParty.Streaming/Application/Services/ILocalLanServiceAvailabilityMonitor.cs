@@ -1,4 +1,4 @@
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 public interface ILocalLanServiceAvailabilityMonitor
 {

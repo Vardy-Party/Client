@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
 
-namespace VardyParty.Parsers;
+namespace VardyParty.Catalog;
 
 public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJsonParser) : IBbcHtmlParser
 {

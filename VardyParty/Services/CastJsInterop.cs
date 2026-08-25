@@ -1,7 +1,7 @@
 using Microsoft.JSInterop;
 using Microsoft.Extensions.Logging;
 
-namespace VardyParty.Services;
+namespace VardyParty;
 
 /// <summary>
 /// JavaScript interop service for Google Cast Web Sender API

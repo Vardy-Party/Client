@@ -1,4 +1,4 @@
-namespace VardyParty.Providers;
+namespace VardyParty.Auth;
 
 public static class Auth0HttpClients
 {

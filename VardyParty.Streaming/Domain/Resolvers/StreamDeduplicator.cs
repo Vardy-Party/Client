@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
 
-namespace VardyParty.Resolvers;
+namespace VardyParty.Streaming;
 
 public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDeduplicator
 {

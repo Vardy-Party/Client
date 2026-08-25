@@ -1,4 +1,4 @@
-namespace VardyParty.Health;
+namespace VardyParty.Streaming;
 
 public interface IStreamHealthChecker
 {

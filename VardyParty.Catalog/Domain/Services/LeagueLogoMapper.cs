@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public static class LeagueLogoMapper
 {

@@ -23,6 +23,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+		<ProjectReference Include="..\VardyParty.Ports\VardyParty.Ports.csproj" />
 		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
 	</ItemGroup>
 

@@ -2,7 +2,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 public sealed class LocalLanServiceAvailabilityMonitor(
     ILocalLanPlayService localLanPlayService,

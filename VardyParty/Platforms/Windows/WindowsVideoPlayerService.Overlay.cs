@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using VardyParty.Services;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;

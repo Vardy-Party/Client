@@ -5,7 +5,6 @@ using System.Linq;
 using Android.Widget;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
-using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
 {

@@ -3,9 +3,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
 using VardyParty.Models;
-using VardyParty.Parsers;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public class BbcFixturesService(
     HttpClient http,

@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 public interface IApiService
 {

@@ -1,8 +1,6 @@
 ﻿using VardyParty.Models;
-using VardyParty.Providers;
-using VardyParty.Services;
 
-namespace VardyParty.Health;
+namespace VardyParty.Streaming;
 
 public class StreamHealthReporter(
     IStreamHealthService streamHealthService,

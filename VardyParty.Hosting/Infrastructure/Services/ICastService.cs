@@ -1,4 +1,4 @@
-namespace VardyParty.Services;
+namespace VardyParty.Hosting;
 
 public interface ICastService
 {

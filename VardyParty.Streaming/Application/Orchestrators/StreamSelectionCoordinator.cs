@@ -3,10 +3,9 @@ using Microsoft.Extensions.Logging;
 using VardyParty.Health;
 using VardyParty.Models;
 using VardyParty.Resolvers;
-using VardyParty.Services;
 using StreamModel = VardyParty.Models.Stream;
 
-namespace VardyParty.Orchestrators;
+namespace VardyParty.Streaming;
 
 public class StreamSelectionCoordinator(
     IApiService apiService,

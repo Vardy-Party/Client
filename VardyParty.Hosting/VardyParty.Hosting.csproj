@@ -29,6 +29,7 @@
 		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
 		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />
+		<ProjectReference Include="..\VardyParty.Ports\VardyParty.Ports.csproj" />
 		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
 		<ProjectReference Include="..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
 	</ItemGroup>

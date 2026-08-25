@@ -134,7 +134,7 @@ VardyParty/
 ├── VardyParty.Core/
 │   └── VardyParty.Core.csproj # Core library
 └── tests/
-    └── VardyParty.Core.Tests/ # Unit tests
+    └── VardyParty.Tests/ # Unit tests
 ```
 
 ## Notes
@@ -208,7 +208,7 @@ To test the pipeline locally before pushing:
 
 ```bash
 # Run tests locally
-dotnet test tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj --configuration Release
+dotnet test tests/VardyParty.Tests/VardyParty.Tests.csproj --configuration Release
 
 # Check formatting
 dotnet format --verify-no-changes

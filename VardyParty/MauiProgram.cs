@@ -11,9 +11,7 @@ using VardyParty.Hosting;
 #if ANDROID
 using VardyParty.Platforms.Android;
 #endif
-using VardyParty.Providers;
 using VardyParty.MauiServices;
-using VardyParty.Services;
 #if WINDOWS
 using Microsoft.Maui.Handlers;
 using Microsoft.Maui.LifecycleEvents;
@@ -195,13 +193,13 @@ public static class MauiProgram
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.Windows.WindowsVideoPlayerService>();
-            builder.Services.AddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
+            builder.Services.AddSingleton<IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
 #elif IOS
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.iOS.IosVideoPlayerService>();
 #elif MACCATALYST
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.MacCatalyst.MacCatalystVideoPlayerService>();
 #endif
-        builder.Services.TryAddSingleton<VardyParty.Services.IOverlayCloseService, VardyParty.Services.NullOverlayCloseService>();
+        builder.Services.TryAddSingleton<IOverlayCloseService, NullOverlayCloseService>();
 
         builder.Services
             .BindConfiguration<APISettings>(APISettings.SectionName)

@@ -3,8 +3,6 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using VardyParty.Orchestrators;
-using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
 {

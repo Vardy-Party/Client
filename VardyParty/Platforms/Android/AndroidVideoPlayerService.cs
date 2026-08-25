@@ -1,7 +1,6 @@
 #if ANDROID
 using System;
 using System.Threading.Tasks;
-using VardyParty.Services;
 using VardyParty.Models;
 
 namespace VardyParty.Platforms.Android
@@ -106,7 +105,7 @@ namespace VardyParty.Platforms.Android
 
             try
             {
-                var switching = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Services.IStreamSwitchingService)) as VardyParty.Services.IStreamSwitchingService;
+                var switching = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
                 switching?.SwitchToNextStream();
             }
             catch { }

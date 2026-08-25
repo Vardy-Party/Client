@@ -4,7 +4,7 @@ using System.Reactive.Subjects;
 using VardyParty.Extensions;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public interface IHomePagePresentationService
 {

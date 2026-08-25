@@ -1,7 +1,7 @@
 #pragma warning disable CS0067
 using Microsoft.Extensions.Logging;
 
-namespace VardyParty.Services;
+namespace VardyParty.Hosting;
 
 /// <summary>
 /// Cast service for Chromecast support

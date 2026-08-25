@@ -17,13 +17,13 @@
 | Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → `IMediaEngine` → session → pool/health/attach |
 | Windows host | `WindowsVideoPlayerService.cs` | WinUI facts → same loop; no local `RecoverFromFailed*` |
 | Linux host | `LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
-| Tests | `tests/VardyParty.Core.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`, `StreamResolutionOrchestratorTests.cs`, `StreamHealthReporterTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
+| Tests | `tests/VardyParty.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`, `StreamResolutionOrchestratorTests.cs`, `StreamHealthReporterTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
 
 ---
 
 ## Testing seam (OS vs Core)
 
-Business recovery must stay under Core tests. OS decoder/chrome differences are large (ExoPlayer vs WinUI AdaptiveMediaSource, TV remote, request headers, Activity vs MediaPlayer). Those do **not** belong in `VardyParty.Core.Tests`.
+Business recovery must stay under unit tests. OS decoder/chrome differences are large (ExoPlayer vs WinUI AdaptiveMediaSource, TV remote, request headers, Activity vs MediaPlayer). Those do **not** belong in `VardyParty.Tests`.
 
 **Do test via a common interface:**
 

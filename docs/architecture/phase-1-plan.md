@@ -67,14 +67,14 @@ This is the hinge for phase 2. It is **not** an Android XAML PR.
 
 Graph is acyclic:
 
-- **Auth**, **Playback** → Kernel
+- **Auth**, **Playback**, **Ports** → Kernel
 - **Catalog** → Kernel (`IGamesCatalogApi` is the catalog HTTP port; `EnrichedGameService` takes that, not `IApiService`)
-- **Streaming** → Catalog → Kernel; Streaming may take `IPlaybackLauncher` (method-injected) and `IStreamSwitchingService` from Playback — not the native player
+- **Streaming** → Catalog → Kernel; Streaming takes `IPlaybackLauncher` and `IStreamSwitchingService` from **Ports** — not Playback, not the native player
 - **Presentation** → Catalog + Kernel
-- **Hosting** → Auth + Catalog + Streaming + Playback + Presentation
+- **Hosting** → Auth + Catalog + Streaming + Playback + Ports + Presentation
 - **`VardyParty.Core` removed**
 
-Still later: split `VardyParty.Core.Tests` into per-domain test projects plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`).
+Still later: split `VardyParty.Tests` into per-domain test projects plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`).
 
 **Auth move:** device-code + refresh HTTP into an Auth token client; MAUI/Linux keep storage + interactive/PKCE. Characterization tests before moving storage (`offline_access`, sliding refresh, `invalid_grant`).
 

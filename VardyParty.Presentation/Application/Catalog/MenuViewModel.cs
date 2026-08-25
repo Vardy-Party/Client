@@ -1,5 +1,4 @@
 using VardyParty.Models;
-using VardyParty.Services;
 
 namespace VardyParty.Catalog;
 

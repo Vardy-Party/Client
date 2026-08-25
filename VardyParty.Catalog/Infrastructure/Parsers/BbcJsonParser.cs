@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 
-namespace VardyParty.Parsers;
+namespace VardyParty.Catalog;
 
 public class BbcJsonParser : IBbcJsonParser
 {

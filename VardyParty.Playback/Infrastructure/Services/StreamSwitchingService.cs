@@ -2,7 +2,7 @@ using System.Reactive.Subjects;
 using VardyParty.Models;
 using VardyParty.Resolvers;
 
-namespace VardyParty.Services;
+namespace VardyParty.Playback;
 
 public class StreamSwitchingService : IStreamSwitchingService, IDisposable
 {

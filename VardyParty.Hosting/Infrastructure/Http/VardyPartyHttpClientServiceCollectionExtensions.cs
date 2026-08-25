@@ -1,8 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
-using VardyParty.Handlers;
+using VardyParty.Auth;
 using VardyParty.Health;
-using VardyParty.Providers;
-using VardyParty.Services;
 
 namespace VardyParty.Hosting;
 
@@ -42,6 +40,7 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             });
         services.AddTransient<IApiService>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<IGamesCatalogApi>(sp => sp.GetRequiredService<ApiService>());
+        services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());

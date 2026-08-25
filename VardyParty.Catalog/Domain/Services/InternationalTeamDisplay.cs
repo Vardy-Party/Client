@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public static class InternationalTeamDisplay
 {

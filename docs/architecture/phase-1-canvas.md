@@ -11,7 +11,8 @@ Domain projects, not `*.Domain` / `*.Application` / `*.Infrastructure` solutions
 
 ```mermaid
 flowchart BT
-  Kernel["VardyParty.Kernel<br/>shared models + ports language"]
+  Kernel["VardyParty.Kernel<br/>shared models"]
+  Ports["VardyParty.Ports<br/>playback ports"]
   Auth["VardyParty.Auth"]
   Catalog["VardyParty.Catalog"]
   Streaming["VardyParty.Streaming"]
@@ -23,18 +24,18 @@ flowchart BT
 
   Auth --> Kernel
   Catalog --> Kernel
-  Catalog --> Auth
+  Ports --> Kernel
   Streaming --> Kernel
-  Streaming --> Auth
   Streaming --> Catalog
+  Streaming --> Ports
   Playback --> Kernel
+  Playback --> Ports
   Presentation --> Kernel
-  Presentation --> Auth
   Presentation --> Catalog
-  Presentation --> Streaming
-  Presentation --> Playback
   Hosting --> Auth
   Hosting --> Catalog
+  Hosting --> Kernel
+  Hosting --> Ports
   Hosting --> Streaming
   Hosting --> Playback
   Hosting --> Presentation
@@ -54,10 +55,11 @@ flowchart BT
 
 | Assembly | Domain | From today’s Core (and new types) |
 |---|---|---|
-| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`. No I/O, no DI graph. |
-| **Auth** | Identity | `AuthTokenLifetime`, `IAuthLoginService`, `IAuthTokenProvider`, `Auth0ApiTokenHandler` |
+| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`. No I/O, no DI graph, no playback ports. |
+| **Ports** | Cross-slice contracts | `IPlaybackLauncher`, `IStreamSwitchingService`, `StreamCandidateRules` — so Streaming can start playback without referencing Playback |
+| **Auth** | Identity | `AuthTokenLifetime`, `Auth0TokenSession`, `IAuth0OAuthClient`, `IAuthLoginService`, `IAuthTokenProvider`, `Auth0ApiTokenHandler`. Hosts keep OS storage and interactive login. |
 | **Catalog** | What matches exist | `EnrichedGameService`, `HomePagePresentationService`, BBC parsers/services, `GameMatcher`, league filter/logos, display helpers, `ScoresTickerPolicy`, `TickerMarquee` |
-| **Streaming** | Get a playable URL | Resolver, expander/dedup/orderer, orchestrator, coordinator, LAN LocalService client, stream/M3U8 HTTP (`IApiService` : `IGamesCatalogApi`), health probe I/O |
+| **Streaming** | Get a playable URL | Resolver, expander/dedup/orderer, orchestrator, coordinator, LAN LocalService client, stream/M3U8 HTTP (`IApiService` + `IGamesCatalogApi` both bind to `ApiService`), health probe I/O |
 | **Playback** | Play and recover | `PlaybackPolicy`, `PlaybackSessionController`, `IMediaEngine`, `INativeVideoPlayerService`, `StreamSwitchingService` |
 | **Presentation** | Shared VMs | `HomeShellViewModel`, `MenuViewModel`, `HomePlaybackIntent` (`SelectionState` lives in Kernel) |
 | **Hosting** | Composition | `AddVardyParty()` — only project that references every domain |

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace VardyParty.Handlers;
+namespace VardyParty.Streaming;
 
 public class M3U8HttpHandler(ILogger<M3U8HttpHandler> logger) : DelegatingHandler
 {

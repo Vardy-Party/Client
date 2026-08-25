@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// Resolves stream m3u8 URLs incrementally and extracts metadata

@@ -52,7 +52,8 @@ VardyParty.Linux/            # Linux native application (Avalonia UI)
 └── README.md                # Linux build & run instructions
 
 VardyParty.Kernel/           # Shared models + config POCOs
-VardyParty.Auth/             # Identity (token lifetime, Auth0 handler)
+VardyParty.Ports/            # Playback ports (launcher, switching, candidate rules)
+VardyParty.Auth/             # Identity (token session, Auth0 HTTP, handler)
 VardyParty.Catalog/          # Matcher, BBC, league filter, ticker, home presentation
 VardyParty.Streaming/        # Orchestrator, resolvers, LAN, stream/M3U8 HTTP, health
 VardyParty.Playback/         # Playback policy/session, switching pool, player ports

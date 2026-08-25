@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 {

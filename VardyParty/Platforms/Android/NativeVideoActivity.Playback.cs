@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
 using VardyParty.Playback;
-using VardyParty.Services;
 
 namespace VardyParty.Platforms.Android
 {

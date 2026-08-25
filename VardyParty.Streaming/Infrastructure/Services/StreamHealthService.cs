@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 using VardyParty.Configuration;
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Streaming;
 
 public class StreamHealthService(
     HttpClient httpClient,

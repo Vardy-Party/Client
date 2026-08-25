@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
 using VardyParty.Playback;
-using VardyParty.Services;
 using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;

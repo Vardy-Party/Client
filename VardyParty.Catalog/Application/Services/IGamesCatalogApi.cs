@@ -1,6 +1,6 @@
 using VardyParty.Models;
 
-namespace VardyParty.Services;
+namespace VardyParty.Catalog;
 
 /// <summary>
 /// Catalog-facing games list. Hosting binds this to the same HTTP implementation

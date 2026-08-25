@@ -1,6 +1,6 @@
 using StreamModel = VardyParty.Models.Stream;
 
-namespace VardyParty.Resolvers;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// Orders catalog streams so FB (English footybitex) candidates are tried before MP (v2) alternates.

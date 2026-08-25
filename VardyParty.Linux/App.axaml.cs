@@ -10,8 +10,6 @@ using VardyParty;
 using VardyParty.Configuration;
 using VardyParty.Hosting;
 using VardyParty.Linux.Services;
-using VardyParty.Providers;
-using VardyParty.Services;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace VardyParty.Linux;

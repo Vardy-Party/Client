@@ -1,4 +1,4 @@
-namespace VardyParty.Providers;
+namespace VardyParty.Streaming;
 
 public interface ISessionIdProvider
 {
