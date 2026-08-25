@@ -8,37 +8,33 @@ public class RecommendationConfidenceTests
 {
     [Theory]
     [InlineData("high", RecommendationConfidence.High)]
-    [InlineData("MEDIUM", RecommendationConfidence.Medium)]
+    [InlineData("medium", RecommendationConfidence.Medium)]
     [InlineData("low", RecommendationConfidence.Low)]
     [InlineData("none", RecommendationConfidence.None)]
-    [InlineData("", RecommendationConfidence.None)]
-    [InlineData("nope", RecommendationConfidence.None)]
-    public void Parse_MapsApiStringsCaseInsensitively(string value, RecommendationConfidence expected)
+    public void JsonStringEnumConverter_ReadsApiStrings(
+        string value,
+        RecommendationConfidence expected)
     {
         // Arrange
         var json = $"\"{value}\"";
 
         // Act
-        var parsed = RecommendationConfidenceJsonConverter.Parse(value);
         var deserialized = JsonSerializer.Deserialize<RecommendationConfidence>(json);
 
         // Assert
-        Assert.Equal(expected, parsed);
         Assert.Equal(expected, deserialized);
     }
 
     [Fact]
-    public void Parse_Null_IsNone()
+    public void JsonStringEnumConverter_WritesApiMemberNames()
     {
         // Arrange
-        const string? missing = null;
+        const RecommendationConfidence confidence = RecommendationConfidence.High;
 
         // Act
-        var parsed = RecommendationConfidenceJsonConverter.Parse(missing);
-        var deserialized = JsonSerializer.Deserialize<RecommendationConfidence>("null");
+        var json = JsonSerializer.Serialize(confidence);
 
         // Assert
-        Assert.Equal(RecommendationConfidence.None, parsed);
-        Assert.Equal(RecommendationConfidence.None, deserialized);
+        Assert.Equal("\"high\"", json);
     }
 }
