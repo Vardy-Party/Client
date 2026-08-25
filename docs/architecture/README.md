@@ -10,4 +10,4 @@ This folder is the **architecture canvas and plan** for moving VardyParty off a 
 
 Existing [docs/ARCHITECTURE.md](../ARCHITECTURE.md) is **version/CI**, not this app. Playback as-is: [docs/STREAM_PLAYBACK_RULES.md](../STREAM_PLAYBACK_RULES.md).
 
-**In progress:** extracted `VardyParty.Kernel`, `VardyParty.Playback`, `VardyParty.Auth`, `VardyParty.Presentation` (shared VMs), and `VardyParty.Hosting` (`AddVardyPartyCore`). Catalog and Streaming still live in `VardyParty.Core`.
+**Phase 1 assemblies:** `VardyParty.Kernel`, `VardyParty.Auth`, `VardyParty.Catalog`, `VardyParty.Streaming`, `VardyParty.Playback`, `VardyParty.Presentation` (shared VMs), and `VardyParty.Hosting` (`AddVardyPartyCore`). `VardyParty.Core` is deleted. Blazor WebView stays until [phase 2](phase-2-webview-xaml.md).

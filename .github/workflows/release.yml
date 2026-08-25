@@ -201,7 +201,7 @@ jobs:
         run: dotnet restore
       
       - name: Build core library for Linux
-        run: dotnet build VardyParty.Core/VardyParty.Core.csproj -c Release -f net10.0
+        run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net10.0
       
       - name: Publish Linux app (x64)
         run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-x64 -o ./output/linux-x64 || true

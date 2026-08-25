@@ -8,11 +8,11 @@
 
 | Type | Path | Role |
 |------|------|------|
-| `PlaybackPolicy` | `VardyParty.Core/Playback/PlaybackPolicy.cs` | Pure rules (attach, navigate, revert, cache retry, decline) |
-| `PlaybackSessionController` | `VardyParty.Core/Playback/PlaybackSessionController.cs` | State machine: engine events → effects |
-| `PlaybackCommand` | `VardyParty.Core/Playback/PlaybackCommand.cs` | Collapses effect batches (remove+advance must not skip) |
-| `IMediaEngine` | `VardyParty.Core/Playback/IMediaEngine.cs` | Slim OS contract (Attach/Stop/events/metrics only) |
-| `DelegatingMediaEngine` | `VardyParty.Core/Playback/DelegatingMediaEngine.cs` | Host adapter: OS plugs attach/stop/metrics, raises facts |
+| `PlaybackPolicy` | `VardyParty.Playback/Domain/PlaybackPolicy.cs` | Pure rules (attach, navigate, revert, cache retry, decline) |
+| `PlaybackSessionController` | `VardyParty.Playback/Domain/PlaybackSessionController.cs` | State machine: engine events → effects |
+| `PlaybackCommand` | `VardyParty.Playback/Domain/PlaybackCommand.cs` | Collapses effect batches (remove+advance must not skip) |
+| `IMediaEngine` | `VardyParty.Playback/Application/IMediaEngine.cs` | Slim OS contract (Attach/Stop/events/metrics only) |
+| `DelegatingMediaEngine` | `VardyParty.Playback/Infrastructure/DelegatingMediaEngine.cs` | Host adapter: OS plugs attach/stop/metrics, raises facts |
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
 | Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → `IMediaEngine` → session → pool/health/attach |
 | Windows host | `WindowsVideoPlayerService.cs` | WinUI facts → same loop; no local `RecoverFromFailed*` |
@@ -288,12 +288,12 @@ Until that exists, agents should reconstruct the timeline from the markers above
 
 | Concern | Primary files |
 |---------|----------------|
-| Orchestration | `VardyParty.Core/Orchestrators/StreamResolutionOrchestrator.cs` |
-| Selection | `VardyParty.Core/Orchestrators/StreamSelectionCoordinator.cs` |
-| Resolve / probe | `VardyParty.Core/Resolvers/StreamResolver.cs`, `Health/StreamHealthChecker.cs` |
-| Pool / switch index | `VardyParty.Core/Services/StreamSwitchingService.cs` |
-| Decline window | `VardyParty.Core/Health/StreamMetricsWindow.cs` |
-| Switch guard | `VardyParty.Core/Services/SwitchingDecision.cs` |
+| Orchestration | `VardyParty.Streaming/Application/Orchestrators/StreamResolutionOrchestrator.cs` |
+| Selection | `VardyParty.Streaming/Application/Orchestrators/StreamSelectionCoordinator.cs` |
+| Resolve / probe | `VardyParty.Streaming/Infrastructure/Resolvers/StreamResolver.cs`, `VardyParty.Streaming/Infrastructure/Health/StreamHealthChecker.cs` |
+| Pool / switch index | `VardyParty.Playback/Infrastructure/Services/StreamSwitchingService.cs` |
+| Decline window | `VardyParty.Playback/Domain/StreamMetricsWindow.cs` |
+| Switch guard | `VardyParty.Playback/Domain/SwitchingDecision.cs` |
 | Android player | `VardyParty/Platforms/Android/NativeVideoActivity.cs` |
 | Android bridge | `VardyParty/Platforms/Android/AndroidVideoPlayerService.cs` |
 | Windows player | `VardyParty/Platforms/Windows/WindowsVideoPlayerService.cs` |

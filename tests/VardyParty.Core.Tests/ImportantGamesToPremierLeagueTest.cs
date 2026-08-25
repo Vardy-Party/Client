@@ -22,7 +22,7 @@ public class ImportantGamesToPremierLeagueTest
     public async Task ImportantGames_MapTo_BbcLeague()
     {
         // Arrange
-        var api = _fixture.GetMock<IApiService>();
+        var api = _fixture.GetMock<IGamesCatalogApi>();
         var bbc = _fixture.GetMock<IBbcFixturesService>();
         var game = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")

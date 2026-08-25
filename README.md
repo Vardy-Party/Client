@@ -51,14 +51,13 @@ VardyParty.Linux/            # Linux native application (Avalonia UI)
 ├── Assets/                  # Linux-specific icons
 └── README.md                # Linux build & run instructions
 
-VardyParty.Core/             # Shared business logic library
-├── Services/                # Core services (API, stream resolution, health checking)
-├── Models/                  # Data models (Game, Stream, etc.)
-├── Orchestrators/           # Stream resolution orchestration
-├── Resolvers/               # Stream URL resolution
-├── Parsers/                 # Schedule parsing
-├── Providers/               # Configuration providers
-└── Health/                  # Stream health checking
+VardyParty.Kernel/           # Shared models + config POCOs
+VardyParty.Auth/             # Identity (token lifetime, Auth0 handler)
+VardyParty.Catalog/          # Matcher, BBC, league filter, ticker, home presentation
+VardyParty.Streaming/        # Orchestrator, resolvers, LAN, stream/M3U8 HTTP, health
+VardyParty.Playback/         # Playback policy/session, switching pool, player ports
+VardyParty.Presentation/     # Shared HomeShell/Menu view-models
+VardyParty.Hosting/          # AddVardyPartyCore() composition
 ```
 
 ## Architecture

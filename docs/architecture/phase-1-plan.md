@@ -10,7 +10,7 @@ Do not estimate calendar time. Each step is a shippable PR.
 
 ## Why this exists
 
-`VardyParty.Core` already holds the real domain (`PlaybackPolicy`, orchestrator, `GameMatcher`, ticker policy, `AuthTokenLifetime`). Around it:
+Domain assemblies now hold the real domain (`PlaybackPolicy`, orchestrator, `GameMatcher`, ticker policy, `AuthTokenLifetime`). Around them:
 
 - Orchestrator (application) ctor-injects the player (infrastructure) — Windows nested session then resolves the orchestrator back out of DI.
 - `MauiProgram` and Linux `App` duplicate the Core graph; Linux registers `IHomePagePresentationService` and does not use it.
@@ -63,15 +63,18 @@ This is the hinge for phase 2. It is **not** an Android XAML PR.
 
 ---
 
-## Phase 1d — Split assemblies (redistribute Core)
+## Phase 1d — Split assemblies (done)
 
-Order matters so the graph stays acyclic:
+Graph is acyclic:
 
-1. **Kernel** + **Hosting** (Hosting may still reference Core during the move).
-2. **Playback** (already a folder) — Streaming can no longer take a player dependency.
-3. **Catalog**, then **Streaming** (split `ApiService` along catalog HTTP vs stream/M3U8 HTTP).
-4. **Auth**, then move VMs into **Presentation**.
-5. Remove **Core**. Split `VardyParty.Core.Tests` into per-domain test projects plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`).
+- **Auth**, **Playback** → Kernel
+- **Catalog** → Kernel (`IGamesCatalogApi` is the catalog HTTP port; `EnrichedGameService` takes that, not `IApiService`)
+- **Streaming** → Catalog → Kernel; Streaming may take `IPlaybackLauncher` (method-injected) and `IStreamSwitchingService` from Playback — not the native player
+- **Presentation** → Catalog + Kernel
+- **Hosting** → Auth + Catalog + Streaming + Playback + Presentation
+- **`VardyParty.Core` removed**
+
+Still later: split `VardyParty.Core.Tests` into per-domain test projects plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`).
 
 **Auth move:** device-code + refresh HTTP into an Auth token client; MAUI/Linux keep storage + interactive/PKCE. Characterization tests before moving storage (`offline_access`, sliding refresh, `invalid_grant`).
 
@@ -99,11 +102,11 @@ Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). De
 
 ## Suggested PR sequence
 
-1. `HomePlaybackIntent` + orchestrator characterization tests  
-2. Shared `HomeShellViewModel` / `MenuViewModel`, Blazor + Linux bound  
-3. `AddVardyParty` composition root  
-4. `IPlaybackLauncher` — break DI cycle  
-5. Kernel + Playback projects  
-6. Catalog + Streaming (+ split `ApiService`)  
-7. Auth + Presentation projects; delete Core  
+1. `HomePlaybackIntent` + orchestrator characterization tests — done  
+2. Shared `HomeShellViewModel` / `MenuViewModel`, Blazor + Linux bound — done  
+3. `AddVardyParty` composition root — done (`AddVardyPartyCore`)  
+4. `IPlaybackLauncher` — break DI cycle — done  
+5. Kernel + Playback projects — done  
+6. Catalog + Streaming (`IGamesCatalogApi` / `IApiService`) — done  
+7. Auth + Presentation projects; delete Core — done  
 8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up

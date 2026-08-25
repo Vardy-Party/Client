@@ -9,7 +9,7 @@ using VardyParty.Models;
 namespace VardyParty.Services;
 
 public class EnrichedGameService(
-    IApiService api,
+    IGamesCatalogApi api,
     IBbcFixturesService bbc,
     IGameMatcher matcher,
     IOptions<BbcFixturesSettings> bbcFixturesSettings,

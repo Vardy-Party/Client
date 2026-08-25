@@ -46,7 +46,7 @@ flowchart BT
 
 **Hard rule:** Streaming must not reference Playback. Playback must not reference Streaming. Presentation wires “start this game” via `IPlaybackLauncher` (method-injected), not a singleton player inside the orchestrator.
 
-`VardyParty.Core` is deleted once types have moved (a short forwarding shim is allowed during the move).
+`VardyParty.Core` is deleted. Types live in the domain assemblies above. Clean Architecture rings are folders **inside** each domain csproj (`Domain/`, `Application/`, `Infrastructure/`), not extra solution projects.
 
 ---
 
@@ -56,10 +56,10 @@ flowchart BT
 |---|---|---|
 | **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`. No I/O, no DI graph. |
 | **Auth** | Identity | `AuthTokenLifetime`, `IAuthLoginService`, `IAuthTokenProvider`, `Auth0ApiTokenHandler` |
-| **Catalog** | What matches exist | `EnrichedGameService`, BBC parsers/services, `GameMatcher`, league filter/logos, display helpers, `ScoresTickerPolicy`, `TickerMarquee` |
-| **Streaming** | Get a playable URL | Resolver, expander/dedup/orderer, orchestrator, coordinator, LAN LocalService client, stream/M3U8 HTTP (split out of `ApiService`), health probe I/O |
+| **Catalog** | What matches exist | `EnrichedGameService`, `HomePagePresentationService`, BBC parsers/services, `GameMatcher`, league filter/logos, display helpers, `ScoresTickerPolicy`, `TickerMarquee` |
+| **Streaming** | Get a playable URL | Resolver, expander/dedup/orderer, orchestrator, coordinator, LAN LocalService client, stream/M3U8 HTTP (`IApiService` : `IGamesCatalogApi`), health probe I/O |
 | **Playback** | Play and recover | `PlaybackPolicy`, `PlaybackSessionController`, `IMediaEngine`, `INativeVideoPlayerService`, `StreamSwitchingService` |
-| **Presentation** | Shared VMs | `HomeShellViewModel`, `MenuViewModel`, `HomePlaybackIntent`, `HomePagePresentationService`, `SelectionState` |
+| **Presentation** | Shared VMs | `HomeShellViewModel`, `MenuViewModel`, `HomePlaybackIntent` (`SelectionState` lives in Kernel) |
 | **Hosting** | Composition | `AddVardyParty()` — only project that references every domain |
 
 **Hosts** (`VardyParty`, `VardyParty.Linux`) implement OS adapters: Auth0 vs Linux PKCE, nested `PlayerSession` / `NativeVideoActivity` / LibVLC. Nested player sessions are **not** DI services.

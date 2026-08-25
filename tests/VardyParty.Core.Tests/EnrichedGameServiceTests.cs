@@ -22,7 +22,7 @@ public class EnrichedGameServiceTests
     public async Task RefreshAsync_MergesApiAndBbc()
     {
         // Arrange
-        var api = _fixture.GetMock<IApiService>();
+        var api = _fixture.GetMock<IGamesCatalogApi>();
         var bbc = _fixture.GetMock<IBbcFixturesService>();
         var game = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")
@@ -83,7 +83,7 @@ public class EnrichedGameServiceTests
     public async Task RefreshAsync_HandlesExceptionsGracefully()
     {
         // Arrange
-        var api = _fixture.GetMock<IApiService>();
+        var api = _fixture.GetMock<IGamesCatalogApi>();
         var bbc = _fixture.GetMock<IBbcFixturesService>();
         api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>())).ThrowsAsync(_fixture.Create<Exception>());
 

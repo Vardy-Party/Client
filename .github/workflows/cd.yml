@@ -10,6 +10,7 @@ name: CD - Package & Release
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
+  VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
   CI_RUN_ID: ${{ github.event.inputs.ci_run_id }}
 on:
@@ -354,7 +355,7 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Download Android build artifact

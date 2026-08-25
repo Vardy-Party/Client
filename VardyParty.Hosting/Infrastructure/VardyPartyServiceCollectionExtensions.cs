@@ -10,7 +10,7 @@ using VardyParty.Services;
 namespace VardyParty.Hosting;
 
 /// <summary>
-/// Shared Core registrations. Hosts still add auth, player, prefs store, and HttpClients.
+/// Shared domain registrations. Hosts still add auth, player, prefs store, and HttpClients.
 /// </summary>
 public static class VardyPartyServiceCollectionExtensions
 {
@@ -20,6 +20,7 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
         services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
+        services.AddSingleton<IGamesCatalogApi>(sp => sp.GetRequiredService<IApiService>());
         services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
         services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();

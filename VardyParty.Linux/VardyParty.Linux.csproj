@@ -47,8 +47,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Reference to shared Core library -->
-    <ProjectReference Include="..\VardyParty.Core\VardyParty.Core.csproj" />
+    <!-- Shared domain + composition -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
     <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
   </ItemGroup>

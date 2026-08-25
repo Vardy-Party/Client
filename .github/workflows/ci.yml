@@ -3,7 +3,7 @@ name: CI - Build & Test
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
+  VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
@@ -151,7 +151,8 @@ jobs:
           name: build-windows
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -159,8 +160,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
@@ -198,7 +201,7 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Build Android app
@@ -209,7 +212,8 @@ jobs:
           name: build-android
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -217,8 +221,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
@@ -253,7 +259,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-ios -r iossimulator-x64
       - name: Build iOS app
@@ -264,7 +270,8 @@ jobs:
           name: build-ios
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -272,8 +279,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
@@ -308,7 +317,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
       - name: Build macOS app
@@ -319,7 +328,8 @@ jobs:
           name: build-macos
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -327,8 +337,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
@@ -372,7 +384,8 @@ jobs:
           name: build-linux-x64
           path: |
             VardyParty.Linux/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -380,8 +393,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
@@ -399,7 +414,8 @@ jobs:
           name: build-linux-arm64
           path: |
             VardyParty.Linux/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
             VardyParty.Auth/
             VardyParty.Kernel/
             VardyParty.Playback/
@@ -407,8 +423,10 @@ jobs:
             VardyParty.Hosting/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
             !VardyParty.Auth/bin/
             !VardyParty.Auth/obj/
             !VardyParty.Kernel/bin/
