@@ -6,12 +6,11 @@ REM Default (no args): one APK for 32-bit ARM TVs (armeabi-v7a) and 64-bit
 REM ARM phones (arm64-v8a, e.g. Nokia C12). AOT/trim off.
 REM Store/emulator fat APK: package-android.cmd all
 REM
-REM Do not pass a single -r. That produces an arm64-only APK that will not
-REM install on armeabi-v7a TVs (INSTALL_FAILED_NO_MATCHING_ABIS).
+REM Do not pass a single -r or a semicolon RuntimeIdentifiers list on the
+REM command line (INSTALL_FAILED_NO_MATCHING_ABIS / NETSDK1083 / MSB1006).
+REM Default sets AndroidArmOnly=true so the csproj selects android-arm+arm64.
 REM After the MAUI restore, re-restore Hosting/Presentation as net10.0
 REM (NETSDK1005) and build with --no-restore.
-REM MSBuild splits -p:A=1;B=2 on ";". Encode the RID list as %%3B in this .cmd
-REM (batch %% -> %3B for MSBuild). Quotes around the value are not enough.
 
 if exist "VardyParty.Core\VardyParty.Core.csproj" (
   echo VardyParty.Core was removed. Delete the leftover project before packaging:
@@ -46,14 +45,13 @@ if not "%~1"=="" (
 )
 
 echo Device APK: armeabi-v7a (TV) + arm64-v8a (phones), AOT/trim off
-set "ANDROID_RIDS=android-arm%%3Bandroid-arm64"
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=!ANDROID_RIDS!
+dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:AndroidArmOnly=true
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=!ANDROID_RIDS! -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:AndroidArmOnly=true -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :ShowApks
 exit /b %ERRORLEVEL%

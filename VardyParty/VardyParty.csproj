@@ -57,8 +57,13 @@
         <!-- Android TV Support -->
         <AndroidEnableProfiledAot Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">false</AndroidEnableProfiledAot>
 
-        <!-- Android: Build for ALL architectures (armeabi-v7a, arm64-v8a, x86, x86_64) -->
-        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+        <!-- Android: all ABIs for store / package-android.cmd all.
+             Device APK (AndroidArmOnly=true): armeabi-v7a TV + arm64-v8a phones.
+             Do not pass a semicolon RID list as -p:RuntimeIdentifiers — the SDK
+             treats it as one RuntimeIdentifier and fails with NETSDK1083. -->
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' != 'true'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' == 'true'">android-arm;android-arm64</RuntimeIdentifiers>
+        <RuntimeIdentifier Condition="'$(AndroidArmOnly)' == 'true'"></RuntimeIdentifier>
 
         <!-- Re-enable trimming and AOT for Android now that assembly info is properly generated -->
         <PublishTrimmed Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</PublishTrimmed>
