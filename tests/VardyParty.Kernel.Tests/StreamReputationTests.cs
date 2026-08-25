@@ -53,4 +53,23 @@ public class StreamReputationTests
             [StreamReputation.None, StreamReputation.Bad, StreamReputation.Poor, StreamReputation.Ok, StreamReputation.Good, StreamReputation.VeryGood],
             ordered);
     }
+
+    [Theory]
+    [InlineData(StreamReputation.None, "")]
+    [InlineData(StreamReputation.Bad, "Bad")]
+    [InlineData(StreamReputation.Poor, "Poor")]
+    [InlineData(StreamReputation.Ok, "OK")]
+    [InlineData(StreamReputation.Good, "Good")]
+    [InlineData(StreamReputation.VeryGood, "Very Good")]
+    public void ToDisplayLabel_UsesApiLabels(StreamReputation value, string expected)
+    {
+        // Arrange
+        var reputation = value;
+
+        // Act
+        var label = StreamReputationParser.ToDisplayLabel(reputation);
+
+        // Assert
+        Assert.Equal(expected, label);
+    }
 }

@@ -49,4 +49,14 @@ public static class StreamReputationParser
 
         return StreamReputation.None;
     }
+
+    public static string ToDisplayLabel(StreamReputation reputation) => reputation switch
+    {
+        StreamReputation.VeryGood => "Very Good",
+        StreamReputation.Good => "Good",
+        StreamReputation.Ok => "OK",
+        StreamReputation.Poor => "Poor",
+        StreamReputation.Bad => "Bad",
+        _ => string.Empty
+    };
 }
