@@ -4,7 +4,8 @@ name: Increment Build Version
 # ApplicationVersion and kick off CD so that merge is packaged under that number.
 #
 # Chain: merge to main → CI (not cancelled) → this workflow (serialized) →
-#   bump PR (GH006: no direct push to main) → dispatch CD with the new version.
+#   bump PR (GH006: no direct push to main with GITHUB_TOKEN) → squash-merge
+#   immediately (do not wait for CI Complete) → dispatch CD with the new version.
 #
 # Why not "CI complete → CD and increment in parallel"?
 # CD would read Version.props before the bump PR lands, so two merges share
@@ -18,10 +19,12 @@ name: Increment Build Version
 # and take max(Version.props, open bump PRs)+1 so versions stay unique even
 # when a previous bump PR is still open.
 #
-# Bump still goes through a PR (no git push to protected main). If the bot
-# cannot squash-merge (reviews / required checks / auto-merge disabled), the
-# PR is left open and CD still packages this unique version. Merge the bump
-# PR so main's Version.props catches up.
+# Hands-off merge: do not wait for required checks or `--auto` (repo
+# allow_auto_merge is false, and bump-PR CI is skipped / approval-gated).
+# Workflow YAML cannot override required reviews on main. If GITHUB_TOKEN
+# cannot merge, optional secret VERSION_BUMP_TOKEN (PAT or GitHub App) is
+# used with `gh pr merge --admin` to bypass required reviews and status
+# checks. Never `git push origin main` with GITHUB_TOKEN (GH006).
 on:
   workflow_run:
     workflows:
@@ -105,10 +108,12 @@ jobs:
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "::notice::Allocated ApplicationVersion ${CURRENT} (pending PR max ${PENDING}) → ${NEW_VERSION}"
 
-      - name: Commit, open PR, and try to squash-merge
+      - name: Commit, open PR, and squash-merge
         if: ${{ steps.guard.outputs.skip != 'true' }}
+        id: land
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_BUMP_TOKEN: ${{ secrets.VERSION_BUMP_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: |
           set -euo pipefail
@@ -120,15 +125,15 @@ jobs:
           TITLE="ci: auto-increment ApplicationVersion to ${NEW_VERSION}"
           BODY="Automated ApplicationVersion bump after CI succeeded on main.
 
-          This reserves build ${NEW_VERSION} for the package of that CI run. CD is dispatched with this number even if branch protection blocks the bot from merging.
+          This reserves build ${NEW_VERSION} for the package of that CI run. Increment squash-merges this PR without waiting for CI Complete (bump PRs skip the product matrix). GITHUB_TOKEN merges do not re-trigger workflows, so this does not loop CI/CD.
 
-          main is protected (GH006: changes must be made through a pull request), so this workflow cannot push directly. Please squash-merge this PR so Version.props on main matches the packaged release.
-
-          GITHUB_TOKEN merges do not re-trigger workflows, so this does not loop CI/CD."
+          main is protected (GH006): this branch is opened as a PR rather than \`git push origin main\` with GITHUB_TOKEN."
 
           git checkout -B "$BRANCH"
           git add Version.props
           git commit -m "$TITLE"
+          # GITHUB_TOKEN push: does not re-trigger workflows. Never push this
+          # token to protected main (GH006: changes must be made through a PR).
           git push --force-with-lease origin "HEAD:${BRANCH}"
 
           PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
@@ -138,18 +143,49 @@ jobs:
               exit 1
             fi
             echo "::notice::Opened ${PR_URL}"
+            PR_NUMBER=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           else
             echo "::notice::Reusing existing PR #${PR_NUMBER}"
           fi
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "::error::Version-bump PR was not found after create."
+            exit 1
+          fi
 
           # Squash keeps the ci: auto-increment* subject so the skip guard still matches.
-          # Do not fail the job if protection blocks the merge — CD still uses NEW_VERSION.
-          if gh pr merge --squash --delete-branch --subject "$TITLE"; then
+          # Do not --auto (waits for CI Complete; repo allow_auto_merge is false).
+          # Do not wait for checks: merge immediately or fail with settings help.
+          merge_pr() {
+            local token="$1"
+            shift
+            GH_TOKEN="${token}" gh pr merge "${PR_NUMBER}" --squash --delete-branch --subject "${TITLE}" "$@"
+          }
+
+          MERGED=0
+          if [[ -n "${VERSION_BUMP_TOKEN}" ]]; then
+            echo "::notice::Merging PR #${PR_NUMBER} with VERSION_BUMP_TOKEN (no wait for CI; --admin bypasses required reviews and status checks)."
+            if merge_pr "${VERSION_BUMP_TOKEN}" --admin; then
+              MERGED=1
+            elif merge_pr "${VERSION_BUMP_TOKEN}"; then
+              MERGED=1
+            fi
+          fi
+
+          if [[ "${MERGED}" -eq 0 ]]; then
+            echo "::notice::Merging PR #${PR_NUMBER} with GITHUB_TOKEN (no wait for CI). Succeeds only if github-actions[bot] can bypass required reviews and status checks on main."
+            if merge_pr "${GH_TOKEN}"; then
+              MERGED=1
+            elif merge_pr "${GH_TOKEN}" --admin; then
+              MERGED=1
+            fi
+          fi
+
+          if [[ "${MERGED}" -eq 1 ]]; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
             echo "::notice::ApplicationVersion ${NEW_VERSION} is on main"
-          elif gh pr merge --squash --auto --delete-branch --subject "$TITLE"; then
-            echo "::warning::Enabled auto-merge for the version-bump PR. Merge it (or wait for checks) so main's Version.props catches up. Packaging will still use ${NEW_VERSION}."
           else
-            echo "::warning::Opened a version-bump PR but could not squash-merge it onto main. If required status checks or reviews block github-actions[bot], allow that actor to bypass those rules for Version.props, enable auto-merge, or merge the PR manually. Packaging will still use ApplicationVersion ${NEW_VERSION}."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Opened PR #${PR_NUMBER} but could not squash-merge it. CD will still package ApplicationVersion ${NEW_VERSION}. The job fails after CD so this is not silent."
           fi
 
       - name: Dispatch CD for this unique version
@@ -169,3 +205,14 @@ jobs:
             -f application_version="${NEW_VERSION}" \
             -f package_sha="${PACKAGE_SHA}"
           echo "::notice::Dispatched CD for ApplicationVersion ${NEW_VERSION} (CI ${CI_RUN_ID}, sha ${PACKAGE_SHA})"
+
+      - name: Fail if the bump did not land on main
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.land.outputs.merged != 'true' }}
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          echo "::error::Could not squash-merge the ApplicationVersion ${NEW_VERSION} bump onto main."
+          echo "::error::Workflow YAML cannot override required reviews or required status checks on protected main."
+          echo "::error::Keep Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests' enabled (needed to open the bump PR)."
+          echo "::error::Then do ONE of: (1) on the main branch protection / ruleset, allow github-actions[bot] to bypass required pull requests, required reviews, and required status checks; or (2) add repo secret VERSION_BUMP_TOKEN (PAT or GitHub App installation token) for an actor that can bypass those rules. Re-run Increment Build Version. Do not git push to protected main with GITHUB_TOKEN (GH006)."
+          exit 1
