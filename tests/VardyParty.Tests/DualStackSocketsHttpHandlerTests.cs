@@ -1,7 +1,12 @@
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 using AutoFixture;
 using VardyParty.Hosting;
 using Xunit;
@@ -109,5 +114,214 @@ public class DualStackSocketsHttpHandlerTests
 
         // Assert
         Assert.False(handler.UseCookies);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenIpv6Hangs_Ipv4Wins()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::1");
+        var ipv4 = new IPAddress([192, 0, 2, _fixture.Create<byte>()]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, ipv4]);
+        var attempts = new ConcurrentQueue<IPAddress>();
+
+        // Act
+        await using var stream = await DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (address, _, cancellationToken) =>
+            {
+                attempts.Enqueue(address);
+                return address.Equals(ipv6)
+                    ? HangUntilCanceledAsync(cancellationToken)
+                    : Task.FromResult<Stream>(new OakLaneStream(address));
+            },
+            TimeSpan.FromMilliseconds(20));
+
+        // Assert
+        var winner = Assert.IsType<OakLaneStream>(stream);
+        Assert.Equal(ipv4, winner.Address);
+        Assert.Contains(ipv6, attempts);
+        Assert.Contains(ipv4, attempts);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenIpv4Hangs_Ipv6Wins()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::10");
+        var ipv4 = new IPAddress([192, 0, 2, 20]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, ipv4]);
+        var attempts = new ConcurrentQueue<IPAddress>();
+
+        // Act
+        await using var stream = await DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (address, _, cancellationToken) =>
+            {
+                attempts.Enqueue(address);
+                if (address.Equals(ipv4))
+                    return HangUntilCanceledAsync(cancellationToken);
+
+                return SucceedAfterAsync(address, TimeSpan.FromMilliseconds(50), cancellationToken);
+            },
+            TimeSpan.FromMilliseconds(20));
+
+        // Assert
+        var winner = Assert.IsType<OakLaneStream>(stream);
+        Assert.Equal(ipv6, winner.Address);
+        Assert.Contains(ipv6, attempts);
+        Assert.Contains(ipv4, attempts);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenIpv6SucceedsImmediately_DoesNotWaitOnIpv4()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::a");
+        var ipv4 = new IPAddress([192, 0, 2, 10]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, ipv4]);
+        var ipv4Started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Act
+        await using var stream = await DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (address, _, cancellationToken) =>
+            {
+                if (address.Equals(ipv4))
+                {
+                    ipv4Started.TrySetResult(true);
+                    return HangUntilCanceledAsync(cancellationToken);
+                }
+
+                return Task.FromResult<Stream>(new OakLaneStream(address));
+            },
+            TimeSpan.FromSeconds(5));
+
+        // Assert
+        var winner = Assert.IsType<OakLaneStream>(stream);
+        Assert.Equal(ipv6, winner.Address);
+        Assert.False(ipv4Started.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenIpv6FailsImmediately_Ipv4Wins()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::3");
+        var ipv4 = new IPAddress([192, 0, 2, 50]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, ipv4]);
+
+        // Act
+        await using var stream = await DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (address, _, _) => address.Equals(ipv6)
+                ? Task.FromException<Stream>(new SocketException((int)SocketError.NetworkUnreachable))
+                : Task.FromResult<Stream>(new OakLaneStream(address)),
+            TimeSpan.FromMilliseconds(20));
+
+        // Assert
+        var winner = Assert.IsType<OakLaneStream>(stream);
+        Assert.Equal(ipv4, winner.Address);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenBothFamiliesFail_ThrowsAggregateException()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::2");
+        var ipv4 = new IPAddress([192, 0, 2, 30]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, ipv4]);
+
+        // Act
+        var thrown = await Assert.ThrowsAsync<AggregateException>(() => DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (_, _, _) => Task.FromException<Stream>(new SocketException((int)SocketError.ConnectionRefused)),
+            TimeSpan.FromMilliseconds(20)));
+
+        // Assert
+        Assert.All(thrown.InnerExceptions, ex => Assert.IsType<SocketException>(ex));
+        Assert.Equal(2, thrown.InnerExceptions.Count);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenOnlyIpv4_ConnectsWithoutRacingIpv6()
+    {
+        // Arrange
+        var ipv4 = new IPAddress([192, 0, 2, 40]);
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv4]);
+        var attempts = new ConcurrentQueue<IPAddress>();
+
+        // Act
+        await using var stream = await DualStackSocketsHttpHandler.ConnectAsync(
+            plan,
+            port,
+            (address, _, _) =>
+            {
+                attempts.Enqueue(address);
+                return Task.FromResult<Stream>(new OakLaneStream(address));
+            },
+            TimeSpan.FromSeconds(5));
+
+        // Assert
+        var winner = Assert.IsType<OakLaneStream>(stream);
+        Assert.Equal(ipv4, winner.Address);
+        Assert.Equal(new[] { ipv4 }, attempts);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenNoAddresses_ThrowsHostNotFound()
+    {
+        // Arrange
+        var port = 1024 + _fixture.Create<byte>();
+        var plan = DualStackSocketsHttpHandler.PlanConnect(Array.Empty<IPAddress>());
+
+        // Act
+        var thrown = await Assert.ThrowsAsync<SocketException>(
+            () => DualStackSocketsHttpHandler.ConnectAsync(
+                plan,
+                port,
+                (_, _, _) => Task.FromResult<Stream>(new MemoryStream())));
+
+        // Assert
+        Assert.Equal(SocketError.HostNotFound, thrown.SocketErrorCode);
+    }
+
+    private static async Task<Stream> HangUntilCanceledAsync(CancellationToken cancellationToken)
+    {
+        var tcs = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken)))
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<Stream> SucceedAfterAsync(
+        IPAddress address,
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+    {
+        await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        return new OakLaneStream(address);
+    }
+
+    private sealed class OakLaneStream : MemoryStream
+    {
+        public OakLaneStream(IPAddress address)
+        {
+            Address = address;
+        }
+
+        public IPAddress Address { get; }
     }
 }

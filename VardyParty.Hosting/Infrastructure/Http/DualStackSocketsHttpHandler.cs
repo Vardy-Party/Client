@@ -20,6 +20,11 @@ public static class DualStackSocketsHttpHandler
         IReadOnlyList<IPAddress> Ipv6,
         IReadOnlyList<IPAddress> Ipv4);
 
+    public delegate Task<Stream> AddressConnect(
+        IPAddress address,
+        int port,
+        CancellationToken cancellationToken);
+
     public static ConnectPlan PlanConnect(IEnumerable<IPAddress> addresses)
     {
         ArgumentNullException.ThrowIfNull(addresses);
@@ -52,7 +57,7 @@ public static class DualStackSocketsHttpHandler
             AllowAutoRedirect = true,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             UseCookies = useCookies,
-            ConnectCallback = ConnectAsync
+            ConnectCallback = ConnectViaDnsAsync
         };
 
         if (ignoreSslCertificateErrors)
@@ -63,38 +68,85 @@ public static class DualStackSocketsHttpHandler
         return handler;
     }
 
-    private static async ValueTask<Stream> ConnectAsync(
+    /// <summary>
+    /// Races or sequences the planned addresses using <paramref name="connect"/>.
+    /// Production uses sockets; tests inject connect so IPv6 hang vs IPv4 win
+    /// can be asserted without opening a real TCP socket.
+    /// </summary>
+    public static Task<Stream> ConnectAsync(
+        ConnectPlan plan,
+        int port,
+        AddressConnect connect,
+        TimeSpan? resolutionDelay = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connect);
+
+        if (plan.Ipv6.Count == 0 && plan.Ipv4.Count == 0)
+            return Task.FromException<Stream>(new SocketException((int)SocketError.HostNotFound));
+
+        if (plan.Ipv4.Count == 0)
+            return ConnectSequentialAsync(plan.Ipv6, port, connect, cancellationToken);
+
+        if (plan.Ipv6.Count == 0)
+            return ConnectSequentialAsync(plan.Ipv4, port, connect, cancellationToken);
+
+        return ConnectHappyEyeballsAsync(
+            plan,
+            port,
+            connect,
+            resolutionDelay ?? HappyEyeballsResolutionDelay,
+            cancellationToken);
+    }
+
+    private static async ValueTask<Stream> ConnectViaDnsAsync(
         SocketsHttpConnectionContext context,
         CancellationToken cancellationToken)
     {
         var resolved = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken)
             .ConfigureAwait(false);
         var plan = PlanConnect(resolved);
-        var port = context.DnsEndPoint.Port;
+        return await ConnectAsync(plan, context.DnsEndPoint.Port, ConnectSocketAsync, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
 
-        if (plan.Ipv6.Count == 0 && plan.Ipv4.Count == 0)
-            throw new SocketException((int)SocketError.HostNotFound);
-
-        if (plan.Ipv4.Count == 0)
-            return await ConnectSequentialAsync(plan.Ipv6, port, cancellationToken).ConfigureAwait(false);
-
-        if (plan.Ipv6.Count == 0)
-            return await ConnectSequentialAsync(plan.Ipv4, port, cancellationToken).ConfigureAwait(false);
-
-        return await ConnectHappyEyeballsAsync(plan, port, cancellationToken).ConfigureAwait(false);
+    private static async Task<Stream> ConnectSocketAsync(
+        IPAddress address,
+        int port,
+        CancellationToken cancellationToken)
+    {
+        var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+        {
+            NoDelay = true
+        };
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(PerAddressTimeout);
+            await socket.ConnectAsync(new IPEndPoint(address, port), cts.Token).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     private static async Task<Stream> ConnectHappyEyeballsAsync(
         ConnectPlan plan,
         int port,
+        AddressConnect connect,
+        TimeSpan resolutionDelay,
         CancellationToken cancellationToken)
     {
         using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var ipv6Task = ConnectSequentialAsync(plan.Ipv6, port, raceCts.Token);
+        var ipv6Task = ConnectSequentialAsync(plan.Ipv6, port, connect, raceCts.Token);
         var ipv4Task = ConnectSequentialAfterDelayAsync(
             plan.Ipv4,
             port,
-            HappyEyeballsResolutionDelay,
+            connect,
+            resolutionDelay,
             raceCts.Token);
 
         var first = await Task.WhenAny(ipv6Task, ipv4Task).ConfigureAwait(false);
@@ -123,37 +175,30 @@ public static class DualStackSocketsHttpHandler
     private static async Task<Stream> ConnectSequentialAfterDelayAsync(
         IReadOnlyList<IPAddress> addresses,
         int port,
+        AddressConnect connect,
         TimeSpan delay,
         CancellationToken cancellationToken)
     {
         await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-        return await ConnectSequentialAsync(addresses, port, cancellationToken).ConfigureAwait(false);
+        return await ConnectSequentialAsync(addresses, port, connect, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<Stream> ConnectSequentialAsync(
         IReadOnlyList<IPAddress> addresses,
         int port,
+        AddressConnect connect,
         CancellationToken cancellationToken)
     {
         Exception? last = null;
         foreach (var address in addresses)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-            {
-                NoDelay = true
-            };
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                cts.CancelAfter(PerAddressTimeout);
-                await socket.ConnectAsync(new IPEndPoint(address, port), cts.Token).ConfigureAwait(false);
-                return new NetworkStream(socket, ownsSocket: true);
+                return await connect(address, port, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                socket.Dispose();
                 last = ex;
             }
         }
