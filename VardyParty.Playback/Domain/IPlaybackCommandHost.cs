@@ -1,8 +1,9 @@
 namespace VardyParty.Playback;
 
 /// <summary>
-/// Host actions for <see cref="PlaybackCommandExecutor"/>. Android, Windows, and Linux
-/// must cover the same flags; OS-specific work stays in the host methods.
+/// Host actions for <see cref="PlaybackCommandExecutor"/>. Every OS host covers the same
+/// flags. Shared pool/resolve work is <see cref="PlaybackPoolCommandActions"/> in this
+/// assembly; LibVLC / AVPlayer / ExoPlayer / WinUI stay in the host methods.
 /// </summary>
 public interface IPlaybackCommandHost
 {

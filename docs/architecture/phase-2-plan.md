@@ -40,7 +40,7 @@ Happy Eyeballs stays. Do not drop DualStack without a C12 retest.
 
 `PlaybackCommandExecutor` in Playback. Android `NativeVideoActivity` and Windows `PlayerSession` call it with **identical** flag coverage. Linux characterization tests exist in `VardyParty.Playback.Tests`; Linux then uses the same executor (including the flags it previously skipped).
 
-`GetEnrichedStreamsAsync` has no callers — delete it. `VideoPlayer.razor` `/player/...` is **Phase 3**. iOS/MacCatalyst only after the paid hosts share the interpreter.
+`GetEnrichedStreamsAsync` has no callers — delete it. `VideoPlayer.razor` `/player/...` is **Phase 3**. iOS/MacCatalyst use `PlaybackSessionController`, `PlaybackCommandExecutor`, and `PlaybackPoolCommandActions` from **`VardyParty.Playback`** — they do not reference `VardyParty.Linux`. AVPlayer attach/UI stays in the Apple hosts. Device characterization of AVPlayer still cannot run in this environment.
 
 **Tests first** in `VardyParty.Playback.Tests`: every `PlaybackCommand` flag the hosts interpret, including ReportFailed / ReportDeclined / RaiseBuffering / RetryFreshResolve.
 
