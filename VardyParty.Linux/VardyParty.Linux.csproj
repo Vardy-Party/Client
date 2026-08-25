@@ -47,9 +47,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared domain + composition -->
-    <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
-    <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+    <!-- Shared domain + composition. Strip host RID so net10.0 libraries do not restore as linux-*. -->
+    <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>

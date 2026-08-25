@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    MAUI `dotnet build -r android-arm64` (and iOS `-r iossimulator-x64`) flows RuntimeIdentifier
+    into every ProjectReference. net10.0 class libraries have no RID graph, which is NETSDK1005
+    ("Assets file ... doesn't have a target for 'net10.0'").
+    Exes (Linux, StreamHealthCheckerTool) keep their own RuntimeIdentifier(s).
+  -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' AND '$(UseMaui)' != 'true' AND '$(OutputType)' != 'Exe' AND '$(OutputType)' != 'WinExe'">
+    <RuntimeIdentifier></RuntimeIdentifier>
+    <RuntimeIdentifiers></RuntimeIdentifiers>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+</Project>

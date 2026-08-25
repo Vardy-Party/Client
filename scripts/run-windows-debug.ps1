@@ -33,7 +33,7 @@ $buildTarget = if ($Rebuild) { 'Rebuild' } else { 'Build' }
 Write-Host "[$buildTarget] $project (Visual Studio-style Windows deploy)..."
 
 & dotnet restore $project -p:CI=true
-& dotnet restore (Join-Path $repoRoot 'VardyParty.Core\VardyParty.Core.csproj')
+& dotnet restore (Join-Path $repoRoot 'VardyParty.Hosting\VardyParty.Hosting.csproj')
 
 # CI=true => Windows-only target graph (same effective output as VS Debug).
 & dotnet msbuild $project `
