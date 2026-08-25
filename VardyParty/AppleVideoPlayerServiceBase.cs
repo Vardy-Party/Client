@@ -10,11 +10,13 @@ using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 
-namespace VardyParty.Platforms.Apple;
+namespace VardyParty;
 
 /// <summary>
 /// Apple AVPlayer host. Session, command execution, and pool actions come from
-/// <c>VardyParty.Playback</c> — not <c>VardyParty.Linux</c>. Subclasses only create the asset.
+/// <c>VardyParty.Playback</c>. Lives in the MAUI project (not under <c>Platforms/</c>)
+/// with <c>#if IOS || MACCATALYST</c> so both Apple TFMs compile it. Subclasses in
+/// <c>Platforms/iOS</c> and <c>Platforms/MacCatalyst</c> only create the asset.
 /// </summary>
 public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 {

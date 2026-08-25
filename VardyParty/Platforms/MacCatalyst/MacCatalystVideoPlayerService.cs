@@ -3,11 +3,10 @@ using AVFoundation;
 using CoreFoundation;
 using Foundation;
 using Microsoft.Extensions.Logging;
-using VardyParty.Platforms.Apple;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 
-namespace VardyParty.Platforms.MacCatalyst
+namespace VardyParty
 {
     public class MacCatalystVideoPlayerService : AppleVideoPlayerServiceBase
     {
@@ -39,7 +38,7 @@ namespace VardyParty.Platforms.MacCatalyst
         }
     }
 
-    public class CustomResourceLoaderDelegate : AVAssetResourceLoaderDelegate
+    file sealed class CustomResourceLoaderDelegate : AVAssetResourceLoaderDelegate
     {
         private readonly string _refererUrl;
         private readonly NSUrlSession _session;

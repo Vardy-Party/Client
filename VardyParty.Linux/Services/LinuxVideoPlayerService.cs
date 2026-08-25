@@ -2,13 +2,8 @@ using LibVLCSharp.Shared;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Net.Http;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using VardyParty.Hosting;
 using VardyParty.Models;
 using VardyParty.Playback;
 using VardyParty.Ports;
@@ -20,7 +15,6 @@ namespace VardyParty.Linux.Services
     {
         private readonly ILogger<LinuxVideoPlayerService> _logger;
         private readonly IStreamSwitchingService _switching;
-        private readonly IHttpClientFactory _httpClientFactory;
         private readonly IApiService _api;
         private readonly PlaybackSessionController _session = new();
         private readonly DelegatingMediaEngine _engine = new();
@@ -31,7 +25,6 @@ namespace VardyParty.Linux.Services
         private TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private Func<Task>? _onNextStreamRequested;
         private bool _isBuffering;
-        private string? _tempManifestPath;
         private EventHandler<LogEventArgs>? _libVlcLogHandler;
         private bool _libVlcLogAttached;
         private string? _refererUrl;
@@ -46,12 +39,10 @@ namespace VardyParty.Linux.Services
         public LinuxVideoPlayerService(
             ILogger<LinuxVideoPlayerService> logger,
             IStreamSwitchingService switching,
-            IHttpClientFactory httpClientFactory,
             IApiService api)
         {
             _logger = logger;
             _switching = switching;
-            _httpClientFactory = httpClientFactory;
             _api = api;
             _pool = new PlaybackPoolCommandActions(
                 _session,
@@ -72,7 +63,6 @@ namespace VardyParty.Linux.Services
             {
                 _mediaPlayer?.Stop();
                 StopMetricsLoop();
-                CleanupTemporaryManifest();
                 PlaybackVisibilityChanged?.Invoke(this, false);
                 _playbackTcs?.TrySetResult(new PlaybackResult
                 {
@@ -245,7 +235,6 @@ namespace VardyParty.Linux.Services
         {
             _currentMedia?.Dispose();
             _mediaPlayer?.Stop();
-            CleanupTemporaryManifest();
             EnsureMediaPlayer();
 
             var mediaLibVlc = _libVLC ?? throw new InvalidOperationException("LibVLC is not initialized");
@@ -285,7 +274,6 @@ namespace VardyParty.Linux.Services
         {
             _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
             StopMetricsLoop();
-            CleanupTemporaryManifest();
             _engine.Raise(MediaEngineEvent.Error(_session.Snapshot.AttachGeneration, "Stream playback failed"));
         }
 
@@ -293,7 +281,6 @@ namespace VardyParty.Linux.Services
         {
             _logger.LogInformation("[LinuxVideoPlayerService] Playback ended");
             StopMetricsLoop();
-            CleanupTemporaryManifest();
             _engine.Raise(MediaEngineEvent.Ended(_session.Snapshot.AttachGeneration));
             PlaybackVisibilityChanged?.Invoke(this, false);
             _playbackTcs?.TrySetResult(PlaybackResult.SuccessResult("Playback completed"));
@@ -410,7 +397,6 @@ namespace VardyParty.Linux.Services
 
                 _currentMedia?.Dispose();
                 _currentMedia = null;
-                CleanupTemporaryManifest();
 
                 DetachLibVlcDiagnostics();
 
@@ -424,172 +410,6 @@ namespace VardyParty.Linux.Services
 
             PlaybackVisibilityChanged?.Invoke(this, false);
             GC.SuppressFinalize(this);
-        }
-
-        private async Task<PreparedPlaybackSource> PreparePlaybackSourceAsync(string requestedUrl, string refererUrl)
-        {
-            if (string.IsNullOrWhiteSpace(requestedUrl))
-            {
-                return PreparedPlaybackSource.Failure("Playback URL is empty");
-            }
-
-            if (!Uri.TryCreate(requestedUrl, UriKind.Absolute, out var requestedUri))
-            {
-                return PreparedPlaybackSource.Failure($"Invalid playback URL: {requestedUrl}");
-            }
-
-            if (!ShouldProbeStreamUrl(requestedUri))
-            {
-                return PreparedPlaybackSource.CreateSuccess(requestedUrl, false, false, false);
-            }
-
-            try
-            {
-                var client = _httpClientFactory.CreateClient(PlaybackHttpClients.Probe);
-                using var request = new HttpRequestMessage(HttpMethod.Get, requestedUri);
-                request.Headers.TryAddWithoutValidation(
-                    "User-Agent",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
-                if (!string.IsNullOrWhiteSpace(refererUrl) &&
-                    Uri.TryCreate(refererUrl, UriKind.Absolute, out var refererUri))
-                {
-                    request.Headers.Referrer = refererUri;
-                }
-
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                response.EnsureSuccessStatusCode();
-
-                var finalUri = response.RequestMessage?.RequestUri ?? requestedUri;
-                var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-
-                var responseBytes = await response.Content.ReadAsByteArrayAsync();
-                var prefixLength = Math.Min(responseBytes.Length, 1024);
-                var bodyPrefix = prefixLength > 0
-                    ? Encoding.UTF8.GetString(responseBytes, 0, prefixLength)
-                    : string.Empty;
-                var detectedManifest = LooksLikeM3U8(bodyPrefix, contentType, finalUri);
-
-                _logger.LogInformation(
-                    "[LinuxVideoPlayerService] Stream probe: requested={RequestedUrl}; final={FinalUrl}; contentType={ContentType}; manifestDetected={ManifestDetected}",
-                    requestedUrl,
-                    finalUri,
-                    string.IsNullOrWhiteSpace(contentType) ? "<none>" : contentType,
-                    detectedManifest);
-
-                if (!detectedManifest)
-                {
-                    return PreparedPlaybackSource.CreateSuccess(finalUri.ToString(), false, false, false);
-                }
-
-                return PreparedPlaybackSource.CreateSuccess(finalUri.ToString(), false, true, false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[LinuxVideoPlayerService] Stream probe failed; falling back to original URL");
-                return PreparedPlaybackSource.CreateSuccess(requestedUrl, false, false, false);
-            }
-        }
-
-        private static bool ShouldProbeStreamUrl(Uri uri)
-            => !uri.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase);
-
-        private static bool LooksLikeM3U8(string bodyPrefix, string contentType, Uri finalUri)
-        {
-            if (finalUri.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(contentType) &&
-                (contentType.Contains("mpegurl", StringComparison.OrdinalIgnoreCase) ||
-                 contentType.Contains("vnd.apple", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            return bodyPrefix.Contains("#EXTM3U", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizeManifestText(string manifestText, Uri manifestUri)
-        {
-            if (string.IsNullOrWhiteSpace(manifestText))
-            {
-                return string.Empty;
-            }
-
-            var sb = new StringBuilder();
-            using var reader = new StringReader(manifestText);
-
-            string? line;
-            while ((line = reader.ReadLine()) != null)
-            {
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    sb.AppendLine(line ?? string.Empty);
-                    continue;
-                }
-
-                if (line.StartsWith("#", StringComparison.Ordinal))
-                {
-                    sb.AppendLine(NormalizeManifestTagUris(line, manifestUri));
-                    continue;
-                }
-
-                if (Uri.TryCreate(line, UriKind.Absolute, out _))
-                {
-                    sb.AppendLine(line);
-                    continue;
-                }
-
-                var absolute = new Uri(manifestUri, line);
-                sb.AppendLine(absolute.ToString());
-            }
-
-            return sb.ToString();
-        }
-
-        private static string NormalizeManifestTagUris(string line, Uri manifestUri)
-        {
-            if (!line.Contains("URI=\"", StringComparison.Ordinal))
-            {
-                return line;
-            }
-
-            return Regex.Replace(line, "URI=\\\"([^\\\"]+)\\\"", match =>
-            {
-                var rawUri = match.Groups[1].Value;
-                if (string.IsNullOrWhiteSpace(rawUri) || Uri.TryCreate(rawUri, UriKind.Absolute, out _))
-                {
-                    return match.Value;
-                }
-
-                var absoluteUri = new Uri(manifestUri, rawUri).ToString();
-                return $"URI=\"{absoluteUri}\"";
-            });
-        }
-
-        private void CleanupTemporaryManifest()
-        {
-            var tempPath = _tempManifestPath;
-            _tempManifestPath = null;
-
-            if (string.IsNullOrWhiteSpace(tempPath))
-            {
-                return;
-            }
-
-            try
-            {
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Failed to remove temporary manifest: {Path}", tempPath);
-            }
         }
 
         private void AttachLibVlcDiagnostics()
@@ -686,20 +506,7 @@ namespace VardyParty.Linux.Services
                    message.Contains("drm", StringComparison.OrdinalIgnoreCase);
         }
 
-        private readonly record struct PreparedPlaybackSource(
-            bool Success,
-            string? PlaybackUrl,
-            bool IsTemporaryManifest,
-            bool DetectedManifest,
-            bool IsLocalPath,
-            string? ErrorMessage)
-        {
-            public static PreparedPlaybackSource Failure(string errorMessage) =>
-                new(false, null, false, false, false, errorMessage);
 
-            public static PreparedPlaybackSource CreateSuccess(string playbackUrl, bool isTemporaryManifest, bool detectedManifest, bool isLocalPath) =>
-                new(true, playbackUrl, isTemporaryManifest, detectedManifest, isLocalPath, null);
-        }
 
     }
 

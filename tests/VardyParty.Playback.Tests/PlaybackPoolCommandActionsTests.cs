@@ -162,6 +162,40 @@ public class PlaybackPoolCommandActionsTests
         Assert.Equal("VardyParty.Playback", assemblyName);
     }
 
+    [Fact]
+    public void SwitchPoolToPrevious_MovesCurrentStream()
+    {
+        // Arrange
+        var oakLane = CreateOakLane("http://oak-lane.m3u8");
+        var northgate = CreateOakLane("http://northgate.m3u8");
+        northgate.Stream.Channel = "northgate-channel";
+        var (pool, actions, _, _, _) = CreateSut(oakLane, extra: northgate);
+        pool.SwitchToNextStream();
+
+        // Act
+        actions.SwitchPoolToPrevious();
+
+        // Assert
+        Assert.Equal("oak-lane-channel", pool.GetCurrentStream()?.Stream.Channel);
+    }
+
+    [Fact]
+    public async Task AttachCurrentFromPoolAsync_WhenResolveReturnsNull_DoesNotAttach()
+    {
+        // Arrange
+        var oakLane = CreateOakLane(resolvedUrl: null);
+        var (_, actions, attaches, applies, resolved) = CreateSut(oakLane, freshUrl: null);
+
+        // Act
+        await actions.AttachCurrentFromPoolAsync();
+
+        // Assert
+        Assert.Single(resolved);
+        Assert.Empty(attaches);
+        Assert.Empty(applies);
+        Assert.Null(oakLane.ResolvedM3U8Url);
+    }
+
     private EnrichedStream CreateOakLane(string? resolvedUrl)
         => _fixture.Build<EnrichedStream>()
             .With(stream => stream.Stream, _fixture.Build<Stream>()

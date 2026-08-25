@@ -1,5 +1,6 @@
 #if ANDROID
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using VardyParty.Models;
@@ -11,6 +12,7 @@ namespace VardyParty.Platforms.Android
     {
         private readonly PlaybackSessionController _session = new();
         private readonly DelegatingMediaEngine _engine = new();
+        private PlaybackPoolCommandActions? _pool;
         private bool _suppressIndexDrivenSwitch;
 
         private long CurrentAttachGeneration => _session.Snapshot.AttachGeneration;
@@ -43,24 +45,33 @@ namespace VardyParty.Platforms.Android
             PlaybackCommandExecutor.Apply(cmd, new NativePlaybackCommandHost(this));
         }
 
+        internal void EnsurePool()
+        {
+            if (_switching == null)
+            {
+                _pool = null;
+                return;
+            }
+
+            _pool = new PlaybackPoolCommandActions(
+                _session,
+                _switching,
+                ResolveFreshM3U8Async,
+                (url, usedCached, force) => RunOnUiThread(() => AttachViaSession(url, usedCached, force)),
+                cmd => RunOnUiThread(() => ApplyPlaybackCommand(cmd)));
+        }
+
         private sealed class NativePlaybackCommandHost(NativeVideoActivity activity) : IPlaybackCommandHost
         {
             public void BeginIndexSwitchSuppression() => activity._suppressIndexDrivenSwitch = true;
 
             public void EndIndexSwitchSuppression() => activity._suppressIndexDrivenSwitch = false;
 
-            public void ClearCurrentResolvedUrl()
-            {
-                var failed = activity._switching?.GetCurrentStream();
-                if (failed != null)
-                {
-                    failed.ResolvedM3U8Url = null;
-                }
-            }
+            public void ClearCurrentResolvedUrl() => activity._pool?.ClearCurrentResolvedUrl();
 
-            public void RemoveCurrentFromPool() => activity._switching?.RemoveCurrentStream();
+            public void RemoveCurrentFromPool() => activity._pool?.RemoveCurrentFromPool();
 
-            public void SyncHealthyStreamCount() => activity.SyncHealthyStreamCount();
+            public void SyncHealthyStreamCount() => activity._pool?.SyncHealthyStreamCount();
 
             public void ReportFailed(string? reason) => activity.PostHealthError(reason);
 
@@ -85,9 +96,9 @@ namespace VardyParty.Platforms.Android
                 _ = activity._engine.AttachAsync(url);
             }
 
-            public void AttachCurrentAfterRemove() => _ = activity.AttachCurrentFromPoolAsync();
+            public void AttachCurrentAfterRemove() => _ = activity._pool?.AttachCurrentFromPoolAsync();
 
-            public void RetryFreshResolve() => _ = activity.RetryFreshResolveAsync();
+            public void RetryFreshResolve() => _ = activity._pool?.RetryFreshResolveAsync();
 
             public void StopEngine() => activity.StopAndReleasePlayer(release: false);
 
@@ -100,91 +111,21 @@ namespace VardyParty.Platforms.Android
 
             public void SwitchPoolToNext() => _ = AndroidVideoPlayerService.RequestNextStream();
 
-            public void SwitchPoolToPrevious() => activity._switching?.SwitchToPreviousStream();
+            public void SwitchPoolToPrevious() => activity._pool?.SwitchPoolToPrevious();
 
             public void NotifyApplyFailed(Exception exception)
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
-        private async Task AttachCurrentFromPoolAsync()
+        private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
         {
-            try
-            {
-                var current = _switching?.GetCurrentStream();
-                if (current == null)
-                {
-                    return;
-                }
+            if (current.Stream == null || _api == null)
+                return Task.FromResult<string?>(null);
 
-                var url = current.ResolvedM3U8Url;
-                if (string.IsNullOrWhiteSpace(url) && current.Stream != null)
-                {
-                    url = await ResolveFreshM3U8Async(current);
-                    if (!string.IsNullOrWhiteSpace(url))
-                    {
-                        current.ResolvedM3U8Url = url;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(url))
-                {
-                    _logger?.LogWarning("[NativeVideoActivity] No URL after remove — cannot attach next stream");
-                    return;
-                }
-
-                RunOnUiThread(() => AttachViaSession(url, usedCachedUrl: false, force: true));
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] AttachCurrentFromPoolAsync failed");
-            }
-        }
-
-        private async Task RetryFreshResolveAsync()
-        {
-            try
-            {
-                var current = _switching?.GetCurrentStream();
-                var fresh = current != null ? await ResolveFreshM3U8Async(current) : null;
-                if (string.IsNullOrWhiteSpace(fresh) ||
-                    string.Equals(fresh, _m3u8Url, StringComparison.OrdinalIgnoreCase))
-                {
-                    RunOnUiThread(() =>
-                        ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.NotifyFreshResolveUnavailable())));
-                    return;
-                }
-
-                if (current != null)
-                {
-                    current.ResolvedM3U8Url = fresh;
-                }
-
-                RunOnUiThread(() => AttachViaSession(fresh, usedCachedUrl: false, force: true));
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] RetryFreshResolveAsync failed");
-                RunOnUiThread(() =>
-                    ApplyPlaybackCommand(PlaybackCommand.FromEffects(
-                        _session.NotifyFreshResolveUnavailable(ex.Message))));
-            }
-        }
-
-        private async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
-        {
-            if (current.Stream == null)
-            {
-                return null;
-            }
-
-            if (_api == null)
-            {
-                return null;
-            }
-
-            return await _api.ResolveM3U8ForPlaybackAsync(
+            return _api.ResolveM3U8ForPlaybackAsync(
                 current.Stream,
-                current.Referer ?? string.Empty);
+                current.Referer ?? string.Empty,
+                cancellationToken);
         }
 
         private void PostHealthError(string? error)

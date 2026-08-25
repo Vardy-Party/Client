@@ -45,23 +45,9 @@ namespace VardyParty
             }
         }
 
-        private static bool _suppressNextBack;
-
-        public static void SuppressNextBackNavigation()
-        {
-            _suppressNextBack = true;
-        }
-
         public override void OnBackPressed()
         {
             Log.Info("MainActivity", "[MAIN] OnBackPressed");
-            if (_suppressNextBack)
-            {
-                _suppressNextBack = false;
-                Log.Info("MainActivity", "[MAIN] Back suppressed by overlay");
-                return;
-            }
-
             if (_flyoutMenuOpen)
             {
                 Log.Info("MainActivity", "[MAIN] Back pressed while flyout open - closing menu");

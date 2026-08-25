@@ -15,11 +15,12 @@
 | `DelegatingMediaEngine` | `VardyParty.Playback/Infrastructure/DelegatingMediaEngine.cs` | Host adapter: OS plugs attach/stop/metrics, raises facts |
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
 | `PlaybackCommandExecutor` | `VardyParty.Playback/Domain/PlaybackCommandExecutor.cs` | Interprets flags; every OS host uses this |
-| `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current; not in `VardyParty.Linux` |
-| Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → `IMediaEngine` → session → pool/health/attach |
-| Windows host | `WindowsVideoPlayerService.cs` | WinUI facts → same loop; no local `RecoverFromFailed*` |
-| Linux host | `LinuxVideoPlayerService.cs` | LibVLC facts → same loop (pool actions in Playback) |
-| Apple host | `AppleVideoPlayerServiceBase.cs` | AVPlayer facts → same Playback loop; no `VardyParty.Linux` reference |
+| `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
+| Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
+| Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
+| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
+| iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
+| MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
 
 ---
@@ -67,7 +68,8 @@ Home.razor
                  ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
                  ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
                  ├─ Linux: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC)
-                 └─ Apple: AppleVideoPlayerServiceBase + DelegatingMediaEngine (AVPlayer)
+                 ├─ iOS: Platforms/iOS + AppleVideoPlayerServiceBase (AVPlayer)
+                 └─ MacCatalyst: Platforms/MacCatalyst + AppleVideoPlayerServiceBase (AVPlayer)
                       all: engine facts → PlaybackSessionController → PlaybackCommandExecutor
                            pool/retry: PlaybackPoolCommandActions in VardyParty.Playback
 ```

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Threading;
 using VardyParty.Models;
 using VardyParty.Playback;
 using Windows.Foundation;
@@ -158,16 +159,11 @@ namespace VardyParty.Platforms.Windows
 
                 public void EndIndexSwitchSuppression() => session.suppressIndexDrivenSwitch = false;
 
-                public void ClearCurrentResolvedUrl()
-                {
-                    var failed = session.switchingService?.GetCurrentStream();
-                    if (failed != null)
-                        failed.ResolvedM3U8Url = null;
-                }
+                public void ClearCurrentResolvedUrl() => session.pool.ClearCurrentResolvedUrl();
 
-                public void RemoveCurrentFromPool() => session.switchingService?.RemoveCurrentStream();
+                public void RemoveCurrentFromPool() => session.pool.RemoveCurrentFromPool();
 
-                public void SyncHealthyStreamCount() => session.SyncHealthyStreamCount();
+                public void SyncHealthyStreamCount() => session.pool.SyncHealthyStreamCount();
 
                 public void ReportFailed(string? reason) => session.ShowStreamError(reason ?? "Playback error");
 
@@ -183,9 +179,9 @@ namespace VardyParty.Platforms.Windows
                     _ = session.engine.AttachAsync(url, session._requestHeaders);
                 }
 
-                public void AttachCurrentAfterRemove() => _ = session.AttachCurrentFromPoolAsync();
+                public void AttachCurrentAfterRemove() => _ = session.pool.AttachCurrentFromPoolAsync();
 
-                public void RetryFreshResolve() => _ = session.RetryFreshResolveAsync();
+                public void RetryFreshResolve() => _ = session.pool.RetryFreshResolveAsync();
 
                 public void StopEngine()
                 {
@@ -211,7 +207,7 @@ namespace VardyParty.Platforms.Windows
                     }
                 }
 
-                public void SwitchPoolToPrevious() => session.switchingService?.SwitchToPreviousStream();
+                public void SwitchPoolToPrevious() => session.pool.SwitchPoolToPrevious();
 
                 public void NotifyApplyFailed(Exception exception)
                     => session._host._logger.LogError(exception, "ApplyPlaybackCommand failed");
@@ -234,70 +230,15 @@ namespace VardyParty.Platforms.Windows
                 }
             }
 
-            private async Task AttachCurrentFromPoolAsync()
-            {
-                try
-                {
-                    var current = switchingService?.GetCurrentStream();
-                    if (current == null)
-                        return;
-
-                    var url = current.ResolvedM3U8Url;
-                    if (string.IsNullOrWhiteSpace(url) && current.Stream != null)
-                    {
-                        url = await ResolveFreshM3U8Async(current);
-                        if (!string.IsNullOrWhiteSpace(url))
-                            current.ResolvedM3U8Url = url;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(url))
-                    {
-                        _host._logger.LogWarning("No URL after remove — cannot attach next stream");
-                        return;
-                    }
-
-                    MainThread.BeginInvokeOnMainThread(() => AttachViaSession(url, usedCachedUrl: false, force: true));
-                }
-                catch (Exception ex)
-                {
-                    _host._logger.LogError(ex, "AttachCurrentFromPoolAsync failed");
-                }
-            }
-
-            private async Task RetryFreshResolveAsync()
-            {
-                try
-                {
-                    var current = switchingService?.GetCurrentStream();
-                    var fresh = current != null ? await ResolveFreshM3U8Async(current) : null;
-                    if (string.IsNullOrWhiteSpace(fresh) ||
-                        !PlaybackPolicy.ShouldAcceptFreshM3U8(session.Snapshot.CurrentUrl, fresh))
-                    {
-                        MainThread.BeginInvokeOnMainThread(() =>
-                            ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.NotifyFreshResolveUnavailable())));
-                        return;
-                    }
-
-                    if (current != null)
-                        current.ResolvedM3U8Url = fresh;
-
-                    MainThread.BeginInvokeOnMainThread(() => AttachViaSession(fresh, usedCachedUrl: false, force: true));
-                }
-                catch (Exception ex)
-                {
-                    _host._logger.LogError(ex, "RetryFreshResolveAsync failed");
-                    MainThread.BeginInvokeOnMainThread(() =>
-                        ApplyPlaybackCommand(PlaybackCommand.FromEffects(
-                            session.NotifyFreshResolveUnavailable(ex.Message))));
-                }
-            }
-
-            private async Task<string?> ResolveFreshM3U8Async(EnrichedStream current)
+            private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
             {
                 if (current.Stream == null)
-                    return null;
+                    return Task.FromResult<string?>(null);
 
-                return await _host._api.ResolveM3U8ForPlaybackAsync(current.Stream, current.Referer ?? string.Empty);
+                return _host._api.ResolveM3U8ForPlaybackAsync(
+                    current.Stream,
+                    current.Referer ?? string.Empty,
+                    cancellationToken);
             }
 
             private void PreparePlaybackSwitchOnUiThread(int generation)

@@ -40,7 +40,9 @@ Happy Eyeballs stays. Do not drop DualStack without a C12 retest.
 
 `PlaybackCommandExecutor` in Playback. Android `NativeVideoActivity` and Windows `PlayerSession` call it with **identical** flag coverage. Linux characterization tests exist in `VardyParty.Playback.Tests`; Linux then uses the same executor (including the flags it previously skipped).
 
-`GetEnrichedStreamsAsync` has no callers — delete it. `VideoPlayer.razor` `/player/...` is **Phase 3**. iOS/MacCatalyst use `PlaybackSessionController`, `PlaybackCommandExecutor`, and `PlaybackPoolCommandActions` from **`VardyParty.Playback`** — they do not reference `VardyParty.Linux`. AVPlayer attach/UI stays in the Apple hosts. Device characterization of AVPlayer still cannot run in this environment.
+`PlaybackPoolCommandActions` is the shared pool/retry implementation. Android, Windows, Linux, iOS, and MacCatalyst all call it. Fresh M3U8 accept is `PlaybackPolicy.ShouldAcceptFreshM3U8` against the session current URL (Android previously compared `Activity._m3u8Url` and could wrongly reject a rotated URL).
+
+`GetEnrichedStreamsAsync` has no callers — delete it. `VideoPlayer.razor` `/player/...` is **Phase 3**. iOS/MacCatalyst player **files** live under `Platforms/iOS` and `Platforms/MacCatalyst` (MAUI TFM scoping). Shared AVPlayer session wiring is `AppleVideoPlayerServiceBase` in the MAUI project root with `#if IOS || MACCATALYST` and namespace `VardyParty` (same as `AppDelegate`) — not under a fake `Platforms/Apple` folder, which MAUI would not compile. Device characterization of AVPlayer still cannot run in this environment.
 
 **Tests first** in `VardyParty.Playback.Tests`: every `PlaybackCommand` flag the hosts interpret, including ReportFailed / ReportDeclined / RaiseBuffering / RetryFreshResolve.
 

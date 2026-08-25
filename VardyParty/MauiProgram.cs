@@ -199,9 +199,9 @@ public static class MauiProgram
             builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.Windows.WindowsVideoPlayerService>();
             builder.Services.AddSingleton<IOverlayCloseService, VardyParty.Platforms.Windows.OverlayCloseService>();
 #elif IOS
-            builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.iOS.IosVideoPlayerService>();
+            builder.Services.AddSingleton<INativeVideoPlayerService, IosVideoPlayerService>();
 #elif MACCATALYST
-            builder.Services.AddSingleton<INativeVideoPlayerService, Platforms.MacCatalyst.MacCatalystVideoPlayerService>();
+            builder.Services.AddSingleton<INativeVideoPlayerService, MacCatalystVideoPlayerService>();
 #endif
         builder.Services.TryAddSingleton<IOverlayCloseService, NullOverlayCloseService>();
 

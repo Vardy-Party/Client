@@ -3,11 +3,10 @@ using AVFoundation;
 using CoreFoundation;
 using Foundation;
 using Microsoft.Extensions.Logging;
-using VardyParty.Platforms.Apple;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 
-namespace VardyParty.Platforms.iOS
+namespace VardyParty
 {
     public class IosVideoPlayerService : AppleVideoPlayerServiceBase
     {

@@ -55,9 +55,6 @@ namespace VardyParty.Platforms.Windows
             @"\uD83C[\uDDE6-\uDDFF](?:\uD83C[\uDDE6-\uDDFF])?",
             RegexOptions.Compiled);
 
-        private static string ToTickerDisplayText(string text) =>
-            TickerMeasurePlainTextRegex.Replace(text, string.Empty);
-
         private static string TruncateForLog(string text, int maxLength) =>
             text.Length <= maxLength ? text : text[..maxLength] + "…";
 

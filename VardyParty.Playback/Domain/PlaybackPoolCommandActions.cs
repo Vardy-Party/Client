@@ -8,9 +8,11 @@ public delegate Task<string?> ResolveFreshPlaybackUrlAsync(
     CancellationToken cancellationToken);
 
 /// <summary>
-/// Pool + fresh-resolve actions for every host. Lives in Playback so Linux (LibVLC)
-/// and Apple (AVPlayer) do not share types through <c>VardyParty.Linux</c>.
-/// Playback does not reference <c>IApiService</c>; hosts pass a resolve delegate.
+/// Pool + fresh-resolve actions for every host (Android, Windows, Linux, iOS, MacCatalyst).
+/// Lives in Playback so OS players do not each reimplement retry/accept. Playback does not
+/// reference <c>IApiService</c>; hosts pass a resolve delegate.
+/// Fresh URLs are accepted only via <see cref="PlaybackPolicy.ShouldAcceptFreshM3U8"/> against
+/// <see cref="PlaybackSessionController.Snapshot"/> current URL — not a host-local field.
 /// </summary>
 public sealed class PlaybackPoolCommandActions(
     PlaybackSessionController session,

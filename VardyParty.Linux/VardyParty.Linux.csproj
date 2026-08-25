@@ -10,6 +10,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>VardyParty.Linux</RootNamespace>
+    <!-- Product process/binary name. CD publishes .../publish/VardyParty — do not rename to VardyParty.Linux. -->
     <AssemblyName>VardyParty</AssemblyName>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <!-- Version properties are now imported from Version.props -->
@@ -49,6 +50,9 @@
   <ItemGroup>
     <!-- Shared domain + composition. Strip host TFM/RID so net10.0 libraries restore as net10.0. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
     <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">

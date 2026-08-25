@@ -13,8 +13,6 @@ namespace VardyParty.Platforms.Android
         private static AndroidVideoPlayerService? _instance;
         private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private static Func<Task>? _onNextStreamRequested;
-        private static int _currentStreamIndex;
-        private static int _totalHealthyStreams;
         private static PlaybackMetrics? _currentMetrics;
 
         public AndroidVideoPlayerService()
@@ -110,36 +108,6 @@ namespace VardyParty.Platforms.Android
                 switching?.SwitchToNextStream();
             }
             catch { }
-        }
-
-        internal static void SetStreamInfo(int currentIndex, int totalStreams)
-        {
-            _currentStreamIndex = currentIndex;
-            _totalHealthyStreams = totalStreams;
-        }
-
-        internal static void SetOverlayInfo(PlayerOverlayInfo? info)
-        {
-            if (info == null)
-            {
-                // Clear any cached overlay info
-                _currentStreamIndex = 0;
-                _totalHealthyStreams = 0;
-                return;
-            }
-
-            _currentStreamIndex = info.Index;
-            _totalHealthyStreams = info.Total;
-
-            // Optionally, platform-specific overlay rendering could be triggered here
-            // Native activity will read GetStreamInfo() and additional metadata via AppServiceProvider if needed.
-            // We could expose other fields as needed.
-        }
-
-        internal static string GetStreamInfo()
-        {
-            if (_totalHealthyStreams == 0) return string.Empty;
-            return $"Stream {_currentStreamIndex}/{_totalHealthyStreams}";
         }
 
         internal static void ReportBufferingState(bool isBuffering)

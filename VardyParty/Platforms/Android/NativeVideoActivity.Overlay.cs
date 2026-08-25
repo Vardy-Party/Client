@@ -19,7 +19,6 @@ namespace VardyParty.Platforms.Android
                     return;
                 }
 
-                AndroidVideoPlayerService.SetOverlayInfo(info);
                 UpdateOverlayText(info);
             }
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }

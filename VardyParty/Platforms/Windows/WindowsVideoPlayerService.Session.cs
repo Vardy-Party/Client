@@ -104,6 +104,7 @@ namespace VardyParty.Platforms.Windows
             private IStreamResolutionOrchestrator streamResolutionOrchestrator = null!;
             private PlaybackSessionController session = null!;
             private DelegatingMediaEngine engine = null!;
+            private PlaybackPoolCommandActions pool = null!;
             private IDisposable? healthyStreamsSubscription;
             private IDisposable? currentIndexSubscription;
             private TypedEventHandler<MediaPlaybackSession, object>? playbackStateChangedHandler;
@@ -219,6 +220,12 @@ namespace VardyParty.Platforms.Windows
                     streamResolutionOrchestrator = _host._services.GetRequiredService<IStreamResolutionOrchestrator>();
                     session = new PlaybackSessionController();
                     engine = new DelegatingMediaEngine();
+                    pool = new PlaybackPoolCommandActions(
+                        session,
+                        switchingService,
+                        ResolveFreshM3U8Async,
+                        (url, usedCached, force) => MainThread.BeginInvokeOnMainThread(() => AttachViaSession(url, usedCached, force)),
+                        cmd => MainThread.BeginInvokeOnMainThread(() => ApplyPlaybackCommand(cmd)));
                     engine.MetricsHandler = () => _host.GetCurrentMetrics();
 
 
