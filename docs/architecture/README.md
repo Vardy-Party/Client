@@ -6,8 +6,8 @@ This folder is the **architecture canvas and plan** for moving VardyParty off a 
 |---|---|
 | **Canvas (phase 1)** | [phase-1-canvas.md](phase-1-canvas.md) — assemblies, layers, playback flow |
 | **Plan (phase 1)** | [phase-1-plan.md](phase-1-plan.md) — how we get there, tests first |
-| **Phase 2 plan** | [phase-2-plan.md](phase-2-plan.md) — Home.razor→VMs, Linux auth adapter, PlaybackCommand interpreter, then XAML |
-| **Phase 2 canvas** | [phase-2-webview-xaml.md](phase-2-webview-xaml.md) — drop Blazor WebView for MAUI XAML (Android perf). **Not until phase-2-plan slice 1.** |
+| **Phase 2 plan** | [phase-2-plan.md](phase-2-plan.md) — Linux auth, PlaybackCommand, then one frontend phase (VMs + XAML) last |
+| **Phase 2 UI canvas** | [phase-2-webview-xaml.md](phase-2-webview-xaml.md) — drop Blazor WebView for MAUI XAML (Android perf). **Last slice. Do not thin Razor first.** |
 
 Existing [docs/ARCHITECTURE.md](../ARCHITECTURE.md) is **version/CI**, not this app. Playback as-is: [docs/STREAM_PLAYBACK_RULES.md](../STREAM_PLAYBACK_RULES.md).
 

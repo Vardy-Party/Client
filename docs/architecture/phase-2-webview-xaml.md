@@ -1,6 +1,6 @@
-# Phase 2 (separate) — Blazor WebView → MAUI XAML
+# Phase 2 UI — Blazor WebView → MAUI XAML
 
-**This is not part of phase 1.** Do not start it until [phase-2-plan.md](phase-2-plan.md) slice 1 (Home.razor → VMs) is done. Canvas only: shared VMs exist; `Home.razor` still owns too much of the shell.
+**Last slice of [phase-2-plan.md](phase-2-plan.md).** Do not start this until slices 1 (Linux auth) and 2 (`PlaybackCommand`) are done. Do **not** rewrite `Home.razor` first — remaining Home policy moves into the shared VMs **in this slice**, as the Android XAML binding target.
 
 On the table for **Android performance** of the **home shell**. Player chrome and scores ticker are already native.
 
@@ -10,17 +10,18 @@ On the table for **Android performance** of the **home shell**. Player chrome an
 
 ```mermaid
 flowchart TB
-  subgraph Ready["Must already exist from phase 1"]
-    HVM["HomeShellViewModel"]
+  subgraph SameSlice["This UI slice"]
+    HVM["HomeShellViewModel\nfinish extracting Home policy"]
     MVM["MenuViewModel"]
+    AH["Android HomePage.xaml\nCollectionView + flyout + auth"]
+    VP["Retire VideoPlayer.razor\nif unused on Home click"]
   end
 
-  subgraph Phase2["Phase 2 UI"]
-    AH["Android HomePage.xaml<br/>CollectionView + flyout + auth"]
-    WH["Windows HomePage.xaml<br/>later, optional"]
+  subgraph Later["Optional after Android shell"]
+    WH["Windows HomePage.xaml"]
   end
 
-  subgraph Leave["Do not migrate in this phase"]
+  subgraph Leave["Do not migrate in this slice"]
     NVA["Android NativeVideoActivity"]
     WNP["Windows WinUI PlayerSession"]
     Ticker["Ticker animation in host"]
@@ -49,11 +50,12 @@ XAML **does not** buy: ExoPlayer/WinUI/LibVLC decode, LocalService, Auth0, catal
 
 ---
 
-## Sequencing (after phase 1)
+## Sequencing (this slice only)
 
-1. Feature-flag or `#if ANDROID` XAML home bound to the **same** VMs; Windows stays Blazor.  
+1. Tests for remaining Home commands on the VMs, then bind Android `HomePage.xaml` to those VMs. Windows stays Blazor on the same VMs.  
 2. Keep `NativeVideoActivity` unchanged.  
-3. Optional: Windows XAML home, then delete WebView, `wwwroot`, Razor, Cast JS interop.  
-4. Do not add bUnit tests as a destination.
+3. Retire or route `VideoPlayer.razor`.  
+4. Optional later: Windows XAML home, then delete WebView, `wwwroot`, Razor, Cast JS interop.  
+5. Do not add bUnit tests as a destination.
 
-**Do not** make the first architecture PR “Android HomePage.xaml”.
+**Do not** make the first phase 2 PR “Android HomePage.xaml”. Host adapters first.

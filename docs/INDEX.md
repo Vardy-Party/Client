@@ -5,7 +5,7 @@ Welcome! This directory contains comprehensive documentation for the VardyParty 
 ## 📚 Quick Navigation
 
 ### For Developers
-- **[architecture/README.md](architecture/README.md)** - App architecture canvas + plan (domain assemblies, shared VMs). Phase 2: [phase-2-plan.md](architecture/phase-2-plan.md) then [phase-2-webview-xaml.md](architecture/phase-2-webview-xaml.md).
+- **[architecture/README.md](architecture/README.md)** - App architecture canvas + plan (domain assemblies, shared VMs). Phase 2: [phase-2-plan.md](architecture/phase-2-plan.md) (host adapters first; UI last).
 - **[VERSION_MANAGEMENT_QUICK_REFERENCE.md](VERSION_MANAGEMENT_QUICK_REFERENCE.md)** - Quick answers to common version questions
 - **[BEFORE_AFTER.md](BEFORE_AFTER.md)** - What changed from the old system to the new one
 

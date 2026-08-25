@@ -1,6 +1,6 @@
 # Phase 1 plan — domain assemblies, shared VMs, tests
 
-Keep Android and Windows working. Do not replace Blazor WebView here. Remaining Home.razor / auth-host / PlaybackCommand / XAML work: [phase-2-plan.md](phase-2-plan.md).
+Keep Android and Windows working. Do not replace Blazor WebView here. Remaining host-adapter / PlaybackCommand / UI work: [phase-2-plan.md](phase-2-plan.md) (UI last, one frontend phase).
 
 **Test rules (locked)** for every new `[Fact]` / `[Theory]`: `// Arrange` / `// Act` / `// Assert`; AutoFixture specimens; `_fixture.GetMock<T>()` never `new Mock<T>()`; fictional names only; test projects do **not** enable ImplicitUsings; no Python.
 
@@ -109,4 +109,4 @@ Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). De
 5. Kernel + Playback projects — done  
 6. Catalog + Streaming (`IGamesCatalogApi` / `IApiService`) — done  
 7. Auth + Presentation projects; delete Core — done  
-8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up — **not in this PR**; [phase-2-plan.md](phase-2-plan.md) slice 3
+8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up — **not in this PR**; [phase-2-plan.md](phase-2-plan.md) slice 2
