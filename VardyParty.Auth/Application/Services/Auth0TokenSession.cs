@@ -9,6 +9,7 @@ namespace VardyParty.Auth;
 /// </summary>
 public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
 {
+    private readonly SemaphoreSlim _sessionLock = new(1, 1);
     private int _backgroundRefreshGate;
 
     protected Auth0TokenSession(
@@ -24,7 +25,6 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
     protected ILogger Logger { get; }
     protected IAuth0OAuthClient Oauth { get; }
     protected Auth0Settings Settings { get; set; }
-    protected SemaphoreSlim SessionLock { get; } = new(1, 1);
     protected string? AccessToken { get; set; }
     protected string? RefreshToken { get; set; }
     protected DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.MinValue;
@@ -133,14 +133,14 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
 
     public virtual async Task LogoutAsync()
     {
-        await SessionLock.WaitAsync();
+        await _sessionLock.WaitAsync();
         try
         {
             await ClearTokensCoreAsync();
         }
         finally
         {
-            SessionLock.Release();
+            _sessionLock.Release();
         }
     }
 
@@ -167,7 +167,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         if (TokenLoaded)
             return;
 
-        await SessionLock.WaitAsync();
+        await _sessionLock.WaitAsync();
         try
         {
             if (TokenLoaded)
@@ -180,7 +180,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         }
         finally
         {
-            SessionLock.Release();
+            _sessionLock.Release();
         }
     }
 
@@ -194,7 +194,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
             return;
         }
 
-        await SessionLock.WaitAsync(cancellationToken);
+        await _sessionLock.WaitAsync(cancellationToken);
         try
         {
             if (!TokenLoaded)
@@ -220,11 +220,24 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         }
         finally
         {
-            SessionLock.Release();
+            _sessionLock.Release();
         }
     }
 
     protected async Task ApplyTokensAsync(string accessToken, int expiresIn, string? refreshToken)
+    {
+        await _sessionLock.WaitAsync();
+        try
+        {
+            await ApplyTokensCoreAsync(accessToken, expiresIn, refreshToken);
+        }
+        finally
+        {
+            _sessionLock.Release();
+        }
+    }
+
+    private async Task ApplyTokensCoreAsync(string accessToken, int expiresIn, string? refreshToken)
     {
         AccessToken = accessToken;
         ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn > 0 ? expiresIn : 3600);
@@ -255,7 +268,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
     {
         try
         {
-            await SessionLock.WaitAsync();
+            await _sessionLock.WaitAsync();
             try
             {
                 if (string.IsNullOrWhiteSpace(RefreshToken) || !NeedsAccessTokenRefresh(forceRefresh: false))
@@ -267,7 +280,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
             }
             finally
             {
-                SessionLock.Release();
+                _sessionLock.Release();
             }
         }
         catch (Exception ex)
@@ -294,7 +307,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
             var token = await Oauth.RefreshAsync(Settings, RefreshToken, cancellationToken);
             if (token.IsSuccess && !string.IsNullOrWhiteSpace(token.AccessToken))
             {
-                await ApplyTokensAsync(token.AccessToken, token.ExpiresIn, token.RefreshToken);
+                await ApplyTokensCoreAsync(token.AccessToken, token.ExpiresIn, token.RefreshToken);
                 return AuthTokenRefreshOutcome.Success;
             }
 

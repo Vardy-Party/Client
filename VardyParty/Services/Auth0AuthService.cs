@@ -23,18 +23,15 @@ public class Auth0AuthService : Auth0TokenSession
         await EnsureTokenReadyAsync(cancellationToken, forceRefresh: false);
         if (HasValidToken) return new AuthLoginResult(true, AccessToken, null);
 
-        await SessionLock.WaitAsync(cancellationToken);
+        if (!MauiProgram.IsWindowsPackaged)
+        {
+            Logger.LogWarning("[Auth0] Interactive login requires a packaged Windows app.");
+            return new AuthLoginResult(false, null,
+                "Interactive login requires a packaged Windows app. Use device sign-in instead.");
+        }
+
         try
         {
-            if (HasValidToken) return new AuthLoginResult(true, AccessToken, null);
-
-            if (!MauiProgram.IsWindowsPackaged)
-            {
-                Logger.LogWarning("[Auth0] Interactive login requires a packaged Windows app.");
-                return new AuthLoginResult(false, null,
-                    "Interactive login requires a packaged Windows app. Use device sign-in instead.");
-            }
-
             var client = BuildAuth0Client(Settings);
             Logger.LogInformation("[Auth0] Starting login...");
 
@@ -87,10 +84,6 @@ public class Auth0AuthService : Auth0TokenSession
         {
             Logger.LogError(ex, "[Auth0] Interactive login failed");
             return new AuthLoginResult(false, null, ex.Message);
-        }
-        finally
-        {
-            SessionLock.Release();
         }
     }
 
