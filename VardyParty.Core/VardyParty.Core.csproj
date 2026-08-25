@@ -24,4 +24,8 @@
 		<PackageReference Include="VardyParty.LocalService.Client" Version="0.1.23" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+	</ItemGroup>
+
 </Project>

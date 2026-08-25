@@ -17,6 +17,7 @@ using LibVLCSharp.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using VardyParty.Catalog;
 using VardyParty.Configuration;
 using VardyParty.Extensions;
 using VardyParty.Models;
@@ -42,6 +43,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly Auth0Settings _auth0Settings;
     private readonly ILogger<MainWindowViewModel> _logger;
+    private readonly HomeShellViewModel _homeShell = new();
     private readonly Dictionary<string, IImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _isBusy;
@@ -564,6 +566,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _streamResolutionCts?.Dispose();
             _streamResolutionCts = new CancellationTokenSource();
 
+            _homeShell.OnUserPicked(item.Game);
             _selectionState.CurrentGame = item.Game;
             StatusMessage = $"Resolving streams for {item.HomeTeam} vs {item.AwayTeam}...";
 

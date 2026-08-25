@@ -10,4 +10,4 @@ This folder is the **architecture canvas and plan** for moving VardyParty off a 
 
 Existing [docs/ARCHITECTURE.md](../ARCHITECTURE.md) is **version/CI**, not this app. Playback as-is: [docs/STREAM_PLAYBACK_RULES.md](../STREAM_PLAYBACK_RULES.md).
 
-**Phase 1 keeps Blazor WebView.** Shared view-models in `VardyParty.Presentation` are the hinge so phase 2 is a view swap, not a rewrite.
+**In progress:** `VardyParty.Kernel` exists (shared models + stream-health DTOs). Remaining domains still live in `VardyParty.Core` until later PRs.

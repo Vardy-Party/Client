@@ -152,10 +152,13 @@ jobs:
           path: |
             VardyParty/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty/bin/
             !VardyParty/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
 
   build-android:
@@ -195,10 +198,13 @@ jobs:
           path: |
             VardyParty/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty/bin/
             !VardyParty/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
 
   build-ios:
@@ -235,10 +241,13 @@ jobs:
           path: |
             VardyParty/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty/bin/
             !VardyParty/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
 
   build-macos:
@@ -275,10 +284,13 @@ jobs:
           path: |
             VardyParty/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty/bin/
             !VardyParty/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
 
   build-linux:
@@ -313,10 +325,13 @@ jobs:
           path: |
             VardyParty.Linux/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
@@ -325,10 +340,13 @@ jobs:
           path: |
             VardyParty.Linux/
             VardyParty.Core/
+            VardyParty.Kernel/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
             !VardyParty.Core/bin/
             !VardyParty.Core/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
           retention-days: 5
 
   linux-runtime-smoke:
