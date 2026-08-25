@@ -74,9 +74,16 @@ public class StreamSelectionCoordinator(
                     testOrder = BuildTestOrder(recommendations, _totalStreams);
                 }
 
-                if (testOrder.Count > 0)
+                if (StreamTestOrderPolicy.ShouldPreferRecommendations(recommendations))
                 {
-                    logger.LogInformation("[StreamSelection] Using recommendation-based test order: {Order}",
+                    logger.LogInformation(
+                        "[StreamSelection] Using recommendation-based test order. Confidence={Confidence}, Order={Order}",
+                        recommendations?.Confidence,
+                        string.Join(",", testOrder));
+                }
+                else
+                {
+                    logger.LogInformation("[StreamSelection] Using catalog source order: {Order}",
                         string.Join(",", testOrder));
                 }
             }
@@ -261,37 +268,10 @@ public class StreamSelectionCoordinator(
 
     private List<int> BuildTestOrder(RecommendationResponse? recommendations, int totalStreams)
     {
-        if (recommendations == null ||
-            !string.Equals(recommendations.Confidence, "high", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(recommendations.Confidence, "medium", StringComparison.OrdinalIgnoreCase))
-        {
-            return Enumerable.Range(0, totalStreams).ToList();
-        }
-
-        var ordered = new List<int>();
-        var seen = new HashSet<int>();
-
-        foreach (var recommendedItem in recommendations.Recommended)
-        {
-            var index = ResolveRecommendationIndex(recommendedItem.Url, recommendedItem.StreamName);
-            if (index < 0 || index >= totalStreams || !seen.Add(index))
-            {
-                continue;
-            }
-
-            ordered.Add(index);
-        }
-
-        for (var i = 0; i < totalStreams; i++)
-        {
-            if (!seen.Contains(i))
-            {
-                ordered.Add(i);
-            }
-        }
-
-        return StreamCatalogSourceOrderer.OrderIndexesFbBeforeMp(
-            ordered,
+        return StreamTestOrderPolicy.Build(
+            recommendations,
+            totalStreams,
+            ResolveRecommendationIndex,
             index => _candidates.First(c => c.Index == index).Stream);
     }
 
@@ -320,9 +300,20 @@ public class StreamSelectionCoordinator(
         }
 
         var normalized = StreamHealthIdentity.NormalizeStreamUrl(recommendedUrl);
-        return !string.IsNullOrWhiteSpace(normalized) && _streamIndexByKey.TryGetValue(normalized, out index)
-            ? index
-            : -1;
+        if (!string.IsNullOrWhiteSpace(normalized) && _streamIndexByKey.TryGetValue(normalized, out index))
+        {
+            return index;
+        }
+
+        foreach (var candidate in _candidates)
+        {
+            if (StreamHealthIdentity.MatchesRecommendation(candidate.Stream, recommendedUrl, recommendedStreamName))
+            {
+                return candidate.Index;
+            }
+        }
+
+        return -1;
     }
 
     private void PublishProgress(
