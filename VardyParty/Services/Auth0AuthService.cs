@@ -68,27 +68,8 @@ public class Auth0AuthService : Auth0TokenSession
                 loginResult.User?.Identity?.Name ?? "unknown",
                 !string.IsNullOrWhiteSpace(loginResult.AccessToken));
 
-            var roleClaims = loginResult.User?.FindAll(Settings.RequiredRoleClaimType)?.ToList();
-            Logger.LogInformation("[Auth0] Found {ClaimCount} role claims of type {ClaimType}",
-                roleClaims?.Count ?? 0,
-                Settings.RequiredRoleClaimType);
-
-            if (roleClaims == null || roleClaims.Count == 0)
+            if (!AcceptAccessToken(loginResult.AccessToken))
             {
-                Logger.LogWarning("[Auth0] User has no role claims of type {ClaimType}",
-                    Settings.RequiredRoleClaimType);
-                return new AuthLoginResult(false, null, null);
-            }
-
-            var hasRequiredRole = roleClaims.Any(c =>
-                !string.IsNullOrWhiteSpace(c.Value) && c.Value.Split(' ').Contains(Settings.RequiredRole));
-            Logger.LogInformation("[Auth0] User has required role '{Role}': {HasRole}", Settings.RequiredRole,
-                hasRequiredRole);
-
-            if (!hasRequiredRole)
-            {
-                Logger.LogWarning("[Auth0] User authenticated but missing required role: {RequiredRole}",
-                    Settings.RequiredRole);
                 return new AuthLoginResult(false, null, null);
             }
 

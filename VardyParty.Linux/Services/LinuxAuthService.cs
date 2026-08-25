@@ -30,8 +30,6 @@ public class LinuxAuthService : Auth0TokenSession
 
     protected override bool ThrowOnMissingDeviceConfig => false;
 
-    protected override bool AcceptAccessToken(string accessToken) => HasRequiredRole(accessToken);
-
     public override async Task<AuthLoginResult> LoginInteractiveAsync(CancellationToken cancellationToken = default)
     {
         await EnsureTokenReadyAsync(cancellationToken, forceRefresh: false);
@@ -89,7 +87,7 @@ public class LinuxAuthService : Auth0TokenSession
             if (!exchanged.IsSuccess)
                 return new AuthLoginResult(false, null, exchanged.Error ?? "Auth0 token exchange failed.");
 
-            if (!HasRequiredRole(exchanged.AccessToken!))
+            if (!AcceptAccessToken(exchanged.AccessToken!))
             {
                 await LogoutAsync();
                 return new AuthLoginResult(false, null,
@@ -333,22 +331,6 @@ public class LinuxAuthService : Auth0TokenSession
     private static string Base64UrlEncode(byte[] input)
         => Convert.ToBase64String(input).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    private static byte[] Base64UrlDecode(string input)
-    {
-        var padded = input.Replace('-', '+').Replace('_', '/');
-        switch (padded.Length % 4)
-        {
-            case 2:
-                padded += "==";
-                break;
-            case 3:
-                padded += "=";
-                break;
-        }
-
-        return Convert.FromBase64String(padded);
-    }
-
     private bool OpenBrowser(string url)
     {
         try
@@ -454,56 +436,6 @@ public class LinuxAuthService : Auth0TokenSession
                 Error = ex.Message
             };
         }
-    }
-
-    private bool HasRequiredRole(string accessToken)
-    {
-        if (string.IsNullOrWhiteSpace(Settings.RequiredRoleClaimType) ||
-            string.IsNullOrWhiteSpace(Settings.RequiredRole))
-        {
-            return true;
-        }
-
-        try
-        {
-            var parts = accessToken.Split('.');
-            if (parts.Length < 2)
-                return false;
-
-            var payloadBytes = Base64UrlDecode(parts[1]);
-            using var doc = JsonDocument.Parse(payloadBytes);
-
-            if (!doc.RootElement.TryGetProperty(Settings.RequiredRoleClaimType, out var claim))
-                return false;
-
-            if (claim.ValueKind == JsonValueKind.String)
-            {
-                var raw = claim.GetString();
-                if (string.IsNullOrWhiteSpace(raw))
-                    return false;
-
-                return raw.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                    .Any(v => string.Equals(v, Settings.RequiredRole, StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (claim.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in claim.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.String &&
-                        string.Equals(item.GetString(), Settings.RequiredRole, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "[Auth0/Linux] Failed to validate required role from access token");
-        }
-
-        return false;
     }
 
     private sealed class StoredTokenPayload

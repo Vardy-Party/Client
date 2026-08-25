@@ -37,7 +37,14 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
 
     protected virtual bool ThrowOnMissingDeviceConfig => true;
 
-    protected virtual bool AcceptAccessToken(string accessToken) => true;
+    protected virtual bool AcceptAccessToken(string accessToken)
+    {
+        if (AuthAccessTokenRoles.HasRequiredRole(accessToken, Settings.RequiredRoleClaimType, Settings.RequiredRole))
+            return true;
+
+        Logger.LogWarning("[Auth0] Access token missing required role '{RequiredRole}'", Settings.RequiredRole);
+        return false;
+    }
 
     public async Task<AuthDeviceLoginResult?> StartDeviceLoginAsync(CancellationToken cancellationToken = default)
     {
