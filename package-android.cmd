@@ -60,15 +60,17 @@ exit /b %ERRORLEVEL%
 echo.
 echo Signed APKs:
 dir /s /b "VardyParty\bin\Release\net10.0-android\*Signed.apk" 2>nul
-set "RID_APK=VardyParty\bin\Release\net10.0-android\android-arm64\com.vardyparty-Signed.apk"
 set "CANONICAL=VardyParty\bin\Release\net10.0-android\com.vardyparty-Signed.apk"
-if exist "%RID_APK%" (
-  copy /Y "%RID_APK%" "%CANONICAL%" >nul
-  echo Copied android-arm64 APK to %CANONICAL%
+if not exist "%CANONICAL%" (
+  set "CANONICAL=VardyParty\bin\Release\net10.0-android\android-arm64\com.vardyparty-Signed.apk"
 )
+echo.
+echo Native libs in %CANONICAL%:
+powershell -NoProfile -Command "$apk='%CANONICAL%'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk)).Entries | Where-Object { $_.FullName -like 'lib/*/*.so' } | ForEach-Object { $_.FullName.Split('/')[1] } | Sort-Object -Unique"
 echo.
 echo Install with:
 echo   adb install -r %CANONICAL%
-echo If that still fails, check the TV ABI:
+echo TV ABI:
 echo   adb shell getprop ro.product.cpu.abi
+echo   adb shell getprop ro.product.cpu.abilist
 exit /b 0
