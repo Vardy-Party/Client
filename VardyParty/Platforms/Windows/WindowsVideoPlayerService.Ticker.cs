@@ -2,8 +2,8 @@ using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Input;
 using VardyParty.Extensions;
+using VardyParty.Catalog;
 using VardyParty.Models;
-using VardyParty.Services;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 
 namespace VardyParty.Platforms.Windows
@@ -618,7 +618,7 @@ namespace VardyParty.Platforms.Windows
                 }
             }
 
-            private void RefreshGamesSnapshot(VardyParty.Services.IEnrichedGameService? enrichedService = null)
+            private void RefreshGamesSnapshot(IEnrichedGameService? enrichedService = null)
             {
                 var service = enrichedService ?? _host._enrichedGames;
                 var dict = service?.GetLatestGames();

@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    MAUI `dotnet build -f net10.0-android -p:TargetFrameworks=net10.0-android -r android-arm64`
+    flows those global properties into every ProjectReference. Domain libraries target
+    net10.0 only. If their assets are restored as net10.0-android (or RID-only), the
+    next build is NETSDK1005 ("doesn't have a target for 'net10.0'").
+    Exes (Linux, StreamHealthCheckerTool) keep their own RuntimeIdentifier(s).
+  -->
+  <ItemDefinitionGroup>
+    <ProjectReference>
+      <GlobalPropertiesToRemove>$(GlobalPropertiesToRemove);RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' AND '$(UseMaui)' != 'true' AND '$(OutputType)' != 'Exe' AND '$(OutputType)' != 'WinExe'">
+    <RuntimeIdentifier></RuntimeIdentifier>
+    <RuntimeIdentifiers></RuntimeIdentifiers>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+</Project>

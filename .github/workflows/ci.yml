@@ -3,8 +3,8 @@ name: CI - Build & Test
 env:
   DOTNET_VERSION: "10.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
-  VARDYPARTY_CORE_CSPROJ: "VardyParty.Core/VardyParty.Core.csproj"
-  TESTS_CSPROJ: "tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj"
+  VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
+  TESTS_DIR: "tests"
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
 
@@ -16,8 +16,9 @@ env:
 # been merged) at the *platform* level with conclusion action_required —
 # "This workflow is awaiting approval from a maintainer" — before any job
 # `if` is evaluated. Skipping jobs is not enough to avoid that click.
-# paths-ignore on Version.props means a Version.props-only bump PR never
-# queues CI. Job-level skip below is belt-and-suspenders if the workflow is
+# pull_request `paths` is an allowlist (solution, projects, source, workflows).
+# Version.props-only and package-android.cmd-only PRs do not match, so they
+# never queue. Job-level skip below is belt-and-suspenders if the workflow is
 # still triggered (extra files, merge_group, or a version commit on main).
 on:
   push:
@@ -26,8 +27,28 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - "Version.props"
+    paths:
+      - "**/*.sln"
+      - "**/*.slnx"
+      - "**/*.csproj"
+      - "**/*.cs"
+      - "**/*.razor"
+      - "**/*.cshtml"
+      - "**/*.xaml"
+      - "**/*.axaml"
+      - "**/*.resx"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "Directory.Build.props"
+      - "Directory.Build.targets"
+      - "Directory.Packages.props"
+      - "**/AndroidManifest.xml"
+      - "**/*.plist"
+      - "VardyParty/appsettings.json"
+      - "VardyParty.Linux/appsettings.json"
+      - "VardyParty/wwwroot/**"
+      - "VardyParty/Resources/**"
+      - "tests/**"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -78,10 +99,22 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       # - name: Restore dependencies
       #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
-      - name: Build test project
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet build {} -c Release
+      - name: Build test projects
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            echo "::group::Build ${proj}"
+            dotnet build "$proj" -c Release
+            echo "::endgroup::"
+          done < <(find tests -name "*Tests.csproj" -type f -print0)
       - name: Run unit tests
-        run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet test {} -c Release --no-build --verbosity normal
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            echo "::group::Test ${proj}"
+            dotnet test "$proj" -c Release --no-build --verbosity normal
+            echo "::endgroup::"
+          done < <(find tests -name "*Tests.csproj" -type f -print0)
 
   code-quality:
     name: Code Quality
@@ -151,11 +184,32 @@ jobs:
           name: build-windows
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
 
   build-android:
@@ -183,22 +237,49 @@ jobs:
           java-version: "17"
           distribution: temurin
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+      - name: Restore domain libraries without Android RID
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false -p:RunAotCompilation=false -p:PublishTrimmed=false
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false -p:RunAotCompilation=false -p:PublishTrimmed=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-android
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
 
   build-ios:
@@ -223,22 +304,49 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-ios -r iossimulator-x64
+      - name: Restore domain libraries without iOS RID
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios -r iossimulator-x64
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios -r iossimulator-x64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-ios
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
 
   build-macos:
@@ -263,7 +371,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CORE_CSPROJ }} --ignore-failed-sources
+        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
       - name: Build macOS app
@@ -274,11 +382,32 @@ jobs:
           name: build-macos
           path: |
             VardyParty/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty/bin/
             !VardyParty/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
 
   build-linux:
@@ -312,11 +441,32 @@ jobs:
           name: build-linux-x64
           path: |
             VardyParty.Linux/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
       - name: Upload ARM64 artifact
         uses: actions/upload-artifact@v4
@@ -324,11 +474,32 @@ jobs:
           name: build-linux-arm64
           path: |
             VardyParty.Linux/
-            VardyParty.Core/
+            VardyParty.Catalog/
+            VardyParty.Streaming/
+            VardyParty.Auth/
+            VardyParty.Kernel/
+            VardyParty.Ports/
+            VardyParty.Playback/
+            VardyParty.Presentation/
+            VardyParty.Hosting/
             !VardyParty.Linux/bin/
             !VardyParty.Linux/obj/
-            !VardyParty.Core/bin/
-            !VardyParty.Core/obj/
+            !VardyParty.Catalog/bin/
+            !VardyParty.Catalog/obj/
+            !VardyParty.Streaming/bin/
+            !VardyParty.Streaming/obj/
+            !VardyParty.Auth/bin/
+            !VardyParty.Auth/obj/
+            !VardyParty.Kernel/bin/
+            !VardyParty.Kernel/obj/
+            !VardyParty.Ports/bin/
+            !VardyParty.Ports/obj/
+            !VardyParty.Playback/bin/
+            !VardyParty.Playback/obj/
+            !VardyParty.Presentation/bin/
+            !VardyParty.Presentation/obj/
+            !VardyParty.Hosting/bin/
+            !VardyParty.Hosting/obj/
           retention-days: 5
 
   linux-runtime-smoke:

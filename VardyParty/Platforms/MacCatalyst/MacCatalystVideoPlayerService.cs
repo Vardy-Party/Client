@@ -5,9 +5,9 @@ using CoreMedia;
 using Foundation;
 using ObjCRuntime;
 using UIKit;
-using VardyParty.Health;
 using VardyParty.Models;
-using VardyParty.Services;
+using VardyParty.Playback;
+using VardyParty.Streaming;
 
 namespace VardyParty.Platforms.MacCatalyst
 {

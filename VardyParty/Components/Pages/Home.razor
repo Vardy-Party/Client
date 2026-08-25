@@ -4,6 +4,7 @@
 @inject SelectionState Selection
 @inject ILogger<Home> Logger
 @inject IStreamResolutionOrchestrator StreamResolutionOrchestrator
+@inject INativeVideoPlayerService VideoPlayer
 @inject IOverlayCloseService OverlayClose
 @inject IHomePagePresentationService HomePresentation
 @inject IAuthLoginService AuthLoginService
@@ -12,10 +13,8 @@
 @inject ILeagueFilterService LeagueFilter
 @using Microsoft.Extensions.Logging
 @using QRCoder
+@using VardyParty.Catalog
 @using VardyParty.Models
-@using VardyParty.Orchestrators
-@using VardyParty.Providers
-@using VardyParty.Services
 @implements IDisposable
 
 <div class="page-shell@(GetPlatformShellClass())">
@@ -274,7 +273,6 @@
     private int totalStreamsFound;
     private int streamsTested;
     private int healthyStreamCount;
-    private Game? selectedGame;
     private IDisposable? _progressSubscription;
 
     private Task? _streamResolutionTask;
@@ -284,7 +282,9 @@
 
     // True only after an explicit card click (or D-pad OK). OnAfterRender must not
     // treat EnsureInitialSelection / first-card focus as "resume after native player".
-    private bool _userInitiatedResolution;
+    private readonly HomeShellViewModel _homeShell = new();
+
+    private Game? selectedGame => _homeShell.SelectedGame;
 
     private void PublishHomeUiUpdate()
     {
@@ -394,8 +394,7 @@
 
         // Ensure we fully stop resolution and clear selection so OnAfterRender does not restart it
         Selection.CurrentGame = null;
-        selectedGame = null;
-        _userInitiatedResolution = false;
+        _homeShell.ClearSelection();
         // Give feedback to user via logging (avoid referencing Android UI types in shared component)
         Logger.LogInformation("[Home] Stream discovery cancelled by Back");
         InvokeAsync(() =>
@@ -575,8 +574,7 @@
 
         games.Clear();
         Selection.CurrentGame = null;
-        selectedGame = null;
-        _userInitiatedResolution = false;
+        _homeShell.ClearSelection();
         statusMessage = string.Empty;
         authStatusMessage = string.Empty;
         isAuthenticated = false;
@@ -626,9 +624,8 @@
 
         _progressSubscription = null;
         _resolutionExhausted = true;
-        _userInitiatedResolution = false;
         Selection.CurrentGame = null;
-        selectedGame = null;
+        _homeShell.ClearSelection();
         isResolvingStreams = false;
         streamResolutionStatus = string.Empty;
         totalStreamsFound = 0;
@@ -645,32 +642,18 @@
         // so UI resumes discovering streams automatically.
         try
         {
-            if (!isResolvingStreams && selectedGame != null && _userInitiatedResolution)
+            var resume = _homeShell.DecideResumeAfterPlayer(
+                isResolvingStreams, Selection.CurrentGame, _resolutionExhausted);
+            if (resume == ResumeAfterPlayerAction.Clear)
             {
-                // Do not restart if we've already exhausted resolution for this selection
-                if (_resolutionExhausted)
-                {
-                    selectedGame = null;
-                    Selection.CurrentGame = null;
-                    _userInitiatedResolution = false;
-                }
-                else
-                {
-                    // Only restart resolution if the user did not explicitly cancel (Selection.CurrentGame indicates intent)
-                    if (Selection.CurrentGame != null && Selection.CurrentGame == selectedGame)
-                    {
-                        Logger.LogInformation("[Home] Resuming stream resolution after native player for {Home} vs {Away}",
-                            selectedGame.DisplayHome, selectedGame.DisplayAway);
-                        _ = StartStreamResolution(selectedGame);
-                    }
-                    else
-                    {
-                        // Clear selection if we should not restart
-                        selectedGame = null;
-                        Selection.CurrentGame = null;
-                        _userInitiatedResolution = false;
-                    }
-                }
+                Selection.CurrentGame = null;
+                _homeShell.ClearSelection();
+            }
+            else if (resume == ResumeAfterPlayerAction.Resume && selectedGame != null)
+            {
+                Logger.LogInformation("[Home] Resuming stream resolution after native player for {Home} vs {Away}",
+                    selectedGame.DisplayHome, selectedGame.DisplayAway);
+                _ = StartStreamResolution(selectedGame);
             }
         }
         catch (Exception ex)
@@ -734,26 +717,8 @@
 
     private void EnsureInitialSelection()
     {
-        if (games.Count == 0)
-        {
-            Selection.CurrentGame = null;
-            selectedGame = null;
-            return;
-        }
-
-        // Never auto-select games[0]. That left a sticky .selected ring and, on Windows,
-        // OnAfterRender treated CurrentGame as "resume after player" and started playback
-        // without a click. Rebind an explicit OK/click selection onto refreshed instances only.
-        if (selectedGame != null)
-        {
-            var match = FindMatchingGame(selectedGame);
-            selectedGame = match;
-            Selection.CurrentGame = match;
-        }
-        else
-        {
-            Selection.CurrentGame = null;
-        }
+        _homeShell.RebindGames(games);
+        Selection.CurrentGame = _homeShell.SelectedGame;
     }
 
     private void OnErrorUpdated(string? error)
@@ -775,18 +740,12 @@
     /// UI .selected must track the game the user chose (OK/click via selectedGame),
     /// not Selection.CurrentGame alone — that was auto-initialized to games[0] and stayed sticky.
     /// </summary>
-    private bool IsSelected(Game game)
-    {
-        if (selectedGame == null) return false;
-        return SameGame(game, selectedGame);
-    }
+    private bool IsSelected(Game game) => _homeShell.IsSelected(game);
 
     private Game? FindMatchingGame(Game target) =>
-        games.FirstOrDefault(g => SameGame(g, target));
+        HomePlaybackIntent.FindMatchingGame(games, target);
 
-    private static bool SameGame(Game a, Game b) =>
-        string.Equals(a.Home, b.Home, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(a.Away, b.Away, StringComparison.OrdinalIgnoreCase);
+    private static bool SameGame(Game a, Game b) => HomePlaybackIntent.SameGame(a, b);
 
     private static string GameKey(Game game) =>
         $"{game.Home}|{game.Away}|{game.Start:O}";
@@ -807,8 +766,7 @@
         }
 
         // Explicit user choice — drives .selected (IsSelected). Do this before overlay render.
-        _userInitiatedResolution = true;
-        selectedGame = game;
+        _homeShell.OnUserPicked(game);
         Selection.CurrentGame = game;
         isResolvingStreams = true;
         totalStreamsFound = 0;
@@ -858,14 +816,13 @@
         {
             try
             {
-                var outcome = await StreamResolutionOrchestrator.StartAsync(game, _streamResolutionCts.Token);
+                var outcome = await StreamResolutionOrchestrator.StartAsync(game, VideoPlayer, _streamResolutionCts.Token);
                 _resolutionExhausted = true;
 
                 if (outcome.UserClosed)
                 {
                     Selection.CurrentGame = null;
-                    selectedGame = null;
-                    _userInitiatedResolution = false;
+                    _homeShell.ClearSelection();
                     return;
                 }
 

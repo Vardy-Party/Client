@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\VardyParty.Auth\VardyParty.Auth.csproj" />
+  </ItemGroup>
+</Project>

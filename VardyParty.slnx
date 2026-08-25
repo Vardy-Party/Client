@@ -14,7 +14,11 @@
     <File Path="docs/FINAL_SUMMARY.md" />
     <File Path="docs/HOW_TO_ADD_TO_SOLUTION.md" />
     <File Path="docs/IMPLEMENTATION_COMPLETE.md" />
-    <File Path="docs/INDEX.md" />
+    <File Path="docs/architecture/README.md" />
+    <File Path="docs/architecture/phase-1-canvas.md" />
+    <File Path="docs/architecture/phase-1-plan.md" />
+    <File Path="docs/architecture/phase-2-plan.md" />
+    <File Path="docs/architecture/phase-2-webview-xaml.md" />
     <File Path="docs/LINUX_IMPLEMENTATION_SUMMARY.md" />
     <File Path="docs/LINUX_SUPPORT.md" />
     <File Path="docs/QUICK_LINKS_CARD.md" />
@@ -41,9 +45,23 @@
     <File Path="package-windows.cmd" />
     <File Path="scripts/launch-linux-app.cmd" />
   </Folder>
-  <Project Path="tests/VardyParty.Core.Tests/VardyParty.Core.Tests.csproj" />
+  <Project Path="tests/VardyParty.TestSupport/VardyParty.TestSupport.csproj" />
+  <Project Path="tests/VardyParty.Kernel.Tests/VardyParty.Kernel.Tests.csproj" />
+  <Project Path="tests/VardyParty.Auth.Tests/VardyParty.Auth.Tests.csproj" />
+  <Project Path="tests/VardyParty.Catalog.Tests/VardyParty.Catalog.Tests.csproj" />
+  <Project Path="tests/VardyParty.Streaming.Tests/VardyParty.Streaming.Tests.csproj" />
+  <Project Path="tests/VardyParty.Playback.Tests/VardyParty.Playback.Tests.csproj" />
+  <Project Path="tests/VardyParty.Presentation.Tests/VardyParty.Presentation.Tests.csproj" />
+  <Project Path="tests/VardyParty.Hosting.Tests/VardyParty.Hosting.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
-  <Project Path="VardyParty.Core/VardyParty.Core.csproj" Id="3a0434c7-9ae5-4b08-b649-32352b4a56bc" />
+  <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />
+  <Project Path="VardyParty.Catalog/VardyParty.Catalog.csproj" />
+  <Project Path="VardyParty.Kernel/VardyParty.Kernel.csproj" />
+  <Project Path="VardyParty.Ports/VardyParty.Ports.csproj" />
+  <Project Path="VardyParty.Playback/VardyParty.Playback.csproj" />
+  <Project Path="VardyParty.Presentation/VardyParty.Presentation.csproj" />
+  <Project Path="VardyParty.Streaming/VardyParty.Streaming.csproj" />
+  <Project Path="VardyParty.Hosting/VardyParty.Hosting.csproj" />
   <Project Path="VardyParty.Linux/VardyParty.Linux.csproj">
     <Build Solution="Debug|*" Project="false" />
   </Project>

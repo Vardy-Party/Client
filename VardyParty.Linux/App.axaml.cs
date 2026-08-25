@@ -1,4 +1,3 @@
-using System.Net;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -8,16 +7,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty;
+using VardyParty.Auth;
+using VardyParty.Catalog;
 using VardyParty.Configuration;
-using VardyParty.Handlers;
-using VardyParty.Health;
+using VardyParty.Hosting;
 using VardyParty.Linux.Services;
-using VardyParty.Models;
-using VardyParty.Orchestrators;
-using VardyParty.Parsers;
-using VardyParty.Providers;
-using VardyParty.Resolvers;
-using VardyParty.Services;
+using VardyParty.Playback;
+using VardyParty.Streaming;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace VardyParty.Linux;
@@ -114,59 +110,14 @@ public class App : Application
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
-        services.AddSingleton<IGameMatcher, GameMatcher>();
-        services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
-        services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
-        services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
-        services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
         services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
-        services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
-        services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
-        services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
-        services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
-        services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
-        services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
-        services.AddSingleton<ISessionIdProvider, SessionIdProvider>();
+        services.AddVardyParty();
         services.AddSingleton<LinuxAuthService>();
         services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
         services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
-        services.AddTransient<Auth0ApiTokenHandler>();
-        services.AddTransient<M3U8HttpHandler>();
+        var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
+        services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
-        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
-        services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
-        services.AddSingleton<IStreamResolver, StreamResolver>();
-
-        services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
-
-        services.AddHttpClient<IStreamHealthService, StreamHealthService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
-        services.AddHttpClient<IApiService, ApiService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigureHttpClient(client =>
-            {
-                client.DefaultRequestHeaders.TryAddWithoutValidation(
-                    VardyPartyClientApiVersion.HeaderName,
-                    VardyPartyClientApiVersion.DefaultHeaderValue);
-            });
-
-        services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            });
-
-        services.AddHttpClient("StreamApi")
-            .AddHttpMessageHandler<M3U8HttpHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                UseCookies = true,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            });
-
-        services.AddSingleton<SelectionState>();
         services.AddSingleton<INativeVideoPlayerService, LinuxVideoPlayerService>();
         services.AddTransient<MainWindowViewModel>();
         services.AddTransient<MainWindow>();

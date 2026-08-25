@@ -1,0 +1,35 @@
+using Microsoft.Extensions.DependencyInjection;
+using VardyParty.Catalog;
+using VardyParty.Models;
+using VardyParty.Playback;
+using VardyParty.Ports;
+using VardyParty.Streaming;
+
+namespace VardyParty.Hosting;
+
+/// <summary>
+/// Shared domain registrations. Hosts still add auth, player, prefs store, and call
+/// <see cref="VardyPartyHttpClientServiceCollectionExtensions.AddVardyPartyHttpClients"/>.
+/// </summary>
+public static class VardyPartyServiceCollectionExtensions
+{
+    public static IServiceCollection AddVardyParty(this IServiceCollection services)
+    {
+        services.AddSingleton<IGameMatcher, GameMatcher>();
+        services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
+        services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
+        services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
+        services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
+        services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
+        services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
+        services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
+        services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
+        services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
+        services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
+        services.AddSingleton<ISessionIdProvider, SessionIdProvider>();
+        services.AddSingleton<SelectionState>();
+        services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
+        services.AddSingleton<IStreamResolver, StreamResolver>();
+        return services;
+    }
+}

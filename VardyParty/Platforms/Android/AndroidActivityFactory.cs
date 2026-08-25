@@ -3,8 +3,9 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using VardyParty.Orchestrators;
-using VardyParty.Services;
+using VardyParty.Ports;
+using VardyParty.Streaming;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {
