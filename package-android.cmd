@@ -5,9 +5,11 @@ cd /d "%~dp0"
 REM Local device install: one ABI, no AOT/trim (same idea as ci.yml android compile).
 REM Store/CI fat APK: package-android.cmd all
 REM
-REM Do not pass -r android-arm64 into restore/build. That RID overwrites net10.0
-REM class-library assets, then the MAUI graph looks for net10.0 (NETSDK1005).
-REM Limit ABIs with RuntimeIdentifiers on the MAUI project only.
+REM -r android-arm64 is required on the MAUI project so the APK contains
+REM arm64-v8a native libs (INSTALL_FAILED_NO_MATCHING_ABIS without them).
+REM After that restore, re-restore Hosting/Presentation as plain net10.0 so
+REM -p:TargetFrameworks=net10.0-android does not poison domain assets (NETSDK1005).
+REM Build uses --no-restore so those domain assets stay net10.0.
 
 if exist "VardyParty.Core\VardyParty.Core.csproj" (
   echo VardyParty.Core was removed. Delete the leftover project before packaging:
@@ -37,11 +39,11 @@ if /I "%~1"=="all" (
 echo Device APK: android-arm64, AOT/trim off
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm64
+dotnet restore .\VardyParty\VardyParty.csproj --ignore-failed-sources -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm64 -r android-arm64
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :RestoreDomain
 if errorlevel 1 exit /b %ERRORLEVEL%
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm64 -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release --no-restore -p:TargetFrameworks=net10.0-android -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:RunAotCompilation=false -p:PublishTrimmed=false -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidKeyStore=false -p:PatchAppSettings=true
 exit /b %ERRORLEVEL%
 
 :RestoreDomain
