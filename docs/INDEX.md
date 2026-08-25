@@ -5,6 +5,7 @@ Welcome! This directory contains comprehensive documentation for the VardyParty 
 ## 📚 Quick Navigation
 
 ### For Developers
+- **[architecture/README.md](architecture/README.md)** - App architecture canvas + plan (domain assemblies, shared VMs). Phase 2 WebView→XAML is a separate doc.
 - **[VERSION_MANAGEMENT_QUICK_REFERENCE.md](VERSION_MANAGEMENT_QUICK_REFERENCE.md)** - Quick answers to common version questions
 - **[BEFORE_AFTER.md](BEFORE_AFTER.md)** - What changed from the old system to the new one
 
