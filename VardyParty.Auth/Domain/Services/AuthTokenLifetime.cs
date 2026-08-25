@@ -65,6 +65,13 @@ public static class AuthTokenLifetime
     public static bool MustRefreshBeforeUse(bool forceRefresh, bool hasValidAccessToken)
         => forceRefresh || !hasValidAccessToken;
 
+    /// <summary>
+    /// Sliding refresh that is due while the access token is still usable
+    /// should run in the background, not on the catalog request path.
+    /// </summary>
+    public static bool ShouldRefreshInBackground(bool forceRefresh, bool hasValidAccessToken, bool refreshDue)
+        => refreshDue && !MustRefreshBeforeUse(forceRefresh, hasValidAccessToken);
+
     public static string? CoalesceRefreshToken(string? incoming, string? existing)
         => string.IsNullOrWhiteSpace(incoming) ? existing : incoming;
 

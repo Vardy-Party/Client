@@ -3,8 +3,8 @@ using VardyParty.Models;
 namespace VardyParty.Services;
 
 /// <summary>
-/// Catalog-facing games list. Streaming's <c>IApiService</c> implements this so
-/// Catalog never depends on stream/M3U8 HTTP.
+/// Catalog-facing games list. Hosting binds this to the same HTTP implementation
+/// as stream/M3U8 calls without putting those methods on this contract.
 /// </summary>
 public interface IGamesCatalogApi
 {

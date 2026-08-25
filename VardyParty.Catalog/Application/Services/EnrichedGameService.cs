@@ -14,9 +14,7 @@ public class EnrichedGameService(
     IGameMatcher matcher,
     IOptions<BbcFixturesSettings> bbcFixturesSettings,
     IOptions<GamesApiSettings> gamesApiSettings,
-#pragma warning disable CS9113 // Parameter is unread.
     ILogger<EnrichedGameService> logger
-#pragma warning restore CS9113 // Parameter is unread.
 ) : IEnrichedGameService, IDisposable
 {
     private readonly int _apiTtl = gamesApiSettings.Value?.RefreshSchedule ?? 300;
@@ -30,7 +28,6 @@ public class EnrichedGameService(
     private Timer? _bbcTimer;
     private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
-    private bool _hasFetchedBbc;
     private List<BbcFixture> _latestBbcFixtures = new();
     private bool _timersStarted;
 
@@ -122,7 +119,6 @@ public class EnrichedGameService(
             lock (_stateLock)
             {
                 _latestBbcFixtures = fixtures;
-                _hasFetchedBbc = true;
             }
 
             RunMatching();
@@ -145,7 +141,7 @@ public class EnrichedGameService(
 
         lock (_stateLock)
         {
-            ready = _hasFetchedApi && _hasFetchedBbc;
+            ready = _hasFetchedApi;
             // manual deep copy of structure (lists are refs but we replace them in fetch)
             // Actually, Game objects are refs. 
             // Matcher modifies Game objects in-place. 

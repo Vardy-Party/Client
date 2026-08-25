@@ -283,7 +283,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var apiService = _serviceProvider.GetRequiredService<IApiService>();
+            var apiService = _serviceProvider.GetRequiredService<IGamesCatalogApi>();
             var gamesByLeague = await apiService.GetAllGamesAsync(true);
             var items = await BuildDisplayGamesAsync(_leagueFilter.FilterGames(gamesByLeague.ToDisplay()));
             ApplyDisplayGames(items);

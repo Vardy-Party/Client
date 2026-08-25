@@ -4,11 +4,11 @@ using System.Net.Sockets;
 namespace VardyParty.Hosting;
 
 /// <summary>
-/// Dual-stack connect for Cloudflare-facing HTTP. Android
+/// Managed <see cref="SocketsHttpHandler"/> for internet HTTP. Android
 /// <see cref="HttpClientHandler"/> is OkHttp, which can hang on a black-holed
-/// address family instead of failing over. This handler races IPv6 and IPv4
-/// (Happy Eyeballs) with a short per-address timeout so the app does not
-/// prefer either family.
+/// address family. This factory does not prefer IPv4 or IPv6: connect races
+/// both families (RFC 8305 Happy Eyeballs). Callers must not sort or filter
+/// addresses. LAN clients should keep the default factory handler.
 /// </summary>
 public static class DualStackSocketsHttpHandler
 {
@@ -42,13 +42,16 @@ public static class DualStackSocketsHttpHandler
         return new ConnectPlan(ipv6, ipv4);
     }
 
-    public static SocketsHttpHandler Create(bool ignoreSslCertificateErrors = false)
+    public static SocketsHttpHandler Create(
+        bool ignoreSslCertificateErrors = false,
+        bool useCookies = true)
     {
         var handler = new SocketsHttpHandler
         {
             ConnectTimeout = ConnectTimeout,
             AllowAutoRedirect = true,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+            UseCookies = useCookies,
             ConnectCallback = ConnectAsync
         };
 

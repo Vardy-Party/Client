@@ -1,3 +1,4 @@
+using VardyParty.Resolvers;
 using VardyParty.Services;
 
 namespace VardyParty.Playback;
@@ -99,9 +100,9 @@ public static class PlaybackPolicy
     /// Cached M3U8 retry: only attach the fresh URL if it exists and differs (token/CDN rotation).
     /// </summary>
     public static bool ShouldAcceptFreshM3U8(string? failedCachedUrl, string? freshUrl)
-        => !string.IsNullOrWhiteSpace(freshUrl)
-           && !string.Equals(failedCachedUrl, freshUrl, StringComparison.OrdinalIgnoreCase);
+        => StreamCandidateRules.ShouldAcceptFreshM3U8(failedCachedUrl, freshUrl);
 
     /// <summary>Countdown pages are not playable candidates.</summary>
-    public static bool ShouldSkipCountdown(bool isCountdown) => isCountdown;
+    public static bool ShouldSkipCountdown(bool isCountdown)
+        => StreamCandidateRules.ShouldSkipCountdown(isCountdown);
 }

@@ -76,6 +76,7 @@ public class DualStackSocketsHttpHandlerTests
         Assert.NotNull(handler.ConnectCallback);
         Assert.Null(handler.SslOptions.RemoteCertificateValidationCallback);
         Assert.Equal(DualStackSocketsHttpHandler.ConnectTimeout, handler.ConnectTimeout);
+        Assert.True(handler.UseCookies);
         Assert.Equal(DecompressionMethods.GZip | DecompressionMethods.Deflate, handler.AutomaticDecompression);
     }
 
@@ -95,5 +96,18 @@ public class DualStackSocketsHttpHandlerTests
             null,
             null,
             SslPolicyErrors.RemoteCertificateNameMismatch));
+    }
+
+    [Fact]
+    public void Create_WhenUseCookiesDisabled_DoesNotUseCookieContainer()
+    {
+        // Arrange
+        const bool useCookies = false;
+
+        // Act
+        using var handler = DualStackSocketsHttpHandler.Create(useCookies: useCookies);
+
+        // Assert
+        Assert.False(handler.UseCookies);
     }
 }

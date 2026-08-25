@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using VardyParty.Configuration;
 using VardyParty.Exceptions;
 using VardyParty.Health;
+using VardyParty.Hosting;
 using VardyParty.Resolvers;
 using VardyParty.Services;
 
@@ -21,11 +22,7 @@ internal class Program
         });
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
-            });
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
 
         services.AddSingleton<IStreamResolver, StreamResolver>()
             .AddSingleton<IStreamDeduplicator, StreamDeduplicator>();

@@ -104,4 +104,61 @@ public class EnrichedGameServiceTests
         // Assert
         Assert.Null(current);
     }
+
+    [Fact]
+    public async Task StartBackgroundPolling_PublishesApiGamesBeforeBbcReturns()
+    {
+        // Arrange
+        var api = _fixture.GetMock<IGamesCatalogApi>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "North Athletic")
+            .With(g => g.Away, "South Wanderers")
+            .With(g => g.Start, DateTime.UtcNow)
+            .Create();
+        const string league = "League Beta";
+        var bbcHold = new TaskCompletionSource<List<BbcFixture>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .ReturnsAsync(new Dictionary<string, List<Game>> { [league] = [game] });
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .Returns(bbcHold.Task);
+
+        var svc = new EnrichedGameService(
+            api.Object,
+            bbc.Object,
+            _fixture.Create<GameMatcher>(),
+            Options.Create(_fixture.Create<BbcFixturesSettings>()),
+            Options.Create(_fixture.Create<GamesApiSettings>()),
+            NullLogger<EnrichedGameService>.Instance);
+
+        var emissions = new List<Dictionary<string, List<Game>>>();
+        var subscription = svc.GamesStream.Subscribe(g =>
+        {
+            if (g != null && g.Count > 0)
+                emissions.Add(g);
+        });
+
+        try
+        {
+            // Act
+            svc.StartBackgroundPolling();
+
+            for (var i = 0; i < 50 && emissions.Count == 0; i++)
+            {
+                await Task.Delay(100);
+            }
+
+            // Assert
+            Assert.NotEmpty(emissions);
+            Assert.True(emissions[0].ContainsKey(league));
+            Assert.Single(emissions[0][league]);
+        }
+        finally
+        {
+            bbcHold.TrySetResult([]);
+            subscription.Dispose();
+            svc.Dispose();
+        }
+    }
 }

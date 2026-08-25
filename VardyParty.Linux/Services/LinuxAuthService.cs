@@ -28,6 +28,7 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
     private DateTimeOffset _expiresAt = DateTimeOffset.MinValue;
     private DateTimeOffset _lastRefreshedAt = DateTimeOffset.MinValue;
     private bool _tokenLoaded;
+    private int _backgroundRefreshGate;
 
     public LinuxAuthService(
         ILogger<LinuxAuthService> logger,
@@ -333,8 +334,9 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
                 return;
             }
 
-            if (!AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, HasValidToken))
+            if (AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, HasValidToken, refreshDue: true))
             {
+                ScheduleBackgroundSlidingRefresh();
                 return;
             }
 
@@ -555,6 +557,43 @@ public class LinuxAuthService : IAuthTokenProvider, IAuthLoginService
         }
 
         return Task.CompletedTask;
+    }
+
+    private void ScheduleBackgroundSlidingRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _backgroundRefreshGate, 1, 0) != 0)
+            return;
+
+        _ = RefreshAccessTokenInBackgroundAsync();
+    }
+
+    private async Task RefreshAccessTokenInBackgroundAsync()
+    {
+        try
+        {
+            await _authLock.WaitAsync();
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh: false))
+                    return;
+
+                var outcome = await RefreshAccessTokenAsync(CancellationToken.None);
+                if (outcome == AuthTokenRefreshOutcome.Rejected)
+                    await ClearTokensCoreAsync();
+            }
+            finally
+            {
+                _authLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Auth0/Linux] Background sliding refresh failed");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _backgroundRefreshGate, 0);
+        }
     }
 
     private async Task<AuthTokenRefreshOutcome> RefreshAccessTokenAsync(CancellationToken cancellationToken)

@@ -72,6 +72,33 @@ public class Auth0ApiTokenHandlerTests
         Assert.Equal(1, inner.SendCount);
     }
 
+    [Fact]
+    public async Task SendAsync_TokenFetchDoesNotUseRequestCancellation()
+    {
+        // Arrange
+        CancellationToken captured = default;
+        var tokenProvider = _fixture.GetMock<IAuthTokenProvider>();
+        tokenProvider
+            .Setup(provider => provider.GetAccessTokenAsync(It.IsAny<CancellationToken>(), false))
+            .Callback<CancellationToken, bool>((token, _) => captured = token)
+            .ReturnsAsync(_fixture.Create<string>());
+
+        var inner = new SequenceStatusHandler(HttpStatusCode.OK);
+        var handler = new Auth0ApiTokenHandler(tokenProvider.Object, NullLogger<Auth0ApiTokenHandler>.Instance)
+        {
+            InnerHandler = inner
+        };
+        using var client = new HttpClient(handler);
+        using var requestCts = new CancellationTokenSource();
+
+        // Act
+        var response = await client.GetAsync("https://catalog.example.test/games", requestCts.Token);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(captured.Equals(requestCts.Token));
+    }
+
     private sealed class SequenceStatusHandler : HttpMessageHandler
     {
         private readonly HttpStatusCode[] _codes;

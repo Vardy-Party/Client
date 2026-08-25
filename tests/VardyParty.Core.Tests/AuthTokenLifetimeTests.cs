@@ -129,6 +129,51 @@ public class AuthTokenLifetimeTests
     }
 
     [Fact]
+    public void ShouldRefreshInBackground_WhenSlidingDueAndTokenValid_ReturnsTrue()
+    {
+        // Arrange
+        const bool forceRefresh = false;
+        const bool hasValidAccessToken = true;
+        const bool refreshDue = true;
+
+        // Act
+        var background = AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, hasValidAccessToken, refreshDue);
+
+        // Assert
+        Assert.True(background);
+    }
+
+    [Fact]
+    public void ShouldRefreshInBackground_WhenAccessTokenUnusable_ReturnsFalse()
+    {
+        // Arrange
+        const bool forceRefresh = false;
+        const bool hasValidAccessToken = false;
+        const bool refreshDue = true;
+
+        // Act
+        var background = AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, hasValidAccessToken, refreshDue);
+
+        // Assert
+        Assert.False(background);
+    }
+
+    [Fact]
+    public void ShouldRefreshInBackground_WhenForced_ReturnsFalse()
+    {
+        // Arrange
+        const bool forceRefresh = true;
+        const bool hasValidAccessToken = true;
+        const bool refreshDue = true;
+
+        // Act
+        var background = AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, hasValidAccessToken, refreshDue);
+
+        // Assert
+        Assert.False(background);
+    }
+
+    [Fact]
     public void CoalesceRefreshToken_KeepsExistingWhenIncomingBlank()
     {
         // Arrange

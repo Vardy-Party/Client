@@ -1,4 +1,3 @@
-using System.Net;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -9,8 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty;
 using VardyParty.Configuration;
-using VardyParty.Handlers;
-using VardyParty.Health;
 using VardyParty.Hosting;
 using VardyParty.Linux.Services;
 using VardyParty.Providers;
@@ -112,47 +109,12 @@ public class App : Application
         });
 
         services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
-        services.AddVardyPartyCore();
+        services.AddVardyParty();
         services.AddSingleton<LinuxAuthService>();
         services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
         services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
-        services.AddTransient<Auth0ApiTokenHandler>();
-        services.AddTransient<M3U8HttpHandler>();
-
-        services.AddHttpClient(Auth0HttpClients.Name)
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
-
-        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
-        services.AddHttpClient<IBbcFixturesService, BbcFixturesService>();
-
-        services.AddHttpClient<IStreamHealthService, StreamHealthService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
-        services.AddHttpClient<IApiService, ApiService>()
-            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
-            .ConfigureHttpClient(client =>
-            {
-                client.DefaultRequestHeaders.TryAddWithoutValidation(
-                    VardyPartyClientApiVersion.HeaderName,
-                    VardyPartyClientApiVersion.DefaultHeaderValue);
-            });
-
-        services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            });
-
-        services.AddHttpClient("StreamApi")
-            .AddHttpMessageHandler<M3U8HttpHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = true,
-                UseCookies = true,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-            });
+        var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
+        services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
         services.AddSingleton<INativeVideoPlayerService, LinuxVideoPlayerService>();
         services.AddTransient<MainWindowViewModel>();

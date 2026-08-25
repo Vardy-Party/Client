@@ -49,7 +49,7 @@ This is the hinge for phase 2. It is **not** an Android XAML PR.
 
 ## Phase 1b — Shared composition root
 
-`VardyParty.Hosting` (or Core `AddVardyPartyCore` until Hosting exists): MAUI and Linux register only host adapters (player, auth, prefs store, loggers).
+`VardyParty.Hosting` `AddVardyParty()`: MAUI and Linux register only host adapters (player, auth, prefs store, loggers) plus `AddVardyPartyHttpClients()`.
 
 **Tests:** build a `ServiceCollection` with mocked LAN/API; assert Core types match across hosts.
 
@@ -104,7 +104,7 @@ Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). De
 
 1. `HomePlaybackIntent` + orchestrator characterization tests — done  
 2. Shared `HomeShellViewModel` / `MenuViewModel`, Blazor + Linux bound — done  
-3. `AddVardyParty` composition root — done (`AddVardyPartyCore`)  
+3. `AddVardyParty` composition root — done  
 4. `IPlaybackLauncher` — break DI cycle — done  
 5. Kernel + Playback projects — done  
 6. Catalog + Streaming (`IGamesCatalogApi` / `IApiService`) — done  

@@ -9,9 +9,12 @@ public class Auth0ApiTokenHandler(
     IAuthTokenProvider tokenProvider,
     ILogger<Auth0ApiTokenHandler> logger) : DelegatingHandler
 {
+    internal static readonly TimeSpan TokenFetchTimeout = TimeSpan.FromSeconds(20);
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var token = await tokenProvider.GetAccessTokenAsync(cancellationToken);
+        using var tokenCts = new CancellationTokenSource(TokenFetchTimeout);
+        var token = await tokenProvider.GetAccessTokenAsync(tokenCts.Token, forceRefresh: false);
         if (string.IsNullOrWhiteSpace(token))
         {
             logger.LogWarning("[Auth0] No access token available for {Method} {Url}", request.Method, request.RequestUri);
@@ -30,7 +33,8 @@ public class Auth0ApiTokenHandler(
             return response;
         }
 
-        var refreshed = await tokenProvider.GetAccessTokenAsync(cancellationToken, forceRefresh: true);
+        using var refreshCts = new CancellationTokenSource(TokenFetchTimeout);
+        var refreshed = await tokenProvider.GetAccessTokenAsync(refreshCts.Token, forceRefresh: true);
         if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, token, StringComparison.Ordinal))
         {
             return response;

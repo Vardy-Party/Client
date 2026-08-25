@@ -28,6 +28,7 @@ public class Auth0AuthService(
     private DateTimeOffset _lastRefreshedAt = DateTimeOffset.MinValue;
     private string? _refreshToken;
     private bool _tokenLoaded;
+    private int _backgroundRefreshGate;
 
     public bool HasValidToken => !string.IsNullOrWhiteSpace(_accessToken) && !IsExpired(_auth0Settings);
 
@@ -361,8 +362,11 @@ public class Auth0AuthService(
             if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
                 return;
 
-            if (!AuthTokenLifetime.MustRefreshBeforeUse(forceRefresh, HasValidToken))
+            if (AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, HasValidToken, refreshDue: true))
+            {
+                ScheduleBackgroundSlidingRefresh();
                 return;
+            }
 
             var outcome = await RefreshAccessTokenAsync(cancellationToken);
             if (outcome == AuthTokenRefreshOutcome.Rejected)
@@ -438,6 +442,43 @@ public class Auth0AuthService(
         return Task.CompletedTask;
     }
 
+    private void ScheduleBackgroundSlidingRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _backgroundRefreshGate, 1, 0) != 0)
+            return;
+
+        _ = RefreshAccessTokenInBackgroundAsync();
+    }
+
+    private async Task RefreshAccessTokenInBackgroundAsync()
+    {
+        try
+        {
+            await _loginLock.WaitAsync();
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_refreshToken) || !NeedsAccessTokenRefresh(forceRefresh: false))
+                    return;
+
+                var outcome = await RefreshAccessTokenAsync(CancellationToken.None);
+                if (outcome == AuthTokenRefreshOutcome.Rejected)
+                    await ClearTokensCoreAsync();
+            }
+            finally
+            {
+                _loginLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Auth0] Background sliding refresh failed");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _backgroundRefreshGate, 0);
+        }
+    }
+
     private async Task<AuthTokenRefreshOutcome> RefreshAccessTokenAsync(CancellationToken cancellationToken)
     {
         if (_auth0Settings == null || string.IsNullOrWhiteSpace(_refreshToken))
@@ -494,9 +535,8 @@ public class Auth0AuthService(
             Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope)
         };
 
-        // Same dual-stack sockets handler as catalog HTTP. Android OkHttp can
-        // hang when one address family is unreachable; Happy Eyeballs races
-        // IPv6 and IPv4 instead of preferring either.
+        // Same internet sockets handler as catalog HTTP. Do not prefer an
+        // address family; Happy Eyeballs races IPv6 and IPv4.
         options.BackchannelHandler = DualStackSocketsHttpHandler.Create();
 
         var client = new Auth0Client(options);

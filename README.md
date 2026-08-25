@@ -57,7 +57,7 @@ VardyParty.Catalog/          # Matcher, BBC, league filter, ticker, home present
 VardyParty.Streaming/        # Orchestrator, resolvers, LAN, stream/M3U8 HTTP, health
 VardyParty.Playback/         # Playback policy/session, switching pool, player ports
 VardyParty.Presentation/     # Shared HomeShell/Menu view-models
-VardyParty.Hosting/          # AddVardyPartyCore() composition
+VardyParty.Hosting/          # AddVardyParty() composition
 ```
 
 ## Architecture

@@ -19,7 +19,7 @@ public class ApiService(
     IStreamDeduplicator streamDeduplicator,
     ILocalLanPlayService localLanPlayService,
     IOptions<GamesApiSettings> gamesApiSettings,
-    IOptions<APISettings> apiSettings) : IApiService
+    IOptions<APISettings> apiSettings) : IApiService, IGamesCatalogApi
 {
     private readonly string _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
     private readonly TimeSpan _callTimeout = TimeSpan.FromSeconds(gamesApiSettings.Value?.CallTimeoutSeconds ?? 45);
