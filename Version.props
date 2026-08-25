@@ -18,7 +18,5 @@
     <!-- Product name for versioning -->
     <Product>VardyParty</Product>
     <Company>Vardy Party</Company>
-    <Copyright>Copyright © Vardy Party. All rights reserved.</Copyright>
-    <Description>VardyParty - Multi-platform football streaming application</Description>
   </PropertyGroup>
 </Project>
