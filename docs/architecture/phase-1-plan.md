@@ -67,7 +67,7 @@ This is the hinge for phase 2. It is **not** an Android XAML PR.
 
 Graph is acyclic:
 
-- **Auth**, **Playback**, **Ports** → Kernel
+- **Playback**, **Ports** → Kernel
 - **Catalog** → Kernel (`IGamesCatalogApi` is the catalog HTTP port; `EnrichedGameService` takes that, not `IApiService`)
 - **Streaming** → Catalog → Kernel; Streaming takes `IPlaybackLauncher` and `IStreamSwitchingService` from **Ports** — not Playback, not the native player
 - **Presentation** → Catalog + Kernel

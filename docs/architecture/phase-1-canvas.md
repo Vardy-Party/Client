@@ -22,7 +22,6 @@ flowchart BT
   Maui["VardyParty — MAUI host"]
   Linux["VardyParty.Linux — Avalonia host"]
 
-  Auth --> Kernel
   Catalog --> Kernel
   Ports --> Kernel
   Streaming --> Kernel
@@ -55,8 +54,8 @@ flowchart BT
 
 | Assembly | Domain | From today’s Core (and new types) |
 |---|---|---|
-| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`. No I/O, no DI graph, no playback ports. |
-| **Ports** | Cross-slice contracts | `IPlaybackLauncher`, `IStreamSwitchingService`, `StreamCandidateRules` — so Streaming can start playback without referencing Playback |
+| **Kernel** | Shared language | `Game`, `EnrichedStream`, stream/playback DTOs, config POCOs, `ApiSystemDownException`. No I/O, no DI graph, no playback ports. Playback candidate rules belong here; they still live in Ports until they move. |
+| **Ports** | Cross-slice contracts | `IPlaybackLauncher`, `IStreamSwitchingService` — so Streaming can start playback without referencing Playback |
 | **Auth** | Identity | `AuthTokenLifetime`, `Auth0TokenSession`, `IAuth0OAuthClient`, `IAuthLoginService`, `IAuthTokenProvider`, `Auth0ApiTokenHandler`. Hosts keep OS storage and interactive login. |
 | **Catalog** | What matches exist | `EnrichedGameService`, `HomePagePresentationService`, BBC parsers/services, `GameMatcher`, league filter/logos, display helpers, `ScoresTickerPolicy`, `TickerMarquee` |
 | **Streaming** | Get a playable URL | Resolver, expander/dedup/orderer, orchestrator, coordinator, LAN LocalService client, stream/M3U8 HTTP (`IApiService` + `IGamesCatalogApi` both bind to `ApiService`), health probe I/O |
