@@ -16,8 +16,9 @@ env:
 # been merged) at the *platform* level with conclusion action_required —
 # "This workflow is awaiting approval from a maintainer" — before any job
 # `if` is evaluated. Skipping jobs is not enough to avoid that click.
-# paths-ignore on Version.props means a Version.props-only bump PR never
-# queues CI. Job-level skip below is belt-and-suspenders if the workflow is
+# pull_request `paths` is an allowlist (solution, projects, source, workflows).
+# Version.props-only and package-android.cmd-only PRs do not match, so they
+# never queue. Job-level skip below is belt-and-suspenders if the workflow is
 # still triggered (extra files, merge_group, or a version commit on main).
 on:
   push:
@@ -26,16 +27,28 @@ on:
   pull_request:
     branches:
       - main
-    # Skip when every file in the PR matches. Local packaging scripts are
-    # not invoked here (developers run package-android.cmd locally). A mixed
-    # PR (code + scripts) still runs CI — GitHub uses the whole PR diff.
-    paths-ignore:
-      - "Version.props"
-      - "package-android.cmd"
-      - "package-windows.cmd"
-      - "scripts/assert-android-apk-abis.ps1"
-      - "scripts/run-windows-debug.ps1"
-      - "scripts/launch-linux-app.cmd"
+    paths:
+      - "**/*.sln"
+      - "**/*.slnx"
+      - "**/*.csproj"
+      - "**/*.cs"
+      - "**/*.razor"
+      - "**/*.cshtml"
+      - "**/*.xaml"
+      - "**/*.axaml"
+      - "**/*.resx"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "Directory.Build.props"
+      - "Directory.Build.targets"
+      - "Directory.Packages.props"
+      - "**/AndroidManifest.xml"
+      - "**/*.plist"
+      - "VardyParty/appsettings.json"
+      - "VardyParty.Linux/appsettings.json"
+      - "VardyParty/wwwroot/**"
+      - "VardyParty/Resources/**"
+      - "tests/**"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
