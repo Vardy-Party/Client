@@ -19,7 +19,11 @@ permissions:
 jobs:
   bump:
     name: Set ApplicationVersion on feature branch
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'github-actions[bot]' && !startsWith(github.head_ref, 'ci/increment-application-version-') && !startsWith(github.event.pull_request.title, 'ci: auto-increment') && !startsWith(github.event.pull_request.title, 'ci: bump') }}
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name == github.repository
+          && github.event.pull_request.user.login != 'github-actions[bot]'
+          && !startsWith(github.head_ref, 'ci/increment-application-version-')
+          && !startsWith(github.event.pull_request.title, 'ci:') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
