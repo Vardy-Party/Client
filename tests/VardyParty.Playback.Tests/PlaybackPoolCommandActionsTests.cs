@@ -2,11 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 public class PlaybackPoolCommandActionsTests
 {
@@ -196,6 +197,56 @@ public class PlaybackPoolCommandActionsTests
         Assert.Null(oakLane.ResolvedM3U8Url);
     }
 
+    [Fact]
+    public void ClearCurrentResolvedUrl_WhenPoolEmpty_DoesNotThrow()
+    {
+        // Arrange
+        var oakLane = CreateOakLane("http://oak-lane.m3u8");
+        var (pool, actions, _, _, _) = CreateSut(oakLane);
+        pool.RemoveCurrentStream();
+
+        // Act
+        var thrown = Record.Exception(actions.ClearCurrentResolvedUrl);
+
+        // Assert
+        Assert.Null(thrown);
+        Assert.Null(pool.GetCurrentStream());
+    }
+
+    [Fact]
+    public async Task AttachCurrentFromPoolAsync_WhenResolverNullAndNoUrl_DoesNotAttach()
+    {
+        // Arrange
+        var oakLane = CreateOakLane(resolvedUrl: null);
+        var (_, actions, attaches, applies, resolved) = CreateSut(oakLane, omitResolver: true);
+
+        // Act
+        await actions.AttachCurrentFromPoolAsync();
+
+        // Assert
+        Assert.Empty(resolved);
+        Assert.Empty(attaches);
+        Assert.Empty(applies);
+    }
+
+    [Fact]
+    public async Task RetryFreshResolveAsync_WhenResolverNull_NotifiesUnavailable()
+    {
+        // Arrange
+        var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
+        var session = new PlaybackSessionController();
+        session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
+        var (_, actions, attaches, applies, _) = CreateSut(oakLane, session: session, omitResolver: true);
+
+        // Act
+        await actions.RetryFreshResolveAsync();
+
+        // Assert
+        Assert.Empty(attaches);
+        Assert.Single(applies);
+        Assert.True(applies[0].CloseSession || applies[0].RemoveCurrentFromPool);
+    }
+
     private EnrichedStream CreateOakLane(string? resolvedUrl)
         => _fixture.Build<EnrichedStream>()
             .With(stream => stream.Stream, _fixture.Build<Stream>()
@@ -219,7 +270,8 @@ public class PlaybackPoolCommandActionsTests
             EnrichedStream? extra = null,
             string? freshUrl = null,
             PlaybackSessionController? session = null,
-            Exception? resolveException = null)
+            Exception? resolveException = null,
+            bool omitResolver = false)
     {
         var pool = new StreamSwitchingService();
         pool.Initialize("northgate-league", "Oak Lane", "Northgate");
@@ -234,13 +286,15 @@ public class PlaybackPoolCommandActionsTests
         var applies = new List<PlaybackCommand>();
         var resolved = new List<string>();
 
-        ResolveFreshPlaybackUrlAsync resolve = (stream, _) =>
-        {
-            resolved.Add(stream.Referer ?? string.Empty);
-            if (resolveException != null)
-                return Task.FromException<string?>(resolveException);
-            return Task.FromResult(freshUrl);
-        };
+        ResolveFreshPlaybackUrlAsync? resolve = omitResolver
+            ? null
+            : (stream, _) =>
+            {
+                resolved.Add(stream.Referer ?? string.Empty);
+                if (resolveException != null)
+                    return Task.FromException<string?>(resolveException);
+                return Task.FromResult(freshUrl);
+            };
 
         var actions = new PlaybackPoolCommandActions(
             session,

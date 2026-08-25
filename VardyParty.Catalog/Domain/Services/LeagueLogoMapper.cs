@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Catalog;
 

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using VardyParty.Catalog;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;

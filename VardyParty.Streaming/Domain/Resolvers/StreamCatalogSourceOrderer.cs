@@ -1,4 +1,4 @@
-using StreamModel = VardyParty.Models.Stream;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 

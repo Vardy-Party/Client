@@ -1,5 +1,5 @@
-using VardyParty.Models;
-using StreamModel = VardyParty.Models.Stream;
+using VardyParty.Kernel;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 

@@ -14,6 +14,8 @@ public interface IPlaybackCommandHost
     void SyncHealthyStreamCount();
     void ReportFailed(string? reason);
     void ReportDeclined(string? reason);
+    void ReportWorking();
+    void MarkEstablished();
     void RaiseBuffering(bool isBuffering);
     void Attach(string url, bool isRevert);
     void AttachCurrentAfterRemove();

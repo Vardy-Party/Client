@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using VardyParty.Playback;
 using Xunit;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 public class PlaybackCommandExecutorTests
 {
@@ -279,6 +279,105 @@ public class PlaybackCommandExecutorTests
         Assert.Contains(nameof(IPlaybackCommandHost.RetryFreshResolve), host.Calls);
     }
 
+    [Fact]
+    public void Apply_ReadyEffects_ReportsWorkingAndMarkEstablished()
+    {
+        // Arrange
+        var host = new RecordingPlaybackCommandHost();
+        var session = new PlaybackSessionController();
+        session.BeginAttach("http://oak-lane.m3u8");
+        var cmd = PlaybackCommand.FromEffects(
+            session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration)));
+
+        // Act
+        PlaybackCommandExecutor.Apply(cmd, host);
+
+        // Assert
+        Assert.True(cmd.ReportWorking);
+        Assert.True(cmd.MarkEstablished);
+        Assert.Contains(nameof(IPlaybackCommandHost.MarkEstablished), host.Calls);
+        Assert.Contains(nameof(IPlaybackCommandHost.ReportWorking), host.Calls);
+        var mark = host.Calls.IndexOf(nameof(IPlaybackCommandHost.MarkEstablished));
+        var working = host.Calls.IndexOf(nameof(IPlaybackCommandHost.ReportWorking));
+        Assert.True(mark < working);
+    }
+
+    [Fact]
+    public void Apply_EveryHostFlag_UsesPaidHostOrder()
+    {
+        // Arrange
+        var host = new RecordingPlaybackCommandHost();
+        var cmd = new PlaybackCommand(
+            AttachUrl: "http://oak-lane.m3u8",
+            ClearResolvedUrl: true,
+            RemoveCurrentFromPool: true,
+            SwitchPoolToNext: true,
+            RetryFreshResolve: true,
+            Stop: true,
+            RaiseBuffering: true,
+            IsBuffering: false,
+            ReportFailed: true,
+            ReportDeclined: true,
+            ReportWorking: true,
+            MarkEstablished: true,
+            Reason: "oak-lane decoder");
+
+        // Act
+        var closed = PlaybackCommandExecutor.Apply(cmd, host);
+
+        // Assert
+        Assert.False(closed);
+        Assert.False(host.LastBuffering);
+        Assert.Equal(
+            new[]
+            {
+                nameof(IPlaybackCommandHost.BeginIndexSwitchSuppression),
+                nameof(IPlaybackCommandHost.ClearCurrentResolvedUrl),
+                nameof(IPlaybackCommandHost.RemoveCurrentFromPool),
+                nameof(IPlaybackCommandHost.SyncHealthyStreamCount),
+                nameof(IPlaybackCommandHost.ReportFailed),
+                nameof(IPlaybackCommandHost.ReportDeclined),
+                nameof(IPlaybackCommandHost.MarkEstablished),
+                nameof(IPlaybackCommandHost.ReportWorking),
+                nameof(IPlaybackCommandHost.RaiseBuffering),
+                nameof(IPlaybackCommandHost.Attach),
+                nameof(IPlaybackCommandHost.RetryFreshResolve),
+                nameof(IPlaybackCommandHost.StopEngine),
+                nameof(IPlaybackCommandHost.EndIndexSwitchSuppression),
+                nameof(IPlaybackCommandHost.SwitchPoolToNext)
+            },
+            host.Calls);
+    }
+
+    [Fact]
+    public void Apply_CloseSessionWithoutCloseReason_FallsBackToReason()
+    {
+        // Arrange
+        var host = new RecordingPlaybackCommandHost();
+        var cmd = new PlaybackCommand(CloseSession: true, Reason: "oak-lane last stream");
+
+        // Act
+        PlaybackCommandExecutor.Apply(cmd, host);
+
+        // Assert
+        Assert.Equal("oak-lane last stream", host.LastCloseReason);
+    }
+
+    [Fact]
+    public void Apply_SwitchNextWinsOverPrevious()
+    {
+        // Arrange
+        var host = new RecordingPlaybackCommandHost();
+        var cmd = new PlaybackCommand(SwitchPoolToNext: true, SwitchPoolToPrevious: true);
+
+        // Act
+        PlaybackCommandExecutor.Apply(cmd, host);
+
+        // Assert
+        Assert.Contains(nameof(IPlaybackCommandHost.SwitchPoolToNext), host.Calls);
+        Assert.DoesNotContain(nameof(IPlaybackCommandHost.SwitchPoolToPrevious), host.Calls);
+    }
+
     private sealed class RecordingPlaybackCommandHost : IPlaybackCommandHost
     {
         public List<string> Calls { get; } = new();
@@ -307,6 +406,10 @@ public class PlaybackCommandExecutorTests
             LastDeclinedReason = reason;
             Calls.Add(nameof(ReportDeclined));
         }
+
+        public void ReportWorking() => Calls.Add(nameof(ReportWorking));
+
+        public void MarkEstablished() => Calls.Add(nameof(MarkEstablished));
 
         public void RaiseBuffering(bool isBuffering)
         {

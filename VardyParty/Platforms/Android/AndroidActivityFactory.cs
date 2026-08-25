@@ -3,6 +3,7 @@ using System;
 using Android.App;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 using VardyParty.Catalog;
@@ -28,9 +29,9 @@ namespace VardyParty.Platforms.Android
                 {
                     var health = provider.GetService<IStreamHealthReporter>();
                     var enriched = provider.GetService<IEnrichedGameService>();
-                    var api = provider.GetService<IApiService>();
+                    var resolveFresh = provider.GetService<ResolveFreshPlaybackUrlAsync>();
                     var orchestrator = provider.GetService<IStreamResolutionOrchestrator>();
-                    nva.InjectServices(switching, logger, health, enriched, api, orchestrator);
+                    nva.InjectServices(switching, logger, health, enriched, resolveFresh, orchestrator);
                 }
             }
             catch (Exception ex)

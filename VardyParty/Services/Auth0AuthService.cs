@@ -4,7 +4,6 @@ using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Auth;
-using VardyParty.Configuration;
 using VardyParty.Hosting;
 
 namespace VardyParty;

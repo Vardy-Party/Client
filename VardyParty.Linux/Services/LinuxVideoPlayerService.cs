@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
@@ -15,7 +15,7 @@ namespace VardyParty.Linux.Services
     {
         private readonly ILogger<LinuxVideoPlayerService> _logger;
         private readonly IStreamSwitchingService _switching;
-        private readonly IApiService _api;
+        private readonly IStreamHealthReporter _healthReporter;
         private readonly PlaybackSessionController _session = new();
         private readonly DelegatingMediaEngine _engine = new();
         private readonly PlaybackPoolCommandActions _pool;
@@ -39,15 +39,16 @@ namespace VardyParty.Linux.Services
         public LinuxVideoPlayerService(
             ILogger<LinuxVideoPlayerService> logger,
             IStreamSwitchingService switching,
-            IApiService api)
+            ResolveFreshPlaybackUrlAsync resolveFresh,
+            IStreamHealthReporter healthReporter)
         {
             _logger = logger;
             _switching = switching;
-            _api = api;
+            _healthReporter = healthReporter;
             _pool = new PlaybackPoolCommandActions(
                 _session,
                 _switching,
-                ResolveFreshM3U8Async,
+                resolveFresh,
                 AttachViaSession,
                 ApplyPlaybackCommand);
             _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
@@ -181,13 +182,44 @@ namespace VardyParty.Linux.Services
             public void SyncHealthyStreamCount() => player._pool.SyncHealthyStreamCount();
 
             public void ReportFailed(string? reason)
-                => player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
+            {
+                player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
+                _ = player._healthReporter.ReportPlaybackErrorAsync(
+                    player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
+            }
 
             public void ReportDeclined(string? reason)
-                => player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
+            {
+                player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
+                _ = player._healthReporter.ReportPlaybackErrorAsync(
+                    player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
+            }
+
+            public void ReportWorking()
+            {
+                player._logger.LogInformation("[LinuxVideoPlayerService] Stream established");
+                _ = player._healthReporter.ReportPlaybackStartedAsync(
+                    player._session.Snapshot.CurrentUrl,
+                    player._refererUrl,
+                    metrics: player.GetCurrentMetrics());
+            }
+
+            public void MarkEstablished()
+            {
+                // Session established flag is owned by PlaybackSessionController.Handle(Ready).
+            }
 
             public void RaiseBuffering(bool isBuffering)
-                => player.BufferingStateChanged?.Invoke(player, isBuffering);
+            {
+                player.BufferingStateChanged?.Invoke(player, isBuffering);
+                if (isBuffering)
+                {
+                    _ = player._healthReporter.ReportBufferingAsync(
+                        player._session.Snapshot.CurrentUrl,
+                        player._refererUrl,
+                        metrics: player.GetCurrentMetrics());
+                }
+            }
 
             public void Attach(string url, bool isRevert)
             {
@@ -214,18 +246,14 @@ namespace VardyParty.Linux.Services
                     _ = player._onNextStreamRequested();
             }
 
-            public void SwitchPoolToPrevious() => player._pool.SwitchPoolToPrevious();
+            public void SwitchPoolToPrevious()
+            {
+                player._pool.SwitchPoolToPrevious();
+                _ = player._pool.AttachCurrentFromPoolAsync();
+            }
 
             public void NotifyApplyFailed(Exception exception)
                 => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
-        }
-
-        private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
-        {
-            if (current.Stream == null)
-                return Task.FromResult<string?>(null);
-
-            return _api.ResolveM3U8ForPlaybackAsync(current.Stream, current.Referer ?? string.Empty, cancellationToken);
         }
 
         private Task AttachLibVlcAsync(

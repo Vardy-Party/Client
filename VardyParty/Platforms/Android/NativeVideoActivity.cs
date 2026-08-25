@@ -11,7 +11,7 @@ using AndroidX.Media3.ExoPlayer.Hls;
 using AndroidX.Media3.DataSource;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using Microsoft.Extensions.Logging;
 using System.Threading;
@@ -74,14 +74,14 @@ namespace VardyParty.Platforms.Android
             ILogger<NativeVideoActivity>? logger,
             IStreamHealthReporter? healthReporter = null,
             IEnrichedGameService? enrichedGames = null,
-            IApiService? api = null,
+            ResolveFreshPlaybackUrlAsync? resolveFresh = null,
             IStreamResolutionOrchestrator? orchestrator = null)
         {
             if (switching != null) _switching = switching;
             if (logger != null) _logger = logger;
             if (healthReporter != null) _healthReporter = healthReporter;
             if (enrichedGames != null) _enrichedGames = enrichedGames;
-            if (api != null) _api = api;
+            if (resolveFresh != null) _resolveFresh = resolveFresh;
             if (orchestrator != null) _orchestrator = orchestrator;
             EnsurePool();
         }
@@ -161,7 +161,7 @@ namespace VardyParty.Platforms.Android
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
         private IEnrichedGameService? _enrichedGames;
-        private IApiService? _api;
+        private ResolveFreshPlaybackUrlAsync? _resolveFresh;
         private IStreamResolutionOrchestrator? _orchestrator;
         private Timer? _healthReportTimer;
         private bool _isPreparing;
@@ -174,7 +174,7 @@ namespace VardyParty.Platforms.Android
         private string _currentHomeTeam = string.Empty;
         private string _currentAwayTeam = string.Empty;
         private string _playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
-        private VardyParty.Models.PlayerOverlayInfo? _lastOverlayInfo;
+        private VardyParty.Kernel.PlayerOverlayInfo? _lastOverlayInfo;
         private global::Android.Widget.ImageButton? _menuButton;
         private LinearLayout? _menuPanel;
         private global::Android.Views.View? _menuBackdrop;
@@ -1126,10 +1126,7 @@ namespace VardyParty.Platforms.Android
                 if (!_metadataReported && tracks != null && _activity._player != null)
                 {
                     _metadataReported = true;
-                    _activity._logger?.LogInformation("[NativeVideoActivity] Tracks changed - reporting playback started with metadata");
-
-                    // Now extract real metadata from the player and report
-                    _activity.ReportPlaybackStarted();
+                    _activity._logger?.LogInformation("[NativeVideoActivity] Tracks changed - metadata available");
                 }
             }
 

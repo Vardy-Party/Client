@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Streaming;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Streaming.Tests;
 
 public class StreamTestOrderPolicyTests
 {
@@ -193,24 +195,10 @@ public class StreamTestOrderPolicyTests
             Fb("https://streams.example.com/live-recent", "Channel Live"),
             Fb("https://streams.example.com/catalog-other", "Channel Other")
         };
-        var recommendations = new RecommendationResponse
-        {
-            Confidence = RecommendationConfidence.High,
-            HasData = true,
-            Recommended =
-            [
-                new RecommendationItem
-                {
-                    Url = "https://streams.example.com/stale-strong",
-                    Confidence = RecommendationConfidence.Low
-                },
-                new RecommendationItem
-                {
-                    Url = "https://streams.example.com/live-recent",
-                    Confidence = RecommendationConfidence.High
-                }
-            ]
-        };
+        var recommendations = Recs(
+            RecommendationConfidence.High,
+            RecItem("https://streams.example.com/stale-strong", RecommendationConfidence.Low),
+            RecItem("https://streams.example.com/live-recent", RecommendationConfidence.High));
 
         // Act
         var order = StreamTestOrderPolicy.Build(
@@ -222,6 +210,122 @@ public class StreamTestOrderPolicyTests
         // Assert
         Assert.Equal([1, 0, 2], order);
     }
+
+    [Fact]
+    public void Build_MediumSitsBetweenHighAndLow_ThenFbRemainderBeforeMp()
+    {
+        // Arrange
+        var streams = new[]
+        {
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
+            Fb("https://streams.example.com/low", "Channel Low"),
+            Fb("https://streams.example.com/remainder", "Channel Remainder"),
+            Fb("https://streams.example.com/high", "Channel High"),
+            Fb("https://streams.example.com/medium", "Channel Medium")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.High,
+            RecItem("https://streams.example.com/low", RecommendationConfidence.Low),
+            RecItem("https://streams.example.com/medium", RecommendationConfidence.Medium),
+            RecItem("https://streams.example.com/high", RecommendationConfidence.High));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([3, 4, 1, 2, 0], order);
+    }
+
+    [Fact]
+    public void Build_SameConfidence_PreservesApiIndex()
+    {
+        // Arrange
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/second", "Channel Second"),
+            Fb("https://streams.example.com/first", "Channel First")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.Low,
+            RecItem("https://streams.example.com/second", RecommendationConfidence.Low),
+            RecItem("https://streams.example.com/first", RecommendationConfidence.Low));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([0, 1], order);
+    }
+
+    [Fact]
+    public void Build_BlankAndDuplicateRecommendationUrls_AreSkipped()
+    {
+        // Arrange
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/northgate", "Channel North"),
+            Fb("https://streams.example.com/other", "Channel Other")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.High,
+            RecItem("   ", RecommendationConfidence.High),
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.High),
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.Low));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([0, 1], order);
+    }
+
+    [Fact]
+    public void Build_ZeroStreams_ReturnsEmpty()
+    {
+        // Arrange
+        var recommendations = Recs(
+            RecommendationConfidence.High,
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.High));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            totalStreams: 0,
+            (_, _) => 0,
+            _ => throw new InvalidOperationException("no streams"));
+
+        // Assert
+        Assert.Empty(order);
+    }
+
+    private RecommendationItem RecItem(string url, RecommendationConfidence confidence) =>
+        _fixture.Build<RecommendationItem>()
+            .With(item => item.Url, url)
+            .With(item => item.Confidence, confidence)
+            .Without(item => item.StreamName)
+            .Without(item => item.Meta)
+            .Create();
+
+    private RecommendationResponse Recs(
+        RecommendationConfidence overall,
+        params RecommendationItem[] items) =>
+        _fixture.Build<RecommendationResponse>()
+            .With(response => response.Confidence, overall)
+            .With(response => response.HasData, items.Length > 0)
+            .With(response => response.Recommended, items.ToList())
+            .Create();
 
     private Stream Fb(string url, string channel) =>
         _fixture.Build<Stream>()

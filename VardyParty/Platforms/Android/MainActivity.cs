@@ -4,7 +4,7 @@ using Android.OS;
 using Android.Util;
 using Android.Views;
 using Microsoft.AspNetCore.Components;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty
 {

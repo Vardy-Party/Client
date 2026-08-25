@@ -4,6 +4,7 @@
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>$(MSBuildProjectName)</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
     <UseMonoRuntime>false</UseMonoRuntime>
   </PropertyGroup>

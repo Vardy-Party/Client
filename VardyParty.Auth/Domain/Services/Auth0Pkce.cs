@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using VardyParty.Configuration;
 
 namespace VardyParty.Auth;
 

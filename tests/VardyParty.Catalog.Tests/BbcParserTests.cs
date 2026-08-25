@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using VardyParty.Catalog;
 
-namespace VardyParty.Tests
+namespace VardyParty.Catalog.Tests
 {
     public class BbcParserTests
     {

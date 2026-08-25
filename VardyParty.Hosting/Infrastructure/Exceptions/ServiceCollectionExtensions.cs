@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.UserSecrets;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace VardyParty.Exceptions;
+namespace VardyParty.Hosting;
 
 public static class ServiceCollectionExtensions
 {

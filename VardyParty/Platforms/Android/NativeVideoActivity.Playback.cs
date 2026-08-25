@@ -3,7 +3,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 
 namespace VardyParty.Platforms.Android
@@ -56,7 +56,7 @@ namespace VardyParty.Platforms.Android
             _pool = new PlaybackPoolCommandActions(
                 _session,
                 _switching,
-                ResolveFreshM3U8Async,
+                _resolveFresh,
                 (url, usedCached, force) => RunOnUiThread(() => AttachViaSession(url, usedCached, force)),
                 cmd => RunOnUiThread(() => ApplyPlaybackCommand(cmd)));
         }
@@ -76,6 +76,13 @@ namespace VardyParty.Platforms.Android
             public void ReportFailed(string? reason) => activity.PostHealthError(reason);
 
             public void ReportDeclined(string? reason) => activity.PostHealthError(reason);
+
+            public void ReportWorking() => activity.ReportPlaybackStarted();
+
+            public void MarkEstablished()
+            {
+                // Session established flag is owned by PlaybackSessionController.Handle(Ready).
+            }
 
             public void RaiseBuffering(bool isBuffering)
             {
@@ -115,17 +122,6 @@ namespace VardyParty.Platforms.Android
 
             public void NotifyApplyFailed(Exception exception)
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
-        }
-
-        private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
-        {
-            if (current.Stream == null || _api == null)
-                return Task.FromResult<string?>(null);
-
-            return _api.ResolveM3U8ForPlaybackAsync(
-                current.Stream,
-                current.Referer ?? string.Empty,
-                cancellationToken);
         }
 
         private void PostHealthError(string? error)

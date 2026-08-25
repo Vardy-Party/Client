@@ -1,4 +1,5 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
@@ -17,7 +18,7 @@ public interface IApiService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The resolved m3u8 URL, or null if resolution failed</returns>
     Task<string?> ResolveM3U8ForPlaybackAsync(
-        Models.Stream stream,
+        StreamModel stream,
         string refererUrl,
         System.Threading.CancellationToken cancellationToken = default);
 }

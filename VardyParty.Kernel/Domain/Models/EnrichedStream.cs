@@ -1,4 +1,4 @@
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 /// <summary>
 /// Represents a stream that has been enriched with m3u8 resolution and metadata

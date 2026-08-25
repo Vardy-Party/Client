@@ -6,7 +6,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Auth;
-using VardyParty.Configuration;
 
 namespace VardyParty.Linux.Services;
 

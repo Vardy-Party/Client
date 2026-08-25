@@ -1,7 +1,7 @@
 using Xunit;
 using VardyParty.Presentation;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Presentation.Tests;
 
 public class TvGridFocusPolicyTests
 {
@@ -113,5 +113,61 @@ public class TvGridFocusPolicyTests
 
         // Assert
         Assert.True(deliver);
+    }
+
+    [Fact]
+    public void ShouldDeliverProgrammaticFocus_WhenShouldFocusFalse_DoesNotDeliver()
+    {
+        // Arrange
+        const bool shouldFocus = false;
+        const bool alreadyDelivered = false;
+
+        // Act
+        var deliver = TvGridFocusPolicy.ShouldDeliverProgrammaticFocus(shouldFocus, alreadyDelivered);
+
+        // Assert
+        Assert.False(deliver);
+    }
+
+    [Fact]
+    public void ClampFocusedIndex_EmptyList_IsNegativeOne()
+    {
+        // Arrange
+        const int focusedIndex = 3;
+        const int displayedCount = 0;
+
+        // Act
+        var clamped = TvGridFocusPolicy.ClampFocusedIndex(focusedIndex, displayedCount);
+
+        // Assert
+        Assert.Equal(-1, clamped);
+    }
+
+    [Fact]
+    public void ClampFocusedIndex_NegativeIndex_ClampsToFirstCard()
+    {
+        // Arrange
+        const int focusedIndex = -1;
+        const int displayedCount = 4;
+
+        // Act
+        var clamped = TvGridFocusPolicy.ClampFocusedIndex(focusedIndex, displayedCount);
+
+        // Assert
+        Assert.Equal(0, clamped);
+    }
+
+    [Fact]
+    public void ClampFocusedIndex_InRange_Unchanged()
+    {
+        // Arrange
+        const int focusedIndex = 2;
+        const int displayedCount = 4;
+
+        // Act
+        var clamped = TvGridFocusPolicy.ClampFocusedIndex(focusedIndex, displayedCount);
+
+        // Assert
+        Assert.Equal(2, clamped);
     }
 }

@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Playback\VardyParty.Playback.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
   </ItemGroup>
 </Project>

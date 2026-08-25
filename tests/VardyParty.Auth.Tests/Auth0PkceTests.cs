@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -10,10 +11,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using VardyParty.Auth;
-using VardyParty.Configuration;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Auth.Tests;
 
 public class Auth0PkceTests
 {
@@ -120,6 +121,9 @@ public class Auth0PkceTests
 
         // Assert
         Assert.Equal("northgate denied", oauthError);
+        var errorOnly = Auth0Pkce.DescribeCallbackFailure(
+            expectedState, expectedState, "oak-code", "access_denied", null);
+        Assert.Equal("access_denied", errorOnly);
         Assert.Equal("Auth0 callback state mismatch.", stateMismatch);
         Assert.Equal("Auth0 callback did not include authorization code.", missingCode);
         Assert.Null(ok);
@@ -177,6 +181,58 @@ public class Auth0PkceTests
         Assert.True(sut.HasValidToken);
         Assert.True(sut.Persisted);
         Assert.Equal(token, result.AccessToken);
+    }
+
+    [Fact]
+    public async Task CompleteAuthorizationCodeAsync_WhenExchangeFails_DoesNotPersist()
+    {
+        // Arrange
+        var settings = CreateNorthgateSettings();
+        var oauth = _fixture.GetMock<IAuth0OAuthClient>();
+        oauth
+            .Setup(client => client.ExchangeAuthorizationCodeAsync(
+                settings,
+                "oak-code",
+                "http://127.0.0.1:4280/callback",
+                "oak-verifier",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Auth0TokenHttpResult(false, null, 0, null, "invalid_grant", "oak-lane rejected"));
+        var sut = CreatePkceSession(settings, oauth.Object);
+
+        // Act
+        var result = await sut.CompletePkceAsync();
+
+        // Assert
+        Assert.False(result.IsSuccess);
+        Assert.Equal("oak-lane rejected", result.Error);
+        Assert.False(sut.HasValidToken);
+        Assert.False(sut.Persisted);
+    }
+
+    [Fact]
+    public async Task CompleteAuthorizationCodeAsync_WhenExchangeThrows_DoesNotPersist()
+    {
+        // Arrange
+        var settings = CreateNorthgateSettings();
+        var oauth = _fixture.GetMock<IAuth0OAuthClient>();
+        oauth
+            .Setup(client => client.ExchangeAuthorizationCodeAsync(
+                settings,
+                "oak-code",
+                "http://127.0.0.1:4280/callback",
+                "oak-verifier",
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("northgate unreachable"));
+        var sut = CreatePkceSession(settings, oauth.Object);
+
+        // Act
+        var result = await sut.CompletePkceAsync();
+
+        // Assert
+        Assert.False(result.IsSuccess);
+        Assert.Contains("northgate unreachable", result.Error, StringComparison.Ordinal);
+        Assert.False(sut.HasValidToken);
+        Assert.False(sut.Persisted);
     }
 
     [Fact]

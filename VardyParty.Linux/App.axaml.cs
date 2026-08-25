@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using VardyParty;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Configuration;
+using VardyParty.Kernel;
 using VardyParty.Hosting;
 using VardyParty.Linux.Services;
 using VardyParty.Playback;

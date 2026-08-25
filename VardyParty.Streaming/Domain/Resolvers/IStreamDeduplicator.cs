@@ -1,4 +1,5 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
@@ -13,7 +14,7 @@ public interface IStreamDeduplicator
     /// </summary>
     /// <param name="streams">The list of streams to deduplicate</param>
     /// <returns>List of deduplicated streams with one entry per unique base URL</returns>
-    List<Models.Stream> DeduplicateStreams(List<Models.Stream> streams);
+    List<StreamModel> DeduplicateStreams(List<StreamModel> streams);
 
     /// <summary>
     /// Extracts the base URL (everything before the query string) from a full stream URL

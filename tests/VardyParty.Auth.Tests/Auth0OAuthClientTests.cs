@@ -7,11 +7,11 @@ using System.Threading.Tasks;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using VardyParty.Configuration;
 using Xunit;
 using VardyParty.Auth;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Auth.Tests;
 
 public class Auth0OAuthClientTests
 {
@@ -100,6 +100,8 @@ public class Auth0OAuthClientTests
         Assert.Equal("oak-lane-access", result.AccessToken);
         Assert.Equal("oak-lane-refresh", result.RefreshToken);
         Assert.Contains("/oauth/token", inner.LastRequestUri?.AbsolutePath, StringComparison.Ordinal);
+        Assert.Contains("code_verifier=oak-verifier", inner.LastRequestBody, StringComparison.Ordinal);
+        Assert.Contains("grant_type=authorization_code", inner.LastRequestBody, StringComparison.Ordinal);
     }
 
     private Auth0Settings CreateNorthgateSettings()
@@ -113,15 +115,18 @@ public class Auth0OAuthClientTests
     private sealed class JsonHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
         public Uri? LastRequestUri { get; private set; }
+        public string? LastRequestBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(status)
+            if (request.Content != null)
+                LastRequestBody = await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(status)
             {
                 RequestMessage = request,
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
-            });
+            };
         }
     }
 }

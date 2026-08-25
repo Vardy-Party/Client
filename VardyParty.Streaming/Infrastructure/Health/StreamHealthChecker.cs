@@ -2,8 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 

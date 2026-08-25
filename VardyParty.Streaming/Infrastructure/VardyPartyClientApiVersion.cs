@@ -1,4 +1,4 @@
-namespace VardyParty;
+namespace VardyParty.Streaming;
 
 /// <summary>
 /// API version negotiation via <c>X-VardyParty-Client-Api-Version</c>.

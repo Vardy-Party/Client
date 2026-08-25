@@ -1,7 +1,7 @@
 #if ANDROID
 using System;
 using System.Threading.Tasks;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 
 namespace VardyParty.Platforms.Android

@@ -2,8 +2,9 @@ using System;
 using AutoFixture;
 using Xunit;
 using VardyParty.Catalog;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Catalog.Tests;
 
 public class TickerMarqueeTests
 {

@@ -4,14 +4,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
 using Moq;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
-using StreamModel = VardyParty.Models.Stream;
+using StreamModel = VardyParty.Kernel.Stream;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Streaming.Tests;
 
 public class StreamResolutionOrchestratorTests
 {

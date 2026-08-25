@@ -3,8 +3,8 @@ using AVFoundation;
 using CoreFoundation;
 using Foundation;
 using Microsoft.Extensions.Logging;
+using VardyParty.Playback;
 using VardyParty.Ports;
-using VardyParty.Streaming;
 
 namespace VardyParty
 {
@@ -15,9 +15,9 @@ namespace VardyParty
         public MacCatalystVideoPlayerService(
             ILogger<MacCatalystVideoPlayerService> logger,
             IStreamSwitchingService switching,
-            IApiService api,
+            ResolveFreshPlaybackUrlAsync resolveFresh,
             IStreamHealthReporter healthReporter)
-            : base(logger, switching, api, healthReporter)
+            : base(logger, switching, resolveFresh, healthReporter)
         {
         }
 

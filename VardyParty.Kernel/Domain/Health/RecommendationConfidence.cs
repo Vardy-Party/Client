@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 [JsonConverter(typeof(JsonStringEnumConverter<RecommendationConfidence>))]
 public enum RecommendationConfidence

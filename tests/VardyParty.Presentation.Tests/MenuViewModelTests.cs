@@ -3,11 +3,12 @@ using System.Linq;
 using AutoFixture;
 using Moq;
 using VardyParty.Catalog;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Presentation;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Presentation.Tests;
 
 public class MenuViewModelTests
 {

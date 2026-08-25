@@ -3,7 +3,7 @@ using System.Linq;
 using VardyParty.Playback;
 using Xunit;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 /// <summary>
 /// Locks the unified recovery rules that used to differ between Windows and Android.

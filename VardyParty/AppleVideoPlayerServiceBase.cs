@@ -5,7 +5,7 @@ using CoreMedia;
 using Foundation;
 using Microsoft.Extensions.Logging;
 using UIKit;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
@@ -22,7 +22,6 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 {
     private readonly ILogger _logger;
     private readonly IStreamSwitchingService _switching;
-    private readonly IApiService _api;
     private readonly IStreamHealthReporter? _healthReporter;
     private readonly PlaybackSessionController _session = new();
     private readonly DelegatingMediaEngine _engine = new();
@@ -46,17 +45,16 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
     protected AppleVideoPlayerServiceBase(
         ILogger logger,
         IStreamSwitchingService switching,
-        IApiService api,
+        ResolveFreshPlaybackUrlAsync resolveFresh,
         IStreamHealthReporter? healthReporter)
     {
         _logger = logger;
         _switching = switching;
-        _api = api;
         _healthReporter = healthReporter;
         _pool = new PlaybackPoolCommandActions(
             _session,
             _switching,
-            ResolveFreshM3U8Async,
+            resolveFresh,
             AttachViaSession,
             ApplyPlaybackCommand);
         _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
@@ -279,14 +277,6 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         _playbackTcs?.TrySetResult(result);
     }
 
-    private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
-    {
-        if (current.Stream == null)
-            return Task.FromResult<string?>(null);
-
-        return _api.ResolveM3U8ForPlaybackAsync(current.Stream, current.Referer ?? string.Empty, cancellationToken);
-    }
-
     private static UIViewController? GetTopViewController()
     {
         var window = UIApplication.SharedApplication.ConnectedScenes
@@ -407,6 +397,18 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
                 _ = player._healthReporter.ReportPlaybackErrorAsync(url, player._refererUrl, error: reason);
         }
 
+        public void ReportWorking()
+        {
+            var url = player._session.Snapshot.CurrentUrl;
+            if (player._healthReporter != null)
+                _ = player._healthReporter.ReportPlaybackStartedAsync(url, player._refererUrl, metrics: player._currentMetrics);
+        }
+
+        public void MarkEstablished()
+        {
+            // Session established flag is owned by PlaybackSessionController.Handle(Ready).
+        }
+
         public void RaiseBuffering(bool isBuffering)
         {
             player.BufferingStateChanged?.Invoke(player, isBuffering);
@@ -445,7 +447,11 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
                 _ = player._onNextStreamRequested();
         }
 
-        public void SwitchPoolToPrevious() => player._pool.SwitchPoolToPrevious();
+        public void SwitchPoolToPrevious()
+        {
+            player._pool.SwitchPoolToPrevious();
+            _ = player._pool.AttachCurrentFromPoolAsync();
+        }
 
         public void NotifyApplyFailed(Exception exception)
             => player._logger.LogWarning(exception, "[AppleVideoPlayer] ApplyPlaybackCommand failed");

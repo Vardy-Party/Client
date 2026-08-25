@@ -1,4 +1,3 @@
-
 namespace VardyParty.Playback;
 
 /// <summary>

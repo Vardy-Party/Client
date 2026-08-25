@@ -3,11 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Exceptions;
-using VardyParty.Models;
-using Stream = VardyParty.Models.Stream;
 using VardyParty.Catalog;
+using VardyParty.Kernel;
+using Stream = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 

@@ -4,9 +4,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
 using VardyParty.LocalService.Client.Discovery;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 

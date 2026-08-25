@@ -2,17 +2,17 @@ using Moq;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Http;
 using System.Text.Json;
 using AutoFixture;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Streaming.Tests
 {
     public class ApiServiceTests
     {

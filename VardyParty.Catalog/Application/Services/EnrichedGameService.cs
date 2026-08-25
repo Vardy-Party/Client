@@ -2,9 +2,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Exceptions;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Catalog;
 

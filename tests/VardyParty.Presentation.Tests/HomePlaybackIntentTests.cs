@@ -1,10 +1,11 @@
 using System.Collections.Generic;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Presentation;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Presentation.Tests;
 
 public class HomePlaybackIntentTests
 {
@@ -248,5 +249,45 @@ public class HomePlaybackIntentTests
         // Assert
         Assert.True(chosenSelected);
         Assert.False(firstCardSelected);
+    }
+
+    [Fact]
+    public void MarkPlayerSessionStarted_WithoutUserClick_DoesNotResume()
+    {
+        // Arrange
+        var sut = new HomePlaybackIntent();
+        sut.MarkPlayerSessionStarted();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+
+        // Act
+        var action = sut.DecideResumeAfterPlayer(
+            isResolvingStreams: false,
+            selectedGame: game,
+            currentGame: game,
+            resolutionExhausted: false);
+
+        // Assert
+        Assert.False(sut.UserInitiatedResolution);
+        Assert.True(sut.PlayerSessionStarted);
+        Assert.Equal(ResumeAfterPlayerAction.None, action);
+    }
+
+    [Fact]
+    public void MarkUserInitiated_ResetsPlayerSessionStarted()
+    {
+        // Arrange
+        var sut = new HomePlaybackIntent();
+        sut.MarkUserInitiated();
+        sut.MarkPlayerSessionStarted();
+
+        // Act
+        sut.MarkUserInitiated();
+
+        // Assert
+        Assert.True(sut.UserInitiatedResolution);
+        Assert.False(sut.PlayerSessionStarted);
     }
 }

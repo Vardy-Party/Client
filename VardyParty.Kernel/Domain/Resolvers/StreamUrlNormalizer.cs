@@ -1,4 +1,4 @@
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 /// <summary>
 /// Normalizes stream URLs for deduplication by stripping auth tokens (query/fragment)

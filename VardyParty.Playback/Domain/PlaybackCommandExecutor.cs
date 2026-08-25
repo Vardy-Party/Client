@@ -31,6 +31,12 @@ public static class PlaybackCommandExecutor
             if (cmd.ReportDeclined)
                 host.ReportDeclined(cmd.Reason ?? "Health declined");
 
+            if (cmd.MarkEstablished)
+                host.MarkEstablished();
+
+            if (cmd.ReportWorking)
+                host.ReportWorking();
+
             if (cmd.RaiseBuffering)
                 host.RaiseBuffering(cmd.IsBuffering);
 

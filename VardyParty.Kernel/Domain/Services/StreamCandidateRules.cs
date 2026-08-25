@@ -1,4 +1,4 @@
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 /// <summary>
 /// Stream-resolution rules shared by Streaming and Playback.

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 public class M3U8Response
 {

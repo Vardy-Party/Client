@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Threading;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using Windows.Foundation;
 using Windows.Media.Core;
@@ -169,6 +169,20 @@ namespace VardyParty.Platforms.Windows
 
                 public void ReportDeclined(string? reason) => session.ShowStreamError(reason ?? "Playback error");
 
+                public void ReportWorking()
+                {
+                    var url = session.session.Snapshot.CurrentUrl;
+                    _ = session._host._healthReporter.ReportPlaybackStartedAsync(
+                        url,
+                        session._refererUrl,
+                        metrics: session._host.GetCurrentMetrics());
+                }
+
+                public void MarkEstablished()
+                {
+                    // Session established flag is owned by PlaybackSessionController.Handle(Ready).
+                }
+
                 public void RaiseBuffering(bool isBuffering)
                     => session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
 
@@ -228,17 +242,6 @@ namespace VardyParty.Platforms.Windows
                 {
                     isNextStreamRequestInProgress = false;
                 }
-            }
-
-            private Task<string?> ResolveFreshM3U8Async(EnrichedStream current, CancellationToken cancellationToken)
-            {
-                if (current.Stream == null)
-                    return Task.FromResult<string?>(null);
-
-                return _host._api.ResolveM3U8ForPlaybackAsync(
-                    current.Stream,
-                    current.Referer ?? string.Empty,
-                    cancellationToken);
             }
 
             private void PreparePlaybackSwitchOnUiThread(int generation)
