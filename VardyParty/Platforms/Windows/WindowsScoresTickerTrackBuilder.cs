@@ -9,6 +9,7 @@ using WinSolidColorBrush = Microsoft.UI.Xaml.Media.SolidColorBrush;
 using WinStretch = Microsoft.UI.Xaml.Media.Stretch;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using WinSize = global::Windows.Foundation.Size;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Windows;
 

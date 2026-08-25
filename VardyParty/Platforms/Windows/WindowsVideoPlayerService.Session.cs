@@ -6,6 +6,7 @@ using VardyParty.Models;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
+using VardyParty.Catalog;
 using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;

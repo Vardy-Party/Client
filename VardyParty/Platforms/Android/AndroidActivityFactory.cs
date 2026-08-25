@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty.Ports;
 using VardyParty.Streaming;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {

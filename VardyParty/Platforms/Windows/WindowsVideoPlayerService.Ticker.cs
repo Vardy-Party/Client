@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Input;
 using VardyParty.Extensions;
+using VardyParty.Catalog;
 using VardyParty.Models;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 

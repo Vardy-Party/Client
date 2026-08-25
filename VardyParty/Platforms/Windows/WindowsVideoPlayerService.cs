@@ -16,6 +16,7 @@ using VardyParty.Models;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
+using VardyParty.Catalog;
 using System.Text.RegularExpressions;
 
 namespace VardyParty.Platforms.Windows

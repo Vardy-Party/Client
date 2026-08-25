@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using Android.Widget;
+using VardyParty.Catalog;
 using VardyParty.Models;
 
 namespace VardyParty.Platforms.Android

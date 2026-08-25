@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using System.Threading;
 using VardyParty.Ports;
 using VardyParty.Streaming;
+using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Android.Widget;
 using Microsoft.Extensions.Logging;
+using VardyParty.Catalog;
 using VardyParty.Models;
 
 namespace VardyParty.Platforms.Android
