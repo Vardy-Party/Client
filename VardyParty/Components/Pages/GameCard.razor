@@ -88,6 +88,7 @@
     [Parameter] public string LeagueLogoUrl { get; set; } = string.Empty;
 
     private ElementReference cardRef;
+    private bool _programmaticFocusDelivered;
 
     private string CardClass => IsSelected ? "game-card selected" : "game-card";
 
@@ -176,16 +177,23 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (ShouldFocus)
+        if (!ShouldFocus)
         {
-            try
-            {
-                await cardRef.FocusAsync();
-                if (OnFocusDelivered.HasDelegate)
-                    await OnFocusDelivered.InvokeAsync();
-            }
-            catch { /* Ignore focus errors */ }
+            _programmaticFocusDelivered = false;
+            return;
         }
+
+        if (!TvGridFocusPolicy.ShouldDeliverProgrammaticFocus(ShouldFocus, _programmaticFocusDelivered))
+            return;
+
+        try
+        {
+            await cardRef.FocusAsync();
+            _programmaticFocusDelivered = true;
+            if (OnFocusDelivered.HasDelegate)
+                await OnFocusDelivered.InvokeAsync();
+        }
+        catch { /* Ignore focus errors */ }
     }
 
     private string FormatGameTime(DateTime startTime)

@@ -558,6 +558,7 @@
         isAuthenticated = false;
         isLoading = false;
         focusPending = true;
+        _tvGridHasBeenShown = false;
         signInContinueFocusPending = true;
         await InvokeAsync(StateHasChanged);
     }
@@ -708,9 +709,7 @@
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
-        // TV: re-arm focus so the first card regains D-pad focus after a background games refresh.
-        if (MauiProgram.IsTv && !isResolvingStreams && selectedGame == null)
-            focusPending = true;
+        ApplyCatalogRefreshFocus();
         PublishHomeUiUpdate();
     }
 
@@ -732,9 +731,7 @@
         EnsureInitialSelection();
         isLoading = false;
         statusMessage = string.Empty;
-        // TV: re-arm focus so the first card regains D-pad focus after a background games refresh.
-        if (MauiProgram.IsTv && !isResolvingStreams && selectedGame == null)
-            focusPending = true;
+        ApplyCatalogRefreshFocus();
         PublishHomeUiUpdate();
     }
 
