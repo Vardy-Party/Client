@@ -10,7 +10,7 @@
         <!-- The shared MAUI XAML homepage (same view the Desktop/Avalonia head draws). -->
         <hv:HomeView x:Name="HomeSurface" />
 
-        <!-- Auth overlay: sign-in hero / device-code QR (glue adapted from Home.razor). -->
+        <!-- Auth overlay: sign-in hero / device-code QR (glue ported from the old Blazor Home page). -->
         <Grid x:Name="AuthOverlay" BackgroundColor="#0B0F1A" IsVisible="False">
             <ScrollView>
                 <VerticalStackLayout Spacing="16"
@@ -71,7 +71,7 @@
             </ScrollView>
         </Grid>
 
-        <!-- Stream-resolution progress overlay (glue adapted from Home.razor). -->
+        <!-- Stream-resolution progress overlay (glue ported from the old Blazor Home page). -->
         <Grid x:Name="ResolveOverlay" BackgroundColor="#D9000000" IsVisible="False">
             <Border BackgroundColor="#111726"
                     Stroke="#26FFFFFF"

@@ -4,7 +4,7 @@ using VardyParty.Kernel;
 namespace VardyParty.Presentation;
 
 /// <summary>
-/// Shared flyout/menu presentation. Blazor AppMenu binds to this; Linux can later.
+/// Shared flyout/menu presentation for the app menu across heads.
 /// </summary>
 public sealed class MenuViewModel
 {

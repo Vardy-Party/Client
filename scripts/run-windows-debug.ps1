@@ -1,5 +1,5 @@
 # Deploy and launch VardyParty on Windows the same way Visual Studio F5 does:
-#  - MSBuild with BuildingInsideVisualStudio=true (Windows-only, refreshes AppX layout + wwwroot)
+#  - MSBuild with BuildingInsideVisualStudio=true (Windows-only, refreshes AppX layout)
 #  - Register the loose MSIX layout from vs.appxrecipe
 #  - Launch the registered debug package
 #
@@ -101,38 +101,13 @@ function Sync-AppXLayoutFromBuildOutput {
             Copy-Item -Path $_.FullName -Destination (Join-Path $appX $_.Name) -Force
         }
 
-    $sourceWwwroot = Join-Path $ProjectRoot 'wwwroot'
-    if (Test-Path $sourceWwwroot) {
-        Write-Host "Syncing project wwwroot from $sourceWwwroot"
-        Copy-Item -Path (Join-Path $sourceWwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
-    }
-
-    $scopedCssBundle = Join-Path $ProjectRoot "obj\$BuildConfiguration\net11.0-windows10.0.19041.0\win-x64\scopedcss\bundle\VardyParty.styles.css"
-    if (Test-Path $scopedCssBundle) {
-        Write-Host "Syncing scoped CSS bundle from $scopedCssBundle"
-        Copy-Item -Path $scopedCssBundle -Destination (Join-Path $appX 'wwwroot\VardyParty.styles.css') -Force
-    }
-
-    $wwwroot = Join-Path $OutputRoot 'wwwroot'
-    if (Test-Path $wwwroot) {
-        Copy-Item -Path (Join-Path $wwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
-    }
-
-    # Loose-register install location is OutputRoot (win-x64), not AppX. Blazor static assets live in AppX\wwwroot\_framework after MSIX layout.
-    $appxFramework = Join-Path $appX 'wwwroot\_framework'
-    $outputFramework = Join-Path $wwwroot '_framework'
-    if (Test-Path $appxFramework) {
-        Write-Host "Mirroring AppX Blazor _framework into output wwwroot for loose-register"
-        New-Item -ItemType Directory -Path $outputFramework -Force | Out-Null
-        Copy-Item -Path (Join-Path $appxFramework '*') -Destination $outputFramework -Recurse -Force
-    }
-
-    foreach ($leaf in @('index.html', 'VardyParty.styles.css')) {
-        $appxFile = Join-Path $appX "wwwroot\$leaf"
-        $outputFile = Join-Path $wwwroot $leaf
-        if (Test-Path $appxFile) {
-            New-Item -ItemType Directory -Path (Split-Path $outputFile) -Force | Out-Null
-            Copy-Item -Path $appxFile -Destination $outputFile -Force
+    # League logo MauiAssets: AppX is not always refreshed on incremental builds.
+    $leagueSource = Join-Path $ProjectRoot 'Resources\Images\Leagues'
+    if (Test-Path $leagueSource) {
+        foreach ($root in @($OutputRoot, $appX)) {
+            $leagueDest = Join-Path $root 'images\leagues'
+            New-Item -ItemType Directory -Path $leagueDest -Force | Out-Null
+            Copy-Item -Path (Join-Path $leagueSource '*') -Destination $leagueDest -Recurse -Force
         }
     }
 
@@ -160,40 +135,6 @@ function Sync-AppXLayoutFromBuildOutput {
     }
 }
 
-function Test-BlazorWebViewAssets {
-    param([string]$OutputRoot)
-
-    $blazorJs = Join-Path $OutputRoot 'wwwroot\_framework\blazor.webview.js'
-    if (-not (Test-Path $blazorJs)) {
-        throw "Missing $blazorJs. Rebuild with -Rebuild so MSIX layout generates _framework, then re-run this script."
-    }
-
-    Write-Host "Blazor WebView asset OK: $blazorJs"
-}
-
-function Test-AppXWwwrootFresh {
-    param(
-        [string]$OutputRoot,
-        [string]$ProjectRoot
-    )
-
-    $srcCss = Join-Path $ProjectRoot 'wwwroot\css\app.css'
-    $appxCss = Join-Path $OutputRoot 'AppX\wwwroot\css\app.css'
-    if (-not ((Test-Path $srcCss) -and (Test-Path $appxCss))) {
-        return
-    }
-
-    $marker = Select-String -Path $srcCss -Pattern 'platform-windows \.header-auth-button' -Quiet
-    if (-not $marker) {
-        return
-    }
-
-    $appxHasMarker = Select-String -Path $appxCss -Pattern 'platform-windows \.header-auth-button' -Quiet
-    if (-not $appxHasMarker) {
-        throw 'AppX\wwwroot\css\app.css is stale (missing current layout rules). wwwroot sync failed.'
-    }
-}
-
 function Test-AppXBinaryFresh {
     param([string]$OutputRoot)
 
@@ -216,10 +157,8 @@ function Test-AppXBinaryFresh {
 $projectRoot = Join-Path $repoRoot 'VardyParty'
 Sync-AppXLayoutFromBuildOutput -OutputRoot $winOut -ProjectRoot $projectRoot -BuildConfiguration $Configuration
 Test-AppXBinaryFresh -OutputRoot $winOut
-Test-AppXWwwrootFresh -OutputRoot $winOut -ProjectRoot $projectRoot
-Test-BlazorWebViewAssets -OutputRoot $winOut
 
-$leagueDir = Join-Path $layoutDir 'wwwroot\images\leagues'
+$leagueDir = Join-Path $layoutDir 'images\leagues'
 if (-not (Test-Path (Join-Path $leagueDir 'lebanese-premier-league.png'))) {
   Write-Warning "League logos look stale in $leagueDir. Try -Rebuild."
 }

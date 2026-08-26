@@ -62,7 +62,7 @@ internal static class WindowsWindowChrome
 
         nativeWindow.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CollapseTitleBar);
 
-        WindowsWindowDragHelper.EnableMainWindowDrag(nativeWindow, MainPage.Instance?.BlazorWebView);
+        WindowsWindowDragHelper.EnableMainWindowDrag(nativeWindow);
     }
 
     static AppWindow? GetAppWindow(WinUiWindow nativeWindow) =>

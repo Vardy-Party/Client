@@ -1,12 +1,10 @@
 using System.Reflection;
-using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using VardyParty;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Components.Pages;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Hosting;
@@ -50,9 +48,6 @@ public static class MauiProgram
         return true;
 #endif
     }
-
-    // Set by Android startup to indicate whether a usable WebView implementation is present
-    public static bool IsWebViewAvailable { get; set; } = false;
 
     private static bool AllowIgnoreSslCertificateErrors(APISettings apiSettings)
     {
@@ -162,37 +157,6 @@ public static class MauiProgram
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
                           ?? throw new InvalidOperationException("Missing Api configuration section.");
 
-        // Only add BlazorWebView when the platform actually has a working WebView implementation.
-        // For Android TV, runtime checks set IsWebViewAvailable; for other platforms assume available.
-#if ANDROID
-        if (IsWebViewAvailable)
-        {
-            Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
-            builder.Services.AddMauiBlazorWebView();
-        }
-        else
-        {
-            Console.WriteLine("[MauiProgram] Android WebView unavailable or disabled - registering stub/fallback");
-            try
-            {
-                builder.ConfigureMauiHandlers(handlers =>
-                {
-                    handlers.AddHandler(typeof(BlazorWebView),
-                        typeof(StubBlazorWebViewHandler));
-                });
-                Console.WriteLine("[MauiProgram] Registered fallback handler for BlazorWebView");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[MauiProgram] Failed to register fallback handler: {ex.Message}");
-            }
-        }
-#else
-        // Non-Android platforms always have BlazorWebView available
-        Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
-        builder.Services.AddMauiBlazorWebView();
-#endif
-
 #if ANDROID
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
@@ -227,25 +191,18 @@ public static class MauiProgram
         builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, WindowsUiSoundPlayer>();
 #endif
 
-        // Shared XAML homepage (replaces the BlazorWebView shell on Android and
-        // Windows; the razor pages stay in the tree, dormant, for rollback).
+        // Shared XAML homepage (the Blazor UI was removed on this branch; every
+        // platform boots HomeHostPage).
         builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
         builder.Services.AddVardyPartyHomeUi();
         builder.Services.AddSingleton<HomeHostPage>();
-        builder.Services
-            .AddSingleton<ICastService, CastService>()
-            .AddSingleton<IBuildInfoService, BuildInfoService>()
-            .AddSingleton(DeviceInfo.Current)
-            .AddTransient<Home>()
-            .AddTransient<VideoPlayer>();
+        builder.Services.AddSingleton(DeviceInfo.Current);
 
         builder.Services.AddSingleton<Auth0AuthService>();
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddVardyPartyHttpClients(AllowIgnoreSslCertificateErrors(apiSettings));
-#if DEBUG
-        builder.Services.AddBlazorWebViewDeveloperTools();
-#endif
+
         // Configure logging for all builds to diagnose startup issues
         builder.Logging
             .ClearProviders()

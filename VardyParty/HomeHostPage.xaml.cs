@@ -13,11 +13,10 @@ namespace VardyParty;
 
 /// <summary>
 /// MAUI-head host for the shared XAML homepage (<c>HomeUi.Views.HomeView</c>),
-/// replacing the BlazorWebView shell on Android/Windows. The auth and
-/// stream-resolution orchestration is the minimal glue adapted from
-/// <c>Components/Pages/Home.razor</c> (which stays in the tree, dormant, for
-/// rollback): same services, same <see cref="HomeShellViewModel"/> selection
-/// rules, same native player wiring.
+/// replacing the old BlazorWebView shell (deleted on this branch). The auth
+/// and stream-resolution orchestration is the minimal glue ported from the
+/// old Blazor Home page: same services, same <see cref="HomeShellViewModel"/>
+/// selection rules, same native player wiring.
 /// </summary>
 public partial class HomeHostPage : ContentPage
 {
@@ -45,7 +44,7 @@ public partial class HomeHostPage : ContentPage
     private string? _serviceError;
     private string? _lanWarning;
 
-    // Stream resolution state (mirrors Home.razor's fields).
+    // Stream resolution state (mirrors the old Blazor Home page's fields).
     private bool _isResolvingStreams;
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
@@ -92,7 +91,7 @@ public partial class HomeHostPage : ContentPage
         };
 
         // Suppress all UI blips while the native player is on screen; when it
-        // goes away, run the same resume-after-player decision Home.razor took
+        // goes away, run the same resume-after-player decision the old Blazor Home page took
         // in OnAfterRenderAsync.
         _videoPlayer.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
     }
@@ -528,7 +527,7 @@ public partial class HomeHostPage : ContentPage
         }
     }
 
-    /// <summary>Same decision Home.razor made in OnAfterRenderAsync after the native player closed.</summary>
+    /// <summary>Same decision the old Blazor Home page made after the native player closed.</summary>
     private void TryResumeAfterPlayer()
     {
         try

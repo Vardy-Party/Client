@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Platform;
 using Microsoft.UI.Dispatching;
@@ -18,8 +17,6 @@ internal static class WindowsWindowDragHelper
     private const int HeaderRightInteractiveReservePx = 230;
 
     private static readonly HashSet<UIElement> AttachedPointerElements = [];
-    private static readonly HashSet<BlazorWebView> AttachedBlazorWebViews = [];
-    private static readonly HashSet<nint> AttachedWebViews = [];
     private static readonly HashSet<nint> AttachedHeaderDragWindows = [];
 
     private static Microsoft.UI.Dispatching.DispatcherQueueTimer? _dragTimer;
@@ -40,14 +37,11 @@ internal static class WindowsWindowDragHelper
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
-    public static void EnableMainWindowDrag(WinUiWindow? nativeWindow, BlazorWebView? blazorWebView = null)
+    public static void EnableMainWindowDrag(WinUiWindow? nativeWindow)
     {
         if (nativeWindow == null) return;
 
         EnableHeaderDragRegions(nativeWindow);
-
-        if (blazorWebView != null)
-            TryAttachBlazorWebViewDrag(blazorWebView, nativeWindow);
     }
 
     public static void AttachPointerDrag(
@@ -217,67 +211,6 @@ internal static class WindowsWindowDragHelper
 
         nativeWindow.DispatcherQueue.TryEnqueue(UpdateDragRects);
         UpdateDragRects();
-    }
-
-    public static void TryAttachBlazorWebViewDrag(BlazorWebView blazorWebView, WinUiWindow nativeWindow)
-    {
-        if (!AttachedBlazorWebViews.Add(blazorWebView)) return;
-
-        void AttachIfReady()
-        {
-            if (blazorWebView.Handler?.PlatformView is Microsoft.UI.Xaml.Controls.WebView2 webView)
-                AttachWebViewDrag(webView, nativeWindow);
-        }
-
-        AttachIfReady();
-        blazorWebView.HandlerChanged += (_, _) => AttachIfReady();
-        blazorWebView.Loaded += (_, _) => AttachIfReady();
-    }
-
-    private static async void AttachWebViewDrag(
-        Microsoft.UI.Xaml.Controls.WebView2 webView,
-        WinUiWindow nativeWindow)
-    {
-        var handle = WindowNative.GetWindowHandle(nativeWindow);
-        if (!AttachedWebViews.Add(handle)) return;
-
-        try
-        {
-            await webView.EnsureCoreWebView2Async();
-            var core = webView.CoreWebView2;
-            if (core == null) return;
-
-            core.WebMessageReceived += (_, args) =>
-            {
-                if (args.TryGetWebMessageAsString() == "beginWindowDrag")
-                    BeginPointerDrag(nativeWindow);
-            };
-
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(
-                """
-                (function () {
-                  if (window.__vardyDragInstalled) return;
-                  window.__vardyDragInstalled = true;
-
-                  function canDrag(el) {
-                    if (!el) return false;
-                    if (el.closest('button,a,input,textarea,select,label,.game-card,.header-auth-button,[role="button"],.flyout-menu,.menu-backdrop,.app-menu-root,.league-filter-list,.no-drag')) {
-                      return false;
-                    }
-                    return !!el.closest('.page-shell,.auth-hero,#app');
-                  }
-
-                  document.addEventListener('pointerdown', function (e) {
-                    if (e.button !== 0 || !canDrag(e.target)) return;
-                    chrome.webview.postMessage('beginWindowDrag');
-                  }, true);
-                })();
-                """);
-        }
-        catch
-        {
-            AttachedWebViews.Remove(handle);
-        }
     }
 
     private static bool IsLeftButtonPressed() => (GetAsyncKeyState(VkLButton) & 0x8000) != 0;

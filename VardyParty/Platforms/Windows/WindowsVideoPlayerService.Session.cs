@@ -155,7 +155,6 @@ namespace VardyParty.Platforms.Windows
 
                     if (nativeWindow == null)
                     {
-                        MainPage.SetNativePlayerActive(false);
                         _tcs.TrySetResult(PlaybackResult.Completed("No window available for playback.", true));
                         return;
                     }
@@ -981,7 +980,6 @@ namespace VardyParty.Platforms.Windows
                 catch (Exception ex)
                 {
                     _host._logger.LogCritical(ex, "UI thread setup failed");
-                    MainPage.SetNativePlayerActive(false);
                     _tcs.TrySetResult(PlaybackResult.Completed($"Player UI failed: {ex.Message}", true));
                 }
             }

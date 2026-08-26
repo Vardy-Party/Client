@@ -117,15 +117,8 @@ public class RemoteKeyHandler
                     return true;
                 }
 
-                // Assist TV WebView click (DPAD_CENTER often never reaches the page as Enter).
-                // TryClick is fire-and-forget (must not block UI thread). Consume when scheduled
-                // so the key isn't also handled elsewhere; Blazor debounce guards double-toggle.
-                if (global::VardyParty.MauiProgram.IsTv
-                    && global::VardyParty.MainPage.Instance?.TryClickFocusedWebElement() == true)
-                {
-                    return true;
-                }
-
+                // Let the focused native view handle the click (MatchCardView
+                // wires Click on its platform view for TV D-pad selection).
                 return false;
 
             default:

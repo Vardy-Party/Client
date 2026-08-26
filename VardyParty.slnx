@@ -63,12 +63,9 @@
   <Project Path="VardyParty.Presentation/VardyParty.Presentation.csproj" />
   <Project Path="VardyParty.Streaming/VardyParty.Streaming.csproj" />
   <Project Path="VardyParty.Hosting/VardyParty.Hosting.csproj" />
-  <Project Path="VardyParty.Linux/VardyParty.Linux.csproj">
-    <Build Solution="Debug|*" Project="false" />
-  </Project>
   <!--
     Preview stack (net11.0 + MAUI-Avalonia): needs the .NET 11 preview SDK.
-    CI code-quality excludes these; the build-desktop-preview job builds them.
+    CI code-quality excludes these; the build-desktop job builds them.
   -->
   <Project Path="VardyParty.HomeUi/VardyParty.HomeUi.csproj" />
   <Project Path="VardyParty.Desktop/VardyParty.Desktop.csproj" />

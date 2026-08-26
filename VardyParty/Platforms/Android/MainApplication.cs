@@ -29,28 +29,10 @@ namespace VardyParty
                 var isTv = hasLeanback || hasTelevision;
                 MauiProgram.IsTv = isTv;
                 Console.WriteLine($"[MainApplication] Device IsTv={isTv}");
-
-                // Detect WebView availability. Some Android TV images either don't include a
-                // Chromium-based WebView or the provider is broken. Try to instantiate a WebView safely.
-                bool webViewAvailable = false;
-                try
-                {
-                    using var wv = new Android.Webkit.WebView(ctx);
-                    webViewAvailable = true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[MainApplication] WebView instantiation failed: {ex.Message}");
-                    webViewAvailable = false;
-                }
-
-                MauiProgram.IsWebViewAvailable = webViewAvailable;
-                Console.WriteLine($"[MainApplication] WebViewAvailable={webViewAvailable}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MainApplication] TV/WebView detection failed: {ex.Message}");
-                MauiProgram.IsWebViewAvailable = false;
+                Console.WriteLine($"[MainApplication] TV detection failed: {ex.Message}");
             }
 
             AndroidEnvironment.UnhandledExceptionRaiser += OnUnhandledException;
@@ -84,20 +66,12 @@ namespace VardyParty
                     Context context = Platform.CurrentActivity ?? Android.App.Application.Context;
                     Toast.MakeText(context, "An error occurred. Reloading...", ToastLength.Long)?.Show();
 
-                    // Try to navigate home to restore stability
-                    if (MainPage.Instance != null)
+                    // Relaunch the homepage activity to restore stability.
+                    var intent = PackageManager?.GetLaunchIntentForPackage(PackageName ?? "");
+                    if (intent != null)
                     {
-                        MainPage.Instance.NavigateToRoute("/");
-                    }
-                    else
-                    {
-                        // Fallback to restart
-                        var intent = PackageManager?.GetLaunchIntentForPackage(PackageName ?? "");
-                        if (intent != null)
-                        {
-                            intent.AddFlags(ActivityFlags.ClearTop | ActivityFlags.NewTask);
-                            StartActivity(intent);
-                        }
+                        intent.AddFlags(ActivityFlags.ClearTop | ActivityFlags.NewTask);
+                        StartActivity(intent);
                     }
                 }
                 catch (Exception ex)
