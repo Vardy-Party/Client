@@ -331,10 +331,17 @@ jobs:
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-ios -r iossimulator-x64
-      - name: Restore domain libraries without iOS RID
+      # Same re-restore dance as the Android job: the head restore's global
+      # TargetFramework/RID poison the assets of every project that keeps
+      # TargetFramework negotiation (NETSDK1005 'no target for net11.0').
+      # HomeUi must be re-restored too — its ProjectReference deliberately
+      # keeps TargetFramework (cross-targeting protocol), so the head restore
+      # left it with ios-only assets while the build consumes it as net11.0.
+      - name: Restore domain libraries without iOS TFM/RID
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
+          dotnet restore VardyParty.HomeUi/VardyParty.HomeUi.csproj --ignore-failed-sources
       - name: Build iOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-ios -r iossimulator-x64 --no-restore
       - name: Upload artifact
@@ -394,11 +401,23 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Restore core dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-maccatalyst -r maccatalyst-x64
+      # Same re-restore dance as the Android/iOS jobs (see the iOS job note):
+      # projects that keep TargetFramework negotiation — HomeUi above all —
+      # must be re-restored plain after the TFM/RID-pinned head restore, and
+      # the build must run --no-restore so the implicit restore cannot poison
+      # them again.
+      - name: Restore domain libraries without macCatalyst TFM/RID
+        run: |
+          dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
+          dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
+          dotnet restore VardyParty.HomeUi/VardyParty.HomeUi.csproj --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-x64
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-x64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
