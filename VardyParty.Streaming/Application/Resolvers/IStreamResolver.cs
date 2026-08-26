@@ -1,4 +1,5 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
@@ -19,7 +20,7 @@ public interface IStreamResolver
     /// <param name="onTotalStreamsKnown">Callback to report the total stream count before testing begins</param>
     /// <returns>Async enumerable that yields enriched streams as they complete</returns>
     IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
-        List<Models.Stream> streams,
+        List<StreamModel> streams,
         int batchSize = 3,
         CancellationToken cancellationToken = default,
         Action<int>? onTotalStreamsKnown = null);
@@ -33,7 +34,7 @@ public interface IStreamResolver
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The resolved m3u8 URL, or null if resolution failed</returns>
     Task<string?> ResolveM3U8UrlAsync(
-        Models.Stream stream,
+        StreamModel stream,
         string refererUrl,
         CancellationToken cancellationToken = default);
 }

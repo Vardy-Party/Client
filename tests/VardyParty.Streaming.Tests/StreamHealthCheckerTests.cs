@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Streaming.Tests;
 
 public class StreamHealthCheckerTests
 {

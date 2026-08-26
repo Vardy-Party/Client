@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Catalog;
 

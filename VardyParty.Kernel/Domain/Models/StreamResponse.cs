@@ -1,4 +1,4 @@
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 
 
@@ -22,7 +22,7 @@ public class Stream
 
     public string Channel { get; set; } = string.Empty;
 
-    public string Reputation { get; set; } = string.Empty;
+    public StreamReputation Reputation { get; set; }
 
     public string Quality { get; set; } = string.Empty;
 

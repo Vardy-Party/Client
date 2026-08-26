@@ -1,6 +1,6 @@
 # Phase 1 plan — domain assemblies, shared VMs, tests
 
-Keep Android and Windows working. Do not replace Blazor WebView here. Remaining Home.razor / auth-host / PlaybackCommand / XAML work: [phase-2-plan.md](phase-2-plan.md).
+Keep Android and Windows working. Do not replace Blazor WebView here. Remaining auth-host / PlaybackCommand work: [phase-2-plan.md](phase-2-plan.md). Home.razor / XAML: Phase 3, [phase-2-webview-xaml.md](phase-2-webview-xaml.md).
 
 **Test rules (locked)** for every new `[Fact]` / `[Theory]`: `// Arrange` / `// Act` / `// Assert`; AutoFixture specimens; `_fixture.GetMock<T>()` never `new Mock<T>()`; fictional names only; test projects do **not** enable ImplicitUsings; no Python.
 
@@ -86,13 +86,13 @@ Per-domain tests plus `VardyParty.TestSupport` (AutoFixture / `GetMock<T>()`) �
 
 Then: retire or route `VideoPlayer.razor` `/player/...` through the orchestrator (confirm unused on the Home click path). iOS/MacCatalyst only after the paid hosts share the interpreter.
 
-Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). Delete dead `GetEnrichedStreamsAsync` when tests prove no callers. Cast stub: do not promote.
+Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). Dead `GetEnrichedStreamsAsync` deleted in phase 2. Cast stub: do not promote.
 
 ---
 
 ## What we will not do in phase 1
 
-- Rewrite Blazor Home to MAUI XAML (phase 2).
+- Rewrite Blazor Home to MAUI XAML (phase 3).
 - `VardyParty.Domain` + `Application` + `Infrastructure` projects at solution level.
 - Register `PlayerSession` / `NativeVideoActivity` as a DI session service.
 - Merge `INativeVideoPlayerService` and `IMediaEngine`.
@@ -109,4 +109,4 @@ Folder hygiene last (namespaces/`Domain` folders **inside** a domain csproj). De
 5. Kernel + Playback projects — done  
 6. Catalog + Streaming (`IGamesCatalogApi` / `IApiService`) — done  
 7. Auth + Presentation projects; delete Core — done  
-8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up — **not in this PR**; [phase-2-plan.md](phase-2-plan.md) slice 3
+8. Shared `PlaybackCommand` interpreter; Linux parity as a follow-up — **not in this PR**; [phase-2-plan.md](phase-2-plan.md) slice 2

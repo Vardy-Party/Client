@@ -1,11 +1,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Streaming.Tests;
 
 public class V2StreamExpanderTests
 {

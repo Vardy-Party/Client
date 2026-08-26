@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using Android.Widget;
 using VardyParty.Catalog;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Platforms.Android
 {
@@ -19,7 +19,6 @@ namespace VardyParty.Platforms.Android
                     return;
                 }
 
-                AndroidVideoPlayerService.SetOverlayInfo(info);
                 UpdateOverlayText(info);
             }
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }
@@ -99,7 +98,7 @@ namespace VardyParty.Platforms.Android
             return $"{w / g}:{h / g}";
         }
 
-        private void UpdateOverlayText(VardyParty.Models.PlayerOverlayInfo? info)
+        private void UpdateOverlayText(VardyParty.Kernel.PlayerOverlayInfo? info)
         {
             if (info == null)
             {

@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reactive.Subjects;
-using VardyParty.Extensions;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Catalog;
 

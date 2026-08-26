@@ -3,7 +3,7 @@ using System.Linq;
 using VardyParty.Playback;
 using Xunit;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 /// <summary>
 /// Locks the unified recovery rules that used to differ between Windows and Android.
@@ -132,6 +132,45 @@ public class PlaybackUnificationRulesTests
             Assert.DoesNotContain(batch, e => e.Kind == PlaybackEffectKind.RemoveCurrentFromPool);
             Assert.DoesNotContain(batch, e => e.Kind == PlaybackEffectKind.ReportFailed);
         });
+    }
+
+    [Fact]
+    public void PlaybackEnded_IsNoOp_HostsCompleteSuccessThemselves()
+    {
+        // Arrange
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(3);
+        session.BeginAttach("http://oak-lane.m3u8");
+        var gen = session.Snapshot.AttachGeneration;
+        session.Handle(MediaEngineEvent.Ready(gen));
+
+        // Act
+        var effects = session.Handle(MediaEngineEvent.Ended(gen));
+        var cmd = PlaybackCommand.FromEffects(effects);
+
+        // Assert
+        Assert.True(cmd.IsNoOp);
+        Assert.False(cmd.CloseSession);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+    }
+
+    [Fact]
+    public void FreshM3U8Accept_UsesSessionUrl_NotAHostLocalField()
+    {
+        // Arrange — Android used to compare fresh == Activity._m3u8Url (attach target).
+        var session = new PlaybackSessionController();
+        session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
+        var sessionUrl = session.Snapshot.CurrentUrl;
+        const string hostLocalUrl = "http://oak-lane-playing.m3u8";
+        const string fresh = "http://oak-lane-playing.m3u8";
+
+        // Act
+        var acceptVsSession = PlaybackPolicy.ShouldAcceptFreshM3U8(sessionUrl, fresh);
+        var acceptVsHostField = PlaybackPolicy.ShouldAcceptFreshM3U8(hostLocalUrl, fresh);
+
+        // Assert
+        Assert.True(acceptVsSession);
+        Assert.False(acceptVsHostField);
     }
 
     [Fact]

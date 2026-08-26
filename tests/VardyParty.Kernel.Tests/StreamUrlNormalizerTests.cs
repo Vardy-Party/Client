@@ -1,7 +1,7 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Kernel.Tests;
 
 public class StreamUrlNormalizerTests
 {

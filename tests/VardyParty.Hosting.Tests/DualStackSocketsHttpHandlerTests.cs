@@ -10,8 +10,9 @@ using System.Threading.Tasks;
 using AutoFixture;
 using VardyParty.Hosting;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Hosting.Tests;
 
 public class DualStackSocketsHttpHandlerTests
 {

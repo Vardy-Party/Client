@@ -8,8 +8,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 using VardyParty.Catalog;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Catalog.Tests;
 
 public class BbcHtmlParserTests
 {

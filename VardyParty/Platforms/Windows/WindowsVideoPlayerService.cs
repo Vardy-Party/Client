@@ -11,12 +11,11 @@ using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
 using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
-using VardyParty.Extensions;
-using VardyParty.Models;
+using VardyParty.Catalog;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
-using VardyParty.Catalog;
 using System.Text.RegularExpressions;
 
 namespace VardyParty.Platforms.Windows
@@ -26,7 +25,7 @@ namespace VardyParty.Platforms.Windows
         private readonly IStreamSwitchingService _switchingService;
         private readonly IServiceProvider _services;
         private readonly IEnrichedGameService _enrichedGames;
-        private readonly IApiService _api;
+        private readonly ResolveFreshPlaybackUrlAsync _resolveFresh;
         private readonly IStreamHealthReporter _healthReporter;
         private readonly ILogger<WindowsVideoPlayerService> _logger;
 
@@ -34,14 +33,14 @@ namespace VardyParty.Platforms.Windows
             IStreamSwitchingService switchingService,
             IServiceProvider services,
             IEnrichedGameService enrichedGames,
-            IApiService api,
+            ResolveFreshPlaybackUrlAsync resolveFresh,
             IStreamHealthReporter healthReporter,
             ILogger<WindowsVideoPlayerService> logger)
         {
             _switchingService = switchingService;
             _services = services;
             _enrichedGames = enrichedGames;
-            _api = api;
+            _resolveFresh = resolveFresh;
             _healthReporter = healthReporter;
             _logger = logger;
         }
@@ -54,9 +53,6 @@ namespace VardyParty.Platforms.Windows
         private static readonly Regex TickerMeasurePlainTextRegex = new(
             @"\uD83C[\uDDE6-\uDDFF](?:\uD83C[\uDDE6-\uDDFF])?",
             RegexOptions.Compiled);
-
-        private static string ToTickerDisplayText(string text) =>
-            TickerMeasurePlainTextRegex.Replace(text, string.Empty);
 
         private static string TruncateForLog(string text, int maxLength) =>
             text.Length <= maxLength ? text : text[..maxLength] + "…";

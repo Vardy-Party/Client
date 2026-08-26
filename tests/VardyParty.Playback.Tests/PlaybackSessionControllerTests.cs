@@ -3,7 +3,7 @@ using System.Linq;
 using VardyParty.Playback;
 using Xunit;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 public class PlaybackSessionControllerTests
 {
@@ -285,8 +285,11 @@ public class PlaybackSessionControllerTests
 
         // Act
         var effects = session.Handle(MediaEngineEvent.Ended(gen));
+
         // Assert
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.None);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.CloseSession);
     }
 
     [Fact]

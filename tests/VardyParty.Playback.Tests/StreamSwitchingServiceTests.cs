@@ -2,11 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Playback;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Playback.Tests
 {
     public class StreamSwitchingServiceTests
     {

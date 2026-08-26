@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace VardyParty.Tests
+namespace VardyParty.Catalog.Tests
 {
     // Lightweight HTML builder for tests using fluent API
     public class BbcHtmlBuilder

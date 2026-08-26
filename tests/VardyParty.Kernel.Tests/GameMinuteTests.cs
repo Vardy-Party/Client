@@ -1,8 +1,9 @@
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Kernel.Tests;
 
 public class GameMinuteTests
 {

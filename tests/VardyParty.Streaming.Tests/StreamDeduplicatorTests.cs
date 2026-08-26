@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Streaming.Tests
 {
     public class StreamDeduplicatorTests
     {
@@ -69,7 +70,7 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8")
                     .With(s => s.Channel, "Channel North")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };
@@ -92,13 +93,13 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?token=abc")
                     .With(s => s.Channel, "Channel North")
-                    .With(s => s.Reputation, "Good")
+                    .With(s => s.Reputation, StreamReputation.Good)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?token=xyz")
                     .With(s => s.Channel, "Channel South")
-                    .With(s => s.Reputation, "OK")
+                    .With(s => s.Reputation, StreamReputation.Ok)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };
@@ -121,19 +122,19 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://alpha.example.com/stream.m3u8")
                     .With(s => s.Channel, "Channel North")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://beta.example.com/stream.m3u8")
                     .With(s => s.Channel, "Channel South")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://gamma.example.com/stream.m3u8")
                     .With(s => s.Channel, "Channel East")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };
@@ -155,37 +156,37 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://alpha.example.com/stream.m3u8?token=abc")
                     .With(s => s.Channel, "Channel North")
-                    .With(s => s.Reputation, "Good")
+                    .With(s => s.Reputation, StreamReputation.Good)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://alpha.example.com/stream.m3u8?token=xyz")
                     .With(s => s.Channel, "Channel North B")
-                    .With(s => s.Reputation, "OK")
+                    .With(s => s.Reputation, StreamReputation.Ok)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://beta.example.com/stream.m3u8")
                     .With(s => s.Channel, "Channel South")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=1")
                     .With(s => s.Channel, "Channel East")
-                    .With(s => s.Reputation, "Very Good")
+                    .With(s => s.Reputation, StreamReputation.VeryGood)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=2")
                     .With(s => s.Channel, "Channel East B")
-                    .With(s => s.Reputation, "Good")
+                    .With(s => s.Reputation, StreamReputation.Good)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://gamma.example.com/stream.m3u8?a=3")
                     .With(s => s.Channel, "Channel East C")
-                    .With(s => s.Reputation, "Poor")
+                    .With(s => s.Reputation, StreamReputation.Poor)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };
@@ -212,25 +213,25 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=1")
                     .With(s => s.Channel, "Channel Poor")
-                    .With(s => s.Reputation, "Poor")
+                    .With(s => s.Reputation, StreamReputation.Poor)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=2")
                     .With(s => s.Channel, "Channel Best")
-                    .With(s => s.Reputation, "Very Good")
+                    .With(s => s.Reputation, StreamReputation.VeryGood)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=3")
                     .With(s => s.Channel, "Channel Good")
-                    .With(s => s.Reputation, "Good")
+                    .With(s => s.Reputation, StreamReputation.Good)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=4")
                     .With(s => s.Channel, "Channel Ok")
-                    .With(s => s.Reputation, "OK")
+                    .With(s => s.Reputation, StreamReputation.Ok)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };
@@ -308,13 +309,13 @@ namespace VardyParty.Tests
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://STREAMS.EXAMPLE.COM/stream.m3u8?v=1")
                     .With(s => s.Channel, "Channel North")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create(),
                 _fixture.Build<Stream>()
                     .With(s => s.Url, "https://streams.example.com/stream.m3u8?v=2")
                     .With(s => s.Channel, "Channel South")
-                    .With(s => s.Reputation, string.Empty)
+                    .With(s => s.Reputation, StreamReputation.None)
                     .With(s => s.ResolutionStrategy, string.Empty)
                     .Create()
             };

@@ -1,4 +1,4 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Presentation;
 
@@ -16,9 +16,21 @@ public sealed class HomePlaybackIntent
 {
     public bool UserInitiatedResolution { get; private set; }
 
-    public void MarkUserInitiated() => UserInitiatedResolution = true;
+    public bool PlayerSessionStarted { get; private set; }
 
-    public void ClearUserInitiation() => UserInitiatedResolution = false;
+    public void MarkUserInitiated()
+    {
+        UserInitiatedResolution = true;
+        PlayerSessionStarted = false;
+    }
+
+    public void MarkPlayerSessionStarted() => PlayerSessionStarted = true;
+
+    public void ClearUserInitiation()
+    {
+        UserInitiatedResolution = false;
+        PlayerSessionStarted = false;
+    }
 
     public static bool SameGame(Game? a, Game? b)
     {
@@ -60,6 +72,9 @@ public sealed class HomePlaybackIntent
         bool resolutionExhausted)
     {
         if (isResolvingStreams || selectedGame is null || !UserInitiatedResolution)
+            return ResumeAfterPlayerAction.None;
+
+        if (!PlayerSessionStarted)
             return ResumeAfterPlayerAction.None;
 
         if (resolutionExhausted)

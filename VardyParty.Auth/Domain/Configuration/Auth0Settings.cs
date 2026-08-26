@@ -1,4 +1,4 @@
-namespace VardyParty.Configuration;
+namespace VardyParty.Auth;
 
 public class Auth0Settings
 {

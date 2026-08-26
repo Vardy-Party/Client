@@ -2,8 +2,9 @@ using System;
 using AutoFixture;
 using Xunit;
 using VardyParty.Auth;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Auth.Tests;
 
 public class AuthTokenLifetimeTests
 {

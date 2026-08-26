@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace VardyParty.Configuration;
+namespace VardyParty.Kernel;
 
 public class APISettings
 {

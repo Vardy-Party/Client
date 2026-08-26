@@ -1,22 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Exceptions;
-using VardyParty.Models;
-using Stream = VardyParty.Models.Stream;
 using VardyParty.Catalog;
+using VardyParty.Kernel;
+using Stream = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
 public class ApiService(
     HttpClient httpClient,
     ILogger<ApiService> logger,
-    IStreamResolver streamResolver,
-    IStreamDeduplicator streamDeduplicator,
     ILocalLanPlayService localLanPlayService,
     IOptions<GamesApiSettings> gamesApiSettings,
     IOptions<APISettings> apiSettings) : IApiService, IGamesCatalogApi
@@ -169,67 +164,6 @@ public class ApiService(
         {
             logger.LogError(ex, "[Api] GetAllGamesAsync error");
             return new Dictionary<string, List<Game>>();
-        }
-    }
-
-    public async IAsyncEnumerable<EnrichedStream> GetEnrichedStreamsAsync(
-        string league,
-        string homeTeam,
-        string awayTeam,
-        Action<int>? onTotalStreamsKnown = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        // Get initial streams from API
-        StreamResponse? response = null;
-        try
-        {
-            response = await GetStreamsAsync(league, homeTeam, awayTeam);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[Api] Error fetching initial streams for {Home} vs {Away}", homeTeam, awayTeam);
-            yield break;
-        }
-
-        if (response?.Streams == null || response.Streams.Count == 0)
-        {
-            logger.LogInformation("[Api] No streams found for {Home} vs {Away}", homeTeam, awayTeam);
-            yield break;
-        }
-
-        var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
-            V2StreamExpander.Expand(response.Streams));
-
-        // Deduplicate streams by base m3u8 URL
-        List<Stream> deduplicated;
-        try
-        {
-            logger.LogInformation("[Api] Deduplicating {Count} streams", expandedStreams.Count);
-            deduplicated = streamDeduplicator.DeduplicateStreams(expandedStreams);
-            logger.LogInformation("[Api] Starting incremental resolution of {Count} deduplicated streams",
-                deduplicated.Count);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[Api] Error deduplicating streams for {Home} vs {Away}", homeTeam, awayTeam);
-            yield break;
-        }
-
-        try
-        {
-            await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
-                               deduplicated,
-                               onTotalStreamsKnown: onTotalStreamsKnown,
-                               cancellationToken: cancellationToken))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                yield return enrichedStream;
-            }
-        }
-        finally
-        {
-            logger.LogInformation("[Api] Completed enriched streams resolution for {Home} vs {Away}", homeTeam,
-                awayTeam);
         }
     }
 

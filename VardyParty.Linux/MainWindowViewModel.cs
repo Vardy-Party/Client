@@ -18,9 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Catalog;
-using VardyParty.Configuration;
-using VardyParty.Extensions;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Linux.Services;
 using VardyParty.Presentation;
 using VardyParty.Playback;
@@ -649,7 +647,7 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _authCts = new CancellationTokenSource();
 
             AuthLoginResult result;
-            if (IsLoopbackRedirectUri(_auth0Settings.RedirectUri))
+            if (Auth0Pkce.TryGetLoopbackRedirectUri(_auth0Settings.RedirectUri, out _))
             {
                 ClearDeviceFlowDetails();
                 result = await _authLoginService.LoginInteractiveAsync();
@@ -729,18 +727,6 @@ public class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _logger.LogWarning(ex, "Failed to generate device-flow QR code");
             return Task.FromResult<Bitmap?>(null);
         }
-    }
-
-    private static bool IsLoopbackRedirectUri(string? redirectUri)
-    {
-        if (string.IsNullOrWhiteSpace(redirectUri))
-        {
-            return false;
-        }
-
-        return Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri)
-               && uri.IsLoopback
-               && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

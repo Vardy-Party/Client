@@ -4,8 +4,9 @@ using System.Threading.Tasks;
 using AutoFixture;
 using VardyParty.Playback;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 public class DelegatingMediaEngineTests
 {

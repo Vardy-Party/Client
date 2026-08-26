@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
 
 namespace VardyParty.Auth;
 
@@ -235,6 +234,47 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         {
             _sessionLock.Release();
         }
+    }
+
+    /// <summary>
+    /// PKCE code exchange + role gate + persist. Call this after the host browser wait so the
+    /// session lock is not held across the loopback callback.
+    /// </summary>
+    protected async Task<AuthLoginResult> CompleteAuthorizationCodeAsync(
+        string code,
+        string redirectUri,
+        string codeVerifier,
+        CancellationToken cancellationToken)
+    {
+        Auth0TokenHttpResult exchanged;
+        try
+        {
+            exchanged = await Oauth.ExchangeAuthorizationCodeAsync(
+                Settings, code, redirectUri, codeVerifier, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return new AuthLoginResult(false, null, ex.Message);
+        }
+
+        if (!exchanged.IsSuccess || string.IsNullOrWhiteSpace(exchanged.AccessToken))
+        {
+            return new AuthLoginResult(false, null,
+                exchanged.ErrorDescription ?? exchanged.Error ?? "Auth0 token exchange failed.");
+        }
+
+        if (!AcceptAccessToken(exchanged.AccessToken))
+        {
+            await LogoutAsync();
+            return new AuthLoginResult(false, null,
+                $"Authenticated but missing required role '{Settings.RequiredRole}'.");
+        }
+
+        await ApplyTokensAsync(
+            exchanged.AccessToken,
+            exchanged.ExpiresIn > 0 ? exchanged.ExpiresIn : 3600,
+            exchanged.RefreshToken);
+        return new AuthLoginResult(true, AccessToken, null);
     }
 
     private async Task ApplyTokensCoreAsync(string accessToken, int expiresIn, string? refreshToken)

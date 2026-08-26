@@ -8,8 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using VardyParty.Auth;
 using VardyParty.Hosting;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Hosting.Tests;
 
 public class NonDisposingDelegatingHandlerTests
 {

@@ -7,10 +7,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
-using VardyParty.Configuration;
 using VardyParty.Auth;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Auth.Tests;
 
 public class Auth0TokenSessionTests
 {

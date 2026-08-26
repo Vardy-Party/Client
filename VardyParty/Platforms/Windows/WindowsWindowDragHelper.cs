@@ -15,7 +15,6 @@ internal static class WindowsWindowDragHelper
 {
     private const int VkLButton = 0x01;
     private const int HeaderHeightPx = 72;
-    private const int CaptionButtonReservePx = 150;
     private const int HeaderRightInteractiveReservePx = 230;
 
     private static readonly HashSet<UIElement> AttachedPointerElements = [];
