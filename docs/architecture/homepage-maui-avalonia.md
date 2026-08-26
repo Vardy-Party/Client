@@ -152,14 +152,73 @@ packaging flows are zero-warning again). CI/CD pins a single
 PhonePortrait** from window size + television idiom, and
 `HomeLayoutMetrics` supplies concrete sizes (card size, badge size, brand
 logo size, font sizes, paddings) which the XAML binds. TV gets 10-foot
-sizing and relies on MAUI's focus visuals for D-pad navigation; phones get
-smaller cards and tighter padding, portrait tighter still.
+sizing (340×180 cards after two field reports that 440×232 then 360×190
+were oversized — 5 cards per row and ~3.6 league rows now fit a 1080p
+panel; type and badge sizes hold the 10-foot floors, so the TV card box is
+now slightly smaller than desktop's while TV type stays the largest);
+phones get smaller cards and tighter padding, portrait tighter still.
+
+### TV focus (Android leanback, D-pad)
+
+MAUI's `Focused`/`VisualStateManager` and Android's native view focus are
+**separate systems**: on a leanback box the D-pad drives *native* focus, and
+a MAUI `Border` is not natively focusable, so without extra wiring the D-pad
+would skip the cards entirely and MAUI focus events would never fire.
+`MatchCardView` therefore bridges natively (Android + TV idiom only):
+
+- The card root's platform view is made `Focusable` (not
+  `FocusableInTouchMode`), with `DescendantFocusability=BlockDescendants` so
+  focus search always lands on the card root, never a child.
+- A native `FocusChange` listener drives the **same** highlight chrome as
+  the MAUI `Focused` path (scale 1.09 + a bright `#AFCBFF` 3 px focus ring)
+  and the focus-tick sound (`UiSoundService.FocusMove` via
+  `MatchCardViewModel.FocusMoved`, throttled to one per 40 ms), so whichever
+  focus system fires, the card lights up and ticks. The MAUI-side
+  `Focused`/pointer handlers remain for Windows/Desktop.
+- **The focus transition is animated and allocation-light**: the ring is a
+  pre-built overlay `Border` faded in/out (~130 ms, native `View.Alpha`) in
+  step with the `ScaleTo` lerp. Nothing on the focus path mutates the MAUI
+  `Shadow` or the card stroke — both force blur/layout re-renders that jank
+  32-bit TV hardware. D-pad autorepeat coalesces: focus moves arriving
+  within 200 ms of each other apply chrome instantly (no animation
+  pile-up); the deliberate single move gets the full glide plus the sheen.
+- A native `Click` listener fires the pick — a focused clickable Android
+  view converts DPAD_CENTER/Enter into a click itself.
+- The wiring follows the platform view (`HandlerChanged` + `Loaded` +
+  `BindingContextChanged`), so handler-timing and RecyclerView recycling
+  can never leave a card unfocusable, and it is torn down on `Unloaded`.
+- On focus gained the card calls `ScrollTo(..., MakeVisible, animate: true)`
+  on both its horizontal strip and the vertical rows list — the MAUI
+  Android handler maps animated ScrollTo to RecyclerView smooth scrolling
+  (`ScrollHelper.AnimateScrollToPosition` → `SmoothScrollToPosition`), so
+  crossing the viewport edge slides instead of snapping. Native RecyclerView
+  focus scrolling alone reveals a card only partially, clipping the ring.
+- **Column memory** (`TvDpadFocusRouter`): a native `KeyPress` listener on
+  the focused card routes DpadDown/Up to the card in the adjacent row whose
+  screen X is nearest the current card (Netflix behaviour) instead of
+  Android's clipped nearest-neighbour pick (which tends to reset to row
+  start), and clamps DpadLeft/Right at row edges so focus never leaps rows.
+  Up from the first row and not-yet-laid-out rows fall through to the
+  default search (header reachability, focus-search-failed scrolling).
+- One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
+  first card of the first row on the empty→non-empty edge; the view consumes
+  it once and calls `RequestFocus()` on the native view, so the app opens
+  with a visibly focused card. Later refreshes never steal the highlight.
+
+Key routing: `RemoteKeyHandler` (activity level) deliberately has **no
+D-pad direction cases** — it only consumes media keys, Menu, Back and
+(conditionally) Enter. Note that `Activity.OnKeyDown` logging every
+`DpadUp/Down/...` press is *expected even when traversal works*: the
+activity sees a key when the focused view declines it, and `ViewRootImpl`
+performs D-pad focus navigation only after the whole dispatch chain
+declines. Activity-level D-pad logs are therefore not evidence that focus
+is broken.
 
 ### The brand logo (3D, metallic, animated)
 
 The header is a brand row: the Vardy Party crest left of the wordmark with
 the subtitle beneath, on every adaptive layout
-(`HomeLayoutMetrics.BrandLogoSize`: TV 76 / desktop 58 / phone 46–40 dip).
+(`HomeLayoutMetrics.BrandLogoSize`: TV 68 / desktop 58 / phone 46–40 dip).
 
 - **Asset**: `VardyParty.HomeUi/Resources/brand_crest.svg` re-authors the
   app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`) with
@@ -347,6 +406,48 @@ creation is legal — but async media failures are now observed via a
 never-throwing `MediaFailed` logging handler, `AutoPlay=false` is explicit,
 and `CommandManager.IsEnabled=false` keeps the sound-effect players out of
 the System Media Transport Controls / CoreMessaging machinery entirely.
+
+A follow-up investigation pinned the crash to ~1 second after the first
+games update renders, and hardened the remaining path end to end:
+
+- **XAML-thread exception hook** (`VardyParty/Platforms/Windows/App.xaml.cs`):
+  the WinUI `Application.UnhandledException` event is the only hook that
+  sees XAML-thread exceptions before WinAppSDK 1.8 converts them into
+  anonymous stowed 0xc000027b crashes — neither
+  `AppDomain.UnhandledException` nor `TaskScheduler.UnobservedTaskException`
+  is ever raised for them. It is wired as the first statement of the WinUI
+  `App` constructor (`Application.Current` is valid from the base ctor, so
+  even `InitializeComponent` failures are covered), logs exception + stack
+  via `WindowsEventLogger.Fatal`, and marks the exception handled so the
+  app survives where possible.
+- **Serialized + coalesced games publishes** (`EnrichedGameService`): the
+  API and BBC pollers each ended in `RunMatching` → `_subject.OnNext` with
+  no synchronization, so `GamesStream` could emit from two threads at once,
+  and the two startup fetches published two full boards ~1s apart — a full
+  board reset mid-first-materialization of the nested CollectionViews is
+  WinUI's documented 0x800710DD failure mode, making this the leading crash
+  trigger. A private publish lock now serializes the whole match+publish
+  body, and the startup burst is coalesced: if the API fetch wins the race
+  its standalone publish is skipped (at most once, ever) and the initial
+  BBC completion — success or failure — publishes the one enriched board; a
+  3s grace fallback publishes the API-only board if BBC hangs. Steady-state
+  live-score publishes are never delayed (no debounce; the skip is spent
+  after startup).
+- **Single-threaded goal detector** (`HomeViewModel`): the
+  `ScoreChangeDetector`'s plain `Dictionary` is now only touched inside the
+  dispatched `Apply` (and `ResetScoreObservations` dispatches too), so it
+  is single-threaded by construction rather than by the publisher's lock
+  discipline.
+- **No sync-over-async on the dispatcher** (`MauiHomeAssetLocator`):
+  `ResolveLeagueLogoPath` blocked on `OpenAppPackageFileAsync` with
+  `GetAwaiter().GetResult()` and is reached on the UI thread at first
+  render; `IHomeAssetLocator.ResolveLeagueLogoPathAsync` is now genuinely
+  async (both the MAUI and Desktop locators updated).
+- **Sounds in the AppX layout**: `SyncSoundsToWindowsLayout` (csproj)
+  mirrors the league-logos target so `Resources\Raw\Sounds\**` lands in
+  both the win-x64 output root and `AppX\Sounds\` on VS/dotnet-driven
+  incremental syncs; `run-windows-debug.ps1`'s recursive sync already
+  covered script-driven deploys.
 
 ## Follow-ups
 

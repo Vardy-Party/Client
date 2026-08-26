@@ -34,20 +34,72 @@ public class HomeLayoutTests
     }
 
     [Fact]
-    public void Metrics_TvIsLargestPhonePortraitIsSmallest()
+    public void Metrics_TvTypeIsLargestPhonePortraitIsSmallest()
     {
-        // Act
-        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
-        var desktop = HomeLayoutMetrics.For(HomeLayoutClass.Desktop);
-        var landscape = HomeLayoutMetrics.For(HomeLayoutClass.PhoneLandscape);
-        var portrait = HomeLayoutMetrics.For(HomeLayoutClass.PhonePortrait);
+        // Arrange
+        var classes = new[]
+        {
+            HomeLayoutClass.Tv, HomeLayoutClass.Desktop,
+            HomeLayoutClass.PhoneLandscape, HomeLayoutClass.PhonePortrait,
+        };
 
-        // Assert: 10-foot UI scales monotonically down to phone portrait.
-        Assert.True(tv.CardWidth > desktop.CardWidth);
+        // Act
+        var tv = HomeLayoutMetrics.For(classes[0]);
+        var desktop = HomeLayoutMetrics.For(classes[1]);
+        var landscape = HomeLayoutMetrics.For(classes[2]);
+        var portrait = HomeLayoutMetrics.For(classes[3]);
+
+        // Assert: 10-foot TYPE stays the largest (that is what 10-foot means),
+        // but the TV card BOX is grid-sized for a 1080p panel and may sit near
+        // (even just below) the desktop card. Cards still shrink desktop ->
+        // landscape -> portrait.
+        Assert.True(tv.ScoreFontSize > desktop.ScoreFontSize);
+        Assert.True(tv.BadgeSize > desktop.BadgeSize);
+        Assert.True(tv.TeamFontSize > desktop.TeamFontSize);
+        Assert.True(tv.CardWidth > landscape.CardWidth);
         Assert.True(desktop.CardWidth > landscape.CardWidth);
         Assert.True(landscape.CardWidth > portrait.CardWidth);
-        Assert.True(tv.ScoreFontSize > desktop.ScoreFontSize);
         Assert.True(tv.BadgeSize > portrait.BadgeSize);
+    }
+
+    [Fact]
+    public void Metrics_TvCardsFitAGridOnA1080pPanel()
+    {
+        // Arrange: a 1080p TV panel; 24 is the focus-scale headroom the row
+        // strip adds (HomeLayoutState.RowHeight), ~150 covers the page header.
+        const double panelWidth = 1920;
+        const double panelHeight = 1080;
+        const double rowFocusHeadroom = 24;
+        const double pageHeaderAllowance = 150;
+
+        // Act
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+
+        // Assert: at least 5 cards per row and 3 league rows visible at once.
+        var usableWidth = panelWidth - (2 * tv.PagePadding);
+        Assert.True(usableWidth / (tv.CardWidth + tv.CardSpacing) >= 5);
+
+        var usableHeight = panelHeight - (2 * tv.PagePadding) - pageHeaderAllowance;
+        var rowCost = tv.CardHeight + rowFocusHeadroom + tv.RowSpacing;
+        Assert.True(usableHeight / rowCost >= 3);
+    }
+
+    [Fact]
+    public void Metrics_TvKeepsTenFootReadabilityFloors()
+    {
+        // Arrange
+        var layoutClass = HomeLayoutClass.Tv;
+
+        // Act
+        var tv = HomeLayoutMetrics.For(layoutClass);
+
+        // Assert: shrinking the cards must never shrink type below what reads
+        // from the sofa — the status chip especially.
+        Assert.True(tv.BadgeSize >= 52);
+        Assert.True(tv.ScoreFontSize >= 32);
+        Assert.True(tv.TeamFontSize >= 18);
+        Assert.True(tv.StatusFontSize >= 14);
+        Assert.True(tv.LeagueTitleFontSize >= 22);
     }
 
     [Fact]

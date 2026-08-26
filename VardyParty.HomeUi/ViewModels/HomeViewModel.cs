@@ -52,7 +52,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     private sealed record PendingApply(
         IReadOnlyList<LeagueRowModel> Rows,
-        int Count,
+        IReadOnlyList<Game> Display,
         IDictionary<string, List<Game>>? Dict);
 
     public HomeViewModel(
@@ -170,11 +170,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     public void SetError(string? message)
     {
         var incoming = message ?? string.Empty;
-        if (incoming.Length > 0 && _errorMessage.Length == 0)
-        {
-            _sounds.Play(UiSound.Error);
-        }
 
+        // Queue for the UI-thread apply pump. Playing and reading
+        // _errorMessage must not happen on the catalog/HTTP thread (WinAppSDK
+        // 1.8 stows that as 0xc000027b; concurrent SetError also races).
         lock (_pendingLock)
         {
             _pendingError = incoming;
@@ -244,8 +243,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
     public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
 
-    /// <summary>Forget observed scores (e.g. on sign-out) so re-appearing games stay silent.</summary>
-    public void ResetScoreObservations() => _scoreChanges.Reset();
+    /// <summary>
+    /// Forget observed scores (e.g. on sign-out) so re-appearing games stay
+    /// silent. Dispatched because the detector is only ever touched on the UI
+    /// thread (see <see cref="Apply"/>); safe to call from any thread.
+    /// </summary>
+    public void ResetScoreObservations() => _dispatcher.Dispatch(() => _scoreChanges.Reset());
 
     public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
 
@@ -255,25 +258,17 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     {
         var dict = _lastGames;
 
-        // Pure work off the UI thread; VM/brush construction on it.
+        // Pure work off the UI thread. Do not Dispatcher.Dispatch from here:
+        // on WinAppSDK 1.8 that marshal is a 0xc000027b in CoreMessagingXP.
+        // HomeView's UI-thread timer calls FlushPendingApply instead.
         var display = dict == null
             ? new List<Game>()
             : _leagueFilter.FilterGames(dict.ToDisplay());
         var rowModels = HomeRowsBuilder.Build(display);
 
-        // Goal sting on genuine live score transitions only (never first load /
-        // first appearance — the detector ignores a game's first observation).
-        if (_scoreChanges.Observe(display).Count > 0)
-        {
-            _sounds.Play(UiSound.Goal);
-        }
-
-        // Do not Dispatcher.Dispatch from this thread. On WinAppSDK 1.8 that
-        // marshal is a 0xc000027b in CoreMessagingXP even for a no-op paint.
-        // HomeView's UI-thread timer calls FlushPendingApply instead.
         lock (_pendingLock)
         {
-            _pendingApply = new PendingApply(rowModels, display.Count, dict);
+            _pendingApply = new PendingApply(rowModels, display, dict);
         }
     }
 
@@ -298,6 +293,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         if (error != null)
         {
+            if (error.Length > 0 && _errorMessage.Length == 0)
+            {
+                _sounds.Play(UiSound.Error);
+            }
+
             ErrorMessage = error;
         }
 
@@ -311,7 +311,14 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         if (apply != null)
         {
-            Apply(apply.Rows, apply.Count, apply.Dict);
+            // Goal sting on genuine live score transitions only. Detector is
+            // UI-thread only — Rebuild can run on the games-stream thread.
+            if (_scoreChanges.Observe(apply.Display).Count > 0)
+            {
+                _sounds.Play(UiSound.Goal);
+            }
+
+            Apply(apply.Rows, apply.Display.Count, apply.Dict);
             return;
         }
 
@@ -492,7 +499,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            var path = _assets.ResolveLeagueLogoPath(game);
+            var path = await _assets.ResolveLeagueLogoPathAsync(game).ConfigureAwait(false);
             var icon = await _images.LoadLocalAsync(path).ConfigureAwait(false);
             if (icon == null) return;
             EnqueueUiAssign(() => _windowsLeagueIcons[league] = icon);
@@ -542,7 +549,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             var firstGame = row.Cards.FirstOrDefault()?.Game;
             if (firstGame != null)
             {
-                var iconPath = _assets.ResolveLeagueLogoPath(firstGame);
+                var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame);
                 var icon = await _images.LoadLocalAsync(iconPath);
                 if (icon != null)
                 {

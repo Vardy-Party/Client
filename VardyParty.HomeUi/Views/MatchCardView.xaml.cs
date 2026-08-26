@@ -6,12 +6,16 @@ namespace VardyParty.HomeUi.Views;
 
 /// <summary>
 /// One match card. Animations are deliberately cheap (opacity + transform
-/// only): the live-dot pulse, the focus/hover scale, the sheen sweep, and the
-/// selected/resolving veil pulse. All are stopped when the card unloads so
-/// virtualised lists stay light.
+/// only): the live-dot pulse, the focus/hover scale, the focus-ring fade, the
+/// sheen sweep, and the selected/resolving veil pulse. All are stopped when
+/// the card unloads so virtualised lists stay light.
 /// Focus chrome is tuned for the 10-foot TV experience: a strong scale bump
-/// plus a bright border and glow, and a distinct gold "resolving" state so a
-/// clicked card visibly stays active while streams resolve.
+/// plus a bright pre-built focus ring faded in over ~130ms, and a distinct
+/// gold "resolving" state so a clicked card visibly stays active while
+/// streams resolve. Nothing on the focus path mutates the MAUI Shadow or the
+/// card's stroke: both trigger blur/layout re-renders that jank low-end TV
+/// hardware. Rapid D-pad autorepeat coalesces: bursts apply chrome instantly
+/// (no animation pile-up) and the deliberate single move gets the full glide.
 /// </summary>
 public partial class MatchCardView : ContentView
 {
@@ -20,13 +24,20 @@ public partial class MatchCardView : ContentView
     private const string ResolvingPulseAnimation = "ResolvingPulse";
     private const uint HoverScaleMs = 130;
 
-    // 1.045 was invisible from the sofa; 1.09 plus the glow border reads at 10 feet.
+    // 1.045 was invisible from the sofa; 1.09 plus the bright ring reads at 10 feet.
     private const double FocusScale = 1.09;
     private const double ResolvingScale = 1.06;
 
-    private static readonly Color RestStrokeColor = Color.FromArgb("#26FFFFFF");
-    private static readonly Color FocusStrokeColor = Color.FromArgb("#AFCBFF");
-    private static readonly Color ResolvingStrokeColor = Color.FromArgb("#FFD54F");
+    // Focus moves closer together than this (D-pad autorepeat) skip animation:
+    // chrome snaps instantly so held-key runs stay fluid with no pile-up.
+    private const long FocusBurstMs = 200;
+
+    private static readonly SolidColorBrush FocusRingBrush = new(Color.FromArgb("#AFCBFF"));
+    private static readonly SolidColorBrush ResolvingRingBrush = new(Color.FromArgb("#FFD54F"));
+
+    // Shared across cards deliberately: a burst is a property of the D-pad
+    // stream, not of one card. UI-thread only.
+    private static long _lastFocusEnterTicks;
 
     private HomeLayoutState? _observedLayout;
     private MatchCardViewModel? _observedViewModel;
@@ -56,6 +67,7 @@ public partial class MatchCardView : ContentView
 #if WINDOWS
         CardOuter.HandlerChanged += OnWindowsCardHandlerChanged;
 #else
+        CardOuter.HandlerChanged += OnCardHandlerChanged;
         var hover = new PointerGestureRecognizer();
         hover.PointerEntered += OnPointerEntered;
         hover.PointerExited += OnPointerExited;
@@ -98,11 +110,15 @@ public partial class MatchCardView : ContentView
             else
             {
                 ApplyCornerRadius();
-                ApplyInteractionState(animateScale: false);
+                ApplyInteractionState(animate: false);
             }
 #else
             ApplyCornerRadius();
-            ApplyInteractionState(animateScale: false);
+            ApplyInteractionState(animate: false);
+
+            // Recycled containers can be rebound while still attached (no
+            // Loaded), so the new VM's armed initial focus must be honoured here.
+            EnableTvFocus();
 #endif
         }
     }
@@ -132,7 +148,7 @@ public partial class MatchCardView : ContentView
             else
 #endif
             {
-                ApplyInteractionState(animateScale: true);
+                ApplyInteractionState(animate: true);
             }
         }
     }
@@ -344,6 +360,7 @@ public partial class MatchCardView : ContentView
     {
         var radius = ViewModel?.Layout.CardCornerRadius ?? 14;
         CardOuter.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
+        FocusRing.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
     }
 
     private void OnLoaded(object? sender, EventArgs e)
@@ -353,7 +370,7 @@ public partial class MatchCardView : ContentView
             StartPulse();
         }
 
-        ApplyInteractionState(animateScale: false);
+        ApplyInteractionState(animate: false);
         EnableTvFocus();
     }
 
@@ -389,12 +406,21 @@ public partial class MatchCardView : ContentView
 #endif
 
     /// <summary>
+    /// Runs whenever the platform view is (re)created: the native focus wiring
+    /// below must follow the platform view, not the Loaded event, because MAUI
+    /// can swap handlers on virtualised items without an Unloaded/Loaded pair.
+    /// </summary>
+    private void OnCardHandlerChanged(object? sender, EventArgs e) => EnableTvFocus();
+
+    /// <summary>
     /// Android TV: MAUI Borders are not focusable natively, so D-pad focus
     /// would skip the cards. Make the platform view focusable and clickable —
     /// a clickable focused Android view fires Click on DPAD_CENTER/Enter.
     /// Wired only on TV idiom so phone taps don't double-fire alongside the
     /// TapGestureRecognizer. Also delivers the one-shot initial autofocus the
     /// view model arms on the first card when the grid first appears.
+    /// Idempotent and called from Loaded, HandlerChanged and BindingContext
+    /// changes so no timing/recycling path can leave a card unfocusable.
     /// </summary>
     private void EnableTvFocus()
     {
@@ -404,30 +430,67 @@ public partial class MatchCardView : ContentView
             return;
         }
 
-        if (CardOuter.Handler?.PlatformView is global::Android.Views.View native)
+        if (CardOuter.Handler?.PlatformView is not global::Android.Views.View native)
         {
-            native.Focusable = true;
-            native.FocusableInTouchMode = false;
-            if (!_tvClickWired)
-            {
-                _tvClickWired = true;
-                native.Click += OnNativeCardClick;
-                native.FocusChange += OnNativeFocusChange;
-            }
+            return;
+        }
 
-            if (ViewModel?.TryConsumeInitialFocus() == true)
-            {
-                // Post: the view must be attached and laid out before focusing.
-                native.Post(() => native.RequestFocus());
-            }
+        native.Focusable = true;
+        native.FocusableInTouchMode = false;
+        if (native is global::Android.Views.ViewGroup group)
+        {
+            // D-pad focus search must land on the card root, never on one of
+            // its children.
+            group.DescendantFocusability = global::Android.Views.DescendantFocusability.BlockDescendants;
+        }
+
+        if (!ReferenceEquals(_wiredNative, native))
+        {
+            UnwireNativeTvFocus();
+            _wiredNative = native;
+            native.Click += OnNativeCardClick;
+            native.FocusChange += OnNativeFocusChange;
+            native.KeyPress += OnNativeKeyPress;
+        }
+
+        if (ViewModel?.TryConsumeInitialFocus() == true)
+        {
+            // Post: the view must be attached and laid out before focusing.
+            native.Post(() => native.RequestFocus());
         }
 #endif
     }
 
 #if ANDROID
-    private bool _tvClickWired;
+    private global::Android.Views.View? _wiredNative;
+
+    private void UnwireNativeTvFocus()
+    {
+        if (_wiredNative is null)
+        {
+            return;
+        }
+
+        _wiredNative.Click -= OnNativeCardClick;
+        _wiredNative.FocusChange -= OnNativeFocusChange;
+        _wiredNative.KeyPress -= OnNativeKeyPress;
+        _wiredNative = null;
+    }
 
     private void OnNativeCardClick(object? sender, EventArgs e) => ViewModel?.Pick();
+
+    /// <summary>
+    /// The focused view sees D-pad keys before Android's default focus search:
+    /// <see cref="TvDpadFocusRouter"/> gives down/up Netflix-style column
+    /// memory and clamps left/right at row edges so focus never leaps rows.
+    /// Unhandled keys fall through to the default traversal.
+    /// </summary>
+    private void OnNativeKeyPress(object? sender, global::Android.Views.View.KeyEventArgs e)
+    {
+        e.Handled = e.Event?.Action == global::Android.Views.KeyEventActions.Down
+            && sender is global::Android.Views.View view
+            && TvDpadFocusRouter.TryHandle(view, e.KeyCode);
+    }
 
     private void OnNativeFocusChange(object? sender, global::Android.Views.View.FocusChangeEventArgs e)
     {
@@ -435,6 +498,7 @@ public partial class MatchCardView : ContentView
         {
             ViewModel?.FocusMoved();
             EnterHighlight();
+            EnsureFocusedCardVisible();
         }
         else
         {
@@ -447,9 +511,51 @@ public partial class MatchCardView : ContentView
     {
         ViewModel?.FocusMoved();
         EnterHighlight();
+        EnsureFocusedCardVisible();
     }
 
     private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
+
+    /// <summary>
+    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: ask
+    /// both CollectionViews to keep it fully on screen. Native RecyclerView
+    /// focus scrolling only reveals a card partially — enough to receive
+    /// focus, not enough to show the whole card plus its focus glow.
+    /// MakeVisible is a no-op when the card is already fully visible.
+    /// </summary>
+    private void EnsureFocusedCardVisible()
+    {
+        if (ViewModel is not { } card)
+        {
+            return;
+        }
+
+        CollectionView? strip = null;
+        for (Element? element = Parent; element != null; element = element.Parent)
+        {
+            if (element is not CollectionView list)
+            {
+                continue;
+            }
+
+            if (strip is null)
+            {
+                // Nearest list: the horizontal card strip of this row.
+                strip = list;
+                list.ScrollTo(card, position: ScrollToPosition.MakeVisible, animate: true);
+            }
+            else
+            {
+                // Outer list: the vertical league rows; scroll our row into view.
+                if (strip.BindingContext is LeagueRowViewModel row)
+                {
+                    list.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
+                }
+
+                break;
+            }
+        }
+    }
 
     private void OnUnloaded(object? sender, EventArgs e)
     {
@@ -475,12 +581,7 @@ public partial class MatchCardView : ContentView
 #endif
 
 #if ANDROID
-        if (_tvClickWired && CardOuter.Handler?.PlatformView is global::Android.Views.View native)
-        {
-            native.Click -= OnNativeCardClick;
-            native.FocusChange -= OnNativeFocusChange;
-            _tvClickWired = false;
-        }
+        UnwireNativeTvFocus();
 #endif
     }
 
@@ -507,76 +608,73 @@ public partial class MatchCardView : ContentView
 
     private void EnterHighlight()
     {
+        var now = Environment.TickCount64;
+        var burst = now - _lastFocusEnterTicks < FocusBurstMs;
+        _lastFocusEnterTicks = now;
+
         _isFocused = true;
-        ApplyInteractionState(animateScale: true);
-        RunSheenSweep();
+        ApplyInteractionState(animate: !burst);
+
+        // The sheen allocates an Animation per run: a nice flourish on a
+        // deliberate move, dead weight at autorepeat rate.
+        if (!burst)
+        {
+            RunSheenSweep();
+        }
     }
 
     private void ExitHighlight()
     {
+        // During a held-key run the leaving card snaps back instantly; the
+        // timestamp is not updated here (exits ride the enters' burst state).
+        var burst = Environment.TickCount64 - _lastFocusEnterTicks < FocusBurstMs;
+
         _isFocused = false;
-        ApplyInteractionState(animateScale: true);
+        ApplyInteractionState(animate: !burst);
     }
 
     /// <summary>
-    /// One place decides the card chrome, resolving > focused > rest:
-    /// gold pulsing veil while the picked card resolves streams, bright
-    /// glow border + strong scale under focus, quiet chrome otherwise.
+    /// One place decides the card chrome, resolving > focused > rest: gold
+    /// ring + pulsing veil while the picked card resolves streams, bright
+    /// ring + strong scale under focus, quiet chrome otherwise. Transitions
+    /// are transform/opacity only (Scale + ring alpha) — no stroke, shadow or
+    /// layout property changes — so a focus move never re-measures the card
+    /// or re-renders a shadow blur. Starting a ScaleTo/FadeTo replaces any
+    /// in-flight one for the same property, so rapid moves cannot pile up.
     /// </summary>
-    private void ApplyInteractionState(bool animateScale)
+    private void ApplyInteractionState(bool animate)
     {
         var resolving = ViewModel?.IsResolving == true;
 
+        var ringBrush = resolving ? ResolvingRingBrush : FocusRingBrush;
+        if (!ReferenceEquals(FocusRing.Stroke, ringBrush))
+        {
+            FocusRing.Stroke = ringBrush;
+        }
+
         if (resolving)
         {
-            SetChrome(ResolvingStrokeColor, strokeThickness: 3, glow: true);
             StartResolvingPulse();
         }
         else
         {
             StopResolvingPulse();
-            if (_isFocused)
-            {
-                SetChrome(FocusStrokeColor, strokeThickness: 3, glow: true);
-            }
-            else
-            {
-                SetChrome(RestStrokeColor, strokeThickness: 1, glow: false);
-            }
         }
 
         var targetScale = resolving ? ResolvingScale : _isFocused ? FocusScale : 1.0;
-        if (animateScale)
+        var targetRing = resolving || _isFocused ? 1.0 : 0.0;
+
+        if (animate)
         {
             _ = CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut);
+            _ = FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut);
         }
         else
         {
+            CardOuter.CancelAnimations();
+            FocusRing.CancelAnimations();
             CardOuter.Scale = targetScale;
-        }
-    }
-
-    private void SetChrome(Color strokeColor, double strokeThickness, bool glow)
-    {
-        CardOuter.Stroke = new SolidColorBrush(strokeColor);
-        CardOuter.StrokeThickness = strokeThickness;
-
-        if (CardOuter.Shadow is { } shadow)
-        {
-            if (glow)
-            {
-                shadow.Brush = new SolidColorBrush(strokeColor);
-                shadow.Opacity = 0.9f;
-                shadow.Radius = 26f;
-                shadow.Offset = new Point(0, 0);
-            }
-            else
-            {
-                shadow.Brush = Brush.Black;
-                shadow.Opacity = 0.35f;
-                shadow.Radius = 18f;
-                shadow.Offset = new Point(0, 6);
-            }
+            FocusRing.Opacity = targetRing;
         }
     }
 

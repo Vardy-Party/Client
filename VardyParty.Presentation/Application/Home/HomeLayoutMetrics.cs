@@ -24,12 +24,17 @@ public sealed record HomeLayoutMetrics(
 {
     public static HomeLayoutMetrics For(HomeLayoutClass layoutClass) => layoutClass switch
     {
-        // 10-foot UI: big targets, generous spacing, readable from the sofa.
+        // 10-foot UI: readable from the sofa without dominating the panel.
+        // Field-tested down twice from 440x232 (barely 2.5 rows on 1080p,
+        // reported oversized). 340x180 keeps 5 cards per row and ~3.6 league
+        // rows visible; type/badge sizes stay at the 10-foot floors (status
+        // chip >= 15, score >= 34, badge >= 56) and still fit the card box
+        // (inner 312x158: status row + badge + two team-name lines).
         HomeLayoutClass.Tv => new(
-            CardWidth: 440, CardHeight: 232, CardCornerRadius: 18, BadgeSize: 68,
-            TeamFontSize: 22, ScoreFontSize: 40, StatusFontSize: 17, AggregateFontSize: 15,
-            LeagueTitleFontSize: 26, LeagueIconSize: 34, PageTitleFontSize: 34, PageSubtitleFontSize: 18,
-            PagePadding: 48, RowSpacing: 36, CardSpacing: 20, BrandLogoSize: 76),
+            CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
+            TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
+            LeagueTitleFontSize: 24, LeagueIconSize: 30, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
+            PagePadding: 44, RowSpacing: 28, CardSpacing: 16, BrandLogoSize: 68),
 
         HomeLayoutClass.Desktop => new(
             CardWidth: 350, CardHeight: 192, CardCornerRadius: 14, BadgeSize: 54,

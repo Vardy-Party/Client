@@ -8,12 +8,24 @@ namespace VardyParty.WinUI
     /// </summary>
     public partial class App : MauiWinUIApplication
     {
+        private static int _firstChanceLogged;
+
         /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
+        /// Initializes the singleton application object. This is the first line of authored code
         /// executed, and as such is the logical equivalent of main() or WinMain().
         /// </summary>
         public App()
         {
+            // XAML-thread exceptions never reach AppDomain.UnhandledException or
+            // TaskScheduler.UnobservedTaskException (both wired in the shared
+            // App.xaml.cs): WinAppSDK 1.8 converts them into anonymous stowed
+            // 0xc000027b crashes unless this hook observes them first.
+            // Application.Current is assigned by the base Application constructor
+            // before this body runs, so wiring here is the earliest safe point and
+            // covers even InitializeComponent-time failures.
+            UnhandledException += OnXamlUnhandledException;
+            AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
+
             // Auth0 records that this ran; Sign in later throws
             // "redirection check on app activation was not detected" if it did not.
             // Always call it — including on a normal Launch — then only skip the
@@ -28,31 +40,32 @@ namespace VardyParty.WinUI
                 return;
             }
 
-            this.UnhandledException += OnXamlUnhandledException;
-            AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
             this.InitializeComponent();
         }
 
         /// <summary>
-        /// WinAppSDK 1.8 converts unhandled XAML-thread exceptions into
-        /// 0xc000027b stowed crashes (CoreMessagingXP / combase 0x800710DD)
-        /// with no managed stack. Log first, then mark handled so a managed
-        /// fault cannot take the process down before we see it.
+        /// Last-chance handler for exceptions thrown on the XAML UI thread.
+        /// Marking them handled keeps the app alive where possible; either way the
+        /// exception is logged instead of dying as an anonymous stowed exception.
         /// </summary>
         private static void OnXamlUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
         {
             try
             {
-                Platforms.Windows.WindowsEventLogger.Fatal("WinUI", "XAML UnhandledException", e.Exception);
+                // e.Exception can be marshaling-lossy for exceptions that crossed
+                // the WinRT boundary; e.Message preserves the original text.
+                Platforms.Windows.WindowsEventLogger.Fatal(
+                    "WinUI.Xaml",
+                    $"Unhandled XAML-thread exception: {e.Message}",
+                    e.Exception);
             }
             catch
             {
+                // The crash hook itself must never throw.
             }
 
             e.Handled = true;
         }
-
-        private static int _firstChanceLogged;
 
         /// <summary>
         /// 0xc000027b is WinUI stowing a managed exception. Capture it here

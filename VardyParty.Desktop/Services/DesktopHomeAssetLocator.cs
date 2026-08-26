@@ -11,13 +11,13 @@ namespace VardyParty.Desktop.Services;
 /// </summary>
 public sealed class DesktopHomeAssetLocator : IHomeAssetLocator
 {
-    public string? ResolveLeagueLogoPath(Game game)
+    public Task<string?> ResolveLeagueLogoPathAsync(Game game)
     {
         var webPath = LeagueLogoMapper.GetLogoForLeague(game);
-        if (string.IsNullOrWhiteSpace(webPath)) return null;
+        if (string.IsNullOrWhiteSpace(webPath)) return Task.FromResult<string?>(null);
 
         var relative = webPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
         var absolute = Path.Combine(AppContext.BaseDirectory, "wwwroot", relative);
-        return File.Exists(absolute) ? absolute : null;
+        return Task.FromResult(File.Exists(absolute) ? absolute : null);
     }
 }
