@@ -210,8 +210,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
     public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
 
-    /// <summary>Forget observed scores (e.g. on sign-out) so re-appearing games stay silent.</summary>
-    public void ResetScoreObservations() => _scoreChanges.Reset();
+    /// <summary>
+    /// Forget observed scores (e.g. on sign-out) so re-appearing games stay
+    /// silent. Dispatched because the detector is only ever touched on the UI
+    /// thread (see <see cref="Apply"/>); safe to call from any thread.
+    /// </summary>
+    public void ResetScoreObservations() => _dispatcher.Dispatch(() => _scoreChanges.Reset());
 
     public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
 
@@ -227,18 +231,23 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             : _leagueFilter.FilterGames(dict.ToDisplay());
         var rowModels = HomeRowsBuilder.Build(display);
 
+        _dispatcher.Dispatch(() => Apply(rowModels, display, dict));
+    }
+
+    private void Apply(IReadOnlyList<LeagueRowModel> rowModels, IReadOnlyList<Game> display, IDictionary<string, List<Game>>? dict)
+    {
+        var gameCount = display.Count;
+
         // Goal sting on genuine live score transitions only (never first load /
         // first appearance — the detector ignores a game's first observation).
+        // Observed here, inside the dispatch, so the detector's plain Dictionary
+        // is only ever touched on the UI thread — Rebuild itself can be entered
+        // from the games-stream publish thread and from UI-thread filter changes.
         if (_scoreChanges.Observe(display).Count > 0)
         {
             _sounds.Play(UiSound.Goal);
         }
 
-        _dispatcher.Dispatch(() => Apply(rowModels, display.Count, dict));
-    }
-
-    private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)
-    {
         _menu.RefreshKnownLeagues(dict);
         RefreshLeagueToggles();
 
