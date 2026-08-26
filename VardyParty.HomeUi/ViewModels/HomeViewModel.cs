@@ -317,10 +317,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             Apply(apply.Rows, apply.Display.Count, apply.Dict);
         }
 
-        TryApplyOnePendingImage();
-        TryApplyOnePendingImage();
-        TryApplyOnePendingImage();
-        TryApplyOnePendingImage();
+        DrainPendingImageAssigns();
     }
 
     private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)
@@ -381,16 +378,19 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void TryApplyOnePendingImage()
+    private void DrainPendingImageAssigns()
     {
-        Action? assign;
-        lock (_pendingLock)
+        while (true)
         {
-            if (_pendingUiAssign.Count == 0) return;
-            assign = _pendingUiAssign.Dequeue();
-        }
+            Action? assign;
+            lock (_pendingLock)
+            {
+                if (_pendingUiAssign.Count == 0) return;
+                assign = _pendingUiAssign.Dequeue();
+            }
 
-        assign();
+            assign();
+        }
     }
 
     private void RefreshLeagueToggles()
