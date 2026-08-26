@@ -59,15 +59,15 @@ public static partial class MatchStatusPresenter
             case MatchPhase.Penalties:
                 return "Pens";
             case MatchPhase.ExtraTime:
-            {
-                var text = game.DisplayStatusText();
-                return string.IsNullOrWhiteSpace(text) ? "ET" : text;
-            }
+                {
+                    var text = game.DisplayStatusText();
+                    return string.IsNullOrWhiteSpace(text) ? "ET" : text;
+                }
             case MatchPhase.Live:
-            {
-                var text = game.DisplayStatusText();
-                return string.IsNullOrWhiteSpace(text) ? "Live" : text;
-            }
+                {
+                    var text = game.DisplayStatusText();
+                    return string.IsNullOrWhiteSpace(text) ? "Live" : text;
+                }
             default:
                 return FormatStartTime(game.Start, nowLocal);
         }
