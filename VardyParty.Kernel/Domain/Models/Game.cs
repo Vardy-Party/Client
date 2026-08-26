@@ -1,4 +1,4 @@
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 public class Game
 {

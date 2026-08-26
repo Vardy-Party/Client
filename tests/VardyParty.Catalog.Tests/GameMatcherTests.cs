@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using AutoFixture;
 using VardyParty.Catalog;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Catalog.Tests
 {
     public class GameMatcherTests
     {

@@ -2,7 +2,7 @@ using System;
 using Xunit;
 using VardyParty.Catalog;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Catalog.Tests;
 
 public class BbcFixtureScheduleTests
 {

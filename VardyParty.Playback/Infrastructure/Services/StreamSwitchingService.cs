@@ -1,5 +1,5 @@
 using System.Reactive.Subjects;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Ports;
 
 namespace VardyParty.Playback;

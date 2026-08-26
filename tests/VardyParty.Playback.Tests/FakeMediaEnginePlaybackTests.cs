@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 /// <summary>
 /// Business tests of stream handling through <see cref="IMediaEngine"/> — the seam OS adapters
@@ -95,6 +96,26 @@ public class FakeMediaEnginePlaybackTests
         Assert.Equal(2, pool.GetHealthyStreams().Count);
         Assert.Equal(next.Channel, pool.GetCurrentStream()!.Stream.Channel);
         Assert.Equal(next.Url, engine.LastAttached);
+    }
+
+    [Fact]
+    public void FakeEngine_UserPrevious_AttachesPreviousPoolEntry()
+    {
+        // Arrange
+        var current = _fixture.Create<Stream>();
+        var next = _fixture.Create<Stream>();
+        var (session, pool, engine, host) = CreateHost(current, next);
+        host.AttachFromPool();
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+        host.Dispatch(MediaEngineEvent.UserNext());
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Act
+        host.Dispatch(MediaEngineEvent.UserPrevious());
+
+        // Assert
+        Assert.Equal(current.Channel, pool.GetCurrentStream()!.Stream.Channel);
+        Assert.Equal(current.Url, engine.LastAttached);
     }
 
     [Fact]
@@ -225,56 +246,112 @@ public class FakeMediaEnginePlaybackTests
             EngineEvent?.Invoke(this, MediaEngineEvent.Ended(generation));
     }
 
-    private sealed class EngineHost(
-        PlaybackSessionController session,
-        StreamSwitchingService pool,
-        FakeMediaEngine engine)
+    private sealed class EngineHost : IPlaybackCommandHost
     {
-        public void AttachFromPool()
+        private readonly PlaybackSessionController _session;
+        private readonly StreamSwitchingService _pool;
+        private readonly FakeMediaEngine _engine;
+        private readonly PlaybackPoolCommandActions _poolActions;
+
+        public EngineHost(
+            PlaybackSessionController session,
+            StreamSwitchingService pool,
+            FakeMediaEngine engine)
         {
-            var url = pool.GetCurrentStream()?.ResolvedM3U8Url;
-            if (string.IsNullOrWhiteSpace(url)) return;
-            Apply(session.BeginAttach(url, usedCachedUrl: false));
+            _session = session;
+            _pool = pool;
+            _engine = engine;
+            _poolActions = new PlaybackPoolCommandActions(
+                session,
+                pool,
+                resolveFresh: null,
+                attachViaSession: (url, usedCached, force) =>
+                {
+                    session.SetHealthyStreamCount(pool.GetHealthyStreams().Count);
+                    PlaybackCommandExecutor.Apply(
+                        PlaybackCommand.FromEffects(session.BeginAttach(url, usedCached, force)),
+                        this);
+                },
+                applyCommand: cmd => PlaybackCommandExecutor.Apply(cmd, this));
         }
 
-        public void Dispatch(MediaEngineEvent e) => Apply(session.Handle(e));
-
-        private void Apply(IReadOnlyList<PlaybackEffect> effects)
+        public void AttachFromPool()
         {
-            var cmd = PlaybackCommand.FromEffects(effects);
-            if (cmd.IsNoOp) return;
+            var url = _pool.GetCurrentStream()?.ResolvedM3U8Url;
+            if (string.IsNullOrWhiteSpace(url)) return;
+            PlaybackCommandExecutor.Apply(
+                PlaybackCommand.FromEffects(_session.BeginAttach(url, usedCachedUrl: false)),
+                this);
+        }
 
-            if (cmd.ClearResolvedUrl)
-            {
-                var current = pool.GetCurrentStream();
-                if (current != null) current.ResolvedM3U8Url = null;
-            }
+        public void Dispatch(MediaEngineEvent e)
+            => PlaybackCommandExecutor.Apply(PlaybackCommand.FromEffects(_session.Handle(e)), this);
 
-            if (cmd.RemoveCurrentFromPool)
-                pool.RemoveCurrentStream();
+        public void BeginIndexSwitchSuppression()
+        {
+        }
 
-            session.SetHealthyStreamCount(pool.GetHealthyStreams().Count);
+        public void EndIndexSwitchSuppression()
+        {
+        }
 
-            if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
-            {
-                engine.AttachAsync(cmd.AttachUrl).GetAwaiter().GetResult();
-            }
-            else if (cmd.AttachCurrentAfterRemove)
-            {
-                var url = pool.GetCurrentStream()?.ResolvedM3U8Url;
-                if (!string.IsNullOrWhiteSpace(url))
-                    Apply(session.BeginAttach(url, usedCachedUrl: false, force: true));
-            }
-            else if (cmd.SwitchPoolToNext)
-            {
-                pool.SwitchToNextStream();
-                AttachFromPool();
-            }
-            else if (cmd.SwitchPoolToPrevious)
-            {
-                pool.SwitchToPreviousStream();
-                AttachFromPool();
-            }
+        public void ClearCurrentResolvedUrl() => _poolActions.ClearCurrentResolvedUrl();
+
+        public void RemoveCurrentFromPool() => _poolActions.RemoveCurrentFromPool();
+
+        public void SyncHealthyStreamCount() => _poolActions.SyncHealthyStreamCount();
+
+        public void ReportFailed(string? reason)
+        {
+        }
+
+        public void ReportDeclined(string? reason)
+        {
+        }
+
+        public void ReportWorking()
+        {
+        }
+
+        public void MarkEstablished()
+        {
+            // Session established flag is owned by PlaybackSessionController.Handle(Ready).
+        }
+
+        public void RaiseBuffering(bool isBuffering)
+        {
+        }
+
+        public void Attach(string url, bool isRevert)
+            => _engine.AttachAsync(url).GetAwaiter().GetResult();
+
+        public void AttachCurrentAfterRemove()
+            => _poolActions.AttachCurrentFromPoolAsync().GetAwaiter().GetResult();
+
+        public void RetryFreshResolve()
+            => _poolActions.RetryFreshResolveAsync().GetAwaiter().GetResult();
+
+        public void StopEngine()
+            => _engine.StopAsync().GetAwaiter().GetResult();
+
+        public void CloseSession(string reason)
+        {
+        }
+
+        public void SwitchPoolToNext()
+        {
+            _pool.SwitchToNextStream();
+            AttachFromPool();
+        }
+
+        public void SwitchPoolToPrevious()
+        {
+            _poolActions.SwitchPoolToPrevious();
+            AttachFromPool();
+        }
+
+        public void NotifyApplyFailed(Exception exception)
+        {
         }
     }
 }

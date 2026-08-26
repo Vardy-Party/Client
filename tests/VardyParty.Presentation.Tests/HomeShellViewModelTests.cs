@@ -1,10 +1,11 @@
 using System.Collections.Generic;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Presentation;
 using Xunit;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Presentation.Tests;
 
 public class HomeShellViewModelTests
 {
@@ -62,6 +63,7 @@ public class HomeShellViewModelTests
             .With(g => g.Away, "Away City")
             .Create();
         sut.OnUserPicked(game);
+        sut.MarkPlayerSessionStarted();
 
         // Act
         var action = sut.DecideResumeAfterPlayer(
@@ -83,6 +85,7 @@ public class HomeShellViewModelTests
             .With(g => g.Away, "Away City")
             .Create();
         sut.OnUserPicked(game);
+        sut.MarkPlayerSessionStarted();
 
         // Act
         sut.ClearSelection();
@@ -90,6 +93,32 @@ public class HomeShellViewModelTests
         // Assert
         Assert.Null(sut.SelectedGame);
         Assert.False(sut.UserInitiatedResolution);
+        Assert.False(sut.PlayerSessionStarted);
         Assert.False(sut.IsSelected(game));
+    }
+
+    [Fact]
+    public void OnUserPicked_AfterPlayerStarted_ResetsSessionFlag()
+    {
+        // Arrange
+        var sut = new HomeShellViewModel();
+        var first = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var second = _fixture.Build<Game>()
+            .With(g => g.Home, "North Rovers")
+            .With(g => g.Away, "South Athletic")
+            .Create();
+        sut.OnUserPicked(first);
+        sut.MarkPlayerSessionStarted();
+
+        // Act
+        sut.OnUserPicked(second);
+
+        // Assert
+        Assert.Same(second, sut.SelectedGame);
+        Assert.True(sut.UserInitiatedResolution);
+        Assert.False(sut.PlayerSessionStarted);
     }
 }

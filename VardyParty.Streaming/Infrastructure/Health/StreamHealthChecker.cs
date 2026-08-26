@@ -2,8 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 
@@ -13,7 +12,6 @@ public class StreamHealthChecker(
     IOptions<StreamHealthSettings> streamHealthOptions) : IStreamHealthChecker
 {
     private const int MaxRecursionDepth = 3;
-    private readonly SemaphoreSlim _initLock = new(1, 1);
     private StreamHealthSettings StreamHealthOptions = streamHealthOptions.Value;
 
     public async Task<StreamHealth> CheckStreamHealthAsync(string m3u8Url, string refererUrl,

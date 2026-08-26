@@ -1,6 +1,8 @@
-# Phase 2 (separate) — Blazor WebView → MAUI XAML
+# Phase 3 — Blazor WebView → MAUI XAML
 
-**This is not part of phase 1.** Do not start it until [phase-2-plan.md](phase-2-plan.md) slice 1 (Home.razor → VMs) is done. Canvas only: shared VMs exist; `Home.razor` still owns too much of the shell.
+**This is not part of phase 1 or phase 2.** Phase 2 is Linux auth + `PlaybackCommandExecutor` only ([phase-2-plan.md](phase-2-plan.md)). Do not start Android `HomePage.xaml` until Phase 3, in the same UI pass as remaining Home policy moving into the shared VMs.
+
+Canvas only until then: shared VMs exist; `Home.razor` still owns too much of the shell.
 
 On the table for **Android performance** of the **home shell**. Player chrome and scores ticker are already native.
 
@@ -15,7 +17,7 @@ flowchart TB
     MVM["MenuViewModel"]
   end
 
-  subgraph Phase2["Phase 2 UI"]
+  subgraph Phase3["Phase 3 UI"]
     AH["Android HomePage.xaml<br/>CollectionView + flyout + auth"]
     WH["Windows HomePage.xaml<br/>later, optional"]
   end

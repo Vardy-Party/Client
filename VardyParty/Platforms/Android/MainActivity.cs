@@ -4,7 +4,7 @@ using Android.OS;
 using Android.Util;
 using Android.Views;
 using Microsoft.AspNetCore.Components;
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty
 {
@@ -45,23 +45,9 @@ namespace VardyParty
             }
         }
 
-        private static bool _suppressNextBack;
-
-        public static void SuppressNextBackNavigation()
-        {
-            _suppressNextBack = true;
-        }
-
         public override void OnBackPressed()
         {
             Log.Info("MainActivity", "[MAIN] OnBackPressed");
-            if (_suppressNextBack)
-            {
-                _suppressNextBack = false;
-                Log.Info("MainActivity", "[MAIN] Back suppressed by overlay");
-                return;
-            }
-
             if (_flyoutMenuOpen)
             {
                 Log.Info("MainActivity", "[MAIN] Back pressed while flyout open - closing menu");
@@ -122,6 +108,15 @@ namespace VardyParty
             RemoteKeyHandler.OnStop += RemoteStopHandler;
         }
 
+        protected override void OnResume()
+        {
+            base.OnResume();
+            if (!_overlayBackSuppression)
+            {
+                MainPage.Instance?.RestoreWebViewFocus();
+            }
+        }
+
         protected override void OnDestroy()
         {
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
@@ -174,8 +169,7 @@ namespace VardyParty
             }
             catch (InvalidOperationException ex)
             {
-                Log.Warn("MainActivity", $"[MAIN] Navigation not initialized: {ex.Message}; exiting app");
-                FinishAndRemoveTask();
+                Log.Warn("MainActivity", $"[MAIN] Navigation not initialized: {ex.Message}; staying on Home");
                 return;
             }
 

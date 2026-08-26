@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
-using VardyParty;
 using VardyParty.Auth;
 using VardyParty.Catalog;
+using VardyParty.Playback;
 using VardyParty.Streaming;
 
 namespace VardyParty.Hosting;
@@ -46,6 +46,8 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             });
         services.AddTransient<IApiService>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<IGamesCatalogApi>(sp => sp.GetRequiredService<ApiService>());
+        services.AddTransient<ResolveFreshPlaybackUrlAsync>(sp =>
+            PlaybackUrlResolver.Bind(sp.GetRequiredService<IApiService>()));
         services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()

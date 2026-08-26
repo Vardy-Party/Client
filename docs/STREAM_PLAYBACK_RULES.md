@@ -1,6 +1,6 @@
 # Stream Playback Rules
 
-**STATUS:** Android, Windows, and Linux hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
+**STATUS:** Android, Windows, Linux, and Apple hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
 **AUDIENCE:** Developers and AI assistants working on MAUI/Linux stream handling (Android, Android TV, Windows, Linux)  
 **RELATED:** [STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)
 
@@ -14,9 +14,13 @@
 | `IMediaEngine` | `VardyParty.Playback/Application/IMediaEngine.cs` | Slim OS contract (Attach/Stop/events/metrics only) |
 | `DelegatingMediaEngine` | `VardyParty.Playback/Infrastructure/DelegatingMediaEngine.cs` | Host adapter: OS plugs attach/stop/metrics, raises facts |
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
-| Android host | `NativeVideoActivity.Playback.cs` | ExoPlayer facts → `IMediaEngine` → session → pool/health/attach |
-| Windows host | `WindowsVideoPlayerService.cs` | WinUI facts → same loop; no local `RecoverFromFailed*` |
-| Linux host | `LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
+| `PlaybackCommandExecutor` | `VardyParty.Playback/Domain/PlaybackCommandExecutor.cs` | Interprets flags; every OS host uses this |
+| `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
+| Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
+| Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
+| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
+| iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
+| MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
 
 ---
@@ -35,7 +39,7 @@ ExoPlayer / WinUI / FakeMediaEngine  →  IMediaEngine (facts only)
                          host executes PlaybackCommand (pool, resolve, health)
 ```
 
-`FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android, Windows, and Linux do.
+`FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android, Windows, Linux, and Apple do.
 
 **Do not share one fat player interface** (`INativeVideoPlayerService` stays a MAUI/Linux launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
 
@@ -48,7 +52,7 @@ Remaining Core test gaps (not OS): Home vs `/player` dual path (`VideoPlayer.raz
 One set of business rules for stream **selection → start → survive → switch → recover**.  
 OS code should only attach/detach media and surface metrics/errors. Shared Core owns decisions.
 
-Today: selection/pre-play is shared; **runtime recovery is Core** (`PlaybackSessionController`) on Android, Windows, and Linux. Hosts only attach/stop and raise engine facts.
+Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux, and Apple. Hosts only attach/stop and raise engine facts.
 
 ---
 
@@ -63,8 +67,11 @@ Home.razor
             └─ INativeVideoPlayerService.PlayVideoAsync(...)
                  ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
                  ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
-                 └─ Linux: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC)
-                      all: engine facts → PlaybackSessionController → PlaybackCommand
+                 ├─ Linux: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC)
+                 ├─ iOS: Platforms/iOS + AppleVideoPlayerServiceBase (AVPlayer)
+                 └─ MacCatalyst: Platforms/MacCatalyst + AppleVideoPlayerServiceBase (AVPlayer)
+                      all: engine facts → PlaybackSessionController → PlaybackCommandExecutor
+                           pool/retry: PlaybackPoolCommandActions in VardyParty.Playback
 ```
 
 **Alternate path (weaker):** `VideoPlayer.razor` (`/player/...`) — single URL, no orchestrator failover pool.

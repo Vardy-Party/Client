@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
-using VardyParty.Models;
-using Stream = VardyParty.Models.Stream;
+using VardyParty.Kernel;
+using Stream = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 

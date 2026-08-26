@@ -2,11 +2,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
 using Moq;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Streaming.Tests;
 
 public class StreamHealthReporterTests
 {

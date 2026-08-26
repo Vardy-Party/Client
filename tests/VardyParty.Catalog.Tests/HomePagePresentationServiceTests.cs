@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Subjects;
 using AutoFixture;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Catalog;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Catalog.Tests
 {
     public class HomePagePresentationServiceTests
     {

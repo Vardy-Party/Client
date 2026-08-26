@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace VardyParty.Tests;
+namespace VardyParty.TestSupport;
 
 /// <summary>
 /// AutoFixture + AutoMoq specimen factory. Tests should <c>Build</c>/<c>Create</c>/<c>GetMock</c>

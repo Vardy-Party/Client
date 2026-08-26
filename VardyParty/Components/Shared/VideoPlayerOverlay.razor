@@ -1,4 +1,4 @@
-@using VardyParty.Models
+@using VardyParty.Kernel
 @using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IApiService ApiService
@@ -37,14 +37,15 @@
                                 <span class="stream-name">@stream.Stream.Channel</span>
                                 @{
                                     var sourceLabel = stream.Stream.CatalogSourceBadgeLabel;
+                                    var reputationLabel = StreamReputationParser.ToDisplayLabel(stream.Stream.Reputation);
                                 }
                                 @if (!string.IsNullOrEmpty(sourceLabel))
                                 {
                                     <span class="source-badge source-badge-@sourceLabel.ToLowerInvariant()">@sourceLabel</span>
                                 }
-                                @if (!string.IsNullOrEmpty(stream.Stream.Reputation))
+                                @if (!string.IsNullOrEmpty(reputationLabel))
                                 {
-                                    <span class="reputation">@stream.Stream.Reputation</span>
+                                    <span class="reputation">@reputationLabel</span>
                                 }
                                 <span class="quality">@stream.GetQualityDisplay()</span>
                                 @if (isSelected)

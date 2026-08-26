@@ -10,7 +10,7 @@ using Xunit;
 using Xunit.Abstractions;
 using VardyParty.Catalog;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Catalog.Tests;
 
 /// <summary>
 /// Baseline: captured BBC scores-fixtures HTML from 2026-08-01 (319 fixtures, ~1.9MB).

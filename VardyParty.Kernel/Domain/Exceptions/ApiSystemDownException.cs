@@ -1,4 +1,4 @@
-namespace VardyParty.Exceptions;
+namespace VardyParty.Kernel;
 
 /// <summary>
 /// Exception thrown when the Games API returns HTTP 500 after all retries

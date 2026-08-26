@@ -63,7 +63,7 @@ flowchart BT
 | **Presentation** | Shared VMs | `HomeShellViewModel`, `MenuViewModel`, `HomePlaybackIntent` (`SelectionState` lives in Kernel) |
 | **Hosting** | Composition | `AddVardyParty()` — only project that references every domain |
 
-**Hosts** (`VardyParty`, `VardyParty.Linux`) implement OS adapters: Auth0 vs Linux PKCE, nested `PlayerSession` / `NativeVideoActivity` / LibVLC. Nested player sessions are **not** DI services.
+**Hosts** (`VardyParty`, `VardyParty.Linux`) implement OS adapters. MAUI platform code lives under `Platforms/Android`, `Platforms/Windows`, `Platforms/iOS`, and `Platforms/MacCatalyst` (folder = TFM). Shared iOS+MacCatalyst AVPlayer session wiring is `#if IOS || MACCATALYST` in the MAUI project root (`AppleVideoPlayerServiceBase`, namespace `VardyParty`) — not a `Platforms/Apple` folder. Nested player sessions are **not** DI services.
 
 Ticker **policy** stays in Catalog. Ticker **animation** stays in the host (already native on Android/Windows).
 

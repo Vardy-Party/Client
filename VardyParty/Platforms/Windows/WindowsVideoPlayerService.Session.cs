@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Controls;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
@@ -18,7 +18,6 @@ using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
 using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
-using VardyParty.Extensions;
 
 namespace VardyParty.Platforms.Windows
 {
@@ -104,6 +103,7 @@ namespace VardyParty.Platforms.Windows
             private IStreamResolutionOrchestrator streamResolutionOrchestrator = null!;
             private PlaybackSessionController session = null!;
             private DelegatingMediaEngine engine = null!;
+            private PlaybackPoolCommandActions pool = null!;
             private IDisposable? healthyStreamsSubscription;
             private IDisposable? currentIndexSubscription;
             private TypedEventHandler<MediaPlaybackSession, object>? playbackStateChangedHandler;
@@ -219,6 +219,12 @@ namespace VardyParty.Platforms.Windows
                     streamResolutionOrchestrator = _host._services.GetRequiredService<IStreamResolutionOrchestrator>();
                     session = new PlaybackSessionController();
                     engine = new DelegatingMediaEngine();
+                    pool = new PlaybackPoolCommandActions(
+                        session,
+                        switchingService,
+                        _host._resolveFresh,
+                        (url, usedCached, force) => MainThread.BeginInvokeOnMainThread(() => AttachViaSession(url, usedCached, force)),
+                        cmd => MainThread.BeginInvokeOnMainThread(() => ApplyPlaybackCommand(cmd)));
                     engine.MetricsHandler = () => _host.GetCurrentMetrics();
 
 

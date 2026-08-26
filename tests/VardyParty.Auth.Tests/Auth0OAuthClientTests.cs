@@ -7,11 +7,11 @@ using System.Threading.Tasks;
 using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using VardyParty.Configuration;
 using Xunit;
 using VardyParty.Auth;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Auth.Tests;
 
 public class Auth0OAuthClientTests
 {
@@ -75,6 +75,35 @@ public class Auth0OAuthClientTests
         Assert.Equal("authorization_pending", result.Error);
     }
 
+    [Fact]
+    public async Task ExchangeAuthorizationCodeAsync_PostsPkceVerifier()
+    {
+        // Arrange
+        var settings = CreateNorthgateSettings();
+        var body = """{"access_token":"oak-lane-access","refresh_token":"oak-lane-refresh","expires_in":3600}""";
+        var inner = new JsonHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(inner);
+        var factory = _fixture.GetMock<IHttpClientFactory>();
+        factory.Setup(clientFactory => clientFactory.CreateClient(Auth0HttpClients.Name)).Returns(http);
+        var sut = new Auth0OAuthClient(factory.Object, NullLogger<Auth0OAuthClient>.Instance);
+
+        // Act
+        var result = await sut.ExchangeAuthorizationCodeAsync(
+            settings,
+            "oak-code",
+            "http://127.0.0.1:4280/callback",
+            "oak-verifier",
+            CancellationToken.None);
+
+        // Assert
+        Assert.True(result.IsSuccess);
+        Assert.Equal("oak-lane-access", result.AccessToken);
+        Assert.Equal("oak-lane-refresh", result.RefreshToken);
+        Assert.Contains("/oauth/token", inner.LastRequestUri?.AbsolutePath, StringComparison.Ordinal);
+        Assert.Contains("code_verifier=oak-verifier", inner.LastRequestBody, StringComparison.Ordinal);
+        Assert.Contains("grant_type=authorization_code", inner.LastRequestBody, StringComparison.Ordinal);
+    }
+
     private Auth0Settings CreateNorthgateSettings()
         => _fixture.Build<Auth0Settings>()
             .With(settings => settings.Domain, "id.northgate.test")
@@ -86,15 +115,18 @@ public class Auth0OAuthClientTests
     private sealed class JsonHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
         public Uri? LastRequestUri { get; private set; }
+        public string? LastRequestBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(status)
+            if (request.Content != null)
+                LastRequestBody = await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(status)
             {
                 RequestMessage = request,
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
-            });
+            };
         }
     }
 }

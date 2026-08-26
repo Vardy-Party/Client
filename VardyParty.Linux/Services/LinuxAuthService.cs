@@ -6,7 +6,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Auth;
-using VardyParty.Configuration;
 
 namespace VardyParty.Linux.Services;
 
@@ -36,7 +35,7 @@ public class LinuxAuthService : Auth0TokenSession
         if (HasValidToken)
             return new AuthLoginResult(true, AccessToken, null);
 
-        if (!TryGetLoopbackRedirectUri(out var redirectUri))
+        if (!Auth0Pkce.TryGetLoopbackRedirectUri(Settings.RedirectUri, out var redirectUri))
         {
             Logger.LogWarning("[Auth0/Linux] RedirectUri is not loopback; falling back to device login");
             var deviceLogin = await StartDeviceLoginAsync(cancellationToken);
@@ -51,18 +50,15 @@ public class LinuxAuthService : Auth0TokenSession
             return await PollDeviceLoginAsync(deviceLogin.DeviceCode, cancellationToken);
         }
 
-        var state = CreateRandomBase64Url(32);
-        var codeVerifier = CreateRandomBase64Url(64);
-        var codeChallenge = CreateCodeChallenge(codeVerifier);
-        var authUrl = BuildAuthorizeUrl(redirectUri, state, codeChallenge);
+        var pkce = Auth0Pkce.Start(Settings, redirectUri);
 
         try
         {
             using var listener = new HttpListener();
-            listener.Prefixes.Add(BuildListenerPrefix(redirectUri));
+            listener.Prefixes.Add(Auth0Pkce.BuildListenerPrefix(redirectUri));
             listener.Start();
 
-            if (!OpenBrowser(authUrl))
+            if (!OpenBrowser(pkce.AuthorizeUrl))
             {
                 listener.Stop();
                 return new AuthLoginResult(false, null,
@@ -73,29 +69,13 @@ public class LinuxAuthService : Auth0TokenSession
             if (callback == null)
                 return new AuthLoginResult(false, null, "Timed out waiting for Auth0 login callback.");
 
-            if (!string.IsNullOrWhiteSpace(callback.Error))
-                return new AuthLoginResult(false, null, callback.ErrorDescription ?? callback.Error);
+            var callbackFailure = Auth0Pkce.DescribeCallbackFailure(
+                pkce.State, callback.State, callback.Code, callback.Error, callback.ErrorDescription);
+            if (callbackFailure != null)
+                return new AuthLoginResult(false, null, callbackFailure);
 
-            if (!string.Equals(callback.State, state, StringComparison.Ordinal))
-                return new AuthLoginResult(false, null, "Auth0 callback state mismatch.");
-
-            if (string.IsNullOrWhiteSpace(callback.Code))
-                return new AuthLoginResult(false, null, "Auth0 callback did not include authorization code.");
-
-            var exchanged = await ExchangeAuthorizationCodeAsync(callback.Code, redirectUri.ToString(), codeVerifier,
-                cancellationToken);
-            if (!exchanged.IsSuccess)
-                return new AuthLoginResult(false, null, exchanged.Error ?? "Auth0 token exchange failed.");
-
-            if (!AcceptAccessToken(exchanged.AccessToken!))
-            {
-                await LogoutAsync();
-                return new AuthLoginResult(false, null,
-                    $"Authenticated but missing required role '{Settings.RequiredRole}'.");
-            }
-
-            await ApplyTokensAsync(exchanged.AccessToken!, exchanged.ExpiresIn, exchanged.RefreshToken);
-            return new AuthLoginResult(true, AccessToken, null);
+            return await CompleteAuthorizationCodeAsync(
+                callback.Code!, redirectUri.ToString(), pkce.CodeVerifier, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -275,62 +255,6 @@ public class LinuxAuthService : Auth0TokenSession
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
-    private string BuildAuthorizeUrl(Uri redirectUri, string state, string codeChallenge)
-    {
-        var authEndpoint = Auth0OAuthClient.BuildUrl(Settings.Domain, "/authorize");
-        var scope = AuthTokenLifetime.EnsureOfflineAccess(Settings.Scope);
-
-        var query = new Dictionary<string, string?>
-        {
-            ["response_type"] = "code",
-            ["client_id"] = Settings.ClientId,
-            ["redirect_uri"] = redirectUri.ToString(),
-            ["scope"] = scope,
-            ["audience"] = Settings.Audience,
-            ["state"] = state,
-            ["code_challenge"] = codeChallenge,
-            ["code_challenge_method"] = "S256"
-        };
-
-        var queryString = string.Join("&", query
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
-            .Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value!)}"));
-
-        return $"{authEndpoint}?{queryString}";
-    }
-
-    private bool TryGetLoopbackRedirectUri(out Uri uri)
-    {
-        if (Uri.TryCreate(Settings.RedirectUri, UriKind.Absolute, out var parsed) &&
-            (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps) &&
-            (parsed.IsLoopback || string.Equals(parsed.Host, "localhost", StringComparison.OrdinalIgnoreCase)))
-        {
-            uri = parsed;
-            return true;
-        }
-
-        uri = null!;
-        return false;
-    }
-
-    private static string BuildListenerPrefix(Uri redirectUri)
-    {
-        var path = string.IsNullOrWhiteSpace(redirectUri.AbsolutePath) || redirectUri.AbsolutePath == "/"
-            ? "/"
-            : redirectUri.AbsolutePath.TrimEnd('/') + "/";
-        var port = redirectUri.IsDefaultPort ? 80 : redirectUri.Port;
-        return $"{redirectUri.Scheme}://{redirectUri.Host}:{port}{path}";
-    }
-
-    private static string CreateRandomBase64Url(int byteLength)
-        => Base64UrlEncode(RandomNumberGenerator.GetBytes(byteLength));
-
-    private static string CreateCodeChallenge(string codeVerifier)
-        => Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
-
-    private static string Base64UrlEncode(byte[] input)
-        => Convert.ToBase64String(input).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
     private bool OpenBrowser(string url)
     {
         try
@@ -401,43 +325,6 @@ public class LinuxAuthService : Auth0TokenSession
         return null;
     }
 
-    private async Task<TokenExchangeResult> ExchangeAuthorizationCodeAsync(
-        string code,
-        string redirectUri,
-        string codeVerifier,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var payload = await Oauth.ExchangeAuthorizationCodeAsync(
-                Settings, code, redirectUri, codeVerifier, cancellationToken);
-            if (payload.IsSuccess && !string.IsNullOrWhiteSpace(payload.AccessToken))
-            {
-                return new TokenExchangeResult
-                {
-                    IsSuccess = true,
-                    AccessToken = payload.AccessToken,
-                    RefreshToken = payload.RefreshToken,
-                    ExpiresIn = payload.ExpiresIn > 0 ? payload.ExpiresIn : 3600
-                };
-            }
-
-            return new TokenExchangeResult
-            {
-                IsSuccess = false,
-                Error = payload.ErrorDescription ?? payload.Error ?? "Unknown token exchange failure"
-            };
-        }
-        catch (Exception ex)
-        {
-            return new TokenExchangeResult
-            {
-                IsSuccess = false,
-                Error = ex.Message
-            };
-        }
-    }
-
     private sealed class StoredTokenPayload
     {
         public string? AccessToken { get; init; }
@@ -452,14 +339,5 @@ public class LinuxAuthService : Auth0TokenSession
         public string? State { get; init; }
         public string? Error { get; init; }
         public string? ErrorDescription { get; init; }
-    }
-
-    private sealed class TokenExchangeResult
-    {
-        public bool IsSuccess { get; init; }
-        public string? AccessToken { get; init; }
-        public string? RefreshToken { get; init; }
-        public int ExpiresIn { get; init; }
-        public string? Error { get; init; }
     }
 }

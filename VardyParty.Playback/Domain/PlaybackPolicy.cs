@@ -1,4 +1,4 @@
-using VardyParty.Models;
+using VardyParty.Kernel;
 
 namespace VardyParty.Playback;
 

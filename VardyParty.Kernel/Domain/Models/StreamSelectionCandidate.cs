@@ -1,6 +1,6 @@
-﻿namespace VardyParty.Models;
+﻿using StreamModel = VardyParty.Kernel.Stream;
 
-using StreamModel = VardyParty.Models.Stream;
+namespace VardyParty.Kernel;
 
 public class StreamSelectionCandidate
 {

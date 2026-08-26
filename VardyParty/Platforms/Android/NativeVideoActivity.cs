@@ -11,7 +11,7 @@ using AndroidX.Media3.ExoPlayer.Hls;
 using AndroidX.Media3.DataSource;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Playback;
 using Microsoft.Extensions.Logging;
 using System.Threading;
@@ -43,6 +43,7 @@ namespace VardyParty.Platforms.Android
                 StopAndReleasePlayer(release: false);
                 return Task.CompletedTask;
             };
+            EnsurePool();
         }
 
         private static string? MapCodecToFriendlyName(string? codec)
@@ -67,114 +68,22 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private async Task AttemptManifestFallbackAsync(string m3u8Url)
-        {
-            try
-            {
-                _logger?.LogInformation("[NativeVideoActivity] Attempting manifest fallback for {Url}", m3u8Url);
-                // Download manifest and save to temp file, then try to play from file:// URI
-                using var http = new System.Net.Http.HttpClient();
-                // Use a browser-like UA consistently
-                http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-                if (!string.IsNullOrEmpty(_refererUrl))
-                {
-                    if (Uri.TryCreate(_refererUrl, UriKind.Absolute, out var ruri))
-                        http.DefaultRequestHeaders.Referrer = ruri;
-                }
-
-                var resp = await http.GetAsync(m3u8Url);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    _logger?.LogWarning("[NativeVideoActivity] Manifest fallback download failed: {Status}", resp.StatusCode);
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback failed" }); }
-                    catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
-                    return;
-                }
-
-                var content = await resp.Content.ReadAsStringAsync();
-                if (string.IsNullOrWhiteSpace(content))
-                {
-                    _logger?.LogWarning("[NativeVideoActivity] Manifest fallback empty content");
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest empty" }); }
-                    catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
-                    return;
-                }
-
-                // Store manifest in-memory and serve it via intercepting data source so we never use file://
-                try
-                {
-                    _inMemoryManifestMap ??= new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>();
-                    var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-                    _inMemoryManifestMap[m3u8Url] = bytes;
-
-                    // Build manifest entry map expected by factory
-                    var manifestMap = new System.Collections.Generic.Dictionary<string, ManifestCacheEntry>();
-                    foreach (var kv in _inMemoryManifestMap)
-                    {
-                        manifestMap[kv.Key] = new ManifestCacheEntry { Data = kv.Value, Added = DateTimeOffset.UtcNow };
-                    }
-
-                    RunOnUiThread(() =>
-                    {
-                        try
-                        {
-                            var headers = new System.Collections.Generic.Dictionary<string, string?>
-                            {
-                                ["Referer"] = _refererUrl ?? string.Empty,
-                                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            };
-                            var headerFactory = new HeaderInjectingDataSourceFactory(headers);
-                            var interceptFactory = new InMemoryInterceptingDataSourceFactory(headerFactory, manifestMap, maxEntries: 5, maxAge: TimeSpan.FromSeconds(60));
-                            var mediaBuilder = new MediaItem.Builder();
-                            mediaBuilder.SetUri(m3u8Url);
-                            mediaBuilder.SetMimeType(MimeTypes.ApplicationM3u8);
-                            var mediaItem = mediaBuilder.Build()
-                                ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                            var mediaSource = new HlsMediaSource.Factory(interceptFactory).CreateMediaSource(mediaItem)
-                                ?? throw new InvalidOperationException("CreateMediaSource returned null.");
-                            _player?.SetMediaSource(mediaSource);
-                            _player?.Prepare();
-                            _player?.Play();
-                            _logger?.LogInformation("[NativeVideoActivity] Serving manifest from memory for {Url}", m3u8Url);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogWarning(ex, "[NativeVideoActivity] Fallback play failed (in-memory)");
-                            try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Fallback play failed" }); }
-                            catch (Exception innerEx) { LogIgnored("ReportPlaybackResult", innerEx); }
-                        }
-                    });
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "[NativeVideoActivity] Manifest fallback in-memory exception");
-                    try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); }
-                    catch (Exception innerEx) { LogIgnored("ReportPlaybackResult", innerEx); }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Manifest fallback exception");
-                try { VardyParty.Platforms.Android.AndroidVideoPlayerService.ReportPlaybackResult(new PlaybackResult { Success = false, Message = "Manifest fallback exception" }); }
-                catch (Exception reportEx) { LogIgnored("ReportPlaybackResult", reportEx); }
-            }
-        }
-
         // Support post-construction injection for true constructor-like DI via activity factory / lifecycle hook
         public void InjectServices(
             IStreamSwitchingService? switching,
             ILogger<NativeVideoActivity>? logger,
             IStreamHealthReporter? healthReporter = null,
             IEnrichedGameService? enrichedGames = null,
-            IApiService? api = null,
+            ResolveFreshPlaybackUrlAsync? resolveFresh = null,
             IStreamResolutionOrchestrator? orchestrator = null)
         {
             if (switching != null) _switching = switching;
             if (logger != null) _logger = logger;
             if (healthReporter != null) _healthReporter = healthReporter;
             if (enrichedGames != null) _enrichedGames = enrichedGames;
-            if (api != null) _api = api;
+            if (resolveFresh != null) _resolveFresh = resolveFresh;
             if (orchestrator != null) _orchestrator = orchestrator;
+            EnsurePool();
         }
 
         private void LogIgnored(string operation, Exception ex)
@@ -252,7 +161,7 @@ namespace VardyParty.Platforms.Android
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
         private IEnrichedGameService? _enrichedGames;
-        private IApiService? _api;
+        private ResolveFreshPlaybackUrlAsync? _resolveFresh;
         private IStreamResolutionOrchestrator? _orchestrator;
         private Timer? _healthReportTimer;
         private bool _isPreparing;
@@ -264,9 +173,8 @@ namespace VardyParty.Platforms.Android
         private string _currentLeague = string.Empty;
         private string _currentHomeTeam = string.Empty;
         private string _currentAwayTeam = string.Empty;
-        private System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>? _inMemoryManifestMap;
         private string _playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
-        private VardyParty.Models.PlayerOverlayInfo? _lastOverlayInfo;
+        private VardyParty.Kernel.PlayerOverlayInfo? _lastOverlayInfo;
         private global::Android.Widget.ImageButton? _menuButton;
         private LinearLayout? _menuPanel;
         private global::Android.Views.View? _menuBackdrop;
@@ -1175,7 +1083,6 @@ namespace VardyParty.Platforms.Android
                     var info = _activity.BuildOverlayInfoFromCurrentStream();
                     if (info != null)
                     {
-                        VardyParty.Platforms.Android.AndroidVideoPlayerService.SetOverlayInfo(info);
                         // capture video size from player if available
                         try
                         {
@@ -1207,15 +1114,6 @@ namespace VardyParty.Platforms.Android
                 {
                     _activity._logger?.LogInformation("[NativeVideoActivity] Playback ended");
                     _metadataReported = false;
-                    try
-                    {
-                        if (!string.IsNullOrEmpty(_activity._m3u8Url) && _activity._inMemoryManifestMap != null)
-                        {
-                            _activity._inMemoryManifestMap.TryRemove(_activity._m3u8Url, out _);
-                            global::Android.Util.Log.Info("VardyParty", $"[NativeVideoActivity] Cleared in-memory manifest for {_activity._m3u8Url}");
-                        }
-                    }
-                    catch (Exception ex) { _activity.LogIgnored("ClearInMemoryManifest", ex); }
 
                     _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
@@ -1228,10 +1126,7 @@ namespace VardyParty.Platforms.Android
                 if (!_metadataReported && tracks != null && _activity._player != null)
                 {
                     _metadataReported = true;
-                    _activity._logger?.LogInformation("[NativeVideoActivity] Tracks changed - reporting playback started with metadata");
-
-                    // Now extract real metadata from the player and report
-                    _activity.ReportPlaybackStarted();
+                    _activity._logger?.LogInformation("[NativeVideoActivity] Tracks changed - metadata available");
                 }
             }
 

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace VardyParty.Models;
+namespace VardyParty.Kernel;
 
 public class StreamHealthReport
 {
@@ -56,7 +56,7 @@ public class RecommendationResponse
     public bool HasData { get; set; }
 
     [JsonPropertyName("confidence")]
-    public string Confidence { get; set; } = string.Empty; // "high" | "medium" | "low" | "none"
+    public RecommendationConfidence Confidence { get; set; }
 }
 
 public class RecommendationItem
@@ -66,6 +66,13 @@ public class RecommendationItem
 
     [JsonPropertyName("streamName")]
     public string? StreamName { get; set; }
+
+    /// <summary>
+    /// Per-stream freshness. Playback tries high-confidence recommended
+    /// streams before low-confidence ones.
+    /// </summary>
+    [JsonPropertyName("confidence")]
+    public RecommendationConfidence Confidence { get; set; }
 
     [JsonPropertyName("meta")]
     public StreamMeta? Meta { get; set; }

@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using VardyParty.Auth;
+using VardyParty.Kernel;
 
-namespace VardyParty.Configuration;
+namespace VardyParty.Hosting;
 
 /// <summary>
 /// Validates that required configuration sections exist in appsettings.json.

@@ -8,12 +8,12 @@ using AutoFixture;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
-using VardyParty.Configuration;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using VardyParty.Catalog;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Catalog.Tests;
 
 public class BbcFixturesServiceTests
 {

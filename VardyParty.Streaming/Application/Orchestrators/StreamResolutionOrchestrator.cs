@@ -1,8 +1,8 @@
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using VardyParty.Ports;
-using StreamModel = VardyParty.Models.Stream;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
@@ -21,6 +21,7 @@ public class StreamResolutionOrchestrator(
 
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
+    private readonly SemaphoreSlim _startGate = new(1, 1);
 
     private bool _hasBufferingOccurred;
     private int _healthyStreamCount;
@@ -36,6 +37,28 @@ public class StreamResolutionOrchestrator(
         Game game,
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken = default)
+    {
+        if (!await _startGate.WaitAsync(TimeSpan.Zero, CancellationToken.None))
+        {
+            logger.LogWarning("[StreamResolution] Ignoring overlapping StartAsync for {Home} vs {Away}",
+                game.DisplayHome, game.DisplayAway);
+            return new StreamResolutionOutcome();
+        }
+
+        try
+        {
+            return await StartCoreAsync(game, launcher, cancellationToken);
+        }
+        finally
+        {
+            _startGate.Release();
+        }
+    }
+
+    private async Task<StreamResolutionOutcome> StartCoreAsync(
+        Game game,
+        IPlaybackLauncher launcher,
+        CancellationToken cancellationToken)
     {
         Reset();
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);

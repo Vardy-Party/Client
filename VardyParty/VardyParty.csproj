@@ -280,6 +280,9 @@
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
+    <ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+    </ProjectReference>
     <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>

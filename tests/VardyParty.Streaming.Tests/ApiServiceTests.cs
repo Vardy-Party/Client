@@ -2,17 +2,17 @@ using Moq;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using VardyParty.Models;
+using VardyParty.Kernel;
 using Xunit;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Http;
 using System.Text.Json;
 using AutoFixture;
 using Microsoft.Extensions.Options;
-using VardyParty.Configuration;
 using VardyParty.Streaming;
+using VardyParty.TestSupport;
 
-namespace VardyParty.Tests
+namespace VardyParty.Streaming.Tests
 {
     public class ApiServiceTests
     {
@@ -44,8 +44,6 @@ namespace VardyParty.Tests
             var api = new ApiService(
                 client,
                 NullLogger<ApiService>.Instance,
-                _fixture.GetMock<IStreamResolver>().Object,
-                _fixture.GetMock<IStreamDeduplicator>().Object,
                 _fixture.GetMock<ILocalLanPlayService>().Object,
                 Options.Create(gameApiSettings),
                 Options.Create(apiSettings));
@@ -57,6 +55,19 @@ namespace VardyParty.Tests
             Assert.True(all.ContainsKey(league));
             Assert.Equal(league, all[league][0].League);
             Assert.Equal(league, all[league][0].ApiLeague);
+        }
+
+        [Fact]
+        public void IApiService_DoesNotExposeGetEnrichedStreamsAsync()
+        {
+            // Arrange
+            var apiSurface = typeof(IApiService);
+
+            // Act
+            var removed = apiSurface.GetMethod("GetEnrichedStreamsAsync");
+
+            // Assert
+            Assert.Null(removed);
         }
 
         private class FakeHttpMessageHandler(string responseJson) : HttpMessageHandler

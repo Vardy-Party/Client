@@ -1,30 +1,21 @@
 using Microsoft.Extensions.Logging;
-using VardyParty.Models;
+using VardyParty.Kernel;
+using StreamModel = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
 
 public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDeduplicator
 {
-    private static readonly Dictionary<string, int> ReputationRanking = new(StringComparer.OrdinalIgnoreCase)
-    {
-        { "Very Good", 5 },
-        { "Good", 4 },
-        { "OK", 3 },
-        { "Poor", 2 },
-        { "Bad", 1 },
-        { "", 0 } // No reputation = lowest priority
-    };
-
-    public List<Models.Stream> DeduplicateStreams(List<Models.Stream> streams)
+    public List<StreamModel> DeduplicateStreams(List<StreamModel> streams)
     {
         if (streams == null || streams.Count == 0)
         {
-            return new List<Models.Stream>();
+            return new List<StreamModel>();
         }
 
         logger.LogInformation("[Dedup] Deduplicating {Count} streams", streams.Count);
 
-        var groupedByBaseUrl = new Dictionary<string, List<Models.Stream>>(StringComparer.OrdinalIgnoreCase);
+        var groupedByBaseUrl = new Dictionary<string, List<StreamModel>>(StringComparer.OrdinalIgnoreCase);
 
         // Group streams by their base URL (and player label for v2 multi-stream pages)
         foreach (var stream in streams)
@@ -33,14 +24,14 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
 
             if (!groupedByBaseUrl.ContainsKey(dedupKey))
             {
-                groupedByBaseUrl[dedupKey] = new List<Models.Stream>();
+                groupedByBaseUrl[dedupKey] = new List<StreamModel>();
             }
 
             groupedByBaseUrl[dedupKey].Add(stream);
         }
 
         // Select best stream from each group
-        var deduplicated = new List<Models.Stream>();
+        var deduplicated = new List<StreamModel>();
         foreach (var group in groupedByBaseUrl.Values)
         {
             var best = SelectBestStream(group);
@@ -59,7 +50,7 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
 
     public string ExtractBaseUrl(string url) => StreamUrlNormalizer.NormalizeForDedup(url);
 
-    private static string GetDedupKey(Models.Stream stream)
+    private static string GetDedupKey(StreamModel stream)
     {
         var baseUrl = StreamUrlNormalizer.NormalizeForDedup(stream.Url);
         if (!stream.RequiresV2StreamSelection)
@@ -76,14 +67,14 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
             : $"{baseUrl}\0{playerLabel.Trim()}";
     }
 
-    private Models.Stream SelectBestStream(List<Models.Stream> group)
+    private StreamModel SelectBestStream(List<StreamModel> group)
     {
         if (group.Count == 1)
             return group[0];
 
         // Sort by reputation score (highest first), then FB before MP, then by channel name
         var sorted = group
-            .OrderByDescending(s => GetReputationScore(s.Reputation))
+            .OrderByDescending(s => s.Reputation)
             .ThenBy(s => StreamCatalogSourceOrderer.GetCatalogSourcePriority(s))
             .ThenBy(s => s.Channel, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -97,13 +88,5 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
         }
 
         return best;
-    }
-
-    private int GetReputationScore(string? reputation)
-    {
-        if (string.IsNullOrEmpty(reputation))
-            return 0;
-
-        return ReputationRanking.TryGetValue(reputation, out var score) ? score : 0;
     }
 }

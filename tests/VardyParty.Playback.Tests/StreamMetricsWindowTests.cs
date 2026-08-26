@@ -1,7 +1,7 @@
 using Xunit;
 using VardyParty.Playback;
 
-namespace VardyParty.Tests;
+namespace VardyParty.Playback.Tests;
 
 public class StreamMetricsWindowTests
 {

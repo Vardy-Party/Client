@@ -1,4 +1,4 @@
-namespace VardyParty.Configuration;
+namespace VardyParty.Kernel;
 
 public class GamesApiSettings
 {
