@@ -315,6 +315,31 @@ clean bisect on the affected machine:
   `SoundPool`, Desktop SoundFlow); `VardyParty.Ports.UiSoundKillSwitch`,
   checked once at registration and logged.
 
+Each switch has **two mechanisms**, and the startup log line says which one
+triggered:
+
+1. **Environment variable** (`VARDYPARTY_NO_CHROME=1` / `VARDYPARTY_NO_SOUND=1`).
+   Beware on packaged Windows: MSIX apps launched via `shell:AppsFolder`
+   (which is how `run-windows-debug.ps1` and the Start menu launch them) are
+   activated by Explorer and **do not inherit the terminal's environment**.
+   A terminal-scoped `$env:VARDYPARTY_NO_SOUND=1` therefore never reaches
+   the app; `setx VARDYPARTY_NO_SOUND 1` (then sign out/in or restart
+   Explorer so the user environment is re-read) does, at the cost of
+   persisting machine-wide until you `setx` it back to empty.
+2. **Flag file** (`VardyParty.Ports.StartupFlagFiles`): the mere presence of
+   `%LOCALAPPDATA%\VardyParty\flags\no-chrome` or
+   `%LOCALAPPDATA%\VardyParty\flags\no-sound` enables the switch — file
+   contents are ignored; delete the file to re-enable. This reaches packaged
+   apps regardless of how they are activated. On non-Windows platforms the
+   same names are probed under the per-user `LocalApplicationData` and
+   `ApplicationData` folders, in `VardyParty/flags/`. Example:
+
+   ```powershell
+   New-Item -ItemType File -Force "$env:LOCALAPPDATA\VardyParty\flags\no-sound"
+   # ... reproduce / bisect ...
+   Remove-Item "$env:LOCALAPPDATA\VardyParty\flags\no-sound"
+   ```
+
 `WindowsUiSoundPlayer` itself was audited against the 0x800710DD signature:
 `Windows.Media.Playback.MediaPlayer` is WinRT-agile (metadata
 MarshalingBehavior=Agile, ThreadingModel=Both), so background-thread

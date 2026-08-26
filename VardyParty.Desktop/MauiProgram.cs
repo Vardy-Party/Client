@@ -58,11 +58,12 @@ public static class MauiProgram
         // UI sounds: registered per composition root (not in AddVardyParty).
         // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
         // fallbacks defer to these. Initialised after first render.
-        // VARDYPARTY_NO_SOUND=1 swaps in the null player for crash bisecting.
+        // VARDYPARTY_NO_SOUND=1 (or the no-sound flag file) swaps in the null
+        // player for crash bisecting.
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, FileSoundPreferencesStore>();
         if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
         {
-            Console.WriteLine($"[MauiProgram] {VardyParty.Ports.UiSoundKillSwitch.VariableName}=1 — UI sounds disabled (NullUiSoundPlayer)");
+            Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
             builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, VardyParty.Ports.NullUiSoundPlayer>();
         }
         else

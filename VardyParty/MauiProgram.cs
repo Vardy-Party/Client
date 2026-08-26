@@ -234,14 +234,15 @@ public static class MauiProgram
         // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
         // fallbacks defer to these. Initialised on a background task after
         // first render (HomeHostPage.OnAppearing), never in the startup path.
-        // VARDYPARTY_NO_SOUND=1 swaps in the null player for crash bisecting.
+        // VARDYPARTY_NO_SOUND=1 (or the no-sound flag file, which also reaches
+        // packaged MSIX launches) swaps in the null player for crash bisecting.
 #if ANDROID || WINDOWS
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
         if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
         {
-            Console.WriteLine($"[MauiProgram] {VardyParty.Ports.UiSoundKillSwitch.VariableName}=1 — UI sounds disabled (NullUiSoundPlayer)");
+            Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
 #if WINDOWS
-            WindowsEventLogger.Info("MauiProgram", $"{VardyParty.Ports.UiSoundKillSwitch.VariableName}=1 — UI sounds disabled (NullUiSoundPlayer)");
+            WindowsEventLogger.Info("MauiProgram", $"UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
 #endif
             builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, VardyParty.Ports.NullUiSoundPlayer>();
         }

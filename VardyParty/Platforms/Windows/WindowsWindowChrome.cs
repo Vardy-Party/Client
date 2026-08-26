@@ -14,24 +14,39 @@ namespace VardyParty.Platforms.Windows;
 internal static class WindowsWindowChrome
 {
     /// <summary>
-    /// Kill switch for bisecting startup crashes: set VARDYPARTY_NO_CHROME=1 to skip
-    /// all custom window chrome (title-bar extension, collapse, drag regions) and run
-    /// with stock WinUI chrome.
+    /// Kill switch for bisecting startup crashes: set VARDYPARTY_NO_CHROME=1 —
+    /// or create the flag file %LOCALAPPDATA%\VardyParty\flags\no-chrome, which
+    /// also reaches packaged MSIX launches via shell:AppsFolder where terminal
+    /// environment variables never arrive — to skip all custom window chrome
+    /// (title-bar extension, collapse, drag regions) and run with stock WinUI
+    /// chrome.
     /// </summary>
-    public static bool IsChromeDisabled { get; } = DetectChromeDisabled();
+    public static bool IsChromeDisabled => ChromeDisabledTrigger != null;
+
+    private const string ChromeVariableName = "VARDYPARTY_NO_CHROME";
+    private const string ChromeFlagFileName = "no-chrome";
+
+    /// <summary>Which mechanism disabled chrome (env var or flag file); null when chrome is on.</summary>
+    private static string? ChromeDisabledTrigger { get; } = DetectChromeDisabledTrigger();
 
     private static bool _chromeDisabledLogged;
 
-    private static bool DetectChromeDisabled()
+    private static string? DetectChromeDisabledTrigger()
     {
         try
         {
-            return Environment.GetEnvironmentVariable("VARDYPARTY_NO_CHROME") == "1";
+            if (Environment.GetEnvironmentVariable(ChromeVariableName) == "1")
+            {
+                return $"environment variable {ChromeVariableName}=1";
+            }
         }
         catch
         {
-            return false;
+            // Reading the environment must never break startup.
         }
+
+        var flagPath = VardyParty.Ports.StartupFlagFiles.Find(ChromeFlagFileName);
+        return flagPath != null ? $"flag file {flagPath}" : null;
     }
 
     private static bool SkipChrome()
@@ -41,7 +56,7 @@ internal static class WindowsWindowChrome
         if (!_chromeDisabledLogged)
         {
             _chromeDisabledLogged = true;
-            WindowsEventLogger.Info("WindowsWindowChrome", "VARDYPARTY_NO_CHROME=1 — skipping all custom window chrome");
+            WindowsEventLogger.Info("WindowsWindowChrome", $"Custom window chrome disabled via {ChromeDisabledTrigger} — using stock WinUI chrome");
         }
 
         return true;
