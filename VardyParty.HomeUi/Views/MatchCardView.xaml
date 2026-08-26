@@ -42,7 +42,6 @@
         </Border.Shadow>
         <Border.GestureRecognizers>
             <TapGestureRecognizer Tapped="OnCardTapped" />
-            <PointerGestureRecognizer PointerEntered="OnPointerEntered" PointerExited="OnPointerExited" />
         </Border.GestureRecognizers>
 
         <Grid>

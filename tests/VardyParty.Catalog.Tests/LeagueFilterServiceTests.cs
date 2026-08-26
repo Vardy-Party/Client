@@ -45,11 +45,13 @@ public class LeagueFilterServiceTests
         {
             _fixture.Build<Game>()
                 .With(g => g.League, visibleLeague)
+                .With(g => g.BBCLeague, "")
                 .With(g => g.Home, "Home United")
                 .With(g => g.Away, "Away City")
                 .Create(),
             _fixture.Build<Game>()
                 .With(g => g.League, hiddenLeague)
+                .With(g => g.BBCLeague, "")
                 .With(g => g.Home, "North FC")
                 .With(g => g.Away, "South FC")
                 .Create()
@@ -125,9 +127,9 @@ public class LeagueFilterServiceTests
         var svc = CreateService();
         var dict = new Dictionary<string, List<Game>>
         {
-            ["League Gamma"] = new(),
-            ["League Alpha"] = new(),
-            ["League Beta"] = new()
+            ["League Gamma"] = [_fixture.Build<Game>().With(g => g.League, "League Gamma").With(g => g.BBCLeague, "").Create()],
+            ["League Alpha"] = [_fixture.Build<Game>().With(g => g.League, "League Alpha").With(g => g.BBCLeague, "").Create()],
+            ["League Beta"] = [_fixture.Build<Game>().With(g => g.League, "League Beta").With(g => g.BBCLeague, "").Create()]
         };
 
         // Act
@@ -135,5 +137,44 @@ public class LeagueFilterServiceTests
 
         // Assert
         Assert.Equal(new[] { "League Alpha", "League Beta", "League Gamma" }, leagues);
+    }
+
+    [Fact]
+    public void GetKnownLeagues_UsesDisplayLeague_AndOmitsImportantGamesBucket()
+    {
+        var svc = CreateService();
+        var ucl = _fixture.Build<Game>()
+            .With(g => g.League, "Important Games")
+            .With(g => g.BBCLeague, "UEFA Champions League")
+            .Create();
+        var leftover = _fixture.Build<Game>()
+            .With(g => g.League, "Important Games")
+            .With(g => g.BBCLeague, "Important Games")
+            .Create();
+        var dict = new Dictionary<string, List<Game>>
+        {
+            ["Important Games"] = [ucl, leftover],
+        };
+
+        var leagues = svc.GetKnownLeagues(dict);
+
+        Assert.Equal(new[] { "UEFA Champions League" }, leagues);
+    }
+
+    [Fact]
+    public void FilterGames_UsesDisplayLeague_WhenBbcHasMarriedTheApiBucket()
+    {
+        var svc = CreateService();
+        var games = new List<Game>
+        {
+            _fixture.Build<Game>()
+                .With(g => g.League, "Important Games")
+                .With(g => g.BBCLeague, "UEFA Champions League")
+                .Create(),
+        };
+
+        svc.SetLeagueVisible("UEFA Champions League", false);
+
+        Assert.Empty(svc.FilterGames(games));
     }
 }

@@ -129,6 +129,16 @@ function Sync-AppXLayoutFromBuildOutput {
 
     Write-Host "Synced $synced changed file(s) from build output into AppX."
 
+    # UI sound WAVs: MauiAsset packing does not put them on disk for loose MSIX.
+    $soundSource = Join-Path $ProjectRoot 'Resources\Raw\Sounds'
+    if (Test-Path $soundSource) {
+        foreach ($root in @($OutputRoot, $appX)) {
+            $soundDest = Join-Path $root 'Sounds'
+            New-Item -ItemType Directory -Path $soundDest -Force | Out-Null
+            Copy-Item -Path (Join-Path $soundSource '*.wav') -Destination $soundDest -Force
+        }
+    }
+
     # League logo MauiAssets: AppX is not always refreshed on incremental builds.
     $leagueSource = Join-Path $ProjectRoot 'Resources\Images\Leagues'
     if (Test-Path $leagueSource) {

@@ -22,7 +22,7 @@ public sealed class MauiHomeAssetLocator : IHomeAssetLocator
         var logical = webPath.TrimStart('/');
         var cached = Path.Combine(
             FileSystem.CacheDirectory,
-            "home-assets",
+            "home-assets-v2",
             logical.Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(cached)) return cached;
 

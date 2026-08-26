@@ -81,6 +81,8 @@ public partial class HomeHostPage : ContentPage
         BindingContext = _viewModel;
 
         _viewModel.GamePicked += OnGamePicked;
+        _viewModel.GamesUpdated += count =>
+            _logger.LogInformation("[HomeHost] Games updated count={Count}", count);
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
         _viewModel.PropertyChanged += (_, e) =>
         {
@@ -194,29 +196,7 @@ public partial class HomeHostPage : ContentPage
         {
             if (MauiProgram.IsTv || !MauiProgram.IsWindowsPackaged)
             {
-                var deviceLogin = await _authLogin.StartDeviceLoginAsync();
-                if (deviceLogin == null)
-                {
-                    SetAuthStatus("Unable to start device sign-in.");
-                    return;
-                }
-
-                _deviceCode = deviceLogin.DeviceCode;
-                ShowDeviceCode(_deviceCode);
-                UpdateBackSuppression();
-
-                _authCts?.Cancel();
-                _authCts = new CancellationTokenSource();
-
-                var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
-                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
-                {
-                    OnSignedIn();
-                }
-                else if (!string.IsNullOrWhiteSpace(result.Error))
-                {
-                    SetAuthStatus(result.Error);
-                }
+                await SignInWithDeviceCodeAsync();
             }
             else
             {
@@ -224,6 +204,12 @@ public partial class HomeHostPage : ContentPage
                 if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
                 {
                     OnSignedIn();
+                }
+                else if (LooksLikeMissingRedirectCheck(result.Error))
+                {
+                    _logger.LogWarning("[HomeHost] Interactive Auth0 login missing redirect check; falling back to device sign-in");
+                    SetAuthStatus("Browser sign-in unavailable — use the code below.");
+                    await SignInWithDeviceCodeAsync();
                 }
                 else if (!string.IsNullOrWhiteSpace(result.Error))
                 {
@@ -251,6 +237,37 @@ public partial class HomeHostPage : ContentPage
                 SignInButton.IsEnabled = true;
                 SignInButton.Text = "Sign in — Continue";
             });
+        }
+    }
+
+    private static bool LooksLikeMissingRedirectCheck(string? error) =>
+        !string.IsNullOrWhiteSpace(error)
+        && error.Contains("redirection check", StringComparison.OrdinalIgnoreCase);
+
+    private async Task SignInWithDeviceCodeAsync()
+    {
+        var deviceLogin = await _authLogin.StartDeviceLoginAsync();
+        if (deviceLogin == null)
+        {
+            SetAuthStatus("Unable to start device sign-in.");
+            return;
+        }
+
+        _deviceCode = deviceLogin.DeviceCode;
+        ShowDeviceCode(_deviceCode);
+        UpdateBackSuppression();
+
+        _authCts?.Cancel();
+        _authCts = new CancellationTokenSource();
+
+        var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
+        if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+        {
+            OnSignedIn();
+        }
+        else if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            SetAuthStatus(result.Error);
         }
     }
 

@@ -188,6 +188,14 @@
         <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
 
+        <!-- Packaged Windows never unpacked MauiAssets onto disk; MediaPlayer
+             and OpenAppPackageFileAsync both miss Sounds/*.wav unless they
+             also copy next to the exe / into the loose AppX layout. -->
+        <Content Include="Resources\Raw\Sounds\*.wav"
+                 Link="Sounds\%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest" />
+
         <!-- League logos for the XAML homepage (MauiHomeAssetLocator reads them
              via OpenAppPackageFileAsync). -->
         <MauiAsset Include="Resources\Images\Leagues\**\*.*" LogicalName="images/leagues/%(RecursiveDir)%(Filename)%(Extension)" />

@@ -40,6 +40,9 @@ public partial class BrandLogoView : ContentView
     public BrandLogoView()
     {
         InitializeComponent();
+#if WINDOWS
+        LogoOuter.ClearValue(Border.ShadowProperty);
+#endif
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -68,10 +71,14 @@ public partial class BrandLogoView : ContentView
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+#if WINDOWS
+        return;
+#else
         if (e.PropertyName is null or nameof(HomeViewModel.IsContentLoading) or nameof(HomeViewModel.HasError))
         {
             ApplyLoadState();
         }
+#endif
     }
 
     /// <summary>
@@ -83,6 +90,9 @@ public partial class BrandLogoView : ContentView
     private void ApplyLoadState()
     {
         if (!IsLoaded) return;
+#if WINDOWS
+        return;
+#endif
 
         if (ShouldSpin)
         {
@@ -98,6 +108,13 @@ public partial class BrandLogoView : ContentView
     {
         CrestImage.Source ??= BrandCrestImageLoader.GetCrest();
         DisableFocusTraversal();
+
+#if WINDOWS
+        // No spin/sheen: aborting the loading animation when the catalog
+        // lands was enough to 0xc000027b on WinAppSDK 1.8.
+        ResetSpinVisuals();
+        return;
+#endif
 
         if (ShouldSpin)
         {
@@ -140,14 +157,19 @@ public partial class BrandLogoView : ContentView
     /// <summary>TV focus entered the header area: subtle scale + glow + sheen.</summary>
     public void OnHeaderFocusEntered()
     {
+#if WINDOWS
+        return;
+#endif
         _ = LogoOuter.ScaleToAsync(1.08, FocusScaleMs, Easing.CubicOut);
         _ = GlowRing.FadeToAsync(0.7, FocusScaleMs);
         RunSheenSweep(0.85);
     }
 
-    /// <summary>TV focus left the header area.</summary>
     public void OnHeaderFocusExited()
     {
+#if WINDOWS
+        return;
+#endif
         _ = LogoOuter.ScaleToAsync(1.0, FocusScaleMs, Easing.CubicOut);
         _ = GlowRing.FadeToAsync(0.0, FocusScaleMs);
     }
@@ -164,6 +186,16 @@ public partial class BrandLogoView : ContentView
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(SettleAnimation);
 
+#if WINDOWS
+        // Opacity pulse only: RotationY/Rotation during catalog Dispatch is a
+        // WinUI 1.8 CoreMessaging 0xc000027b. Same "we're loading" signal.
+        var pulse = new Animation();
+        pulse.Add(0.0, 0.5, new Animation(v => LogoOuter.Opacity = v, 1.0, 0.55, Easing.SinInOut));
+        pulse.Add(0.5, 1.0, new Animation(v => LogoOuter.Opacity = v, 0.55, 1.0, Easing.SinInOut));
+        pulse.Commit(this, SpinAnimation, length: 1400, repeat: () => _spinning);
+        return;
+#endif
+
         var spin = new Animation(ApplySpinFrame, 0, 360);
         spin.Commit(this, SpinAnimation, length: SpinTurnMs, easing: Easing.Linear, repeat: () => _spinning);
     }
@@ -174,6 +206,14 @@ public partial class BrandLogoView : ContentView
         if (!_spinning) return;
         _spinning = false;
         this.AbortAnimation(SpinAnimation);
+#if WINDOWS
+        ResetSpinVisuals();
+        if (IsLoaded)
+        {
+            RunSheenSweep(0.85);
+        }
+        return;
+#endif
 
         var current = LogoOuter.RotationY % 360;
         if (current < 0) current += 360;
@@ -192,7 +232,12 @@ public partial class BrandLogoView : ContentView
 
     private void ResetSpinVisuals()
     {
+        LogoOuter.Opacity = 1;
+#if WINDOWS
+        LogoOuter.Rotation = 0;
+#else
         LogoOuter.RotationY = 0;
+#endif
         EdgeRim.Opacity = 0;
         LogoSheen.Opacity = 0;
         LogoSheen.TranslationX = -26;
@@ -213,7 +258,12 @@ public partial class BrandLogoView : ContentView
         var absSin = Math.Abs(sin);
         var faceVisibility = Math.Abs(Math.Cos(radians));
 
+#if WINDOWS
+        // 2D spin: same "loading" signal, no WinUI PlaneProjection.
+        LogoOuter.Rotation = angleDegrees;
+#else
         LogoOuter.RotationY = angleDegrees;
+#endif
 
         EdgeRim.ScaleX = RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * absSin;
         EdgeRim.TranslationX = sin * RimDriftPx;

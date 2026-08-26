@@ -108,7 +108,10 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
             canvas.DrawPicture(picture);
             canvas.Flush();
 
-            using var image = surface.Snapshot();
+            using var snapshot = surface.Snapshot();
+            using var bitmap = SKBitmap.FromImage(snapshot);
+            LightenDarkMonochrome(bitmap);
+            using var image = SKImage.FromBitmap(bitmap);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
             return data.ToArray();
         }
@@ -116,6 +119,40 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
         {
             _logger?.LogWarning(ex, "SVG rasterise failed for {Source}", source);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Brandlogos league marks are often near-black (#221f1f). On the dark
+    /// homepage that looks like a missing icon. Recolor dark opaque pixels
+    /// to off-white and keep alpha so the silhouette still reads.
+    /// </summary>
+    private static void LightenDarkMonochrome(SKBitmap bitmap)
+    {
+        var dark = 0;
+        var opaque = 0;
+        for (var y = 0; y < bitmap.Height; y += 4)
+        {
+            for (var x = 0; x < bitmap.Width; x += 4)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.Alpha < 40) continue;
+                opaque++;
+                if (pixel.Red + pixel.Green + pixel.Blue < 140) dark++;
+            }
+        }
+
+        if (opaque == 0 || dark * 2 < opaque) return;
+
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.Alpha < 40) continue;
+                if (pixel.Red + pixel.Green + pixel.Blue >= 140) continue;
+                bitmap.SetPixel(x, y, new SKColor(245, 246, 248, pixel.Alpha));
+            }
         }
     }
 

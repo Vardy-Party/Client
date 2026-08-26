@@ -53,12 +53,16 @@
                        FontSize="{Binding Layout.PageSubtitleFontSize}" />
             </Border>
 
-            <!-- Netflix-style rows: vertical list of leagues, horizontal strips of cards -->
-            <CollectionView Grid.Row="2"
-                            ItemsSource="{Binding Rows}"
-                            VerticalScrollBarVisibility="Never"
-                            SelectionMode="None">
-                <CollectionView.ItemTemplate>
+            <!-- Netflix-style rows. BindableLayout (not CollectionView) on both
+                 axes: nested WinUI ItemsRepeaters plus DropShadows are a
+                 0xc000027b crash on Windows App SDK 1.8. A homepage has a
+                 handful of leagues and fixtures, so virtualization is not needed. -->
+            <ScrollView x:Name="RichCatalog"
+                        Grid.Row="2"
+                        VerticalScrollBarVisibility="Never"
+                        IsVisible="{OnPlatform WinUI=false, Default=true}">
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Rows}">
+                    <BindableLayout.ItemTemplate>
                     <DataTemplate x:DataType="hu:LeagueRowViewModel">
                         <VerticalStackLayout Margin="{Binding Layout.RowMarginThickness}" Spacing="10">
                             <!-- Row header -->
@@ -91,24 +95,40 @@
                                        VerticalOptions="Center" />
                             </HorizontalStackLayout>
 
-                            <!-- Horizontal, virtualised card strip -->
-                            <CollectionView ItemsSource="{Binding Cards}"
-                                            HeightRequest="{Binding Layout.RowHeight}"
-                                            HorizontalScrollBarVisibility="Never"
-                                            SelectionMode="None">
-                                <CollectionView.ItemsLayout>
-                                    <LinearItemsLayout Orientation="Horizontal" />
-                                </CollectionView.ItemsLayout>
-                                <CollectionView.ItemTemplate>
-                                    <DataTemplate x:DataType="hu:MatchCardViewModel">
-                                        <views:MatchCardView />
-                                    </DataTemplate>
-                                </CollectionView.ItemTemplate>
-                            </CollectionView>
+                            <!-- Horizontal card strip. Nested CollectionView
+                                 (vertical league list × horizontal ItemsRepeater)
+                                 materialises WinUI composition shadows for every
+                                 card at once and is a known 0xc000027b crash on
+                                 Windows App SDK 1.8. BindableLayout keeps the
+                                 same Netflix-row UX without nested virtualization;
+                                 a row only has a handful of fixtures. -->
+                            <ScrollView HeightRequest="{Binding Layout.RowHeight}"
+                                        Orientation="Horizontal"
+                                        HorizontalScrollBarVisibility="Never"
+                                        VerticalScrollBarVisibility="Never">
+                                <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Cards}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="hu:MatchCardViewModel">
+                                            <views:MatchCardView />
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </HorizontalStackLayout>
+                            </ScrollView>
                         </VerticalStackLayout>
                     </DataTemplate>
-                </CollectionView.ItemTemplate>
-            </CollectionView>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- Windows: BindableLayout + MatchCardView is a WinAppSDK 1.8
+                 CoreMessagingXP 0xc000027b. Plain buttons, one per pump tick. -->
+            <ScrollView x:Name="WindowsCatalog"
+                        Grid.Row="2"
+                        Padding="36,8,36,24"
+                        VerticalScrollBarVisibility="Default"
+                        IsVisible="{OnPlatform WinUI=true, Default=false}">
+                <VerticalStackLayout x:Name="WindowsCatalogHost" Spacing="8" Padding="0,0,0,24" />
+            </ScrollView>
 
             <!-- Empty state -->
             <VerticalStackLayout Grid.Row="2"
@@ -139,30 +159,32 @@
         <Border WidthRequest="340"
                 HorizontalOptions="End"
                 VerticalOptions="Fill"
+                Margin="{OnPlatform WinUI='0,48,0,0', Default=0}"
                 BackgroundColor="#111726"
                 Stroke="#26FFFFFF"
                 StrokeThickness="1"
                 IsVisible="{Binding IsMenuOpen}">
             <Grid RowDefinitions="Auto,*,Auto,Auto" Padding="20">
-                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
-                    <Label Text="Leagues"
-                           FontSize="20"
-                           FontAttributes="Bold"
-                           TextColor="White"
-                           VerticalOptions="Center" />
-                    <Button Grid.Column="1"
-                            Text="✕"
+                <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,14">
+                    <Button Text="✕"
                             Clicked="OnCloseMenuClicked"
                             Focused="OnMenuItemFocused"
                             BackgroundColor="Transparent"
                             TextColor="#8A93A6"
-                            Padding="8,2" />
+                            Padding="8,2"
+                            SemanticProperties.Hint="Close menu" />
+                    <Label Grid.Column="1"
+                           Text="Leagues"
+                           FontSize="20"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           VerticalOptions="Center"
+                           Margin="12,0,0,0" />
                 </Grid>
 
-                <CollectionView Grid.Row="1"
-                                ItemsSource="{Binding LeagueToggles}"
-                                SelectionMode="None">
-                    <CollectionView.ItemTemplate>
+                <ScrollView Grid.Row="1">
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding LeagueToggles}">
+                        <BindableLayout.ItemTemplate>
                         <DataTemplate x:DataType="hu:LeagueToggleViewModel">
                             <HorizontalStackLayout Spacing="10" Padding="0,6">
                                 <CheckBox IsChecked="{Binding IsVisible, Mode=TwoWay}"
@@ -175,8 +197,9 @@
                                        VerticalOptions="Center" />
                             </HorizontalStackLayout>
                         </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </ScrollView>
 
                 <VerticalStackLayout Grid.Row="2" Spacing="10" Margin="0,16,0,0">
                     <Button Text="Show all"
