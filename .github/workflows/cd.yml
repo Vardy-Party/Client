@@ -8,9 +8,8 @@ name: CD - Package & Release
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
-  DOTNET_VERSION: "10.0.x"
-  # The Linux desktop head (VardyParty.Desktop, MAUI-Avalonia) targets net11.0.
-  DOTNET_PREVIEW_VERSION: "11.0.x"
+  # Everything targets net11.0(-*): one preview SDK pin for every job.
+  DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
@@ -58,10 +57,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -189,11 +189,11 @@ jobs:
       - name: Publish Windows app
         env:
           MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $searchRoots = @(
-            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/bin/Release/net11.0-windows10.0.19041.0/win-x64/AppPackages",
             "VardyParty/AppPackages"
           )
 
@@ -253,7 +253,7 @@ jobs:
         run: |
           $artifactsDir = "windows-artifacts"
           $searchRoots = @(
-            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/bin/Release/net11.0-windows10.0.19041.0/win-x64/AppPackages",
             "VardyParty/AppPackages"
           )
 
@@ -342,10 +342,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -444,12 +445,12 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
         continue-on-error: true
         run: |
           # Find all APK files
-          APK_FILES=($(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f))
+          APK_FILES=($(find ./VardyParty/bin/Release/net11.0-android -name "*Signed.apk" -type f))
           if [ ${#APK_FILES[@]} -eq 0 ]; then
             echo "ERROR: No APK files found"
             exit 1
@@ -494,7 +495,7 @@ jobs:
           mkdir -p "$ARTIFACTS_DIR"
           
           # Copy universal APK (contains all ABIs)
-          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          APK_FILE=$(find ./VardyParty/bin/Release/net11.0-android -name "*Signed.apk" -type f | head -1)
           if [ -z "$APK_FILE" ]; then
             echo "ERROR: No signed APK found"
             exit 1
@@ -548,10 +549,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -629,9 +631,9 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish iOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-ios -c Release
       - name: Create iOS package
-        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
+        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-ios/ios-arm64 .
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
@@ -672,10 +674,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -753,9 +756,9 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-maccatalyst -c Release
       - name: Create macOS package
-        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
+        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
@@ -799,7 +802,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -1047,7 +1050,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:

@@ -32,10 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -47,7 +48,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish Windows app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
       
       - name: Package Windows
         run: |
@@ -72,10 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -93,7 +95,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish Android app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./output/android
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-android /p:AndroidPackageFormat=apk -o ./output/android
       
       - name: Upload Android Release Asset
         uses: actions/upload-release-asset@v1
@@ -112,10 +114,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -127,7 +130,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish iOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-ios /p:ArchiveOnBuild=true -o ./output/ios
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-ios /p:ArchiveOnBuild=true -o ./output/ios
       
       - name: Upload iOS Release Asset
         uses: actions/upload-release-asset@v1
@@ -146,10 +149,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -161,7 +165,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish macOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
       
       - name: Package macOS
         run: |
@@ -186,10 +190,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -201,13 +206,13 @@ jobs:
         run: dotnet restore
       
       - name: Build core library for Linux
-        run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net10.0
+        run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net11.0
       
       - name: Publish Linux app (x64)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-x64 -o ./output/linux-x64 || true
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64 || true
       
       - name: Publish Linux app (ARM64)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-arm64 -o ./output/linux-arm64 || true
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64 || true
       
       - name: Package Linux x64
         run: |

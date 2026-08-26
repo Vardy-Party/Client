@@ -290,7 +290,7 @@
     <ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
     </ProjectReference>
-    <!-- Strip MAUI TargetFrameworks/RID so net10.0 domain libraries restore as net10.0, not NETSDK1005. -->
+    <!-- Strip MAUI TargetFrameworks/RID so net11.0 domain libraries restore as net11.0, not NETSDK1005. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>

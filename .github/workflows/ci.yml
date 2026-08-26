@@ -1,15 +1,12 @@
 name: CI - Build & Test
 
 env:
-  # Domain libraries and tests target net10.0 and use the stable SDK. The MAUI
-  # heads (VardyParty, VardyParty.HomeUi, VardyParty.Desktop) target net11.0-*
-  # and need the .NET 11 preview SDK.
+  # Everything targets net11.0(-*) now, so every job uses the same .NET 11
+  # preview SDK pin.
   # There is deliberately no repo global.json: with no pin, dotnet picks the
   # newest installed SDK (previews included), which is what the local build
-  # scripts need on a machine with SDK 10 + 11 installed, while CI jobs pin
-  # per-job via setup-dotnet.
-  DOTNET_VERSION: "10.0.x"
-  DOTNET_PREVIEW_VERSION: "11.0.x"
+  # scripts need, while CI jobs pin per-job via setup-dotnet.
+  DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"
@@ -90,10 +87,11 @@ jobs:
           APP_VERSION=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
           DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
           echo "::notice::Building with ApplicationVersion=${APP_VERSION}, ApplicationDisplayVersion=${DISPLAY_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -125,12 +123,10 @@ jobs:
     if: ${{ needs.resolve-flags.outputs.skip_codequality != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     steps:
       - uses: actions/checkout@v4
-      # The MAUI head now targets net11.0-android, so this job runs on the .NET
-      # 11 preview SDK (it builds the net10.0 domain libraries fine too).
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -186,7 +182,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -244,7 +240,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -320,7 +316,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -388,7 +384,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -453,7 +449,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -486,7 +482,7 @@ jobs:
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
