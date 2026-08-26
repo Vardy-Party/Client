@@ -108,9 +108,22 @@ Deleted on this branch (no dormant rollback code):
   snap packaging and `scripts/launch-linux-app.cmd` now point at the
   Desktop head.
 
-The pure logic lives in `VardyParty.Presentation` (net10.0, fully
+The pure logic lives in `VardyParty.Presentation` (net11.0, fully
 unit-tested in `tests/VardyParty.Presentation.Tests`) so the existing MAUI
 app can adopt it without touching the preview stack.
+
+### Everything is net11.0 now
+
+Every project in the repo — the domain libraries (Kernel, Ports, Catalog,
+Auth, Streaming, Playback, Presentation, Hosting), the test projects
+(`tests/Directory.Build.props`) and `Tools/StreamHealthCheckerTool` — targets
+net11.0, matching the MAUI/Desktop heads. The
+`Microsoft.Extensions.Logging.Abstractions` / `Options` /
+`Configuration.Abstractions` packages are framework-provided on .NET 11 and
+their explicit `PackageReference`s were removed (they fired NU1510; the
+packaging flows are zero-warning again). CI/CD pins a single
+`DOTNET_VERSION: "11.0.x"` with `dotnet-quality: preview` for every job —
+`DOTNET_PREVIEW_VERSION` is gone.
 
 ### The Netflix-style UI in XAML terms
 
@@ -187,7 +200,7 @@ be turned off in the menu's Settings section (persisted per platform).
 ### Repo-specific gotchas (hard-won, do not rediscover)
 
 1. **`Directory.Build.targets` vs multi-targeting**: the repo strips
-   `TargetFramework` off every `ProjectReference` (to protect net10.0 domain
+   `TargetFramework` off every `ProjectReference` (to protect net11.0 domain
    libraries from Android TFM/RID leakage). That also strips the
    `SetTargetFramework` negotiation used by *cross-targeting* references, so
    a project declaring plural `<TargetFrameworks>` returns **no compiled
@@ -214,7 +227,7 @@ be turned off in the menu's Settings section (persisted per platform).
 The `ci.yml` pipeline is ordered so **Code Quality gates every platform
 build**:
 
-1. `test` (SDK 10, all `tests/*Tests` projects), then
+1. `test` (SDK 11 preview, all `tests/*Tests` projects), then
 2. `code-quality` (SDK 11 preview: analyzers with warnings-as-errors +
    `dotnet format --verify-no-changes`), then
 3. `build-android`, `build-windows`, `build-ios`, `build-macos` and
@@ -229,14 +242,79 @@ desktop-build/desktop-smoke (iOS/macOS remain informational, as before).
 The old `build-linux` and `linux-runtime-smoke` jobs are gone with the
 project; CD's Linux snap jobs package `VardyParty.Desktop` instead.
 
+## Local packaging (PowerShell)
+
+`package-android.cmd` / `package-windows.cmd` are now `package-android.ps1`
+and `package-windows.ps1` (the `.cmd` files are deleted). The Android script
+keeps the whole contract: the SDK-11 fail-fast guard, the appsettings
+secrets-patching flow (`-p:PatchAppSettings=true` → the
+`PatchAppSettingsForLocalAndroid` csproj target →
+`scripts/patch-appsettings-android.ps1`), the domain restore dance (still
+required on net11 — the MAUI restore rewrites the domain
+`project.assets.json` and the next plain-net11.0 build hits NETSDK1005
+without the re-restore), the `AndroidArmOnly` device default with
+`-Mode all` for the store/emulator fat APK, build-info/splash generation and
+the canonical multi-ABI APK check (`scripts/assert-android-apk-abis.ps1`).
+
+New in the PowerShell version:
+
+- `-m:1` on the trim-heavy Release build — parallel multi-RID ILLink crashed
+  local packaging from memory pressure; the failure hint reminds that Windows
+  needs a page file for trimming.
+- XA5207 detection that prints the `InstallAndroidDependencies` remedy
+  (run elevated if the Android SDK lives under Program Files).
+- The secrets-patched `VardyParty/appsettings.json` is `git restore`d after
+  the build (clearly logged; opt out with `-KeepPatchedAppSettings`).
+
+`buildinfo.txt` is no longer a tracked file the build rewrites: the
+`GenerateBuildInfo` target writes `$(IntermediateOutputPath)buildinfo.txt`
+and injects it as a `MauiAsset` with the same `buildinfo.txt` logical name,
+so packages still ship it (`assets/buildinfo.txt` in the APK) but the
+working tree stays clean after every build.
+
+## Startup hardening (real-device crash fixes)
+
+Two startup crashes found on real devices after the net11/CoreCLR move:
+
+- **Android TV (32-bit, CoreCLR)**: `AddSecrets`
+  (`VardyParty.Hosting/Infrastructure/Exceptions/ServiceCollectionExtensions.cs`)
+  probed `appsettings.json` with a relative-path JSON file source. On Mono
+  the default configuration base path happened to be absolute (`/`) so the
+  optional file just never loaded; on CoreCLR Android it is not absolute and
+  `PhysicalFileProvider` threw "The path must be absolute" inside
+  `ConfigurationBuilder.Build()` before the app could start. The probe now
+  resolves an explicit absolute path from `AppContext.BaseDirectory`, only
+  adds file sources that exist, and the whole optional secrets flow is
+  guarded — a missing secrets source can never crash startup. Devices keep
+  using the embedded `appsettings.json`; desktop user-secrets behavior is
+  unchanged.
+- **Windows (WinAppSDK 1.8)**: a stowed-exception crash (`0xc000027b` in
+  `CoreMessagingXP.dll`) between window creation and first render. Every
+  window-chrome hook (`MauiProgram` lifecycle events and mapper hooks,
+  `WindowsWindowChrome`, `WindowsWindowDragHelper`) is now wrapped in
+  try/catch that logs via `WindowsEventLogger` and degrades to default
+  chrome; chrome no longer calls `AppWindow.Show()`/`Activate()` from inside
+  content-connect mappers (MAUI shows its own window); the deprecated
+  `AppWindowTitleBar.SetDragRectangles` is replaced by
+  `InputNonClientPointerSource.SetRegionRects(NonClientRegionKind.Caption)`
+  with the old call as a logged fallback; Auth0's
+  `CheckRedirectionActivation` only short-circuits startup for genuine
+  protocol activations and treats activator failures as a normal launch.
+  Setting `VARDYPARTY_NO_CHROME=1` skips all custom chrome for bisecting.
+
 ## Follow-ups
 
 - **iOS / Mac Catalyst runtime QA**: both platforms boot `HomeHostPage`
   and CI builds them, but nobody has run the new UI on real Apple hardware
   yet.
-- **Windows drag region**: the old BlazorWebView drag-helper hooks were
-  removed with the WebView; verify title-bar drag still feels right on
-  Windows.
+- **Windows drag region**: header drag now uses
+  `InputNonClientPointerSource.SetRegionRects` (WinAppSDK 1.8's supported
+  API) with `SetDragRectangles` as a logged fallback; verify drag feel on a
+  real Windows box.
+- **Windows startup verification**: the chrome/Auth0 hardening turns the
+  1.8 stowed-exception crash into logged, survivable failures — needs a
+  launch check on the affected machine (use `VARDYPARTY_NO_CHROME=1` to
+  bisect if anything still misbehaves).
 
 ## Risk register
 
