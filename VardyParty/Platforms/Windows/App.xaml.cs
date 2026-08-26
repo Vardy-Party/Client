@@ -14,6 +14,15 @@ namespace VardyParty.WinUI
         /// </summary>
         public App()
         {
+            // XAML-thread exceptions never reach AppDomain.UnhandledException or
+            // TaskScheduler.UnobservedTaskException (both wired in the shared
+            // App.xaml.cs): WinAppSDK 1.8 converts them into anonymous stowed
+            // 0xc000027b crashes unless this hook observes them first.
+            // Application.Current is assigned by the base Application constructor
+            // before this body runs, so wiring here is the earliest safe point and
+            // covers even InitializeComponent-time failures.
+            UnhandledException += OnXamlUnhandledException;
+
             if (IsAuth0RedirectActivation())
             {
                 Platforms.Windows.WindowsEventLogger.Info("WinUI.App", "Auth0 redirection activation handled; skipping main UI startup");
@@ -21,6 +30,29 @@ namespace VardyParty.WinUI
             }
 
             this.InitializeComponent();
+        }
+
+        /// <summary>
+        /// Last-chance handler for exceptions thrown on the XAML UI thread.
+        /// Marking them handled keeps the app alive where possible; either way the
+        /// exception is logged instead of dying as an anonymous stowed exception.
+        /// </summary>
+        private static void OnXamlUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+        {
+            try
+            {
+                // e.Exception can be marshaling-lossy for exceptions that crossed
+                // the WinRT boundary; e.Message preserves the original text.
+                Platforms.Windows.WindowsEventLogger.Fatal(
+                    "WinUI.Xaml",
+                    $"Unhandled XAML-thread exception: {e.Message}",
+                    e.Exception);
+                e.Handled = true;
+            }
+            catch
+            {
+                // The crash hook itself must never throw.
+            }
         }
 
         /// <summary>
