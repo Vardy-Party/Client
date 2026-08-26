@@ -2,8 +2,11 @@
 {
     public partial class App : Application
     {
-        public App()
+        private readonly IServiceProvider _services;
+
+        public App(IServiceProvider services)
         {
+            _services = services;
             Console.WriteLine("[App] Constructor start");
             try
             {
@@ -50,8 +53,16 @@
             try
             {
                 Console.WriteLine("[App] CreateWindow - start");
-                var mainPage = new MainPage();
+#if ANDROID || WINDOWS
+                // The shared MAUI XAML homepage replaced the BlazorWebView shell
+                // on these heads (razor/wwwroot stay in the tree, dormant, for
+                // rollback). iOS/macCatalyst still boot the Blazor MainPage.
+                Page mainPage = _services.GetRequiredService<HomeHostPage>();
+                Console.WriteLine("[App] CreateWindow - HomeHostPage created");
+#else
+                Page mainPage = new MainPage();
                 Console.WriteLine("[App] CreateWindow - MainPage created");
+#endif
                 var window = new Window(mainPage)
                 {
                     Title = string.Empty,

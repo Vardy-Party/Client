@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hv="clr-namespace:VardyParty.HomeUi.Views;assembly=VardyParty.HomeUi"
+             x:Class="VardyParty.HomeHostPage"
+             NavigationPage.HasNavigationBar="False"
+             BackgroundColor="#0B0F1A">
+
+    <Grid>
+        <!-- The shared MAUI XAML homepage (same view the Desktop/Avalonia head draws). -->
+        <hv:HomeView x:Name="HomeSurface" />
+
+        <!-- Auth overlay: sign-in hero / device-code QR (glue adapted from Home.razor). -->
+        <Grid x:Name="AuthOverlay" BackgroundColor="#0B0F1A" IsVisible="False">
+            <ScrollView>
+                <VerticalStackLayout Spacing="16"
+                                     Padding="32"
+                                     HorizontalOptions="Center"
+                                     VerticalOptions="Center"
+                                     MaximumWidthRequest="560">
+                    <Label Text="Vardy Party"
+                           FontSize="36"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="AuthWelcomeLabel"
+                           Text="Welcome — please sign in to browse today's matches."
+                           FontSize="16"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="SignInButton"
+                            Text="Sign in — Continue"
+                            Clicked="OnSignInClicked"
+                            BackgroundColor="#2563EB"
+                            TextColor="White"
+                            CornerRadius="10"
+                            Padding="24,12"
+                            HorizontalOptions="Center" />
+
+                    <VerticalStackLayout x:Name="DeviceCodePanel" IsVisible="False" Spacing="12">
+                        <Label x:Name="DeviceCodeLabel"
+                               FontSize="30"
+                               FontAttributes="Bold"
+                               TextColor="White"
+                               HorizontalTextAlignment="Center" />
+                        <Image x:Name="DeviceQrImage"
+                               WidthRequest="240"
+                               HeightRequest="240"
+                               Aspect="AspectFit"
+                               HorizontalOptions="Center" />
+                        <Label x:Name="DeviceUriLabel"
+                               FontSize="15"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Button x:Name="CancelSignInButton"
+                                Text="Cancel"
+                                Clicked="OnCancelSignInClicked"
+                                BackgroundColor="#1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="10"
+                                Padding="24,10"
+                                HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+
+                    <Label x:Name="AuthStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#FECACA"
+                           HorizontalTextAlignment="Center" />
+                </VerticalStackLayout>
+            </ScrollView>
+        </Grid>
+
+        <!-- Stream-resolution progress overlay (glue adapted from Home.razor). -->
+        <Grid x:Name="ResolveOverlay" BackgroundColor="#D9000000" IsVisible="False">
+            <Border BackgroundColor="#111726"
+                    Stroke="#26FFFFFF"
+                    StrokeThickness="1"
+                    StrokeShape="RoundRectangle 14"
+                    Padding="28,22"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    MinimumWidthRequest="360">
+                <VerticalStackLayout Spacing="12">
+                    <Label x:Name="ResolveTitleLabel"
+                           Text="Finding streams..."
+                           FontSize="20"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="ResolveStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <ProgressBar x:Name="ResolveProgressBar"
+                                 ProgressColor="#2563EB" />
+                    <Label x:Name="ResolveCountLabel"
+                           FontSize="13"
+                           TextColor="#5B6478"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="ResolveCancelButton"
+                            Text="Cancel"
+                            Clicked="OnResolveCancelClicked"
+                            BackgroundColor="#1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="10"
+                            Padding="24,8"
+                            HorizontalOptions="Center" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+    </Grid>
+
+</ContentPage>

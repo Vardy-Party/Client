@@ -68,9 +68,12 @@
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' == 'true'">android-arm;android-arm64</RuntimeIdentifiers>
         <RuntimeIdentifier Condition="'$(AndroidArmOnly)' == 'true'"></RuntimeIdentifier>
 
-        <!-- Re-enable trimming and AOT for Android now that assembly info is properly generated -->
+        <!-- Trimming stays on for Android (also required: CoreCLR R2R assemblies
+             are mixed-mode and the un-trimmed linker path can't rewrite them).
+             Mono profiled AOT is gone in .NET 11 (XA1044: RunAOTCompilation is
+             incompatible with CoreCLR), so it is guarded to Mono-only targets. -->
         <PublishTrimmed Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</PublishTrimmed>
-        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</RunAotCompilation>
+        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(UseMonoRuntime)' == 'true'">true</RunAotCompilation>
 
         <!-- FORCE DISABLE Fast Deployment for Android.
              This is critical to prevent the NoClassDefFoundError loop and 6-minute startup delay.
@@ -179,6 +182,11 @@
 
         <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+
+        <!-- League logos for the XAML homepage (MauiHomeAssetLocator reads them
+             via OpenAppPackageFileAsync); the Content include above keeps the
+             same files in wwwroot for the dormant Blazor pages. -->
+        <MauiAsset Include="Resources\Images\Leagues\**\*.*" LogicalName="images/leagues/%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
 
     <!-- Removed custom deletion of MAUI app compat layout to retain default fragment containers -->
@@ -277,6 +285,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Desktop,
+        net11.0-android/-windows compiled natively into this head).
+        Directory.Build.targets strips TargetFramework off every
+        ProjectReference, which breaks the cross-targeting reference protocol
+        (no compiled output comes back) - so this one reference keeps
+        TargetFramework negotiation and only strips the RID/SelfContained
+        globals.
+    -->
+    <ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+    </ProjectReference>
     <!-- Strip MAUI TargetFrameworks/RID so net10.0 domain libraries restore as net10.0, not NETSDK1005. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>

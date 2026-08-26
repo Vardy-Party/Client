@@ -7,6 +7,7 @@ using VardyParty;
 using VardyParty.Auth;
 using VardyParty.Catalog;
 using VardyParty.Components.Pages;
+using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Hosting;
 using VardyParty.Playback;
@@ -213,6 +214,24 @@ public static class MauiProgram
 
         builder.Services.AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>();
         builder.Services.AddVardyParty();
+
+        // UI sounds: registered per composition root (never in AddVardyParty).
+        // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
+        // fallbacks defer to these. Initialised on a background task after
+        // first render (HomeHostPage.OnAppearing), never in the startup path.
+#if ANDROID
+        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, AndroidUiSoundPlayer>();
+#elif WINDOWS
+        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, WindowsUiSoundPlayer>();
+#endif
+
+        // Shared XAML homepage (replaces the BlazorWebView shell on Android and
+        // Windows; the razor pages stay in the tree, dormant, for rollback).
+        builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
+        builder.Services.AddVardyPartyHomeUi();
+        builder.Services.AddSingleton<HomeHostPage>();
         builder.Services
             .AddSingleton<ICastService, CastService>()
             .AddSingleton<IBuildInfoService, BuildInfoService>()
