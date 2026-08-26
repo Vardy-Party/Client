@@ -3,18 +3,16 @@ using System.ComponentModel;
 namespace VardyParty.HomeUi.Views;
 
 /// <summary>
-/// The 3D metallic Vardy Party crest in the homepage header. Decoration only:
-/// it is never focusable (D-pad/tab traversal skips it entirely; the menu
-/// button beside it stays focusable).
-/// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/> —
-/// real state, never a timer) the crest spins on a 3D RotationY turntable
-/// with a coin-edge rim whose width and shading derive from the rotation
-/// angle, plus a specular glint tracking the same angle; when the first rows
-/// render it eases to rest with a sheen sweep. At rest: the static metallic
-/// look with an occasional ambient shimmer.
-/// Follows the same performance discipline as the match cards: every frame is
-/// opacity and transform only (no per-pixel effects — smooth on armeabi-v7a),
-/// and everything is aborted on unload so nothing runs while off screen.
+/// The metallic Vardy Party crest in the homepage header. Decoration only:
+/// it is never focusable (D-pad/tab traversal skips it; the menu button
+/// beside it stays focusable).
+/// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/>)
+/// the crest spins; when rows render it eases to rest with a sheen sweep.
+/// WinUI has no cheap PlaneProjection, so the loading spin uses 2D
+/// <see cref="VisualElement.Rotation"/> there and <c>RotationY</c> elsewhere.
+/// Settling is delayed one dispatcher interval so it does not abort an
+/// animation on the same CoreMessaging tick as catalog materialization
+/// (that pairing is what 0xc000027b'd, not the crest XAML itself).
 /// </summary>
 public partial class BrandLogoView : ContentView
 {
@@ -24,11 +22,7 @@ public partial class BrandLogoView : ContentView
     private const string SettleAnimation = "BrandSpinSettle";
     private const uint FocusScaleMs = 130;
     private const double AmbientOpacity = 0.35;
-
-    /// <summary>One full turntable revolution while loading.</summary>
     private const uint SpinTurnMs = 1800;
-
-    // Coin-edge rim: hairline when face-on, widest when edge-on.
     private const double RimMinScaleX = 0.06;
     private const double RimMaxScaleX = 0.34;
     private const double RimDriftPx = 7.0;
@@ -36,11 +30,14 @@ public partial class BrandLogoView : ContentView
     private bool _ambientRunning;
     private bool _spinning;
     private HomeViewModel? _observedViewModel;
+    private IDispatcherTimer? _settleDelay;
 
     public BrandLogoView()
     {
         InitializeComponent();
 #if WINDOWS
+        // MAUI Shadow is a WinUI DropShadow: keep it off the crest. The glow
+        // ring is the focus chrome instead.
         LogoOuter.ClearValue(Border.ShadowProperty);
 #endif
         Loaded += OnLoaded;
@@ -71,64 +68,44 @@ public partial class BrandLogoView : ContentView
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-#if WINDOWS
-        return;
-#else
         if (e.PropertyName is null or nameof(HomeViewModel.IsContentLoading) or nameof(HomeViewModel.HasError))
         {
             ApplyLoadState();
         }
-#endif
     }
 
-    /// <summary>
-    /// Spin while data loads / the UI gets ready; a surfaced service error
-    /// with no rows rests the crest instead of spinning forever.
-    /// </summary>
     private bool ShouldSpin => _observedViewModel is { IsContentLoading: true, HasError: false };
 
     private void ApplyLoadState()
     {
         if (!IsLoaded) return;
-#if WINDOWS
-        return;
-#endif
 
         if (ShouldSpin)
         {
+            CancelSettleDelay();
             StartLoadingSpin();
+            return;
         }
-        else
+
+        if (_spinning)
         {
-            SettleFromSpin();
+            ScheduleSettle();
+            return;
         }
+
+        RunSheenSweep(0.85);
     }
 
     private void OnLoaded(object? sender, EventArgs e)
     {
         CrestImage.Source ??= BrandCrestImageLoader.GetCrest();
         DisableFocusTraversal();
-
-#if WINDOWS
-        // No spin/sheen: aborting the loading animation when the catalog
-        // lands was enough to 0xc000027b on WinAppSDK 1.8.
-        ResetSpinVisuals();
-        return;
-#endif
-
-        if (ShouldSpin)
-        {
-            StartLoadingSpin();
-        }
-        else
-        {
-            // Opening sheen sweep; the ambient shimmer loop starts when it lands.
-            RunSheenSweep(0.85);
-        }
+        ApplyLoadState();
     }
 
     private void OnUnloaded(object? sender, EventArgs e)
     {
+        CancelSettleDelay();
         _ambientRunning = false;
         _spinning = false;
         this.AbortAnimation(SheenAnimation);
@@ -138,10 +115,6 @@ public partial class BrandLogoView : ContentView
         ResetSpinVisuals();
     }
 
-    /// <summary>
-    /// Decoration only: the crest (and everything inside it) must be skipped
-    /// by D-pad traversal. The Leagues/menu button to its right stays focusable.
-    /// </summary>
     private void DisableFocusTraversal()
     {
 #if ANDROID
@@ -154,12 +127,9 @@ public partial class BrandLogoView : ContentView
 #endif
     }
 
-    /// <summary>TV focus entered the header area: subtle scale + glow + sheen.</summary>
+    /// <summary>TV/keyboard focus entered the header: scale + glow + sheen.</summary>
     public void OnHeaderFocusEntered()
     {
-#if WINDOWS
-        return;
-#endif
         _ = LogoOuter.ScaleToAsync(1.08, FocusScaleMs, Easing.CubicOut);
         _ = GlowRing.FadeToAsync(0.7, FocusScaleMs);
         RunSheenSweep(0.85);
@@ -167,14 +137,9 @@ public partial class BrandLogoView : ContentView
 
     public void OnHeaderFocusExited()
     {
-#if WINDOWS
-        return;
-#endif
         _ = LogoOuter.ScaleToAsync(1.0, FocusScaleMs, Easing.CubicOut);
         _ = GlowRing.FadeToAsync(0.0, FocusScaleMs);
     }
-
-    // ---------------------------------------------------------- loading spin --
 
     private void StartLoadingSpin()
     {
@@ -186,36 +151,43 @@ public partial class BrandLogoView : ContentView
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(SettleAnimation);
 
-#if WINDOWS
-        // Opacity pulse only: RotationY/Rotation during catalog Dispatch is a
-        // WinUI 1.8 CoreMessaging 0xc000027b. Same "we're loading" signal.
-        var pulse = new Animation();
-        pulse.Add(0.0, 0.5, new Animation(v => LogoOuter.Opacity = v, 1.0, 0.55, Easing.SinInOut));
-        pulse.Add(0.5, 1.0, new Animation(v => LogoOuter.Opacity = v, 0.55, 1.0, Easing.SinInOut));
-        pulse.Commit(this, SpinAnimation, length: 1400, repeat: () => _spinning);
-        return;
-#endif
-
         var spin = new Animation(ApplySpinFrame, 0, 360);
         spin.Commit(this, SpinAnimation, length: SpinTurnMs, easing: Easing.Linear, repeat: () => _spinning);
     }
 
-    /// <summary>Rows are ready: ease to rest over the shortest arc, then sheen-sweep.</summary>
+    private void ScheduleSettle()
+    {
+        if (!_spinning) return;
+        if (_settleDelay != null) return;
+
+        _settleDelay = Dispatcher.CreateTimer();
+        _settleDelay.Interval = TimeSpan.FromMilliseconds(400);
+        _settleDelay.IsRepeating = false;
+        _settleDelay.Tick += OnSettleDelayTick;
+        _settleDelay.Start();
+    }
+
+    private void OnSettleDelayTick(object? sender, EventArgs e)
+    {
+        CancelSettleDelay();
+        SettleFromSpin();
+    }
+
+    private void CancelSettleDelay()
+    {
+        if (_settleDelay == null) return;
+        _settleDelay.Tick -= OnSettleDelayTick;
+        _settleDelay.Stop();
+        _settleDelay = null;
+    }
+
     private void SettleFromSpin()
     {
         if (!_spinning) return;
         _spinning = false;
         this.AbortAnimation(SpinAnimation);
-#if WINDOWS
-        ResetSpinVisuals();
-        if (IsLoaded)
-        {
-            RunSheenSweep(0.85);
-        }
-        return;
-#endif
 
-        var current = LogoOuter.RotationY % 360;
+        var current = CurrentSpinAngle() % 360;
         if (current < 0) current += 360;
         var target = current <= 180 ? 0.0 : 360.0;
 
@@ -228,6 +200,15 @@ public partial class BrandLogoView : ContentView
                 RunSheenSweep(0.85);
             }
         });
+    }
+
+    private double CurrentSpinAngle()
+    {
+#if WINDOWS
+        return LogoOuter.Rotation;
+#else
+        return LogoOuter.RotationY;
+#endif
     }
 
     private void ResetSpinVisuals()
@@ -243,14 +224,6 @@ public partial class BrandLogoView : ContentView
         LogoSheen.TranslationX = -26;
     }
 
-    /// <summary>
-    /// One turntable frame — transform/opacity only, all derived from the same
-    /// rotation angle:
-    /// the face compresses toward edge-on (RotationY perspective), the dark
-    /// rim widens/darkens and drifts toward the receding side like a turning
-    /// coin's edge, and the specular glint travels across the face, brightest
-    /// near the 45° sweet-spot angles and gone when edge-on.
-    /// </summary>
     private void ApplySpinFrame(double angleDegrees)
     {
         var radians = angleDegrees * Math.PI / 180.0;
@@ -259,7 +232,6 @@ public partial class BrandLogoView : ContentView
         var faceVisibility = Math.Abs(Math.Cos(radians));
 
 #if WINDOWS
-        // 2D spin: same "loading" signal, no WinUI PlaneProjection.
         LogoOuter.Rotation = angleDegrees;
 #else
         LogoOuter.RotationY = angleDegrees;
@@ -274,18 +246,12 @@ public partial class BrandLogoView : ContentView
         LogoSheen.TranslationX = -26 + (SheenTravel + 26) * (angleDegrees % 180.0) / 180.0;
     }
 
-    // ------------------------------------------------------------ rest state --
-
     private double SheenTravel => Math.Max(Width, 40) + 26;
 
     private void RunSheenSweep(double peakOpacity)
     {
-        // The spin owns the sheen while it runs (the glint is a spin-frame
-        // output); a header-focus sweep during loading would fight it.
         if (_spinning) return;
 
-        // One animation owns the sheen at a time: pause the ambient loop for
-        // the sweep and resume it when the sweep lands.
         _ambientRunning = false;
         this.AbortAnimation(AmbientAnimation);
         this.AbortAnimation(SheenAnimation);
@@ -306,10 +272,6 @@ public partial class BrandLogoView : ContentView
         });
     }
 
-    /// <summary>
-    /// Ambient shimmer: a low-opacity sheen crosses the crest during the first
-    /// quarter of a 6s loop, then the crest rests. Opacity/translation only.
-    /// </summary>
     private void StartAmbientShimmer()
     {
         if (_ambientRunning) return;

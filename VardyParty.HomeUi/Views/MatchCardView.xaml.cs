@@ -44,21 +44,9 @@ public partial class MatchCardView : ContentView
     private bool _pulseRunning;
     private bool _resolvingPulseRunning;
     private bool _isFocused;
-#if WINDOWS
-    private Border? _windowsCard;
-#endif
 
     public MatchCardView()
     {
-#if WINDOWS
-        // Default is the shared XAML (same design as Android/TV). The light
-        // tree is only a fallback: set VARDYPARTY_WINDOWS_LIGHT_CARDS=1.
-        if (UseWindowsLightCards())
-        {
-            UseLightweightWindowsCard();
-            return;
-        }
-#endif
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -102,24 +90,12 @@ public partial class MatchCardView : ContentView
             _observedLayout.PropertyChanged += OnLayoutChanged;
             _observedViewModel = vm;
             _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
-#if WINDOWS
-            if (_windowsCard != null)
-            {
-                ApplyWindowsChrome();
-            }
-            else
-            {
-                ApplyCornerRadius();
-                ApplyInteractionState(animate: false);
-            }
-#else
             ApplyCornerRadius();
             ApplyInteractionState(animate: false);
 
             // Recycled containers can be rebound while still attached (no
             // Loaded), so the new VM's armed initial focus must be honoured here.
             EnableTvFocus();
-#endif
         }
     }
 
@@ -127,12 +103,7 @@ public partial class MatchCardView : ContentView
     {
         if (e.PropertyName is null or nameof(HomeLayoutState.CardCornerRadius))
         {
-#if WINDOWS
-            if (_windowsCard == null)
-#endif
-            {
-                ApplyCornerRadius();
-            }
+            ApplyCornerRadius();
         }
     }
 
@@ -140,221 +111,9 @@ public partial class MatchCardView : ContentView
     {
         if (e.PropertyName is null or nameof(MatchCardViewModel.IsResolving))
         {
-#if WINDOWS
-            if (_windowsCard != null)
-            {
-                ApplyWindowsChrome();
-            }
-            else
-#endif
-            {
-                ApplyInteractionState(animate: true);
-            }
+            ApplyInteractionState(animate: true);
         }
     }
-
-#if WINDOWS
-    private static bool UseWindowsLightCards() =>
-        string.Equals(
-            Environment.GetEnvironmentVariable("VARDYPARTY_WINDOWS_LIGHT_CARDS"),
-            "1",
-            StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Fallback card tree when VARDYPARTY_WINDOWS_LIGHT_CARDS=1.
-    /// </summary>
-    private void UseLightweightWindowsCard()
-    {
-        var live = new Border
-        {
-            Padding = new Thickness(8, 2),
-            BackgroundColor = Color.FromArgb("#8CBE1233"),
-            StrokeThickness = 0,
-            HorizontalOptions = LayoutOptions.Start,
-            VerticalOptions = LayoutOptions.Center,
-            Content = new Label
-            {
-                Text = "LIVE",
-                TextColor = Color.FromArgb("#FECACA"),
-                FontAttributes = FontAttributes.Bold,
-                FontSize = 11,
-            },
-        };
-        live.SetBinding(VisualElement.IsVisibleProperty, nameof(MatchCardViewModel.IsLive));
-
-        var status = new Label
-        {
-            TextColor = Color.FromArgb("#8A93A6"),
-            HorizontalTextAlignment = TextAlignment.End,
-            LineBreakMode = LineBreakMode.TailTruncation,
-            HorizontalOptions = LayoutOptions.Fill,
-        };
-        status.SetBinding(Label.TextProperty, nameof(MatchCardViewModel.StatusText));
-        status.SetBinding(Label.FontSizeProperty, "Layout.StatusFontSize");
-
-        var aggregate = new Label
-        {
-            TextColor = Color.FromArgb("#D1D5DB"),
-            HorizontalTextAlignment = TextAlignment.End,
-        };
-        aggregate.SetBinding(Label.TextProperty, nameof(MatchCardViewModel.AggregateText));
-        aggregate.SetBinding(VisualElement.IsVisibleProperty, nameof(MatchCardViewModel.HasAggregate));
-        aggregate.SetBinding(Label.FontSizeProperty, "Layout.AggregateFontSize");
-
-        var score = new Label
-        {
-            TextColor = Colors.White,
-            FontAttributes = FontAttributes.Bold,
-            HorizontalTextAlignment = TextAlignment.Center,
-            VerticalOptions = LayoutOptions.Center,
-        };
-        score.SetBinding(Label.TextProperty, nameof(MatchCardViewModel.ScoreText));
-        score.SetBinding(Label.FontSizeProperty, "Layout.ScoreFontSize");
-
-        var homeEdge = new BoxView
-        {
-            WidthRequest = 5,
-            HorizontalOptions = LayoutOptions.Start,
-            InputTransparent = true,
-        };
-        homeEdge.SetBinding(VisualElement.BackgroundProperty, nameof(MatchCardViewModel.HomeAccent));
-
-        var awayEdge = new BoxView
-        {
-            WidthRequest = 5,
-            HorizontalOptions = LayoutOptions.End,
-            InputTransparent = true,
-        };
-        awayEdge.SetBinding(VisualElement.BackgroundProperty, nameof(MatchCardViewModel.AwayAccent));
-
-        var tap = new TapGestureRecognizer();
-        tap.Tapped += OnCardTapped;
-
-        var card = new Border
-        {
-            BackgroundColor = Color.FromArgb("#141926"),
-            Stroke = new SolidColorBrush(RestStrokeColor),
-            StrokeThickness = 1,
-            Padding = 0,
-            Content = new Grid
-            {
-                Children =
-                {
-                    new Grid
-                    {
-                        RowDefinitions =
-                        [
-                            new RowDefinition(GridLength.Auto),
-                            new RowDefinition(GridLength.Star),
-                        ],
-                        Padding = new Thickness(14, 10, 14, 12),
-                        Children =
-                        {
-                            Named(new Grid
-                            {
-                                ColumnDefinitions =
-                                [
-                                    new ColumnDefinition(GridLength.Auto),
-                                    new ColumnDefinition(GridLength.Star),
-                                    new ColumnDefinition(GridLength.Auto),
-                                ],
-                                Children =
-                                {
-                                    Named(live, 0, 0),
-                                    Named(status, 0, 1),
-                                    Named(aggregate, 0, 2),
-                                },
-                            }, 0, 0),
-                            Named(new Grid
-                            {
-                                ColumnDefinitions =
-                                [
-                                    new ColumnDefinition(GridLength.Star),
-                                    new ColumnDefinition(GridLength.Auto),
-                                    new ColumnDefinition(GridLength.Star),
-                                ],
-                                Children =
-                                {
-                                    Named(WindowsTeamColumn(home: true), 0, 0),
-                                    Named(score, 0, 1),
-                                    Named(WindowsTeamColumn(home: false), 0, 2),
-                                },
-                            }, 1, 0),
-                        },
-                    },
-                    homeEdge,
-                    awayEdge,
-                },
-            },
-        };
-        card.GestureRecognizers.Add(tap);
-        card.SetBinding(VisualElement.BackgroundProperty, nameof(MatchCardViewModel.CardBackground));
-        card.SetBinding(VisualElement.WidthRequestProperty, "Layout.CardWidth");
-        card.SetBinding(VisualElement.HeightRequestProperty, "Layout.CardHeight");
-        card.SetBinding(View.MarginProperty, "Layout.CardMarginThickness");
-        _windowsCard = card;
-        Content = card;
-    }
-
-    private static VerticalStackLayout WindowsTeamColumn(bool home)
-    {
-        var badge = new Image
-        {
-            Aspect = Aspect.AspectFit,
-            HorizontalOptions = LayoutOptions.Center,
-        };
-        badge.SetBinding(Image.SourceProperty, home ? nameof(MatchCardViewModel.HomeBadge) : nameof(MatchCardViewModel.AwayBadge));
-        badge.SetBinding(VisualElement.IsVisibleProperty, home ? nameof(MatchCardViewModel.HasHomeBadge) : nameof(MatchCardViewModel.HasAwayBadge));
-        badge.SetBinding(VisualElement.WidthRequestProperty, "Layout.BadgeSize");
-        badge.SetBinding(VisualElement.HeightRequestProperty, "Layout.BadgeSize");
-
-        var initial = new Label
-        {
-            FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.White,
-            HorizontalOptions = LayoutOptions.Center,
-            HorizontalTextAlignment = TextAlignment.Center,
-        };
-        initial.SetBinding(Label.TextProperty, home ? nameof(MatchCardViewModel.HomeInitial) : nameof(MatchCardViewModel.AwayInitial));
-        initial.SetBinding(VisualElement.IsVisibleProperty, home ? nameof(MatchCardViewModel.NoHomeBadge) : nameof(MatchCardViewModel.NoAwayBadge));
-        initial.SetBinding(Label.FontSizeProperty, "Layout.TeamFontSize");
-
-        var name = new Label
-        {
-            TextColor = Colors.White,
-            FontAttributes = FontAttributes.Bold,
-            HorizontalTextAlignment = TextAlignment.Center,
-            LineBreakMode = LineBreakMode.WordWrap,
-            HorizontalOptions = LayoutOptions.Center,
-        };
-        name.SetBinding(Label.TextProperty, home ? nameof(MatchCardViewModel.HomeTeam) : nameof(MatchCardViewModel.AwayTeam));
-        name.SetBinding(Label.FontSizeProperty, "Layout.TeamFontSize");
-
-        return new VerticalStackLayout
-        {
-            Spacing = 6,
-            HorizontalOptions = LayoutOptions.Center,
-            VerticalOptions = LayoutOptions.Center,
-            Children = { badge, initial, name },
-        };
-    }
-
-    private void ApplyWindowsChrome()
-    {
-        if (_windowsCard == null) return;
-        var resolving = ViewModel?.IsResolving == true;
-        _windowsCard.Stroke = new SolidColorBrush(resolving ? ResolvingStrokeColor : RestStrokeColor);
-        _windowsCard.StrokeThickness = resolving ? 2 : 1;
-    }
-
-    private static T Named<T>(T view, int row, int column, int columnSpan = 1) where T : View
-    {
-        Grid.SetRow(view, row);
-        Grid.SetColumn(view, column);
-        Grid.SetColumnSpan(view, columnSpan);
-        return view;
-    }
-#endif
 
     private void ApplyCornerRadius()
     {

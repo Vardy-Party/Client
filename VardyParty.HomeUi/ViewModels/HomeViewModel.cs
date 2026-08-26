@@ -11,7 +11,7 @@ namespace VardyParty.HomeUi;
 /// Homepage shell: Netflix-style league rows built from the enriched games
 /// dictionary, plus the hide/show leagues menu and the adaptive layout state.
 /// Platform heads feed it games and viewport changes; it raises
-/// <see cref="GamePicked"/> when the user selects a match.
+/// <see cref="GamePicked"/> when the user picks a match.
 /// </summary>
 public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 {
@@ -19,9 +19,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly MenuViewModel _menu;
     private readonly IBadgeImageLoader _images;
     private readonly IHomeAssetLocator _assets;
-    private readonly IDispatcher _dispatcher;
     private readonly UiSoundService _sounds;
     private readonly ScoreChangeDetector _scoreChanges = new();
+    private readonly object _pendingLock = new();
+    private readonly Queue<Action> _pendingUiAssign = new();
     private IDictionary<string, List<Game>>? _lastGames;
     private bool _isMenuOpen;
     private string _subtitle = string.Empty;
@@ -29,26 +30,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _hasGames;
     private bool _isContentLoading = true;
     private Game? _resolvingGame;
-    private readonly object _pendingLock = new();
     private PendingApply? _pendingApply;
     private string? _pendingError;
     private bool _pendingClearResolving;
-#if WINDOWS
-    private IReadOnlyList<LeagueRowModel>? _windowsStaggerRows;
-    private int _windowsStaggerRow;
-    private int _windowsStaggerCard;
-    private readonly List<WindowsCatalogItem> _windowsPainted = new();
-    private readonly Dictionary<string, ImageSource> _windowsLeagueIcons = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Queue<Action> _pendingUiAssign = new();
-
-    public readonly record struct WindowsCatalogItem(string? Header, bool HeaderIsLive, MatchCardViewModel? Card, Game? LeagueGame);
-
-    /// <summary>Plain catalog lines HomeView paints without BindableLayout/MatchCardView.</summary>
-    public IReadOnlyList<WindowsCatalogItem> WindowsPaintedLines => _windowsPainted;
-
-    public ImageSource? TryGetWindowsLeagueIcon(string league) =>
-        _windowsLeagueIcons.TryGetValue(league, out var icon) ? icon : null;
-#endif
+    private bool _pendingResetScores;
 
     private sealed record PendingApply(
         IReadOnlyList<LeagueRowModel> Rows,
@@ -67,7 +52,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
         _images = images ?? throw new ArgumentNullException(nameof(images));
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
-        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _ = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
 
         _leagueFilter.Changed += OnFilterChanged;
@@ -140,7 +125,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool ShowEmptyState => !HasGames;
+    /// <summary>
+    /// Empty copy only after a real catalog has arrived. Startup coalescing can
+    /// withhold the first board while BBC is in flight; that is still loading.
+    /// </summary>
+    public bool ShowEmptyState => !_hasGames && !_isContentLoading;
 
     /// <summary>
     /// True until the first real games dictionary lands (and again after a
@@ -156,6 +145,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             if (_isContentLoading == value) return;
             _isContentLoading = value;
             Raise(nameof(IsContentLoading));
+            Raise(nameof(ShowEmptyState));
         }
     }
 
@@ -169,14 +159,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Surface a service error banner. Safe to call from any thread.</summary>
     public void SetError(string? message)
     {
-        var incoming = message ?? string.Empty;
-
-        // Queue for the UI-thread apply pump. Playing and reading
-        // _errorMessage must not happen on the catalog/HTTP thread (WinAppSDK
-        // 1.8 stows that as 0xc000027b; concurrent SetError also races).
         lock (_pendingLock)
         {
-            _pendingError = incoming;
+            _pendingError = message ?? string.Empty;
         }
     }
 
@@ -188,12 +173,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     {
         var opening = !IsMenuOpen;
         IsMenuOpen = opening;
-#if WINDOWS
         if (opening)
         {
             RefreshLeagueToggles();
         }
-#endif
+
         _sounds.Play(opening ? UiSound.MenuOpen : UiSound.Back);
     }
 
@@ -245,10 +229,16 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>
     /// Forget observed scores (e.g. on sign-out) so re-appearing games stay
-    /// silent. Dispatched because the detector is only ever touched on the UI
-    /// thread (see <see cref="Apply"/>); safe to call from any thread.
+    /// silent. Queued for the UI-thread apply pump — the detector is only
+    /// touched there (see <see cref="FlushPendingApply"/>).
     /// </summary>
-    public void ResetScoreObservations() => _dispatcher.Dispatch(() => _scoreChanges.Reset());
+    public void ResetScoreObservations()
+    {
+        lock (_pendingLock)
+        {
+            _pendingResetScores = true;
+        }
+    }
 
     public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
 
@@ -258,9 +248,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     {
         var dict = _lastGames;
 
-        // Pure work off the UI thread. Do not Dispatcher.Dispatch from here:
-        // on WinAppSDK 1.8 that marshal is a 0xc000027b in CoreMessagingXP.
-        // HomeView's UI-thread timer calls FlushPendingApply instead.
+        // Filter/group off the caller thread. WinAppSDK 1.8 stows a
+        // 0xc000027b if we Dispatcher.Dispatch from the Rx/HTTP thread into
+        // WinUI layout; HomeView's UI-thread timer drains this queue instead.
         var display = dict == null
             ? new List<Game>()
             : _leagueFilter.FilterGames(dict.ToDisplay());
@@ -273,14 +263,15 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Drain catalog/error work that arrived off the UI thread. Must run on
-    /// the UI thread (HomeView's apply pump).
+    /// Drain catalog/error/image work that arrived off the UI thread. Must run
+    /// on the UI thread (HomeView's apply pump).
     /// </summary>
     public void FlushPendingApply()
     {
         string? error;
         PendingApply? apply;
         var clearResolving = false;
+        var resetScores = false;
         lock (_pendingLock)
         {
             error = _pendingError;
@@ -289,6 +280,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             _pendingApply = null;
             clearResolving = _pendingClearResolving;
             _pendingClearResolving = false;
+            resetScores = _pendingResetScores;
+            _pendingResetScores = false;
+        }
+
+        if (resetScores)
+        {
+            _scoreChanges.Reset();
         }
 
         if (error != null)
@@ -311,27 +309,22 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         if (apply != null)
         {
-            // Goal sting on genuine live score transitions only. Detector is
-            // UI-thread only — Rebuild can run on the games-stream thread.
             if (_scoreChanges.Observe(apply.Display).Count > 0)
             {
                 _sounds.Play(UiSound.Goal);
             }
 
             Apply(apply.Rows, apply.Display.Count, apply.Dict);
-            return;
         }
 
-#if WINDOWS
-        TryAppendOneWindowsCard();
         TryApplyOnePendingImage();
         TryApplyOnePendingImage();
-#endif
+        TryApplyOnePendingImage();
+        TryApplyOnePendingImage();
     }
 
     private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)
     {
-#if WINDOWS
         _menu.RefreshKnownLeagues(dict);
         if (IsMenuOpen)
         {
@@ -343,33 +336,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             _resolvingGame = null;
         }
 
-        GameCount = gameCount;
-        IsContentLoading = dict == null;
-        HasGames = gameCount > 0;
-        var winLive = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
-        Subtitle = FormatSubtitle(gameCount, winLive);
-        Rows.Clear();
-        _windowsStaggerRows = rowModels;
-        _windowsStaggerRow = 0;
-        _windowsStaggerCard = 0;
-        _windowsPainted.Clear();
-        _windowsLeagueIcons.Clear();
+        var hadGames = GameCount > 0;
         lock (_pendingLock)
         {
             _pendingUiAssign.Clear();
         }
-        GamesUpdated?.Invoke(gameCount);
-        return;
-#else
-        _menu.RefreshKnownLeagues(dict);
-        RefreshLeagueToggles();
 
-        if (dict == null)
-        {
-            _resolvingGame = null;
-        }
-
-        var hadGames = GameCount > 0;
         Rows.Clear();
         var rowViewModels = new List<LeagueRowViewModel>(rowModels.Count);
         foreach (var model in rowModels)
@@ -377,8 +349,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             var cards = model.Games
                 .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked, OnCardFocused)
                 {
-                    // Rebuilds during an active resolution keep the picked
-                    // card's resolving highlight on the replacement VM.
                     IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game),
                 })
                 .ToList();
@@ -387,9 +357,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             Rows.Add(row);
         }
 
-        // TV D-pad: arm one programmatic autofocus on the first card when rows
-        // first appear (empty -> non-empty edge). Later refreshes never steal
-        // the highlight (same contract as TvGridFocusPolicy).
         if (!hadGames && rowViewModels.Count > 0 && rowViewModels[0].Cards.Count > 0)
         {
             rowViewModels[0].Cards[0].RequestsInitialFocus = true;
@@ -404,56 +371,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         GamesUpdated?.Invoke(gameCount);
 
         _ = LoadImagesAsync(rowViewModels);
-#endif
-    }
-
-#if WINDOWS
-    private void TryAppendOneWindowsCard()
-    {
-        var rows = _windowsStaggerRows;
-        if (rows == null || _windowsStaggerRow >= rows.Count)
-        {
-            _windowsStaggerRows = null;
-            return;
-        }
-
-        var model = rows[_windowsStaggerRow];
-        if (_windowsStaggerCard == 0)
-        {
-            _windowsPainted.Add(new WindowsCatalogItem(model.League, model.HasLiveGames, null, model.Games.FirstOrDefault()));
-            _windowsStaggerCard = -1;
-            if (model.Games.Count > 0)
-            {
-                _ = LoadWindowsLeagueIconAsync(model.League, model.Games[0]);
-            }
-            return;
-        }
-
-        if (_windowsStaggerCard < 0)
-        {
-            _windowsStaggerCard = 0;
-        }
-
-        if (_windowsStaggerCard >= model.Games.Count)
-        {
-            _windowsStaggerRow++;
-            _windowsStaggerCard = 0;
-            return;
-        }
-
-        var next = model.Games[_windowsStaggerCard];
-        var cardVm = new MatchCardViewModel(next, Layout, OnCardPicked, OnCardFocused)
-        {
-            IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, next),
-        };
-        _windowsPainted.Add(new WindowsCatalogItem(null, false, cardVm, null));
-        _ = LoadWindowsCardImagesAsync(cardVm);
-        _windowsStaggerCard++;
-        if (_windowsStaggerCard >= model.Games.Count)
-        {
-            _windowsStaggerRow++;
-            _windowsStaggerCard = 0;
-        }
     }
 
     private void EnqueueUiAssign(Action assign)
@@ -476,52 +393,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         assign();
     }
 
-    private async Task LoadWindowsCardImagesAsync(MatchCardViewModel card)
-    {
-        try
-        {
-            var home = await _images.LoadRemoteAsync(card.Game.HomeBadgeUrl).ConfigureAwait(false);
-            var away = await _images.LoadRemoteAsync(card.Game.AwayBadgeUrl).ConfigureAwait(false);
-            if (home == null && away == null) return;
-            EnqueueUiAssign(() =>
-            {
-                if (home != null) card.HomeBadge = home;
-                if (away != null) card.AwayBadge = away;
-            });
-        }
-        catch
-        {
-            // Missing badges stay as monograms.
-        }
-    }
-
-    private async Task LoadWindowsLeagueIconAsync(string league, Game game)
-    {
-        try
-        {
-            var path = await _assets.ResolveLeagueLogoPathAsync(game).ConfigureAwait(false);
-            var icon = await _images.LoadLocalAsync(path).ConfigureAwait(false);
-            if (icon == null) return;
-            EnqueueUiAssign(() => _windowsLeagueIcons[league] = icon);
-        }
-        catch
-        {
-        }
-    }
-
-    public void PickWindowsGame(Game game)
-    {
-        _sounds.Play(UiSound.Select);
-        _resolvingGame = game;
-        GamePicked?.Invoke(game);
-    }
-#endif
-
     private void RefreshLeagueToggles()
     {
         var known = _menu.KnownLeagues;
 
-        // Rebuild only when the league set changed; otherwise sync check states.
         if (LeagueToggles.Count == known.Count
             && LeagueToggles.Select(t => t.Name).SequenceEqual(known, StringComparer.OrdinalIgnoreCase))
         {
@@ -549,26 +424,24 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             var firstGame = row.Cards.FirstOrDefault()?.Game;
             if (firstGame != null)
             {
-                var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame);
-                var icon = await _images.LoadLocalAsync(iconPath);
+                var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame).ConfigureAwait(false);
+                var icon = await _images.LoadLocalAsync(iconPath).ConfigureAwait(false);
                 if (icon != null)
                 {
-                    _dispatcher.Dispatch(() => row.LeagueIcon = icon);
+                    EnqueueUiAssign(() => row.LeagueIcon = icon);
                 }
             }
 
             foreach (var card in row.Cards)
             {
-                var home = await _images.LoadRemoteAsync(card.Game.HomeBadgeUrl);
-                var away = await _images.LoadRemoteAsync(card.Game.AwayBadgeUrl);
-                if (home != null || away != null)
+                var home = await _images.LoadRemoteAsync(card.Game.HomeBadgeUrl).ConfigureAwait(false);
+                var away = await _images.LoadRemoteAsync(card.Game.AwayBadgeUrl).ConfigureAwait(false);
+                if (home == null && away == null) continue;
+                EnqueueUiAssign(() =>
                 {
-                    _dispatcher.Dispatch(() =>
-                    {
-                        if (home != null) card.HomeBadge = home;
-                        if (away != null) card.AwayBadge = away;
-                    });
-                }
+                    if (home != null) card.HomeBadge = home;
+                    if (away != null) card.AwayBadge = away;
+                });
             }
         }
     }
@@ -579,30 +452,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         return liveCount > 0 ? $"{games} · {liveCount} live" : games;
     }
 
-    private IEnumerable<MatchCardViewModel> EnumerateCards()
-    {
-        foreach (var card in Rows.SelectMany(r => r.Cards))
-        {
-            yield return card;
-        }
-
-#if WINDOWS
-        foreach (var item in _windowsPainted)
-        {
-            if (item.Card != null)
-            {
-                yield return item.Card;
-            }
-        }
-#endif
-    }
+    private IEnumerable<MatchCardViewModel> EnumerateCards() =>
+        Rows.SelectMany(r => r.Cards);
 
     private void OnCardPicked(MatchCardViewModel card)
     {
         _sounds.Play(UiSound.Select);
 
-        // Selected/resolving state: the picked card stays visibly active until
-        // the head reports the resolution ended (OnStreamResolutionEnded).
         _resolvingGame = card.Game;
         foreach (var other in EnumerateCards())
         {

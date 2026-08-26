@@ -53,19 +53,17 @@
                        FontSize="{Binding Layout.PageSubtitleFontSize}" />
             </Border>
 
-            <!-- Netflix-style rows. BindableLayout (not CollectionView) on both
-                 axes: nested WinUI ItemsRepeaters plus DropShadows are a
-                 0xc000027b crash on Windows App SDK 1.8. A homepage has a
-                 handful of leagues and fixtures, so virtualization is not needed. -->
-            <ScrollView x:Name="RichCatalog"
-                        Grid.Row="2"
-                        VerticalScrollBarVisibility="Never"
-                        IsVisible="{OnPlatform WinUI=false, Default=true}">
-                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Rows}">
-                    <BindableLayout.ItemTemplate>
+            <!-- Android/iOS/Mac Catalyst/TV: nested CollectionViews so D-pad
+                 focus routing can walk RecyclerView. ItemsSource is wired in
+                 code-behind so WinUI never attaches an ItemsRepeater. -->
+            <CollectionView x:Name="LeagueList"
+                            Grid.Row="2"
+                            VerticalScrollBarVisibility="Never"
+                            SelectionMode="None"
+                            IsVisible="{OnPlatform WinUI=false, Default=true}">
+                <CollectionView.ItemTemplate>
                     <DataTemplate x:DataType="hu:LeagueRowViewModel">
                         <VerticalStackLayout Margin="{Binding Layout.RowMarginThickness}" Spacing="10">
-                            <!-- Row header -->
                             <HorizontalStackLayout Spacing="10">
                                 <Image Source="{Binding LeagueIcon}"
                                        WidthRequest="{Binding Layout.LeagueIconSize}"
@@ -94,40 +92,81 @@
                                        TextColor="#5B6478"
                                        VerticalOptions="Center" />
                             </HorizontalStackLayout>
-
-                            <!-- Horizontal card strip. Nested CollectionView
-                                 (vertical league list × horizontal ItemsRepeater)
-                                 materialises WinUI composition shadows for every
-                                 card at once and is a known 0xc000027b crash on
-                                 Windows App SDK 1.8. BindableLayout keeps the
-                                 same Netflix-row UX without nested virtualization;
-                                 a row only has a handful of fixtures. -->
-                            <ScrollView HeightRequest="{Binding Layout.RowHeight}"
-                                        Orientation="Horizontal"
-                                        HorizontalScrollBarVisibility="Never"
-                                        VerticalScrollBarVisibility="Never">
-                                <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Cards}">
-                                    <BindableLayout.ItemTemplate>
-                                        <DataTemplate x:DataType="hu:MatchCardViewModel">
-                                            <views:MatchCardView />
-                                        </DataTemplate>
-                                    </BindableLayout.ItemTemplate>
-                                </HorizontalStackLayout>
-                            </ScrollView>
+                            <CollectionView ItemsSource="{Binding Cards}"
+                                            HeightRequest="{Binding Layout.RowHeight}"
+                                            HorizontalScrollBarVisibility="Never"
+                                            SelectionMode="None">
+                                <CollectionView.ItemsLayout>
+                                    <LinearItemsLayout Orientation="Horizontal" />
+                                </CollectionView.ItemsLayout>
+                                <CollectionView.ItemTemplate>
+                                    <DataTemplate x:DataType="hu:MatchCardViewModel">
+                                        <views:MatchCardView />
+                                    </DataTemplate>
+                                </CollectionView.ItemTemplate>
+                            </CollectionView>
                         </VerticalStackLayout>
                     </DataTemplate>
-                    </BindableLayout.ItemTemplate>
-                </VerticalStackLayout>
-            </ScrollView>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
 
-            <!-- Windows: BindableLayout + MatchCardView is a WinAppSDK 1.8
-                 CoreMessagingXP 0xc000027b. Plain buttons, one per pump tick. -->
+            <!-- WinUI: same Rows + MatchCardView, StackPanel not ItemsRepeater.
+                 Nested WinUI Repeaters + DropShadow is 0x800710DD / 0xc000027b. -->
             <ScrollView x:Name="WindowsCatalog"
                         Grid.Row="2"
                         Padding="36,8,36,24"
                         VerticalScrollBarVisibility="Default"
                         IsVisible="{OnPlatform WinUI=true, Default=false}">
-                <VerticalStackLayout x:Name="WindowsCatalogHost" Spacing="8" Padding="0,0,0,24" />
+                <VerticalStackLayout x:Name="WindowsLeagueRows" Spacing="8" Padding="0,0,0,24">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="hu:LeagueRowViewModel">
+                            <VerticalStackLayout Margin="{Binding Layout.RowMarginThickness}" Spacing="10">
+                                <HorizontalStackLayout Spacing="10">
+                                    <Image Source="{Binding LeagueIcon}"
+                                           WidthRequest="{Binding Layout.LeagueIconSize}"
+                                           HeightRequest="{Binding Layout.LeagueIconSize}"
+                                           Aspect="AspectFit"
+                                           VerticalOptions="Center"
+                                           IsVisible="{Binding HasLeagueIcon}" />
+                                    <Label Text="{Binding League}"
+                                           FontSize="{Binding Layout.LeagueTitleFontSize}"
+                                           FontAttributes="Bold"
+                                           TextColor="White"
+                                           VerticalOptions="Center" />
+                                    <Border Padding="8,2"
+                                            BackgroundColor="#8CBE1233"
+                                            StrokeThickness="0"
+                                            StrokeShape="RoundRectangle 999"
+                                            VerticalOptions="Center"
+                                            IsVisible="{Binding HasLiveGames}">
+                                        <Label Text="LIVE"
+                                               FontSize="11"
+                                               FontAttributes="Bold"
+                                               TextColor="#FECACA" />
+                                    </Border>
+                                    <Label Text="{Binding MatchCountText}"
+                                           FontSize="{Binding Layout.PageSubtitleFontSize}"
+                                           TextColor="#5B6478"
+                                           VerticalOptions="Center" />
+                                </HorizontalStackLayout>
+                                <ScrollView HeightRequest="{Binding Layout.RowHeight}"
+                                            Orientation="Horizontal"
+                                            HorizontalScrollBarVisibility="Never"
+                                            VerticalScrollBarVisibility="Never">
+                                    <HorizontalStackLayout Spacing="{Binding Layout.CardSpacing}"
+                                                           Padding="24,12"
+                                                           BindableLayout.ItemsSource="{Binding Cards}">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="hu:MatchCardViewModel">
+                                                <views:MatchCardView />
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </HorizontalStackLayout>
+                                </ScrollView>
+                            </VerticalStackLayout>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
             </ScrollView>
 
             <!-- Empty state -->

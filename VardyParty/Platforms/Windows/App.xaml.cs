@@ -8,8 +8,6 @@ namespace VardyParty.WinUI
     /// </summary>
     public partial class App : MauiWinUIApplication
     {
-        private static int _firstChanceLogged;
-
         /// <summary>
         /// Initializes the singleton application object. This is the first line of authored code
         /// executed, and as such is the logical equivalent of main() or WinMain().
@@ -24,18 +22,12 @@ namespace VardyParty.WinUI
             // before this body runs, so wiring here is the earliest safe point and
             // covers even InitializeComponent-time failures.
             UnhandledException += OnXamlUnhandledException;
-            AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
 
             // Auth0 records that this ran; Sign in later throws
             // "redirection check on app activation was not detected" if it did not.
             // Always call it — including on a normal Launch — then only skip the
             // main UI when THIS instance is the protocol-redirect helper.
-            var redirected = IsAuth0RedirectActivation();
-            Platforms.Windows.WindowsEventLogger.Info("WinUI.App",
-                redirected
-                    ? "Auth0 redirection activation handled; skipping main UI startup"
-                    : "Auth0 CheckRedirectionActivation completed (normal launch)");
-            if (redirected)
+            if (IsAuth0RedirectActivation())
             {
                 return;
             }
@@ -65,43 +57,6 @@ namespace VardyParty.WinUI
             }
 
             e.Handled = true;
-        }
-
-        /// <summary>
-        /// 0xc000027b is WinUI stowing a managed exception. Capture it here
-        /// before CoreMessaging swallows the stack.
-        /// </summary>
-        private static void OnFirstChanceException(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
-        {
-            var ex = e.Exception;
-            if (ex is OperationCanceledException or TaskCanceledException)
-            {
-                return;
-            }
-
-            var stack = ex.StackTrace ?? string.Empty;
-            if (stack.IndexOf("VardyParty", StringComparison.OrdinalIgnoreCase) < 0
-                && stack.IndexOf("Microsoft.Maui", StringComparison.OrdinalIgnoreCase) < 0
-                && stack.IndexOf("Microsoft.UI.Xaml", StringComparison.OrdinalIgnoreCase) < 0)
-            {
-                return;
-            }
-
-            if (System.Threading.Interlocked.Increment(ref _firstChanceLogged) > 25)
-            {
-                return;
-            }
-
-            try
-            {
-                Platforms.Windows.WindowsEventLogger.Error(
-                    "FirstChance",
-                    $"{ex.GetType().FullName}: {ex.Message}",
-                    ex);
-            }
-            catch
-            {
-            }
         }
 
         /// <summary>
