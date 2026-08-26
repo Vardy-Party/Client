@@ -1,11 +1,11 @@
 # VardyParty
 
-A cross-platform chess tournament streaming application built with .NET MAUI and Blazor. VardyParty aggregates live chess tournament streams, tests them for health and availability, and plays them using native video players with automatic stream switching if a feed goes down.
+A cross-platform match streaming application built with .NET MAUI. VardyParty aggregates live streams, tests them for health and availability, and plays them using native video players with automatic stream switching if a feed goes down.
 
 ## Tech Stack
 
-- **.NET MAUI** (.NET 10) with **Blazor WebView** for the UI (Razor components)
-- **Avalonia UI** (for Linux support)
+- **.NET MAUI** (.NET 11 preview) with a shared **MAUI XAML homepage** (`VardyParty.HomeUi`)
+- **MAUI-Avalonia** (Avalonia 12 preview backend) draws the same homepage on Linux (`VardyParty.Desktop`) — see [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md)
 - **C#** with nullable reference types
 - **Auth0** for authentication (including QR-code device flow for TV)
 - **System.Reactive** for reactive/observable patterns around stream updates
@@ -21,7 +21,7 @@ A cross-platform chess tournament streaming application built with .NET MAUI and
 - ✅ **iOS**
 - ✅ **macOS** (Mac Catalyst)
 - ✅ **Windows** 10/11
-- ✅ **Linux** (x64 and ARM64) - See [Linux Support Guide](docs/LINUX_SUPPORT.md)
+- ✅ **Linux** (x64 and ARM64) via `VardyParty.Desktop` - See [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md)
 
 ## Key Features
 
@@ -35,21 +35,21 @@ A cross-platform chess tournament streaming application built with .NET MAUI and
 ## Project Structure
 
 ```
-VardyParty/                  # Main MAUI application
-├── Components/              # Blazor Razor components (Home, VideoPlayer, etc.)
+VardyParty/                  # Main MAUI application (Android/iOS/macOS/Windows)
+├── HomeHostPage.xaml        # Hosts the shared XAML homepage + auth/resolve overlays
 ├── Platforms/               # Platform-specific implementations
 │   ├── Android/             # Android services (video player, TV detection)
 │   ├── iOS/                 # iOS video player
 │   ├── MacCatalyst/         # macOS video player
 │   └── Windows/             # Windows video player & overlay controls
 ├── Services/                # App-level services
-├── Resources/               # Images, fonts, splash screens
-└── wwwroot/                 # Static web assets
+└── Resources/               # Images, fonts, sounds, splash screens
 
-VardyParty.Linux/            # Linux native application (Avalonia UI)
-├── Services/                # Linux video player (LibVLC)
-├── Assets/                  # Linux-specific icons
-└── README.md                # Linux build & run instructions
+VardyParty.HomeUi/           # Shared MAUI XAML homepage (rows, cards, brand logo)
+
+VardyParty.Desktop/          # Linux desktop head (MAUI drawn by Avalonia)
+├── Pages/                   # DesktopHomePage (device-code QR sign-in, playback)
+└── Services/                # Auth0 device flow, LibVLC playback, UI sounds
 
 VardyParty.Kernel/           # Shared models + config POCOs
 VardyParty.Ports/            # Playback ports (launcher, switching, candidate rules)

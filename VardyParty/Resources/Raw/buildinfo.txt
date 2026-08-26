@@ -1,2 +1,2 @@
-Commit=484ae5d
-Built=2026-07-04 23:13:00 UTC
+Commit=2b69e9e
+Built=2026-08-26 15:06:56 UTC

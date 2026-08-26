@@ -14,28 +14,33 @@ MAUI XAML rewrite could not cover Linux).
 `Button` becomes an Android `MaterialButton`, a WinUI `Button` on Windows, a
 `UIButton` on iOS. That is fast because the platform draws its own widgets.
 
-Today the VardyParty app **bypasses all of that**: `MainPage.xaml` hosts a
-single `BlazorWebView`, and the whole homepage is HTML/CSS running in a
+The VardyParty app used to **bypass all of that**: `MainPage.xaml` hosted a
+single `BlazorWebView`, and the whole homepage was HTML/CSS running in a
 WebView (`Components/Pages/Home.razor`, ~968 lines). On a 32-bit Android TV
-box that means an embedded browser engine doing layout, style and JS on
-hardware that struggles with it — which is exactly the sluggishness we see.
+box that meant an embedded browser engine doing layout, style and JS on
+hardware that struggled with it — which was exactly the sluggishness we saw.
 Replacing the WebView with real MAUI XAML (`CollectionView` and friends) is
-the performance fix: virtualized native views instead of DOM.
+the performance fix: virtualized native views instead of DOM. **On this
+branch that replacement is complete and the Blazor UI is deleted** —
+`Components/`, `wwwroot/`, `MainPage.xaml`, the
+`Microsoft.AspNetCore.Components.WebView.Maui` package, the Cast JS interop
+and the scoped-CSS build plumbing are all gone; every platform (Android,
+Windows, iOS, Mac Catalyst, Linux desktop) boots the shared XAML homepage.
 
 ### How does .NET on Linux fit with XAML?
 
 It doesn't, out of the box. There is **no Microsoft UI stack for Linux**:
 WPF and WinUI are Windows-only, and MAUI has never shipped a Linux target.
-.NET itself runs fine on Linux (our domain libraries and `VardyParty.Linux`
-prove it) — what was missing is the UI layer.
+.NET itself runs fine on Linux — what was missing is the UI layer.
 
 **Avalonia** fills that gap: it is a XAML framework that does not use native
 controls at all. It draws every pixel itself with Skia (the same graphics
 library Chrome and Flutter use), so the same UI runs anywhere Skia runs —
-including Linux. The existing `VardyParty.Linux` app is Avalonia 11 with its
-own hand-written window; its XAML dialect is *similar* to MAUI's but not
+including Linux. The retired `VardyParty.Linux` app was Avalonia 11 with its
+own hand-written window; its XAML dialect was *similar* to MAUI's but not
 compatible, which is why the app previously needed two homepage
-implementations.
+implementations. That head is now deleted; `VardyParty.Desktop` (MAUI drawn
+by Avalonia) is the only Linux head.
 
 ### What changed: the MAUI-Avalonia backend
 
@@ -60,17 +65,26 @@ platform —
 ## What this PR ships
 
 ```
-VardyParty.HomeUi/            shared MAUI XAML homepage (net11.0 class library)
-  Views/HomePage.xaml         Netflix-style rows + league menu overlay
+VardyParty.HomeUi/            shared MAUI XAML homepage (net11.0 + net11.0-android/-windows)
+  Views/HomeView.xaml         Netflix-style rows + brand header + league/settings menu
   Views/MatchCardView.xaml    rich match card (badges, score, status, effects)
+  Views/BrandLogoView.xaml    3D metallic animated Vardy Party crest (see below)
   ViewModels/                 HomeViewModel, LeagueRowViewModel, MatchCardViewModel,
                               LeagueToggleViewModel, HomeLayoutState
-  Services/                   IBadgeImageLoader (+ Svg.Skia rasterizer), IHomeAssetLocator
+  Services/                   IBadgeImageLoader (+ Svg.Skia rasterizer), IHomeAssetLocator,
+                              BrandCrestImageLoader
+  Resources/brand_crest.svg   metallic crest, embedded + rasterised at runtime
+
+VardyParty/                   MAUI head (net11.0-android/-ios/-maccatalyst/-windows)
+  HomeHostPage.xaml           hosts HomeView + auth/resolve overlays on every platform
+                              (the Blazor UI is deleted)
 
 VardyParty.Desktop/           Linux/desktop head (net11.0, UseAvaloniaApp)
   MauiProgram.cs              AddVardyParty + AddVardyPartyHttpClients + HomeUi DI
-  Services/HomeFeed.cs        binds HomeViewModel to EnrichedGameService.GamesStream
-  Services/StubAuthTokenProvider.cs   auth stub (see "Stubbed", below)
+  Pages/DesktopHomePage.xaml  hosts HomeView + device-code QR sign-in + playback overlays
+  Services/DesktopAuthService.cs        Auth0 PKCE loopback / device-code flow (from VardyParty.Linux)
+  Services/DesktopVideoPlayerService.cs LibVLC playback in a native video window (see below)
+  Services/SoundFlowUiSoundPlayer.cs    UI sounds (miniaudio); degrades gracefully headless
   Services/SampleGames.cs     VARDYPARTY_DESKTOP_SAMPLE_DATA=1 offline data
 
 VardyParty.Presentation/Application/Home/
@@ -79,6 +93,20 @@ VardyParty.Presentation/Application/Home/
   HomeRowsBuilder.cs          league-row grouping and ordering (live rows first)
   HomeLayoutClass.cs/.Metrics HomeLayoutClassifier: TV/Desktop/PhoneLandscape/Portrait
 ```
+
+Deleted on this branch (no dormant rollback code):
+
+- `VardyParty/Components/` (all Razor pages/layout/routes), `VardyParty/wwwroot/`,
+  `MainPage.xaml` + `StubBlazorWebViewHandler` + Cast JS interop +
+  `BuildInfoService`/`CastService`, the `Microsoft.AspNetCore.Components.WebView.Maui`
+  package, the Razor project SDK and every scoped-CSS/wwwroot sync step in
+  the csproj and `scripts/run-windows-debug.ps1`.
+- `VardyParty.Linux/` (the Avalonia 11 head with the ListBox homepage). Its
+  two unique capabilities were ported into `VardyParty.Desktop` first: the
+  Auth0 device-code sign-in with QR (`DesktopAuthService` + QRCoder) and
+  LibVLC playback (`DesktopVideoPlayerService`). `VardyParty.slnx`, CI, CD
+  snap packaging and `scripts/launch-linux-app.cmd` now point at the
+  Desktop head.
 
 The pure logic lives in `VardyParty.Presentation` (net10.0, fully
 unit-tested in `tests/VardyParty.Presentation.Tests`) so the existing MAUI
@@ -109,10 +137,41 @@ app can adopt it without touching the preview stack.
 
 `HomeLayoutClassifier` picks one of **TV / Desktop / PhoneLandscape /
 PhonePortrait** from window size + television idiom, and
-`HomeLayoutMetrics` supplies concrete sizes (card size, badge size, font
-sizes, paddings) which the XAML binds. TV gets 10-foot sizing and relies on
-MAUI's focus visuals for D-pad navigation; phones get smaller cards and
-tighter padding, portrait tighter still.
+`HomeLayoutMetrics` supplies concrete sizes (card size, badge size, brand
+logo size, font sizes, paddings) which the XAML binds. TV gets 10-foot
+sizing and relies on MAUI's focus visuals for D-pad navigation; phones get
+smaller cards and tighter padding, portrait tighter still.
+
+### The brand logo (3D, metallic, animated)
+
+The header is a brand row: the Vardy Party crest left of the wordmark with
+the subtitle beneath, on every adaptive layout
+(`HomeLayoutMetrics.BrandLogoSize`: TV 76 / desktop 58 / phone 46–40 dip).
+
+- **Asset**: `VardyParty.HomeUi/Resources/brand_crest.svg` re-authors the
+  app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`) with
+  chrome/navy metallic gradients, and is rasterised once per process through
+  the same Svg.Skia path the badges use (`BrandCrestImageLoader`).
+- **3D treatment** (`BrandLogoView`): the badges' brushed-metal gradient
+  ring, a dark inner plate, a glass gloss over the upper hemisphere, and a
+  drop shadow.
+- **Animation**: a sheen sweep on load, a slow ambient shimmer loop (a
+  low-opacity sheen crosses the crest for a quarter of a 6 s loop), and a
+  subtle scale + glow + sheen response when TV focus enters the header
+  (the Menu button). Same performance discipline as the cards —
+  opacity/transform only, everything aborted on unload.
+
+### UI sound design
+
+Six generated WAV cues (`VardyParty/Resources/Raw/Sounds`) played through
+`UiSoundService` (`VardyParty.Presentation`): navigation blip on TV focus
+moves (rate-limited), select confirmation, stream-ready, error, goal chime
+(via `ScoreChangeDetector`) and app-open sting. Platform players:
+`SoundPool` on Android, `MediaPlayer` on Windows, SoundFlow (miniaudio) on
+the Desktop head — which disables itself cleanly when no audio device
+exists (headless CI). Sounds are suppressed while the native video player
+is visible (`INativeVideoPlayerService.PlaybackVisibilityChanged`) and can
+be turned off in the menu's Settings section (persisted per platform).
 
 ## Exact stack versions (verified building and running on Linux)
 
@@ -141,24 +200,43 @@ tighter padding, portrait tighter still.
    `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
    SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at
    startup with "native libSkiaSharp (119.0) incompatible".
-3. **Code Quality CI runs .NET 10**: net11.0 projects neither build nor
-   `dotnet format`-load under SDK 10, so they are excluded there and covered
-   by the dedicated `build-desktop-preview` job (build + xvfb startup smoke
-   test with sample data).
+3. **LibVLC in a MAUI-Avalonia window**: `LibVLCSharp.Avalonia`'s
+   `VideoView` is an Avalonia control with no MAUI handler, so it cannot be
+   hosted inside the Desktop head's MAUI XAML tree (and the Avalonia-12
+   preview backend exposes no supported native-surface embedding hook).
+   `DesktopVideoPlayerService` therefore uses plain `LibVLCSharp` and lets
+   libvlc open its own native video window; the in-app "Now Playing"
+   overlay owns the Close control. libvlc is initialised lazily on first
+   play so machines without VLC still run the homepage.
 
-## Stubbed / follow-ups
+## CI shape
 
-- **Auth**: `VardyParty.Desktop` registers `StubAuthTokenProvider` (always
-  unauthenticated). The games API answers 401 and the homepage shows its
-  error banner; `VARDYPARTY_DESKTOP_SAMPLE_DATA=1` renders the full UI
-  offline. Follow-up: reuse the Auth0 device-code/PKCE flow already in
-  `VardyParty.Auth`/`VardyParty.Linux`.
-- **Playback**: picking a card raises the game-selected intent but playback
-  is not wired (`VardyParty.Linux` keeps LibVLCSharp for now).
-- **Android head adoption**: retarget `VardyParty/` to net11.0, add
-  `net11.0-android` to HomeUi, replace `MainPage.xaml`'s BlazorWebView with
-  `HomePage`. Deliberately not in this PR — it would put the whole product
-  on preview SDKs before the stack proves out.
+The `ci.yml` pipeline is ordered so **Code Quality gates every platform
+build**:
+
+1. `test` (SDK 10, all `tests/*Tests` projects), then
+2. `code-quality` (SDK 11 preview: analyzers with warnings-as-errors +
+   `dotnet format --verify-no-changes`), then
+3. `build-android`, `build-windows`, `build-ios`, `build-macos` and
+   `build-desktop` — each with `needs: code-quality`, and finally
+4. `desktop-runtime-smoke` (needs `build-desktop`): rebuilds the Desktop
+   head and runs it for 20 s under `xvfb-run` with
+   `VARDYPARTY_DESKTOP_SAMPLE_DATA=1` — the startup smoke test that used to
+   guard `VardyParty.Linux`.
+
+`ci-complete` fails on any failure of test/code-quality/android/windows/
+desktop-build/desktop-smoke (iOS/macOS remain informational, as before).
+The old `build-linux` and `linux-runtime-smoke` jobs are gone with the
+project; CD's Linux snap jobs package `VardyParty.Desktop` instead.
+
+## Follow-ups
+
+- **iOS / Mac Catalyst runtime QA**: both platforms boot `HomeHostPage`
+  and CI builds them, but nobody has run the new UI on real Apple hardware
+  yet.
+- **Windows drag region**: the old BlazorWebView drag-helper hooks were
+  removed with the WebView; verify title-bar drag still feels right on
+  Windows.
 
 ## Risk register
 
@@ -170,16 +248,15 @@ tighter padding, portrait tighter still.
 | Package drift | All packages come from nuget.org today; if previews move to a nightly feed, `NuGet.config` needs the feed added. |
 | Divergent renderers | The same XAML renders via native controls on Android but Avalonia on Linux; visual QA needed on both before the Android switch. |
 
-## Migration roadmap
+## Migration roadmap (all steps landed on this branch)
 
-1. **This PR** — shared homepage (`VardyParty.HomeUi`), Linux preview head
-   (`VardyParty.Desktop`), tested logic in `VardyParty.Presentation`,
-   preview CI job. Old apps untouched.
-2. **Android head adoption** — retarget `VardyParty/` to net11 (when the
-   stack and our confidence allow), host `HomePage` natively, measure on the
-   armeabi-v7a TV box.
-3. **Delete the WebView** — remove `BlazorWebView`, `wwwroot/`,
-   `Components/*.razor` once the XAML homepage is the shipped UI.
-4. **Retire `VardyParty.Linux`** — move playback + Auth0 device flow into
-   `VardyParty.Desktop`, then delete the Avalonia-11 app and its duplicate
-   homepage.
+1. ~~Shared homepage~~ — `VardyParty.HomeUi`, Linux head
+   (`VardyParty.Desktop`), tested logic in `VardyParty.Presentation`.
+2. ~~Android/Windows head adoption~~ — `VardyParty/` retargeted to net11,
+   `HomeHostPage` hosts the shared homepage natively.
+3. ~~Delete the WebView~~ — `BlazorWebView`, `wwwroot/`,
+   `Components/*.razor` and all Blazor plumbing removed; iOS/Mac Catalyst
+   boot the XAML homepage too.
+4. ~~Retire `VardyParty.Linux`~~ — playback + Auth0 device flow moved into
+   `VardyParty.Desktop`; the Avalonia-11 app and its duplicate homepage are
+   deleted.
