@@ -58,6 +58,62 @@ namespace VardyParty.Streaming.Tests
         }
 
         [Fact]
+        public async Task GetStreamsAsync_ReputationWithNonCanonicalCasing_DeserializesWithoutThrowing()
+        {
+            // Arrange
+            const string json = """{"href":"https://streams.example.com/match","streams":[{"url":"https://streams.example.com/1","channel":"Channel North","reputation":"Very good"}]}""";
+            var handler = new FakeHttpMessageHandler(json);
+            var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
+            var apiSettings = _fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create();
+            var gameApiSettings = _fixture.Build<GamesApiSettings>()
+                .With(g => g.CallTimeoutSeconds, 10)
+                .With(g => g.MaxRetries, 2)
+                .Create();
+            var api = new ApiService(
+                client,
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(gameApiSettings),
+                Options.Create(apiSettings));
+
+            // Act
+            var response = await api.GetStreamsAsync("League Alpha", "Home United", "Away City");
+
+            // Assert
+            Assert.NotNull(response);
+            var stream = Assert.Single(response!.Streams);
+            Assert.Equal(StreamReputation.VeryGood, stream.Reputation);
+            Assert.Equal(1, handler.RequestCount);
+        }
+
+        [Fact]
+        public async Task GetStreamsAsync_MalformedJsonPayload_FailsFastWithoutRetrying()
+        {
+            // Arrange
+            const string malformedJson = """{"href":"https://streams.example.com/match","streams":42}""";
+            var handler = new FakeHttpMessageHandler(malformedJson);
+            var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
+            var apiSettings = _fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create();
+            var gameApiSettings = _fixture.Build<GamesApiSettings>()
+                .With(g => g.CallTimeoutSeconds, 10)
+                .With(g => g.MaxRetries, 2)
+                .Create();
+            var api = new ApiService(
+                client,
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(gameApiSettings),
+                Options.Create(apiSettings));
+
+            // Act
+            var response = await api.GetStreamsAsync("League Alpha", "Home United", "Away City");
+
+            // Assert
+            Assert.Null(response);
+            Assert.Equal(1, handler.RequestCount);
+        }
+
+        [Fact]
         public void IApiService_DoesNotExposeGetEnrichedStreamsAsync()
         {
             // Arrange
@@ -72,8 +128,11 @@ namespace VardyParty.Streaming.Tests
 
         private class FakeHttpMessageHandler(string responseJson) : HttpMessageHandler
         {
+            public int RequestCount { get; private set; }
+
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
             {
+                RequestCount++;
                 var resp = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
                     Content = new StringContent(responseJson, System.Text.Encoding.UTF8, "application/json")

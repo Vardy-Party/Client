@@ -193,6 +193,13 @@ public class ApiService(
                 throw new HttpRequestException($"Request failed with status code {response.StatusCode}", null,
                     response.StatusCode);
             }
+            catch (JsonException ex)
+            {
+                // A malformed payload is deterministic — retrying the same bytes cannot succeed.
+                logger.LogError(ex, "[Api] Non-retryable JSON parse failure for {Url} on attempt {Attempt}", url,
+                    attempt);
+                return null;
+            }
             catch (Exception ex) when (attempt <= _maxRetries)
             {
                 // If exception was due to 401, do not retry (HttpRequestException may carry StatusCode)
