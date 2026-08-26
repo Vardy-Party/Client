@@ -30,6 +30,7 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double LeagueIconSize => _metrics.LeagueIconSize;
     public double PageTitleFontSize => _metrics.PageTitleFontSize;
     public double PageSubtitleFontSize => _metrics.PageSubtitleFontSize;
+    public double BrandLogoSize => _metrics.BrandLogoSize;
 
     /// <summary>Row height for the horizontal card strip: card + focus-scale headroom.</summary>
     public double RowHeight => _metrics.CardHeight + 24;
@@ -59,6 +60,6 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
         nameof(RowHeight), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
-        nameof(CardSpacing),
+        nameof(CardSpacing), nameof(BrandLogoSize),
     ];
 }

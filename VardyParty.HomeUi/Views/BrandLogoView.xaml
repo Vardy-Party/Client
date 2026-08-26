@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hu="clr-namespace:VardyParty.HomeUi"
+             x:Class="VardyParty.HomeUi.Views.BrandLogoView"
+             x:DataType="hu:HomeViewModel">
+
+    <ContentView.Resources>
+        <!-- Same brushed-metal ring the match badges wear -->
+        <LinearGradientBrush x:Key="LogoRingBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#FDFDFD" Offset="0" />
+            <GradientStop Color="#C2C8D0" Offset="0.30" />
+            <GradientStop Color="#848B96" Offset="0.50" />
+            <GradientStop Color="#D9DDE2" Offset="0.72" />
+            <GradientStop Color="#F4F6F8" Offset="1" />
+        </LinearGradientBrush>
+
+        <!-- Glass highlight over the upper hemisphere -->
+        <LinearGradientBrush x:Key="LogoGlossBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#66FFFFFF" Offset="0" />
+            <GradientStop Color="#17FFFFFF" Offset="0.42" />
+            <GradientStop Color="#00FFFFFF" Offset="0.58" />
+        </LinearGradientBrush>
+
+        <!-- Light band swept across the crest (intro + ambient shimmer) -->
+        <LinearGradientBrush x:Key="LogoSheenBrush" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#00FFFFFF" Offset="0" />
+            <GradientStop Color="#59FFFFFF" Offset="0.5" />
+            <GradientStop Color="#00FFFFFF" Offset="1" />
+        </LinearGradientBrush>
+    </ContentView.Resources>
+
+    <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
+          HeightRequest="{Binding Layout.BrandLogoSize}">
+
+        <!-- Focus glow: scaled slightly past the ring, faded in from code-behind -->
+        <Border x:Name="GlowRing"
+                StrokeShape="Ellipse"
+                Stroke="#B39CC3FF"
+                StrokeThickness="3"
+                BackgroundColor="Transparent"
+                Opacity="0"
+                Scale="1.12"
+                InputTransparent="True" />
+
+        <!-- Metallic ring + shadow: the 3D backplate -->
+        <Border x:Name="LogoOuter"
+                StrokeShape="Ellipse"
+                StrokeThickness="0"
+                Background="{StaticResource LogoRingBrush}"
+                Padding="3">
+            <Border.Shadow>
+                <Shadow Brush="Black" Opacity="0.5" Radius="12" Offset="0,4" />
+            </Border.Shadow>
+            <Grid>
+                <!-- Dark inner plate holding the rasterised metallic crest -->
+                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" Padding="2">
+                    <Image x:Name="CrestImage" Aspect="AspectFit" />
+                </Border>
+
+                <!-- Gloss highlight -->
+                <Border StrokeShape="Ellipse" StrokeThickness="0"
+                        Background="{StaticResource LogoGlossBrush}"
+                        InputTransparent="True" />
+
+                <!-- Sheen band, clipped to the ellipse by the Border shape -->
+                <Border StrokeShape="Ellipse" StrokeThickness="0"
+                        BackgroundColor="Transparent"
+                        InputTransparent="True">
+                    <BoxView x:Name="LogoSheen"
+                             WidthRequest="26"
+                             HorizontalOptions="Start"
+                             VerticalOptions="Fill"
+                             Background="{StaticResource LogoSheenBrush}"
+                             Opacity="0"
+                             InputTransparent="True" />
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</ContentView>

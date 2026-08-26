@@ -44,6 +44,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- Metallic brand crest, rasterised at runtime by BrandCrestImageLoader. -->
+		<EmbeddedResource Include="Resources\brand_crest.svg" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
 		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
 		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />

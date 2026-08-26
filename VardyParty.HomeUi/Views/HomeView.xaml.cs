@@ -47,5 +47,17 @@ public partial class HomeView : ContentView
 
     private void OnSignOutClicked(object? sender, EventArgs e) => ViewModel?.RequestSignOut();
 
-    private void OnMenuItemFocused(object? sender, FocusEventArgs e) => ViewModel?.OnFocusPulse();
+    private void OnMenuItemFocused(object? sender, FocusEventArgs e)
+    {
+        ViewModel?.OnFocusPulse();
+
+        // The menu button is the header's focusable element: entering it means
+        // TV focus reached the header area, so the brand crest responds.
+        if (ReferenceEquals(sender, MenuButton))
+        {
+            BrandLogo.OnHeaderFocusEntered();
+        }
+    }
+
+    private void OnHeaderUnfocused(object? sender, FocusEventArgs e) => BrandLogo.OnHeaderFocusExited();
 }
