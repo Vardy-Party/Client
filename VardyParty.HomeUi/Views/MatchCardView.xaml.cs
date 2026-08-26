@@ -40,6 +40,7 @@ public partial class MatchCardView : ContentView
         Unloaded += OnUnloaded;
         CardOuter.Focused += OnCardFocused;
         CardOuter.Unfocused += OnCardUnfocused;
+        CardOuter.HandlerChanged += OnCardHandlerChanged;
     }
 
     private MatchCardViewModel? ViewModel => BindingContext as MatchCardViewModel;
@@ -71,6 +72,10 @@ public partial class MatchCardView : ContentView
             _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
             ApplyCornerRadius();
             ApplyInteractionState(animateScale: false);
+
+            // Recycled containers can be rebound while still attached (no
+            // Loaded), so the new VM's armed initial focus must be honoured here.
+            EnableTvFocus();
         }
     }
 
@@ -108,12 +113,21 @@ public partial class MatchCardView : ContentView
     }
 
     /// <summary>
+    /// Runs whenever the platform view is (re)created: the native focus wiring
+    /// below must follow the platform view, not the Loaded event, because MAUI
+    /// can swap handlers on virtualised items without an Unloaded/Loaded pair.
+    /// </summary>
+    private void OnCardHandlerChanged(object? sender, EventArgs e) => EnableTvFocus();
+
+    /// <summary>
     /// Android TV: MAUI Borders are not focusable natively, so D-pad focus
     /// would skip the cards. Make the platform view focusable and clickable —
     /// a clickable focused Android view fires Click on DPAD_CENTER/Enter.
     /// Wired only on TV idiom so phone taps don't double-fire alongside the
     /// TapGestureRecognizer. Also delivers the one-shot initial autofocus the
     /// view model arms on the first card when the grid first appears.
+    /// Idempotent and called from Loaded, HandlerChanged and BindingContext
+    /// changes so no timing/recycling path can leave a card unfocusable.
     /// </summary>
     private void EnableTvFocus()
     {
@@ -123,28 +137,50 @@ public partial class MatchCardView : ContentView
             return;
         }
 
-        if (CardOuter.Handler?.PlatformView is global::Android.Views.View native)
+        if (CardOuter.Handler?.PlatformView is not global::Android.Views.View native)
         {
-            native.Focusable = true;
-            native.FocusableInTouchMode = false;
-            if (!_tvClickWired)
-            {
-                _tvClickWired = true;
-                native.Click += OnNativeCardClick;
-                native.FocusChange += OnNativeFocusChange;
-            }
+            return;
+        }
 
-            if (ViewModel?.TryConsumeInitialFocus() == true)
-            {
-                // Post: the view must be attached and laid out before focusing.
-                native.Post(() => native.RequestFocus());
-            }
+        native.Focusable = true;
+        native.FocusableInTouchMode = false;
+        if (native is global::Android.Views.ViewGroup group)
+        {
+            // D-pad focus search must land on the card root, never on one of
+            // its children.
+            group.DescendantFocusability = global::Android.Views.DescendantFocusability.BlockDescendants;
+        }
+
+        if (!ReferenceEquals(_wiredNative, native))
+        {
+            UnwireNativeTvFocus();
+            _wiredNative = native;
+            native.Click += OnNativeCardClick;
+            native.FocusChange += OnNativeFocusChange;
+        }
+
+        if (ViewModel?.TryConsumeInitialFocus() == true)
+        {
+            // Post: the view must be attached and laid out before focusing.
+            native.Post(() => native.RequestFocus());
         }
 #endif
     }
 
 #if ANDROID
-    private bool _tvClickWired;
+    private global::Android.Views.View? _wiredNative;
+
+    private void UnwireNativeTvFocus()
+    {
+        if (_wiredNative is null)
+        {
+            return;
+        }
+
+        _wiredNative.Click -= OnNativeCardClick;
+        _wiredNative.FocusChange -= OnNativeFocusChange;
+        _wiredNative = null;
+    }
 
     private void OnNativeCardClick(object? sender, EventArgs e) => ViewModel?.Pick();
 
@@ -154,6 +190,7 @@ public partial class MatchCardView : ContentView
         {
             ViewModel?.FocusMoved();
             EnterHighlight();
+            EnsureFocusedCardVisible();
         }
         else
         {
@@ -166,9 +203,51 @@ public partial class MatchCardView : ContentView
     {
         ViewModel?.FocusMoved();
         EnterHighlight();
+        EnsureFocusedCardVisible();
     }
 
     private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
+
+    /// <summary>
+    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: ask
+    /// both CollectionViews to keep it fully on screen. Native RecyclerView
+    /// focus scrolling only reveals a card partially — enough to receive
+    /// focus, not enough to show the whole card plus its focus glow.
+    /// MakeVisible is a no-op when the card is already fully visible.
+    /// </summary>
+    private void EnsureFocusedCardVisible()
+    {
+        if (ViewModel is not { } card)
+        {
+            return;
+        }
+
+        CollectionView? strip = null;
+        for (Element? element = Parent; element != null; element = element.Parent)
+        {
+            if (element is not CollectionView list)
+            {
+                continue;
+            }
+
+            if (strip is null)
+            {
+                // Nearest list: the horizontal card strip of this row.
+                strip = list;
+                list.ScrollTo(card, position: ScrollToPosition.MakeVisible, animate: true);
+            }
+            else
+            {
+                // Outer list: the vertical league rows; scroll our row into view.
+                if (strip.BindingContext is LeagueRowViewModel row)
+                {
+                    list.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
+                }
+
+                break;
+            }
+        }
+    }
 
     private void OnUnloaded(object? sender, EventArgs e)
     {
@@ -190,12 +269,7 @@ public partial class MatchCardView : ContentView
         }
 
 #if ANDROID
-        if (_tvClickWired && CardOuter.Handler?.PlatformView is global::Android.Views.View native)
-        {
-            native.Click -= OnNativeCardClick;
-            native.FocusChange -= OnNativeFocusChange;
-            _tvClickWired = false;
-        }
+        UnwireNativeTvFocus();
 #endif
     }
 
