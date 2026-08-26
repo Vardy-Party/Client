@@ -134,6 +134,9 @@ jobs:
       # Warnings-as-errors + code-style enforcement. Android Release packaging is
       # not the point of this job: skip signing/AOT/trim so a missing keystore
       # cannot fail Code Quality, matching the Build Android job flags.
+      # VardyParty.HomeUi / VardyParty.Desktop target net11.0 (MAUI-Avalonia
+      # preview) and cannot build on this job's .NET 10 SDK; the
+      # build-desktop-preview job covers them instead.
       - name: Run analyzers (warnings as errors)
         run: |
           set -euo pipefail
@@ -146,9 +149,23 @@ jobs:
               /p:RunAotCompilation=false \
               /p:PublishTrimmed=false
             echo "::endgroup::"
-          done < <(find . -name "*.csproj" -not -name "*Tests.csproj" -type f -print0)
+          done < <(find . -name "*.csproj" -not -name "*Tests.csproj" \
+            -not -name "VardyParty.HomeUi.csproj" -not -name "VardyParty.Desktop.csproj" \
+            -type f -print0)
+      # --no-restore: dotnet format's own solution restore would fail on the
+      # net11.0 preview projects under this job's .NET 10 SDK. Everything else
+      # is already restored by the analyzer step; test projects are restored
+      # here so format still checks them. The preview projects are excluded
+      # from formatting (they fail workspace load on SDK 10 and are exercised
+      # by build-desktop-preview instead).
+      - name: Restore test projects for format check
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' proj; do
+            dotnet restore "$proj"
+          done < <(find tests -name "*Tests.csproj" -type f -print0)
       - name: Check code formatting
-        run: dotnet format --verify-no-changes --verbosity diagnostic
+        run: dotnet format --verify-no-changes --verbosity diagnostic --no-restore --exclude VardyParty.HomeUi/ VardyParty.Desktop/
 
   build-windows:
     name: Build Windows
@@ -540,6 +557,60 @@ jobs:
           fi
 
           echo "ERROR: Runtime smoke test failed with exit code $RC"
+          exit 1
+
+  # Preview stack (informational, not gating ci-complete): builds the shared
+  # MAUI XAML homepage (VardyParty.HomeUi) and the Linux head that draws it
+  # with Avalonia (VardyParty.Desktop) on the .NET 11 preview SDK, then smoke
+  # tests startup under xvfb with sample data. See
+  # docs/architecture/homepage-maui-avalonia.md.
+  build-desktop-preview:
+    name: Build Desktop Preview (MAUI-Avalonia)
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-flags
+      - test
+    if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET 11 preview
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "11.0.x"
+          dotnet-quality: preview
+          source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+      - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
+        run: dotnet workload install maui-tizen --ignore-failed-sources
+      - name: Restore desktop head
+        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
+      - name: Build desktop head
+        run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - name: Runtime smoke test (xvfb, sample data)
+        run: |
+          set +e
+          APP_PATH="VardyParty.Desktop/bin/Release/net11.0/VardyPartyDesktop"
+          if [ ! -x "$APP_PATH" ]; then
+            echo "ERROR: Expected app binary not found or not executable at $APP_PATH"
+            ls -la VardyParty.Desktop/bin/Release/net11.0 || true
+            exit 1
+          fi
+
+          VARDYPARTY_DESKTOP_SAMPLE_DATA=1 xvfb-run -a timeout 20s "$APP_PATH"
+          RC=$?
+          set -e
+
+          if [ "$RC" -eq 124 ]; then
+            echo "OK: Desktop head launched and stayed running under xvfb (timeout expected)."
+            exit 0
+          fi
+
+          echo "ERROR: Desktop preview smoke test failed with exit code $RC"
           exit 1
 
   ci-complete:

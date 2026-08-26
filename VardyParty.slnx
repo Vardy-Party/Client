@@ -15,6 +15,7 @@
     <File Path="docs/HOW_TO_ADD_TO_SOLUTION.md" />
     <File Path="docs/IMPLEMENTATION_COMPLETE.md" />
     <File Path="docs/architecture/README.md" />
+    <File Path="docs/architecture/homepage-maui-avalonia.md" />
     <File Path="docs/architecture/phase-1-canvas.md" />
     <File Path="docs/architecture/phase-1-plan.md" />
     <File Path="docs/architecture/phase-2-plan.md" />
@@ -65,6 +66,12 @@
   <Project Path="VardyParty.Linux/VardyParty.Linux.csproj">
     <Build Solution="Debug|*" Project="false" />
   </Project>
+  <!--
+    Preview stack (net11.0 + MAUI-Avalonia): needs the .NET 11 preview SDK.
+    CI code-quality excludes these; the build-desktop-preview job builds them.
+  -->
+  <Project Path="VardyParty.HomeUi/VardyParty.HomeUi.csproj" />
+  <Project Path="VardyParty.Desktop/VardyParty.Desktop.csproj" />
   <Project Path="VardyParty/VardyParty.csproj">
     <Deploy />
   </Project>
