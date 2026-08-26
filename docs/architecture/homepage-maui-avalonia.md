@@ -152,14 +152,54 @@ packaging flows are zero-warning again). CI/CD pins a single
 PhonePortrait** from window size + television idiom, and
 `HomeLayoutMetrics` supplies concrete sizes (card size, badge size, brand
 logo size, font sizes, paddings) which the XAML binds. TV gets 10-foot
-sizing and relies on MAUI's focus visuals for D-pad navigation; phones get
+sizing (360×190 cards after a field report that 440×232 was oversized —
+~4 cards per row and ~3 league rows now fit a 1080p panel); phones get
 smaller cards and tighter padding, portrait tighter still.
+
+### TV focus (Android leanback, D-pad)
+
+MAUI's `Focused`/`VisualStateManager` and Android's native view focus are
+**separate systems**: on a leanback box the D-pad drives *native* focus, and
+a MAUI `Border` is not natively focusable, so without extra wiring the D-pad
+would skip the cards entirely and MAUI focus events would never fire.
+`MatchCardView` therefore bridges natively (Android + TV idiom only):
+
+- The card root's platform view is made `Focusable` (not
+  `FocusableInTouchMode`), with `DescendantFocusability=BlockDescendants` so
+  focus search always lands on the card root, never a child.
+- A native `FocusChange` listener drives the **same** highlight chrome as
+  the MAUI `Focused` path (scale 1.09 + bright `#AFCBFF` 3 px border + glow
+  shadow) and the focus-tick sound (`UiSoundService.FocusMove` via
+  `MatchCardViewModel.FocusMoved`), so whichever focus system fires, the
+  card lights up and ticks. The MAUI-side `Focused`/pointer handlers remain
+  for Windows/Desktop.
+- A native `Click` listener fires the pick — a focused clickable Android
+  view converts DPAD_CENTER/Enter into a click itself.
+- The wiring follows the platform view (`HandlerChanged` + `Loaded` +
+  `BindingContextChanged`), so handler-timing and RecyclerView recycling
+  can never leave a card unfocusable, and it is torn down on `Unloaded`.
+- On focus gained the card calls `ScrollTo(..., MakeVisible)` on both its
+  horizontal strip and the vertical rows list: native RecyclerView focus
+  scrolling reveals a card only partially, which clips the focus glow.
+- One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
+  first card of the first row on the empty→non-empty edge; the view consumes
+  it once and calls `RequestFocus()` on the native view, so the app opens
+  with a visibly focused card. Later refreshes never steal the highlight.
+
+Key routing: `RemoteKeyHandler` (activity level) deliberately has **no
+D-pad direction cases** — it only consumes media keys, Menu, Back and
+(conditionally) Enter. Note that `Activity.OnKeyDown` logging every
+`DpadUp/Down/...` press is *expected even when traversal works*: the
+activity sees a key when the focused view declines it, and `ViewRootImpl`
+performs D-pad focus navigation only after the whole dispatch chain
+declines. Activity-level D-pad logs are therefore not evidence that focus
+is broken.
 
 ### The brand logo (3D, metallic, animated)
 
 The header is a brand row: the Vardy Party crest left of the wordmark with
 the subtitle beneath, on every adaptive layout
-(`HomeLayoutMetrics.BrandLogoSize`: TV 76 / desktop 58 / phone 46–40 dip).
+(`HomeLayoutMetrics.BrandLogoSize`: TV 68 / desktop 58 / phone 46–40 dip).
 
 - **Asset**: `VardyParty.HomeUi/Resources/brand_crest.svg` re-authors the
   app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`) with
