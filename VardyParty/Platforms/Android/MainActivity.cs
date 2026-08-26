@@ -3,6 +3,7 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
+using VardyParty.Presentation;
 
 namespace VardyParty
 {
@@ -15,13 +16,15 @@ namespace VardyParty
     [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher, Android.Content.Intent.CategoryLeanbackLauncher })]
     public class MainActivity : MauiAppCompatActivity
     {
-        private static bool _overlayBackSuppression;
         private static bool _flyoutMenuOpen;
 
-        public static void SetOverlayBackSuppression(bool suppress)
-        {
-            _overlayBackSuppression = suppress;
-        }
+        /// <summary>
+        /// Per-overlay Back suppression state, reported by <see cref="HomeHostPage"/>.
+        /// Static (process lifetime), so it is reset in <see cref="OnCreate"/> —
+        /// a stale flag from a previous activity instance must never suppress
+        /// Back on a fresh idle homepage.
+        /// </summary>
+        public static OverlayBackSuppressionTracker OverlaySuppression { get; } = new();
 
         public static void SetFlyoutMenuOpen(bool open)
         {
@@ -62,11 +65,12 @@ namespace VardyParty
                 return;
             }
 
-            if (_overlayBackSuppression)
+            if (OverlaySuppression.IsSuppressed)
             {
                 // Overlay is active and wants to consume Back. Dispatch to the remote handler so the
                 // overlay can cancel resolution and close itself.
-                Log.Info("MainActivity", "[MAIN] Back pressed while overlay visible - delegating to overlay handler");
+                Log.Info("MainActivity",
+                    $"[MAIN] Back pressed while overlay visible ({OverlaySuppression.DescribeActive()}) - delegating to overlay handler");
                 try
                 {
                     if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
@@ -77,7 +81,7 @@ namespace VardyParty
                 catch { }
 
                 // Fallback: if no handler consumed the event, cancel any stream switching state but do not navigate.
-                _overlayBackSuppression = false;
+                OverlaySuppression.Reset();
                 try
                 {
                     var services = IPlatformApplication.Current?.Services;
@@ -96,6 +100,12 @@ namespace VardyParty
             base.OnCreate(savedInstanceState);
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");
+
+            // Fresh activity: no overlay can be visible yet. Without this reset a
+            // previous session that ended mid-overlay (device-code sign-in, stream
+            // resolution) left the static suppression active on an idle homepage.
+            OverlaySuppression.Reset();
+            SetFlyoutMenuOpen(false);
 
             // Wire hardware back to logical navigation
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
@@ -123,9 +133,10 @@ namespace VardyParty
 
             // If an overlay (e.g., stream discovery) is active and intends to consume Back,
             // do not perform navigation here; let the overlay handler handle cancelation.
-            if (_overlayBackSuppression)
+            if (OverlaySuppression.IsSuppressed)
             {
-                Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to overlay");
+                Log.Info("MainActivity",
+                    $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
                 return;
             }
             HandleNavigationBack();

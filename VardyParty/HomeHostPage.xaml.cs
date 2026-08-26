@@ -99,6 +99,12 @@ public partial class HomeHostPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+
+        // Re-sync Back suppression with actual overlay state whenever the page
+        // (re)appears — the Android flags are process-lifetime statics and must
+        // never outlive the overlays that set them.
+        UpdateBackSuppression();
+
         if (_initialized) return;
         _initialized = true;
 
@@ -287,6 +293,7 @@ public partial class HomeHostPage : ContentPage
         _authCts = null;
         _isAuthenticating = false;
         _deviceCode = null;
+        UpdateBackSuppression();
 
         await _authTokens.LogoutAsync();
 
@@ -627,15 +634,19 @@ public partial class HomeHostPage : ContentPage
 
     /// <summary>
     /// Back must be consumed (menu close / cancel sign-in / cancel resolution)
-    /// instead of exiting the app whenever one of our layers is open.
+    /// instead of exiting the app whenever one of our layers is open. Each
+    /// overlay is reported by name so suppression exactly tracks visible
+    /// overlays and the Android log can say which one consumed Back.
     /// </summary>
     private void UpdateBackSuppression()
     {
 #if ANDROID
         try
         {
-            MainActivity.SetOverlayBackSuppression(
-                _isResolvingStreams || _viewModel.IsMenuOpen || _deviceCode != null);
+            var tracker = MainActivity.OverlaySuppression;
+            tracker.Set("stream-resolve", _isResolvingStreams);
+            tracker.Set("menu", _viewModel.IsMenuOpen);
+            tracker.Set("device-code-sign-in", _deviceCode != null);
         }
         catch
         {
