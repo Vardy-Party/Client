@@ -348,6 +348,48 @@ never-throwing `MediaFailed` logging handler, `AutoPlay=false` is explicit,
 and `CommandManager.IsEnabled=false` keeps the sound-effect players out of
 the System Media Transport Controls / CoreMessaging machinery entirely.
 
+A follow-up investigation pinned the crash to ~1 second after the first
+games update renders, and hardened the remaining path end to end:
+
+- **XAML-thread exception hook** (`VardyParty/Platforms/Windows/App.xaml.cs`):
+  the WinUI `Application.UnhandledException` event is the only hook that
+  sees XAML-thread exceptions before WinAppSDK 1.8 converts them into
+  anonymous stowed 0xc000027b crashes — neither
+  `AppDomain.UnhandledException` nor `TaskScheduler.UnobservedTaskException`
+  is ever raised for them. It is wired as the first statement of the WinUI
+  `App` constructor (`Application.Current` is valid from the base ctor, so
+  even `InitializeComponent` failures are covered), logs exception + stack
+  via `WindowsEventLogger.Fatal`, and marks the exception handled so the
+  app survives where possible.
+- **Serialized + coalesced games publishes** (`EnrichedGameService`): the
+  API and BBC pollers each ended in `RunMatching` → `_subject.OnNext` with
+  no synchronization, so `GamesStream` could emit from two threads at once,
+  and the two startup fetches published two full boards ~1s apart — a full
+  board reset mid-first-materialization of the nested CollectionViews is
+  WinUI's documented 0x800710DD failure mode, making this the leading crash
+  trigger. A private publish lock now serializes the whole match+publish
+  body, and the startup burst is coalesced: if the API fetch wins the race
+  its standalone publish is skipped (at most once, ever) and the initial
+  BBC completion — success or failure — publishes the one enriched board; a
+  3s grace fallback publishes the API-only board if BBC hangs. Steady-state
+  live-score publishes are never delayed (no debounce; the skip is spent
+  after startup).
+- **Single-threaded goal detector** (`HomeViewModel`): the
+  `ScoreChangeDetector`'s plain `Dictionary` is now only touched inside the
+  dispatched `Apply` (and `ResetScoreObservations` dispatches too), so it
+  is single-threaded by construction rather than by the publisher's lock
+  discipline.
+- **No sync-over-async on the dispatcher** (`MauiHomeAssetLocator`):
+  `ResolveLeagueLogoPath` blocked on `OpenAppPackageFileAsync` with
+  `GetAwaiter().GetResult()` and is reached on the UI thread at first
+  render; `IHomeAssetLocator.ResolveLeagueLogoPathAsync` is now genuinely
+  async (both the MAUI and Desktop locators updated).
+- **Sounds in the AppX layout**: `SyncSoundsToWindowsLayout` (csproj)
+  mirrors the league-logos target so `Resources\Raw\Sounds\**` lands in
+  both the win-x64 output root and `AppX\Sounds\` on VS/dotnet-driven
+  incremental syncs; `run-windows-debug.ps1`'s recursive sync already
+  covered script-driven deploys.
+
 ## Follow-ups
 
 - **iOS / Mac Catalyst runtime QA**: both platforms boot `HomeHostPage`
