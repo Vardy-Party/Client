@@ -56,7 +56,7 @@
         <!-- Android TV Support -->
         <AndroidEnableProfiledAot Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">false</AndroidEnableProfiledAot>
 
-        <!-- Android: all ABIs for store / package-android.cmd all.
+        <!-- Android: all ABIs for store / package-android.ps1 -Mode all.
              Device APK (AndroidArmOnly=true): armeabi-v7a TV + arm64-v8a phones.
              Do not pass a semicolon RID list as -p:RuntimeIdentifiers — the SDK
              treats it as one RuntimeIdentifier and fails with NETSDK1083.
