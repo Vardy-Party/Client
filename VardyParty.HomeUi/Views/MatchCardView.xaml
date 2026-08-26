@@ -226,6 +226,16 @@
                     </VerticalStackLayout>
                 </Grid>
             </Grid>
+
+            <!-- Focus ring: pre-built chrome, faded in/out on focus with an
+                 opacity animation only (native View alpha). Mutating the MAUI
+                 Shadow per focus move forced a blur re-render that visibly
+                 janked the 32-bit TV box; this ring never re-measures. -->
+            <Border x:Name="FocusRing"
+                    Stroke="#AFCBFF"
+                    StrokeThickness="3"
+                    Opacity="0"
+                    InputTransparent="True" />
         </Grid>
     </Border>
 </ContentView>
