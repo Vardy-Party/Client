@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<Import Project="..\Version.props" />
+
+	<PropertyGroup>
+		<!--
+			Linux/desktop head: the shared .NET MAUI homepage drawn by Avalonia
+			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11 preview
+			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
+			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
+		-->
+		<!--
+			Singular TargetFramework: see the matching note in VardyParty.HomeUi.csproj
+			(Directory.Build.targets strips TargetFramework off ProjectReferences, which
+			breaks references to cross-targeting projects).
+		-->
+		<TargetFramework>net11.0</TargetFramework>
+		<OutputType>Exe</OutputType>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>VardyParty.Desktop</RootNamespace>
+		<AssemblyName>VardyPartyDesktop</AssemblyName>
+
+		<ApplicationTitle>Vardy Party</ApplicationTitle>
+		<ApplicationId>uk.jonbreen.vardyparty.desktop</ApplicationId>
+
+		<!-- Netflix-style dark UI regardless of OS theme. -->
+		<AvaloniaControlsMauiThemeVariant>Dark</AvaloniaControlsMauiThemeVariant>
+
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+		<PackageReference Include="Avalonia.Controls.Maui.Desktop" Version="11.0.0-preview.7.26224.328" />
+		<!--
+			Avalonia 12 preview draws with managed SkiaSharp 4.148, but Svg.Skia pins the
+			Linux native library at 3.119. Without this override the wrong libSkiaSharp.so
+			is deployed and the app aborts at startup with a native version mismatch.
+		-->
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.148.0" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj" />
+		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
+		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<!-- League logos shipped next to the binary, mirroring the VardyParty.Linux layout. -->
+		<None Include="..\VardyParty\Resources\Images\Leagues\**\*.*"
+		      Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
+
+</Project>
