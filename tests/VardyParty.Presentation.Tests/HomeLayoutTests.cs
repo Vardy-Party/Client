@@ -51,6 +51,46 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_TvCardsFitAGridOnA1080pPanel()
+    {
+        // Arrange: a 1080p TV panel; 24 is the focus-scale headroom the row
+        // strip adds (HomeLayoutState.RowHeight), ~150 covers the page header.
+        const double panelWidth = 1920;
+        const double panelHeight = 1080;
+        const double rowFocusHeadroom = 24;
+        const double pageHeaderAllowance = 150;
+
+        // Act
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+
+        // Assert: at least 4 cards per row and 3 league rows visible at once.
+        var usableWidth = panelWidth - (2 * tv.PagePadding);
+        Assert.True(usableWidth / (tv.CardWidth + tv.CardSpacing) >= 4);
+
+        var usableHeight = panelHeight - (2 * tv.PagePadding) - pageHeaderAllowance;
+        var rowCost = tv.CardHeight + rowFocusHeadroom + tv.RowSpacing;
+        Assert.True(usableHeight / rowCost >= 3);
+    }
+
+    [Fact]
+    public void Metrics_TvKeepsTenFootReadabilityFloors()
+    {
+        // Arrange
+        var layoutClass = HomeLayoutClass.Tv;
+
+        // Act
+        var tv = HomeLayoutMetrics.For(layoutClass);
+
+        // Assert: shrinking the cards must never shrink type below what reads
+        // from the sofa — the status chip especially.
+        Assert.True(tv.BadgeSize >= 52);
+        Assert.True(tv.ScoreFontSize >= 32);
+        Assert.True(tv.TeamFontSize >= 18);
+        Assert.True(tv.StatusFontSize >= 14);
+        Assert.True(tv.LeagueTitleFontSize >= 22);
+    }
+
+    [Fact]
     public void Metrics_EveryLayoutClassHasPositiveSizes()
     {
         foreach (HomeLayoutClass layoutClass in Enum.GetValues<HomeLayoutClass>())
