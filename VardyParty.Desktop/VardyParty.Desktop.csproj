@@ -45,6 +45,15 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
 		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
 		<PackageReference Include="SoundFlow" Version="1.4.1" />
+		<!--
+			LibVLC playback (system libvlc, initialised lazily). Deliberately NOT
+			LibVLCSharp.Avalonia: its VideoView is an Avalonia control and cannot be
+			hosted inside this head's MAUI XAML tree — playback opens libvlc's own
+			native video window instead (see DesktopVideoPlayerService).
+		-->
+		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
+		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
+		<PackageReference Include="QRCoder" Version="1.7.0" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -59,6 +68,7 @@
 			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
 		</ProjectReference>
 		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
+		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />
 		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
 	</ItemGroup>
 

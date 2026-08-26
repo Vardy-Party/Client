@@ -31,29 +31,38 @@ public static class MauiProgram
         builder.Services.Configure<BbcFixturesSettings>(configuration.GetSection(BbcFixturesSettings.SectionName));
 
         builder.Logging.AddConsole();
+        builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "VardyParty",
+            "logs")));
         builder.Logging.SetMinimumLevel(LogLevel.Information);
 
         builder.Services.AddSingleton<ILeagueFilterPreferencesStore, InMemoryLeagueFilterPreferencesStore>();
         builder.Services.AddVardyParty();
 
-        // Auth is stubbed in this preview head: the games API returns 401 and the
-        // homepage shows its error banner until the shared device-code/PKCE login
-        // is wired in (follow-up; see docs/architecture/homepage-maui-avalonia.md).
-        builder.Services.AddSingleton<IAuthTokenProvider, StubAuthTokenProvider>();
+        // Real Auth0 session (device-code flow with QR, encrypted token cache),
+        // ported from the retired VardyParty.Linux head.
+        builder.Services.AddSingleton<DesktopAuthService>();
+        builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<DesktopAuthService>());
+        builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<DesktopAuthService>());
 
         var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
         builder.Services.AddSingleton<IHomeAssetLocator, DesktopHomeAssetLocator>();
 
+        // LibVLC playback in a dedicated native window (lazy init; see
+        // DesktopVideoPlayerService for the Avalonia-12 surface rationale).
+        builder.Services.AddSingleton<VardyParty.Playback.INativeVideoPlayerService, DesktopVideoPlayerService>();
+
         // UI sounds: registered per composition root (not in AddVardyParty).
         // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
-        // fallbacks defer to these. Initialised in App after first render.
+        // fallbacks defer to these. Initialised after first render.
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, FileSoundPreferencesStore>();
         builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, SoundFlowUiSoundPlayer>();
 
         builder.Services.AddVardyPartyHomeUi();
-        builder.Services.AddSingleton<HomeFeed>();
+        builder.Services.AddSingleton<Pages.DesktopHomePage>();
 
         return builder.Build();
     }
