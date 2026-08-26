@@ -5,17 +5,33 @@ namespace VardyParty.HomeUi.Views;
 
 /// <summary>
 /// One match card. Animations are deliberately cheap (opacity + transform
-/// only): the live-dot pulse, the focus/hover scale, and the sheen sweep.
-/// All are stopped when the card unloads so virtualised lists stay light.
+/// only): the live-dot pulse, the focus/hover scale, the sheen sweep, and the
+/// selected/resolving veil pulse. All are stopped when the card unloads so
+/// virtualised lists stay light.
+/// Focus chrome is tuned for the 10-foot TV experience: a strong scale bump
+/// plus a bright border and glow, and a distinct gold "resolving" state so a
+/// clicked card visibly stays active while streams resolve.
 /// </summary>
 public partial class MatchCardView : ContentView
 {
     private const string PulseAnimation = "LiveDotPulse";
     private const string SheenAnimation = "SheenSweep";
+    private const string ResolvingPulseAnimation = "ResolvingPulse";
     private const uint HoverScaleMs = 130;
 
+    // 1.045 was invisible from the sofa; 1.09 plus the glow border reads at 10 feet.
+    private const double FocusScale = 1.09;
+    private const double ResolvingScale = 1.06;
+
+    private static readonly Color RestStrokeColor = Color.FromArgb("#26FFFFFF");
+    private static readonly Color FocusStrokeColor = Color.FromArgb("#AFCBFF");
+    private static readonly Color ResolvingStrokeColor = Color.FromArgb("#FFD54F");
+
     private HomeLayoutState? _observedLayout;
+    private MatchCardViewModel? _observedViewModel;
     private bool _pulseRunning;
+    private bool _resolvingPulseRunning;
+    private bool _isFocused;
 
     public MatchCardView()
     {
@@ -38,11 +54,23 @@ public partial class MatchCardView : ContentView
             _observedLayout = null;
         }
 
+        if (_observedViewModel != null)
+        {
+            _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _observedViewModel = null;
+        }
+
+        // Recycled containers must not keep the previous card's focus chrome.
+        _isFocused = false;
+
         if (ViewModel is { } vm)
         {
             _observedLayout = vm.Layout;
             _observedLayout.PropertyChanged += OnLayoutChanged;
+            _observedViewModel = vm;
+            _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
             ApplyCornerRadius();
+            ApplyInteractionState(animateScale: false);
         }
     }
 
@@ -51,6 +79,14 @@ public partial class MatchCardView : ContentView
         if (e.PropertyName is null or nameof(HomeLayoutState.CardCornerRadius))
         {
             ApplyCornerRadius();
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is null or nameof(MatchCardViewModel.IsResolving))
+        {
+            ApplyInteractionState(animateScale: true);
         }
     }
 
@@ -67,6 +103,7 @@ public partial class MatchCardView : ContentView
             StartPulse();
         }
 
+        ApplyInteractionState(animateScale: false);
         EnableTvFocus();
     }
 
@@ -75,7 +112,8 @@ public partial class MatchCardView : ContentView
     /// would skip the cards. Make the platform view focusable and clickable —
     /// a clickable focused Android view fires Click on DPAD_CENTER/Enter.
     /// Wired only on TV idiom so phone taps don't double-fire alongside the
-    /// TapGestureRecognizer.
+    /// TapGestureRecognizer. Also delivers the one-shot initial autofocus the
+    /// view model arms on the first card when the grid first appears.
     /// </summary>
     private void EnableTvFocus()
     {
@@ -94,6 +132,12 @@ public partial class MatchCardView : ContentView
                 _tvClickWired = true;
                 native.Click += OnNativeCardClick;
                 native.FocusChange += OnNativeFocusChange;
+            }
+
+            if (ViewModel?.TryConsumeInitialFocus() == true)
+            {
+                // Post: the view must be attached and laid out before focusing.
+                native.Post(() => native.RequestFocus());
             }
         }
 #endif
@@ -129,6 +173,7 @@ public partial class MatchCardView : ContentView
     private void OnUnloaded(object? sender, EventArgs e)
     {
         _pulseRunning = false;
+        StopResolvingPulse();
         this.AbortAnimation(PulseAnimation);
         this.AbortAnimation(SheenAnimation);
 
@@ -136,6 +181,12 @@ public partial class MatchCardView : ContentView
         {
             _observedLayout.PropertyChanged -= OnLayoutChanged;
             _observedLayout = null;
+        }
+
+        if (_observedViewModel != null)
+        {
+            _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _observedViewModel = null;
         }
 
 #if ANDROID
@@ -171,15 +222,77 @@ public partial class MatchCardView : ContentView
 
     private void EnterHighlight()
     {
-        CardOuter.Stroke = new SolidColorBrush(Color.FromArgb("#66FFFFFF"));
-        _ = CardOuter.ScaleToAsync(1.045, HoverScaleMs, Easing.CubicOut);
+        _isFocused = true;
+        ApplyInteractionState(animateScale: true);
         RunSheenSweep();
     }
 
     private void ExitHighlight()
     {
-        CardOuter.Stroke = new SolidColorBrush(Color.FromArgb("#26FFFFFF"));
-        _ = CardOuter.ScaleToAsync(1.0, HoverScaleMs, Easing.CubicOut);
+        _isFocused = false;
+        ApplyInteractionState(animateScale: true);
+    }
+
+    /// <summary>
+    /// One place decides the card chrome, resolving > focused > rest:
+    /// gold pulsing veil while the picked card resolves streams, bright
+    /// glow border + strong scale under focus, quiet chrome otherwise.
+    /// </summary>
+    private void ApplyInteractionState(bool animateScale)
+    {
+        var resolving = ViewModel?.IsResolving == true;
+
+        if (resolving)
+        {
+            SetChrome(ResolvingStrokeColor, strokeThickness: 3, glow: true);
+            StartResolvingPulse();
+        }
+        else
+        {
+            StopResolvingPulse();
+            if (_isFocused)
+            {
+                SetChrome(FocusStrokeColor, strokeThickness: 3, glow: true);
+            }
+            else
+            {
+                SetChrome(RestStrokeColor, strokeThickness: 1, glow: false);
+            }
+        }
+
+        var targetScale = resolving ? ResolvingScale : _isFocused ? FocusScale : 1.0;
+        if (animateScale)
+        {
+            _ = CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut);
+        }
+        else
+        {
+            CardOuter.Scale = targetScale;
+        }
+    }
+
+    private void SetChrome(Color strokeColor, double strokeThickness, bool glow)
+    {
+        CardOuter.Stroke = new SolidColorBrush(strokeColor);
+        CardOuter.StrokeThickness = strokeThickness;
+
+        if (CardOuter.Shadow is { } shadow)
+        {
+            if (glow)
+            {
+                shadow.Brush = new SolidColorBrush(strokeColor);
+                shadow.Opacity = 0.9f;
+                shadow.Radius = 26f;
+                shadow.Offset = new Point(0, 0);
+            }
+            else
+            {
+                shadow.Brush = Brush.Black;
+                shadow.Opacity = 0.35f;
+                shadow.Radius = 18f;
+                shadow.Offset = new Point(0, 6);
+            }
+        }
     }
 
     private void RunSheenSweep()
@@ -194,5 +307,29 @@ public partial class MatchCardView : ContentView
         sweep.Add(0.0, 1.0, new Animation(v => Sheen.TranslationX = v, -160, travel, Easing.CubicInOut));
         sweep.Add(0.6, 1.0, new Animation(v => Sheen.Opacity = v, 0.9, 0.0));
         sweep.Commit(this, SheenAnimation, length: 750);
+    }
+
+    private void StartResolvingPulse()
+    {
+        if (_resolvingPulseRunning) return;
+        _resolvingPulseRunning = true;
+
+        var pulse = new Animation();
+        pulse.Add(0.0, 0.5, new Animation(v => SelectedVeil.Opacity = v, 0.04, 0.16, Easing.SinInOut));
+        pulse.Add(0.5, 1.0, new Animation(v => SelectedVeil.Opacity = v, 0.16, 0.04, Easing.SinInOut));
+        pulse.Commit(this, ResolvingPulseAnimation, length: 900, repeat: () => _resolvingPulseRunning);
+    }
+
+    private void StopResolvingPulse()
+    {
+        if (!_resolvingPulseRunning)
+        {
+            SelectedVeil.Opacity = 0;
+            return;
+        }
+
+        _resolvingPulseRunning = false;
+        this.AbortAnimation(ResolvingPulseAnimation);
+        SelectedVeil.Opacity = 0;
     }
 }

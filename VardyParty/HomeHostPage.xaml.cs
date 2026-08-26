@@ -477,6 +477,7 @@ public partial class HomeHostPage : ContentPage
                 {
                     _resolutionStartClaimed = false;
                     _isResolvingStreams = false;
+                    _viewModel.OnStreamResolutionEnded();
                     UpdateBackSuppression();
                     Dispatcher.Dispatch(() =>
                     {
@@ -516,6 +517,7 @@ public partial class HomeHostPage : ContentPage
         _isResolvingStreams = false;
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
+        _viewModel.OnStreamResolutionEnded();
         UpdateBackSuppression();
         _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");

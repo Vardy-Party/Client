@@ -64,6 +64,13 @@
                      Opacity="0"
                      InputTransparent="True" />
 
+            <!-- Selected/resolving veil: gold wash pulsed from code-behind while
+                 the picked card's stream resolution is in flight -->
+            <BoxView x:Name="SelectedVeil"
+                     Color="#FFD54F"
+                     Opacity="0"
+                     InputTransparent="True" />
+
             <Grid RowDefinitions="Auto,*" Padding="14,10,14,12">
                 <!-- Status + aggregate chips -->
                 <Grid ColumnDefinitions="Auto,*,Auto">

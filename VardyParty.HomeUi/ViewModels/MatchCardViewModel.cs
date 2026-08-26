@@ -101,6 +101,39 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
     public bool NoHomeBadge => _homeBadge == null;
     public bool NoAwayBadge => _awayBadge == null;
 
+    private bool _isResolving;
+
+    /// <summary>
+    /// The user picked this card and stream resolution is in flight: the card
+    /// keeps a distinct "selected" treatment so a TV click visibly took.
+    /// Set by <see cref="HomeViewModel"/>, cleared via
+    /// <see cref="HomeViewModel.OnStreamResolutionEnded"/>.
+    /// </summary>
+    public bool IsResolving
+    {
+        get => _isResolving;
+        set
+        {
+            if (_isResolving == value) return;
+            _isResolving = value;
+            Raise(nameof(IsResolving));
+        }
+    }
+
+    /// <summary>
+    /// TV D-pad: armed on the first card of the first row when the grid first
+    /// appears; the view consumes it once (never re-fires on later refreshes).
+    /// </summary>
+    public bool RequestsInitialFocus { get; set; }
+
+    /// <summary>One-shot latch for the armed initial focus.</summary>
+    public bool TryConsumeInitialFocus()
+    {
+        if (!RequestsInitialFocus) return false;
+        RequestsInitialFocus = false;
+        return true;
+    }
+
     public void Pick() => _onPicked(this);
 
     /// <summary>Keyboard/D-pad focus or pointer highlight landed on this card.</summary>

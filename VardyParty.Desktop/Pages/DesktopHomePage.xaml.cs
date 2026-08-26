@@ -466,6 +466,7 @@ public partial class DesktopHomePage : ContentPage
                 {
                     _resolutionStartClaimed = false;
                     _isResolvingStreams = false;
+                    _viewModel.OnStreamResolutionEnded();
                     Dispatcher.Dispatch(() =>
                     {
                         ResolveOverlay.IsVisible = false;
@@ -504,6 +505,7 @@ public partial class DesktopHomePage : ContentPage
         _isResolvingStreams = false;
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
+        _viewModel.OnStreamResolutionEnded();
         _sounds.Play(UiSound.Back);
         _logger.LogInformation("[DesktopHome] Stream discovery cancelled by user");
 

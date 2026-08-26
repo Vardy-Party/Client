@@ -28,6 +28,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private string _errorMessage = string.Empty;
     private bool _hasGames;
     private bool _isContentLoading = true;
+    private Game? _resolvingGame;
 
     public HomeViewModel(
         ILeagueFilterService leagueFilter,
@@ -241,16 +242,37 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _menu.RefreshKnownLeagues(dict);
         RefreshLeagueToggles();
 
+        var hadGames = GameCount > 0;
+        if (dict == null)
+        {
+            // Feed cleared (sign-out): back to the loading posture, and no card
+            // can still be "resolving" a game that is no longer on screen.
+            _resolvingGame = null;
+        }
+
         Rows.Clear();
         var rowViewModels = new List<LeagueRowViewModel>(rowModels.Count);
         foreach (var model in rowModels)
         {
             var cards = model.Games
-                .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked, OnCardFocused))
+                .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked, OnCardFocused)
+                {
+                    // Rebuilds during an active resolution keep the picked
+                    // card's resolving highlight on the replacement VM.
+                    IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game),
+                })
                 .ToList();
             var row = new LeagueRowViewModel(model.League, model.HasLiveGames, cards, Layout);
             rowViewModels.Add(row);
             Rows.Add(row);
+        }
+
+        // TV D-pad: arm one programmatic autofocus on the first card when rows
+        // first appear (empty -> non-empty edge). Later refreshes never steal
+        // the highlight (same contract as TvGridFocusPolicy).
+        if (!hadGames && rowViewModels.Count > 0 && rowViewModels[0].Cards.Count > 0)
+        {
+            rowViewModels[0].Cards[0].RequestsInitialFocus = true;
         }
 
         GameCount = gameCount;
@@ -323,7 +345,32 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private void OnCardPicked(MatchCardViewModel card)
     {
         _sounds.Play(UiSound.Select);
+
+        // Selected/resolving state: the picked card stays visibly active until
+        // the head reports the resolution ended (OnStreamResolutionEnded).
+        _resolvingGame = card.Game;
+        foreach (var other in Rows.SelectMany(r => r.Cards))
+        {
+            other.IsResolving = ReferenceEquals(other, card);
+        }
+
         GamePicked?.Invoke(card.Game);
+    }
+
+    /// <summary>
+    /// Heads call this when stream resolution finishes, fails or is cancelled,
+    /// so the picked card releases its resolving highlight. Safe from any thread.
+    /// </summary>
+    public void OnStreamResolutionEnded()
+    {
+        _resolvingGame = null;
+        _dispatcher.Dispatch(() =>
+        {
+            foreach (var card in Rows.SelectMany(r => r.Cards))
+            {
+                card.IsResolving = false;
+            }
+        });
     }
 
     private void OnCardFocused(MatchCardViewModel card) => OnFocusPulse();
