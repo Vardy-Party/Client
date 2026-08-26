@@ -4,15 +4,15 @@
 
     <PropertyGroup>
         <!-- Visual Studio IDE on Windows: only Windows TFM (fast IDE experience) -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- Windows CLI, local dev (not CI): all TFMs for local APK + MSIX builds -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net11.0-android;net11.0-ios;net11.0-maccatalyst;net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- Windows CI: only Windows TFM (CI installs only maui-windows workload) -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- macOS: iOS and macCatalyst -->
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0-ios;net11.0-maccatalyst</TargetFrameworks>
         <!-- Linux (CI or local): Android only -->
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net11.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
         <!-- Note for MacCatalyst:
@@ -60,8 +60,11 @@
         <!-- Android: all ABIs for store / package-android.cmd all.
              Device APK (AndroidArmOnly=true): armeabi-v7a TV + arm64-v8a phones.
              Do not pass a semicolon RID list as -p:RuntimeIdentifiers — the SDK
-             treats it as one RuntimeIdentifier and fails with NETSDK1083. -->
-        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' != 'true'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+             treats it as one RuntimeIdentifier and fails with NETSDK1083.
+             .NET 11 Android runs on CoreCLR only and has no android-x86 runtime
+             pack (NETSDK1181), so x86 was dropped from the fat APK; x86_64
+             emulators are covered by android-x64. -->
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' != 'true'">android-arm;android-arm64;android-x64</RuntimeIdentifiers>
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' == 'true'">android-arm;android-arm64</RuntimeIdentifiers>
         <RuntimeIdentifier Condition="'$(AndroidArmOnly)' == 'true'"></RuntimeIdentifier>
 
@@ -85,9 +88,7 @@
       <UseMonoRuntime>true</UseMonoRuntime>
     </PropertyGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-      <UseMonoRuntime>true</UseMonoRuntime>
-    </PropertyGroup>
+    <!-- .NET 11 Android is CoreCLR-only (NETSDK1242): UseMonoRuntime must stay off for android. -->
 
     <!-- GenerateBuildInfo: always on Debug; Release via RunGenerateBuildInfo=true (CI publish). -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true' Or '$(Configuration)' == 'Debug'">
@@ -143,7 +144,7 @@
     </Target>
 
     <!-- Auto-sync Package.appxmanifest version from .csproj properties for Windows builds -->
-    <Target Name="UpdateWindowsPackageVersion" BeforeTargets="_ConvertAppxManifestToGenerationFormat" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <Target Name="UpdateWindowsPackageVersion" BeforeTargets="_ConvertAppxManifestToGenerationFormat" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <PropertyGroup>
         <ManifestFile>$(MSBuildProjectDirectory)\Platforms\Windows\Package.appxmanifest</ManifestFile>
         <!-- MSIX requires 4-part version: Major.Minor.Build.Revision -->
@@ -185,36 +186,36 @@
     <!-- Retain default MAUI AppCompat layout -->
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.41" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="11.0.0-preview.7.26406.9" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.0-preview.7.26381.103" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
         <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <ItemGroup Condition="'$(TargetFramework)' == 'net11.0-android'">
       <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.9.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.9.0" />
+      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.10.0.1" />
       <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.15.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.1" />
+      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.3" />
       <!-- Explicit AndroidX Lifecycle packages to resolve version conflicts -->
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModelSavedState" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Runtime.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Process" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.SavedState" Version="1.4.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.SavedState.SavedState.Ktx" Version="1.4.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModelSavedState" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Runtime.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Process" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState" Version="1.5.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState.SavedState.Ktx" Version="1.5.0.1" />
     </ItemGroup>
 
     <ItemGroup>
@@ -245,7 +246,7 @@
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
     <GenerateTestArtifacts Condition="'$(Configuration)' == 'Debug'">True</GenerateTestArtifacts>
     <GenerateTestArtifacts Condition="'$(Configuration)' != 'Debug'">False</GenerateTestArtifacts>
-    <AppInstallerUri>bin\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
+    <AppInstallerUri>bin\Release\net11.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
   </PropertyGroup>
@@ -308,7 +309,7 @@
 
     <!-- MSIX packaging defaults for Windows -->
     <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
-    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
       <!-- PFX exists (CD): override to sign with PFX file -->
@@ -323,7 +324,7 @@
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     </PropertyGroup>
 
-    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
 	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', 'vardyparty.keystore'))</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
@@ -332,7 +333,7 @@
     </PropertyGroup>
 
     <!-- Loose-register deploys from OutputPath\AppX; incremental builds often refresh win-x64 only. -->
-    <Target Name="SyncWindowsAppXLayout" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0' and Exists('$(OutputPath)AppX')">
+    <Target Name="SyncWindowsAppXLayout" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0' and Exists('$(OutputPath)AppX')">
       <PropertyGroup>
         <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
         <_AppXRoot>$(_WinOutputRoot)AppX\</_AppXRoot>
@@ -399,7 +400,7 @@
     </Target>
 
     <!-- Keep MSIX loose-layout wwwroot in sync with league logo assets (AppX folder is not always refreshed on incremental builds). -->
-    <Target Name="SyncLeagueLogosToWindowsWwwroot" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <Target Name="SyncLeagueLogosToWindowsWwwroot" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <ItemGroup>
         <_LeagueLogoFile Include="$(MSBuildProjectDirectory)\Resources\Images\Leagues\**\*.*" />
       </ItemGroup>
@@ -427,10 +428,10 @@
     </Target>
 
     <!-- Local Development: Patch appsettings.json with user secrets for Android builds -->
-    <!-- Usage: dotnet build -f net10.0-android -p:PatchAppSettings=true -->
+    <!-- Usage: dotnet build -f net11.0-android -p:PatchAppSettings=true -->
     <!-- This patches the SOURCE appsettings.json BEFORE build so it gets embedded into APK -->
     <!-- WARNING: This modifies the source file. Revert with: git restore VardyParty\appsettings.json -->
-    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net10.0-android' AND '$(PatchAppSettings)' == 'true'">
+    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net11.0-android' AND '$(PatchAppSettings)' == 'true'">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
             <UserSecretsId>$(UserSecretsId)</UserSecretsId>
