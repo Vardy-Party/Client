@@ -72,35 +72,79 @@ public static class MauiProgram
             .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
 
 #if WINDOWS
+        // Every chrome hook is guarded: a chrome failure must never prevent the
+        // window from showing (WinAppSDK 1.8 turns unhandled XAML-thread failures
+        // into 0xc000027b stowed-exception crashes with no managed stack).
         builder.ConfigureLifecycleEvents(events =>
         {
             events.AddWindows(windows =>
             {
-                windows.OnWindowCreated(window => WindowsWindowChrome.ApplyMainWindowChrome(window));
-                windows.OnActivated((window, _) => WindowsWindowChrome.ApplyMainWindowChrome(window));
+                windows.OnWindowCreated(window =>
+                {
+                    try
+                    {
+                        WindowsWindowChrome.ApplyMainWindowChrome(window);
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("MauiProgram", "OnWindowCreated chrome failed; using default chrome", ex);
+                    }
+                });
+                windows.OnActivated((window, _) =>
+                {
+                    try
+                    {
+                        WindowsWindowChrome.ApplyMainWindowChrome(window);
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("MauiProgram", "OnActivated chrome failed; using default chrome", ex);
+                    }
+                });
             });
         });
 
         WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Content), (handler, view, action) =>
         {
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.PrepareBeforeMauiConnect(nativeWindow);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.PrepareBeforeMauiConnect(nativeWindow);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Pre-connect chrome failed; using default chrome", ex);
             }
 
             action?.Invoke(handler, view);
 
-            if (handler.PlatformView is WinUiWindow connectedWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(connectedWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow connectedWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(connectedWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Post-connect chrome failed; using default chrome", ex);
             }
         });
 
         WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Title), (handler, view, action) =>
         {
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Title-mapping chrome failed; using default chrome", ex);
             }
         });
 
@@ -108,9 +152,16 @@ public static class MauiProgram
         {
             action?.Invoke(handler, view);
 
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "TitleBar-mapping chrome failed; using default chrome", ex);
             }
         });
 #endif

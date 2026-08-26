@@ -174,43 +174,91 @@ internal static class WindowsWindowDragHelper
 
     private static void EnableHeaderDragRegions(WinUiWindow nativeWindow)
     {
-        var handle = WindowNative.GetWindowHandle(nativeWindow);
-        if (!AttachedHeaderDragWindows.Add(handle)) return;
-
-        var appWindow = GetAppWindow(nativeWindow);
-        if (appWindow?.TitleBar is not { } titleBar || !AppWindowTitleBar.IsCustomizationSupported())
-            return;
-
-        void UpdateDragRects()
+        try
         {
-            var width = appWindow.Size.Width;
-            if (width <= HeaderRightInteractiveReservePx)
-            {
-                titleBar.SetDragRectangles([]);
+            var handle = WindowNative.GetWindowHandle(nativeWindow);
+            if (!AttachedHeaderDragWindows.Add(handle)) return;
+
+            var appWindow = GetAppWindow(nativeWindow);
+            if (appWindow?.TitleBar is not { } titleBar || !AppWindowTitleBar.IsCustomizationSupported())
                 return;
+
+            void UpdateDragRects()
+            {
+                try
+                {
+                    var width = appWindow.Size.Width;
+                    if (width <= HeaderRightInteractiveReservePx)
+                    {
+                        SetCaptionDragRegions(appWindow, titleBar, []);
+                        return;
+                    }
+
+                    var leftWidth = Math.Min(300, width - HeaderRightInteractiveReservePx);
+                    var centerLeft = leftWidth;
+                    var centerWidth = width - HeaderRightInteractiveReservePx - centerLeft;
+
+                    SetCaptionDragRegions(appWindow, titleBar,
+                    [
+                        new global::Windows.Graphics.RectInt32(0, 0, leftWidth, HeaderHeightPx),
+                        new global::Windows.Graphics.RectInt32(centerLeft, 0, centerWidth, HeaderHeightPx)
+                    ]);
+                }
+                catch (Exception ex)
+                {
+                    WindowsEventLogger.Error("WindowsWindowDragHelper", "Updating header drag regions failed; window stays draggable via default chrome", ex);
+                }
             }
 
-            var leftWidth = Math.Min(300, width - HeaderRightInteractiveReservePx);
-            var centerLeft = leftWidth;
-            var centerWidth = width - HeaderRightInteractiveReservePx - centerLeft;
+            appWindow.Changed += (_, e) =>
+            {
+                if (e.DidSizeChange) UpdateDragRects();
+            };
 
-            titleBar.SetDragRectangles(
-            [
-                new global::Windows.Graphics.RectInt32(0, 0, leftWidth, HeaderHeightPx),
-                new global::Windows.Graphics.RectInt32(centerLeft, 0, centerWidth, HeaderHeightPx)
-            ]);
+            if (nativeWindow.Content is FrameworkElement { IsLoaded: false } root)
+                root.Loaded += (_, _) => UpdateDragRects();
+
+            nativeWindow.DispatcherQueue.TryEnqueue(UpdateDragRects);
+            UpdateDragRects();
+        }
+        catch (Exception ex)
+        {
+            WindowsEventLogger.Error("WindowsWindowDragHelper", "EnableHeaderDragRegions failed; skipping custom drag regions", ex);
+        }
+    }
+
+    private static bool _captionRegionApiFallbackLogged;
+
+    /// <summary>
+    /// Windows App SDK 1.8 deprecates AppWindowTitleBar.SetDragRectangles; the supported
+    /// API is InputNonClientPointerSource.SetRegionRects with NonClientRegionKind.Caption
+    /// (both take physical pixels). The old call is kept as a logged fallback for runtimes
+    /// where the newer input API is unavailable.
+    /// </summary>
+    private static void SetCaptionDragRegions(
+        AppWindow appWindow,
+        AppWindowTitleBar titleBar,
+        global::Windows.Graphics.RectInt32[] rects)
+    {
+        try
+        {
+            var nonClientSource = Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(appWindow.Id);
+            if (nonClientSource != null)
+            {
+                nonClientSource.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Caption, rects);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_captionRegionApiFallbackLogged)
+            {
+                _captionRegionApiFallbackLogged = true;
+                WindowsEventLogger.Warning("WindowsWindowDragHelper", "InputNonClientPointerSource unavailable; falling back to AppWindowTitleBar.SetDragRectangles", ex);
+            }
         }
 
-        appWindow.Changed += (_, e) =>
-        {
-            if (e.DidSizeChange) UpdateDragRects();
-        };
-
-        if (nativeWindow.Content is FrameworkElement { IsLoaded: false } root)
-            root.Loaded += (_, _) => UpdateDragRects();
-
-        nativeWindow.DispatcherQueue.TryEnqueue(UpdateDragRects);
-        UpdateDragRects();
+        titleBar.SetDragRectangles(rects);
     }
 
     private static bool IsLeftButtonPressed() => (GetAsyncKeyState(VkLButton) & 0x8000) != 0;

@@ -14,13 +14,44 @@ namespace VardyParty.WinUI
         /// </summary>
         public App()
         {
-            if (Auth0.OidcClient.Platforms.Windows.Activator.Default.CheckRedirectionActivation())
+            if (IsAuth0RedirectActivation())
             {
                 Platforms.Windows.WindowsEventLogger.Info("WinUI.App", "Auth0 redirection activation handled; skipping main UI startup");
                 return;
             }
 
             this.InitializeComponent();
+        }
+
+        /// <summary>
+        /// Only a genuine protocol activation can be an Auth0 redirect; a normal launch
+        /// must never be short-circuited (that would leave the app running with no window).
+        /// Any failure in the Auth0 activator is logged and treated as "not a redirect".
+        /// </summary>
+        private static bool IsAuth0RedirectActivation()
+        {
+            try
+            {
+                try
+                {
+                    var activationKind = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Kind;
+                    if (activationKind != Microsoft.Windows.AppLifecycle.ExtendedActivationKind.Protocol)
+                    {
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Platforms.Windows.WindowsEventLogger.Warning("WinUI.App", "Could not determine activation kind; probing Auth0 redirection anyway", ex);
+                }
+
+                return Auth0.OidcClient.Platforms.Windows.Activator.Default.CheckRedirectionActivation();
+            }
+            catch (Exception ex)
+            {
+                Platforms.Windows.WindowsEventLogger.Error("WinUI.App", "Auth0 CheckRedirectionActivation failed; treating as a normal launch", ex);
+                return false;
+            }
         }
 
         protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();

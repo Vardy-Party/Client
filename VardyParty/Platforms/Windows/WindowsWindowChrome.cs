@@ -14,55 +14,120 @@ namespace VardyParty.Platforms.Windows;
 internal static class WindowsWindowChrome
 {
     /// <summary>
+    /// Kill switch for bisecting startup crashes: set VARDYPARTY_NO_CHROME=1 to skip
+    /// all custom window chrome (title-bar extension, collapse, drag regions) and run
+    /// with stock WinUI chrome.
+    /// </summary>
+    public static bool IsChromeDisabled { get; } = DetectChromeDisabled();
+
+    private static bool _chromeDisabledLogged;
+
+    private static bool DetectChromeDisabled()
+    {
+        try
+        {
+            return Environment.GetEnvironmentVariable("VARDYPARTY_NO_CHROME") == "1";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool SkipChrome()
+    {
+        if (!IsChromeDisabled) return false;
+
+        if (!_chromeDisabledLogged)
+        {
+            _chromeDisabledLogged = true;
+            WindowsEventLogger.Info("WindowsWindowChrome", "VARDYPARTY_NO_CHROME=1 — skipping all custom window chrome");
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Must run before MAUI MapContent connects NavigationRootManager.
     /// Extending into the title bar avoids the classic Win32 caption strip that shows "VardyParty".
+    /// Chrome failure must never prevent the window from showing: any error is logged
+    /// and the window falls back to default chrome.
     /// </summary>
     public static void PrepareBeforeMauiConnect(WinUiWindow nativeWindow)
     {
-        nativeWindow.ExtendsContentIntoTitleBar = true;
-        nativeWindow.Title = string.Empty;
+        if (SkipChrome()) return;
 
-        if (GetAppWindow(nativeWindow)?.TitleBar is { } titleBar && AppWindowTitleBar.IsCustomizationSupported())
+        try
         {
-            titleBar.ExtendsContentIntoTitleBar = true;
-            titleBar.PreferredHeightOption = TitleBarHeightOption.Standard;
-            titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
-            titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            nativeWindow.ExtendsContentIntoTitleBar = true;
+            nativeWindow.Title = string.Empty;
+
+            if (GetAppWindow(nativeWindow)?.TitleBar is { } titleBar && AppWindowTitleBar.IsCustomizationSupported())
+            {
+                titleBar.ExtendsContentIntoTitleBar = true;
+                titleBar.PreferredHeightOption = TitleBarHeightOption.Standard;
+                titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+                titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            }
+        }
+        catch (Exception ex)
+        {
+            WindowsEventLogger.Error("WindowsWindowChrome", "PrepareBeforeMauiConnect failed; falling back to default chrome", ex);
         }
     }
 
     /// <summary>
     /// Main games screen uses the in-app blue header only — no separate WinUI title bar.
+    /// Never calls AppWindow.Show()/Window.Activate(): MAUI shows and activates its own
+    /// window (MauiWinUIApplication.OnLaunched), and forcing it mid-content-connect
+    /// destabilised startup on Windows App SDK 1.8. The OnActivated lifecycle hook
+    /// re-applies this chrome after the first activation.
     /// </summary>
     public static void ApplyMainWindowChrome(WinUiWindow? nativeWindow, IMauiContext? mauiContext = null)
     {
         if (nativeWindow == null) return;
+        if (SkipChrome()) return;
 
-        mauiContext ??= nativeWindow.GetWindow()?.Handler?.MauiContext;
-
-        PrepareBeforeMauiConnect(nativeWindow);
-        GetAppWindow(nativeWindow)?.Show();
-        nativeWindow.Activate();
-
-        if (nativeWindow.GetWindow() is Microsoft.Maui.Controls.Window mauiWindow)
+        try
         {
-            mauiWindow.Title = string.Empty;
+            mauiContext ??= nativeWindow.GetWindow()?.Handler?.MauiContext;
+
+            PrepareBeforeMauiConnect(nativeWindow);
+
+            if (nativeWindow.GetWindow() is Microsoft.Maui.Controls.Window mauiWindow)
+            {
+                mauiWindow.Title = string.Empty;
+            }
+
+            HideMauiNavigationTitleBar(mauiContext);
+
+            void CollapseTitleBar()
+            {
+                try
+                {
+                    CollapseMauiTitleBar(nativeWindow.Content);
+                }
+                catch (Exception ex)
+                {
+                    WindowsEventLogger.Error("WindowsWindowChrome", "CollapseMauiTitleBar failed; keeping default title bar", ex);
+                }
+            }
+
+            CollapseTitleBar();
+
+            if (nativeWindow.Content is FrameworkElement { IsLoaded: false } root)
+            {
+                root.Loaded += (_, _) => CollapseTitleBar();
+            }
+
+            nativeWindow.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CollapseTitleBar);
+
+            WindowsWindowDragHelper.EnableMainWindowDrag(nativeWindow);
         }
-
-        HideMauiNavigationTitleBar(mauiContext);
-
-        void CollapseTitleBar() => CollapseMauiTitleBar(nativeWindow.Content);
-
-        CollapseTitleBar();
-
-        if (nativeWindow.Content is FrameworkElement { IsLoaded: false } root)
+        catch (Exception ex)
         {
-            root.Loaded += (_, _) => CollapseTitleBar();
+            WindowsEventLogger.Error("WindowsWindowChrome", "ApplyMainWindowChrome failed; falling back to default chrome", ex);
         }
-
-        nativeWindow.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CollapseTitleBar);
-
-        WindowsWindowDragHelper.EnableMainWindowDrag(nativeWindow);
     }
 
     static AppWindow? GetAppWindow(WinUiWindow nativeWindow) =>
