@@ -42,6 +42,8 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
     public event EventHandler<bool>? BufferingStateChanged;
 
+    public event EventHandler<bool>? PlaybackVisibilityChanged;
+
     protected AppleVideoPlayerServiceBase(
         ILogger logger,
         IStreamSwitchingService switching,
@@ -89,6 +91,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
         try
         {
+            PlaybackVisibilityChanged?.Invoke(this, true);
             _session.Reset();
             AttachViaSession(m3u8Url);
             return await _playbackTcs.Task;
@@ -97,6 +100,16 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         {
             _logger.LogError(ex, "[AppleVideoPlayer] Error during playback");
             return PlaybackResult.Completed($"Playback error: {ex.Message}", true);
+        }
+        finally
+        {
+            try
+            {
+                PlaybackVisibilityChanged?.Invoke(this, false);
+            }
+            catch
+            {
+            }
         }
     }
 

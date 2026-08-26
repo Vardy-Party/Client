@@ -59,6 +59,8 @@ namespace VardyParty.Platforms.Windows
 
         public event EventHandler<bool>? BufferingStateChanged;
 
+        public event EventHandler<bool>? PlaybackVisibilityChanged;
+
         private PlaybackMetrics? _currentMetrics;
         private MediaPlaybackItem? _currentPlaybackItem;
 
@@ -102,6 +104,30 @@ namespace VardyParty.Platforms.Windows
             // still fire on a background thread after the first healthy stream is found.
             MainPage.SetNativePlayerActive(true);
             _logger.LogInformation($"PlayVideoAsync starting: {title}");
+
+            // Player surface takes over: suppress UI sounds until this session ends.
+            try
+            {
+                PlaybackVisibilityChanged?.Invoke(this, true);
+            }
+            catch (Exception ex)
+            {
+                LogIgnored("PlaybackVisibilityChanged(true)", ex);
+            }
+
+            _ = tcs.Task.ContinueWith(
+                _ =>
+                {
+                    try
+                    {
+                        PlaybackVisibilityChanged?.Invoke(this, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogIgnored("PlaybackVisibilityChanged(false)", ex);
+                    }
+                },
+                TaskScheduler.Default);
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
