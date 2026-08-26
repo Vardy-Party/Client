@@ -23,7 +23,13 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $project = Join-Path $repoRoot 'VardyParty\VardyParty.csproj'
-$winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net10.0-windows10.0.19041.0\win-x64"
+$winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net11.0-windows10.0.19041.0\win-x64"
+
+# The MAUI head targets net11.0-*: fail fast when dotnet resolves to an older SDK.
+$sdkVersion = (& dotnet --version)
+if (-not $sdkVersion.StartsWith('11.')) {
+    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 preview SDK (11.0.100-preview.7 or later)."
+}
 
 if (-not (Test-Path $project)) {
     throw "Project not found: $project"
@@ -39,7 +45,7 @@ Write-Host "[$buildTarget] $project (Visual Studio-style Windows deploy)..."
 & dotnet msbuild $project `
     -t:$buildTarget `
     -p:Configuration=$Configuration `
-    -p:TargetFramework=net10.0-windows10.0.19041.0 `
+    -p:TargetFramework=net11.0-windows10.0.19041.0 `
     -p:CI=true `
     -p:GenerateTestArtifacts=true `
     -p:RunGenerateBuildInfo=true
@@ -101,7 +107,7 @@ function Sync-AppXLayoutFromBuildOutput {
         Copy-Item -Path (Join-Path $sourceWwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
     }
 
-    $scopedCssBundle = Join-Path $ProjectRoot "obj\$BuildConfiguration\net10.0-windows10.0.19041.0\win-x64\scopedcss\bundle\VardyParty.styles.css"
+    $scopedCssBundle = Join-Path $ProjectRoot "obj\$BuildConfiguration\net11.0-windows10.0.19041.0\win-x64\scopedcss\bundle\VardyParty.styles.css"
     if (Test-Path $scopedCssBundle) {
         Write-Host "Syncing scoped CSS bundle from $scopedCssBundle"
         Copy-Item -Path $scopedCssBundle -Destination (Join-Path $appX 'wwwroot\VardyParty.styles.css') -Force

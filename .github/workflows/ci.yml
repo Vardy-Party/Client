@@ -1,7 +1,15 @@
 name: CI - Build & Test
 
 env:
+  # Domain libraries, tests and the Avalonia Linux head target net10.0 and use
+  # the stable SDK. The MAUI heads (VardyParty, VardyParty.HomeUi,
+  # VardyParty.Desktop) target net11.0-* and need the .NET 11 preview SDK.
+  # There is deliberately no repo global.json: with no pin, dotnet picks the
+  # newest installed SDK (previews included), which is what the local build
+  # scripts need on a machine with SDK 10 + 11 installed, while CI jobs pin
+  # per-job via setup-dotnet.
   DOTNET_VERSION: "10.0.x"
+  DOTNET_PREVIEW_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"
@@ -120,10 +128,13 @@ jobs:
     if: ${{ needs.resolve-flags.outputs.skip_codequality != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET 10
+      # The MAUI head now targets net11.0-android, so this job runs on the .NET
+      # 11 preview SDK (it builds the net10.0 domain libraries fine too).
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -132,11 +143,13 @@ jobs:
       # - name: Restore dependencies
       #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       # Warnings-as-errors + code-style enforcement. Android Release packaging is
-      # not the point of this job: skip signing/AOT/trim so a missing keystore
-      # cannot fail Code Quality, matching the Build Android job flags.
-      # VardyParty.HomeUi / VardyParty.Desktop target net11.0 (MAUI-Avalonia
-      # preview) and cannot build on this job's .NET 10 SDK; the
-      # build-desktop-preview job covers them instead.
+      # not the point of this job: skip signing so a missing keystore cannot fail
+      # Code Quality. .NET 11 Android is CoreCLR-only: PublishTrimmed must stay
+      # ON (the linker path requires it) and Mono AOT no longer exists (the
+      # csproj guards RunAotCompilation to Mono targets).
+      # VardyParty.HomeUi / VardyParty.Desktop are excluded: HomeUi is built
+      # through the VardyParty head, and Desktop needs the maui-tizen workload;
+      # the build-desktop-preview job covers both.
       - name: Run analyzers (warnings as errors)
         run: |
           set -euo pipefail
@@ -145,19 +158,15 @@ jobs:
             dotnet build "$proj" -c Release \
               /p:TreatWarningsAsErrors=true \
               /p:EnforceCodeStyleInBuild=true \
-              /p:AndroidKeyStore=false \
-              /p:RunAotCompilation=false \
-              /p:PublishTrimmed=false
+              /p:AndroidKeyStore=false
             echo "::endgroup::"
           done < <(find . -name "*.csproj" -not -name "*Tests.csproj" \
             -not -name "VardyParty.HomeUi.csproj" -not -name "VardyParty.Desktop.csproj" \
             -type f -print0)
-      # --no-restore: dotnet format's own solution restore would fail on the
-      # net11.0 preview projects under this job's .NET 10 SDK. Everything else
-      # is already restored by the analyzer step; test projects are restored
-      # here so format still checks them. The preview projects are excluded
-      # from formatting (they fail workspace load on SDK 10 and are exercised
-      # by build-desktop-preview instead).
+      # --no-restore: everything is already restored by the analyzer step; test
+      # projects are restored here so format still checks them. The preview
+      # projects stay excluded from formatting (they are exercised by
+      # build-desktop-preview / the head builds instead).
       - name: Restore test projects for format check
         run: |
           set -euo pipefail
@@ -177,10 +186,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -189,7 +199,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
       - name: Build Windows app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-windows10.0.19041.0
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-windows10.0.19041.0
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -234,10 +244,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -252,14 +263,16 @@ jobs:
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
+      # .NET 11 Android is CoreCLR-only: UseMonoRuntime is gone (NETSDK1242) and
+      # PublishTrimmed must stay ON (XA linker requires it for CoreCLR R2R).
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:RuntimeIdentifiers=android-arm64 -r android-arm64
       - name: Restore domain libraries without Android RID
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Build Android app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-android --no-restore -p:UseMonoRuntime=true -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false -p:RunAotCompilation=false -p:PublishTrimmed=false
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-android --no-restore -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -304,10 +317,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -320,13 +334,13 @@ jobs:
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-ios -r iossimulator-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-ios -r iossimulator-x64
       - name: Restore domain libraries without iOS RID
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-ios -r iossimulator-x64 --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-ios -r iossimulator-x64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -371,10 +385,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: ${{ env.DOTNET_PREVIEW_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -385,9 +400,9 @@ jobs:
       - name: Restore core dependencies
         run: dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net10.0-maccatalyst -r maccatalyst-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-maccatalyst -r maccatalyst-x64
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net10.0-maccatalyst -r maccatalyst-x64
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-x64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

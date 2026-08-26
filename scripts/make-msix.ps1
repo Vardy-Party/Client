@@ -66,7 +66,7 @@ if ($exitCode -ne 0) {
 }
 
 # Find generated msix
-$searchRoot = Join-Path $pwd "VardyParty\bin\$Configuration\net10.0-windows10.0.19041.0\$Runtime\publish"
+$searchRoot = Join-Path $pwd "VardyParty\bin\$Configuration\net11.0-windows10.0.19041.0\$Runtime\publish"
 $search = Get-ChildItem -Path $searchRoot -Filter *.msix -Recurse -ErrorAction SilentlyContinue
 if ($search) {
     $outDir = "artifacts"
