@@ -9,11 +9,6 @@
 			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
 			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
 		-->
-		<!--
-			Singular TargetFramework: see the matching note in VardyParty.HomeUi.csproj
-			(Directory.Build.targets strips TargetFramework off ProjectReferences, which
-			breaks references to cross-targeting projects).
-		-->
 		<TargetFramework>net11.0</TargetFramework>
 		<OutputType>Exe</OutputType>
 		<UseMaui>true</UseMaui>
@@ -48,10 +43,21 @@
 		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-preview.7.26381.103" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
+		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
+		<PackageReference Include="SoundFlow" Version="1.4.1" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj" />
+		<!--
+			HomeUi cross-targets (net11.0 for this head, net11.0-android/-windows
+			for the MAUI head). Directory.Build.targets strips TargetFramework off
+			every ProjectReference, which would break the cross-targeting reference
+			protocol (no compiled output back) - so this one reference overrides
+			GlobalPropertiesToRemove to keep only the RID/SelfContained stripping.
+		-->
+		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+		</ProjectReference>
 		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
 		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
 	</ItemGroup>
@@ -61,6 +67,11 @@
 		<!-- League logos shipped next to the binary, mirroring the VardyParty.Linux layout. -->
 		<None Include="..\VardyParty\Resources\Images\Leagues\**\*.*"
 		      Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+		<!-- UI sounds: the same generated WAVs the MAUI head ships as MauiAssets. -->
+		<None Include="..\VardyParty\Resources\Raw\Sounds\*.wav"
+		      Link="Sounds\%(Filename)%(Extension)"
 		      CopyToOutputDirectory="PreserveNewest"
 		      CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>

@@ -45,6 +45,13 @@ public static class MauiProgram
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
         builder.Services.AddSingleton<IHomeAssetLocator, DesktopHomeAssetLocator>();
+
+        // UI sounds: registered per composition root (not in AddVardyParty).
+        // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
+        // fallbacks defer to these. Initialised in App after first render.
+        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, FileSoundPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, SoundFlowUiSoundPlayer>();
+
         builder.Services.AddVardyPartyHomeUi();
         builder.Services.AddSingleton<HomeFeed>();
 

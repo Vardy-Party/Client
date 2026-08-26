@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
+using VardyParty.Ports;
 using VardyParty.Presentation;
 
 namespace VardyParty.HomeUi;
@@ -19,6 +20,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly IBadgeImageLoader _images;
     private readonly IHomeAssetLocator _assets;
     private readonly IDispatcher _dispatcher;
+    private readonly UiSoundService _sounds;
+    private readonly ScoreChangeDetector _scoreChanges = new();
     private IDictionary<string, List<Game>>? _lastGames;
     private bool _isMenuOpen;
     private string _subtitle = string.Empty;
@@ -30,13 +33,15 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MenuViewModel menu,
         IBadgeImageLoader images,
         IHomeAssetLocator assets,
-        IDispatcher dispatcher)
+        IDispatcher dispatcher,
+        UiSoundService sounds)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
         _images = images ?? throw new ArgumentNullException(nameof(images));
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
 
         _leagueFilter.Changed += OnFilterChanged;
     }
@@ -45,6 +50,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>Raised on the UI thread when the user picks a match.</summary>
     public event Action<Game>? GamePicked;
+
+    /// <summary>Raised when the user taps "Sign out" in the settings menu (head-handled).</summary>
+    public event Action? SignOutRequested;
 
     /// <summary>Raised on the UI thread after rows are rebuilt, with the visible game count.</summary>
     public event Action<int>? GamesUpdated;
@@ -115,20 +123,76 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>Surface a service error banner. Safe to call from any thread.</summary>
-    public void SetError(string? message) =>
-        _dispatcher.Dispatch(() => ErrorMessage = message ?? string.Empty);
+    public void SetError(string? message)
+    {
+        var incoming = message ?? string.Empty;
+        if (incoming.Length > 0 && _errorMessage.Length == 0)
+        {
+            _sounds.Play(UiSound.Error);
+        }
+
+        _dispatcher.Dispatch(() => ErrorMessage = incoming);
+    }
 
     /// <summary>Reclassify the layout for a new viewport size / idiom.</summary>
     public void SetViewport(double width, double height, bool isTelevision) =>
         Layout.Apply(HomeLayoutClassifier.Classify(width, height, isTelevision));
 
-    public void ToggleMenu() => IsMenuOpen = !IsMenuOpen;
+    public void ToggleMenu()
+    {
+        var opening = !IsMenuOpen;
+        IsMenuOpen = opening;
+        _sounds.Play(opening ? UiSound.MenuOpen : UiSound.Back);
+    }
 
-    public void CloseMenu() => IsMenuOpen = false;
+    public void CloseMenu()
+    {
+        if (!IsMenuOpen) return;
+        IsMenuOpen = false;
+        _sounds.Play(UiSound.Back);
+    }
 
     public void ShowAllLeagues() => _menu.ShowAllLeagues();
 
     public void ResetLeaguesToDefaults() => _menu.ResetToDefaults();
+
+    /// <summary>Settings: the persisted "UI sounds" switch (default ON).</summary>
+    public bool UiSoundsEnabled
+    {
+        get => _menu.UiSoundsEnabled;
+        set
+        {
+            if (_menu.UiSoundsEnabled == value) return;
+            _menu.ToggleUiSounds();
+            Raise(nameof(UiSoundsEnabled));
+        }
+    }
+
+    private bool _canSignOut;
+
+    /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>
+    public bool CanSignOut
+    {
+        get => _canSignOut;
+        set
+        {
+            if (_canSignOut == value) return;
+            _canSignOut = value;
+            Raise(nameof(CanSignOut));
+        }
+    }
+
+    public void RequestSignOut()
+    {
+        _sounds.Play(UiSound.Select);
+        SignOutRequested?.Invoke();
+    }
+
+    /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
+    public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
+
+    /// <summary>Forget observed scores (e.g. on sign-out) so re-appearing games stay silent.</summary>
+    public void ResetScoreObservations() => _scoreChanges.Reset();
 
     public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
 
@@ -144,6 +208,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             : _leagueFilter.FilterGames(dict.ToDisplay());
         var rowModels = HomeRowsBuilder.Build(display);
 
+        // Goal sting on genuine live score transitions only (never first load /
+        // first appearance — the detector ignores a game's first observation).
+        if (_scoreChanges.Observe(display).Count > 0)
+        {
+            _sounds.Play(UiSound.Goal);
+        }
+
         _dispatcher.Dispatch(() => Apply(rowModels, display.Count, dict));
     }
 
@@ -157,7 +228,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         foreach (var model in rowModels)
         {
             var cards = model.Games
-                .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked))
+                .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked, OnCardFocused))
                 .ToList();
             var row = new LeagueRowViewModel(model.League, model.HasLiveGames, cards, Layout);
             rowViewModels.Add(row);
@@ -230,7 +301,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void OnCardPicked(MatchCardViewModel card) => GamePicked?.Invoke(card.Game);
+    private void OnCardPicked(MatchCardViewModel card)
+    {
+        _sounds.Play(UiSound.Select);
+        GamePicked?.Invoke(card.Game);
+    }
+
+    private void OnCardFocused(MatchCardViewModel card) => OnFocusPulse();
 
     private void Raise(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

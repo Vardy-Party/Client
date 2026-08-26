@@ -4,18 +4,28 @@
 
 	<PropertyGroup>
 		<!--
-			Shared .NET MAUI XAML homepage. net11.0 builds today (drawn by Avalonia via
-			Avalonia.Controls.Maui in VardyParty.Desktop). Adding net11.0-android later
-			lets the existing MAUI Android head consume the exact same XAML natively.
+			Shared .NET MAUI XAML homepage: net11.0 is drawn by Avalonia
+			(VardyParty.Desktop); net11.0-android/-windows compile the exact same
+			XAML natively into the VardyParty MAUI head.
 
-			Singular TargetFramework on purpose: Directory.Build.targets strips the
-			TargetFramework global property off every ProjectReference, which breaks the
-			cross-targeting (plural TargetFrameworks) reference protocol - the referencing
-			project would get no compiled output back. When this project multi-targets,
-			referencing heads must override GlobalPropertiesToRemove on their
-			ProjectReference to keep TargetFramework negotiation intact.
+			This project cross-targets, and Directory.Build.targets strips the
+			TargetFramework global property off every ProjectReference, which breaks
+			the cross-targeting reference protocol (the referencing project gets no
+			compiled output back). Heads referencing this project therefore override
+			GlobalPropertiesToRemove on their ProjectReference to keep
+			TargetFramework negotiation intact (see VardyParty.csproj and
+			VardyParty.Desktop.csproj).
 		-->
-		<TargetFramework>net11.0</TargetFramework>
+		<!-- Linux (this CI/dev VM): Desktop head TFM + Android. -->
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net11.0;net11.0-android</TargetFrameworks>
+		<!-- macOS CI: plain TFM only (the ios/maccatalyst heads consume net11.0). -->
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0</TargetFrameworks>
+		<!-- Windows CI: only the Windows TFM (CI installs only maui-windows). -->
+		<TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
+		<!-- Windows local dev: everything the local MAUI head can build. -->
+		<TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' != 'true'">net11.0;net11.0-android;net11.0-windows10.0.19041.0</TargetFrameworks>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<UseMaui>true</UseMaui>
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>

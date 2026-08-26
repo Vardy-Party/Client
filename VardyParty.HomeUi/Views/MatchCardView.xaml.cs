@@ -22,6 +22,8 @@ public partial class MatchCardView : ContentView
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        CardOuter.Focused += OnCardFocused;
+        CardOuter.Unfocused += OnCardUnfocused;
     }
 
     private MatchCardViewModel? ViewModel => BindingContext as MatchCardViewModel;
@@ -64,7 +66,65 @@ public partial class MatchCardView : ContentView
         {
             StartPulse();
         }
+
+        EnableTvFocus();
     }
+
+    /// <summary>
+    /// Android TV: MAUI Borders are not focusable natively, so D-pad focus
+    /// would skip the cards. Make the platform view focusable and clickable —
+    /// a clickable focused Android view fires Click on DPAD_CENTER/Enter.
+    /// Wired only on TV idiom so phone taps don't double-fire alongside the
+    /// TapGestureRecognizer.
+    /// </summary>
+    private void EnableTvFocus()
+    {
+#if ANDROID
+        if (!HomeView.IsTelevision())
+        {
+            return;
+        }
+
+        if (CardOuter.Handler?.PlatformView is global::Android.Views.View native)
+        {
+            native.Focusable = true;
+            native.FocusableInTouchMode = false;
+            if (!_tvClickWired)
+            {
+                _tvClickWired = true;
+                native.Click += OnNativeCardClick;
+                native.FocusChange += OnNativeFocusChange;
+            }
+        }
+#endif
+    }
+
+#if ANDROID
+    private bool _tvClickWired;
+
+    private void OnNativeCardClick(object? sender, EventArgs e) => ViewModel?.Pick();
+
+    private void OnNativeFocusChange(object? sender, global::Android.Views.View.FocusChangeEventArgs e)
+    {
+        if (e.HasFocus)
+        {
+            ViewModel?.FocusMoved();
+            EnterHighlight();
+        }
+        else
+        {
+            ExitHighlight();
+        }
+    }
+#endif
+
+    private void OnCardFocused(object? sender, FocusEventArgs e)
+    {
+        ViewModel?.FocusMoved();
+        EnterHighlight();
+    }
+
+    private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
 
     private void OnUnloaded(object? sender, EventArgs e)
     {
@@ -77,6 +137,15 @@ public partial class MatchCardView : ContentView
             _observedLayout.PropertyChanged -= OnLayoutChanged;
             _observedLayout = null;
         }
+
+#if ANDROID
+        if (_tvClickWired && CardOuter.Handler?.PlatformView is global::Android.Views.View native)
+        {
+            native.Click -= OnNativeCardClick;
+            native.FocusChange -= OnNativeFocusChange;
+            _tvClickWired = false;
+        }
+#endif
     }
 
     private void StartPulse()
@@ -92,7 +161,11 @@ public partial class MatchCardView : ContentView
 
     private void OnCardTapped(object? sender, TappedEventArgs e) => ViewModel?.Pick();
 
-    private void OnPointerEntered(object? sender, PointerEventArgs e) => EnterHighlight();
+    private void OnPointerEntered(object? sender, PointerEventArgs e)
+    {
+        ViewModel?.FocusMoved();
+        EnterHighlight();
+    }
 
     private void OnPointerExited(object? sender, PointerEventArgs e) => ExitHighlight();
 

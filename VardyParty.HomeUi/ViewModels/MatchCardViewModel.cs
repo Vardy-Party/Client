@@ -12,14 +12,20 @@ namespace VardyParty.HomeUi;
 public sealed class MatchCardViewModel : INotifyPropertyChanged
 {
     private readonly Action<MatchCardViewModel> _onPicked;
+    private readonly Action<MatchCardViewModel>? _onFocused;
     private ImageSource? _homeBadge;
     private ImageSource? _awayBadge;
 
-    public MatchCardViewModel(Game game, HomeLayoutState layout, Action<MatchCardViewModel> onPicked)
+    public MatchCardViewModel(
+        Game game,
+        HomeLayoutState layout,
+        Action<MatchCardViewModel> onPicked,
+        Action<MatchCardViewModel>? onFocused = null)
     {
         Game = game;
         Layout = layout;
         _onPicked = onPicked;
+        _onFocused = onFocused;
 
         HomeTeam = game.DisplayHome;
         AwayTeam = game.DisplayAway;
@@ -96,6 +102,9 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
     public bool NoAwayBadge => _awayBadge == null;
 
     public void Pick() => _onPicked(this);
+
+    /// <summary>Keyboard/D-pad focus or pointer highlight landed on this card.</summary>
+    public void FocusMoved() => _onFocused?.Invoke(this);
 
     /// <summary>
     /// Diagonal wash: home colour bleeds in from the top-left, away colour
