@@ -234,12 +234,25 @@ public static class MauiProgram
         // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
         // fallbacks defer to these. Initialised on a background task after
         // first render (HomeHostPage.OnAppearing), never in the startup path.
+        // VARDYPARTY_NO_SOUND=1 swaps in the null player for crash bisecting.
+#if ANDROID || WINDOWS
+        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
+        {
+            Console.WriteLine($"[MauiProgram] {VardyParty.Ports.UiSoundKillSwitch.VariableName}=1 — UI sounds disabled (NullUiSoundPlayer)");
+#if WINDOWS
+            WindowsEventLogger.Info("MauiProgram", $"{VardyParty.Ports.UiSoundKillSwitch.VariableName}=1 — UI sounds disabled (NullUiSoundPlayer)");
+#endif
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, VardyParty.Ports.NullUiSoundPlayer>();
+        }
+        else
+        {
 #if ANDROID
-        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
-        builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, AndroidUiSoundPlayer>();
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, AndroidUiSoundPlayer>();
 #elif WINDOWS
-        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
-        builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, WindowsUiSoundPlayer>();
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, WindowsUiSoundPlayer>();
+#endif
+        }
 #endif
 
         // Shared XAML homepage (the Blazor UI was removed on this branch; every

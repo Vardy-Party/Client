@@ -302,6 +302,27 @@ Two startup crashes found on real devices after the net11/CoreCLR move:
   protocol activations and treats activator failures as a normal launch.
   Setting `VARDYPARTY_NO_CHROME=1` skips all custom chrome for bisecting.
 
+The full WER report pins the Windows stowed exception as `combase.dll`
+HRESULT `0x800710DD` — the WinUI 3 DispatcherQueue/CoreMessaging misuse
+signature (a WinRT operation on the wrong thread/apartment, or an
+**unobserved async WinRT failure**, which a managed try/catch cannot catch).
+The two live suspects are each behind their own startup kill switch for a
+clean bisect on the affected machine:
+
+- `VARDYPARTY_NO_CHROME=1` — skip all custom window chrome (Windows).
+- `VARDYPARTY_NO_SOUND=1` — register `NullUiSoundPlayer` instead of the
+  platform sound player on every platform (Windows `MediaPlayer`, Android
+  `SoundPool`, Desktop SoundFlow); `VardyParty.Ports.UiSoundKillSwitch`,
+  checked once at registration and logged.
+
+`WindowsUiSoundPlayer` itself was audited against the 0x800710DD signature:
+`Windows.Media.Playback.MediaPlayer` is WinRT-agile (metadata
+MarshalingBehavior=Agile, ThreadingModel=Both), so background-thread
+creation is legal — but async media failures are now observed via a
+never-throwing `MediaFailed` logging handler, `AutoPlay=false` is explicit,
+and `CommandManager.IsEnabled=false` keeps the sound-effect players out of
+the System Media Transport Controls / CoreMessaging machinery entirely.
+
 ## Follow-ups
 
 - **iOS / Mac Catalyst runtime QA**: both platforms boot `HomeHostPage`

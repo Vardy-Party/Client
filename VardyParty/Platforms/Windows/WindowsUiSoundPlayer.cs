@@ -12,6 +12,17 @@ namespace VardyParty.Platforms.Windows;
 /// cannot). WAVs ship as MauiAssets; they are copied once to local app data at
 /// initialize because MediaPlayer needs a URI and OpenAppPackageFileAsync works
 /// in both packaged (MSIX) and unpackaged runs.
+///
+/// Threading: Windows.Media.Playback.MediaPlayer is a WinRT agile class
+/// (metadata MarshalingBehavior=Agile, ThreadingModel=Both — see the class
+/// page on learn.microsoft.com), so creating and configuring it on the
+/// background init task is legal and needs no DispatcherQueue. The two things
+/// that CAN surface as 0xc000027b stowed exceptions are handled explicitly:
+/// async media failures are observed via <see cref="MediaPlayer.MediaFailed"/>
+/// (a logging handler that never throws back into the WinRT callback), and
+/// System Media Transport Controls integration is disabled
+/// (CommandManager.IsEnabled=false) so six sound-effect players never touch
+/// the SMTC/CoreMessaging machinery during startup.
 /// </summary>
 public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
 {
@@ -29,6 +40,7 @@ public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
     private readonly Dictionary<UiSound, MediaPlayer> _players = new();
     private volatile bool _ready;
     private int _playFailureLogged;
+    private int _mediaFailedLogged;
 
     public WindowsUiSoundPlayer(ILogger<WindowsUiSoundPlayer> logger) => _logger = logger;
 
@@ -54,8 +66,22 @@ public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
                 var player = new MediaPlayer
                 {
                     AudioCategory = MediaPlayerAudioCategory.SoundEffects,
-                    Source = MediaSource.CreateFromUri(new Uri(localPath)),
+                    // MediaPlayer (unlike MediaElement) does not auto-play by
+                    // default; explicit so preloading can never start playback.
+                    AutoPlay = false,
                 };
+
+                // Sound effects must not appear in (or wire up) the System
+                // Media Transport Controls.
+                player.CommandManager.IsEnabled = false;
+
+                // Observe async failures BEFORE attaching the source: an
+                // unobserved async WinRT failure is exactly what surfaces as a
+                // 0xc000027b stowed-exception crash.
+                var failedSound = sound;
+                player.MediaFailed += (_, args) => OnMediaFailed(failedSound, args);
+
+                player.Source = MediaSource.CreateFromUri(new Uri(localPath));
                 _players[sound] = player;
             }
 
@@ -68,6 +94,25 @@ public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "UI sound init failed; sounds disabled");
+        }
+    }
+
+    private void OnMediaFailed(UiSound sound, MediaPlayerFailedEventArgs args)
+    {
+        try
+        {
+            if (Interlocked.Exchange(ref _mediaFailedLogged, 1) == 0)
+            {
+                _logger.LogWarning(
+                    args.ExtendedErrorCode,
+                    "UI sound {Sound} failed asynchronously ({Error}: {Message}); further failures muted",
+                    sound, args.Error, args.ErrorMessage);
+            }
+        }
+        catch
+        {
+            // Never throw back into the WinRT callback — that would itself
+            // become a stowed exception.
         }
     }
 
