@@ -16,18 +16,17 @@ public partial class HomeView : ContentView
         SizeChanged += OnSizeChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
-        BindingContextChanged += OnHomeBindingContextChanged;
     }
 
     private HomeViewModel? ViewModel => BindingContext as HomeViewModel;
 
     private void OnLoaded(object? sender, EventArgs e)
     {
-        WireCatalogSource();
         if (_applyPump != null) return;
 
-        // WinAppSDK cannot Dispatcher.Dispatch from the catalog thread into
-        // layout. Drain pending apply on this view's UI-thread timer instead.
+        // WinAppSDK stows 0xc000027b if catalog apply is Dispatcher.Dispatch'd
+        // from the Rx/HTTP thread. Drain the pending queue on this view's
+        // UI-thread timer instead — same Rows binding on every platform.
         _applyPump = Dispatcher.CreateTimer();
         _applyPump.Interval = TimeSpan.FromMilliseconds(50);
         _applyPump.Tick += OnApplyPumpTick;
@@ -44,28 +43,6 @@ public partial class HomeView : ContentView
 
     private void OnApplyPumpTick(object? sender, EventArgs e) =>
         ViewModel?.FlushPendingApply();
-
-    private void OnHomeBindingContextChanged(object? sender, EventArgs e) => WireCatalogSource();
-
-    /// <summary>
-    /// Android/TV CollectionView must not bind <see cref="HomeViewModel.Rows"/>
-    /// on WinUI (nested ItemsRepeater is the crash). WinUI uses BindableLayout
-    /// on the same collection.
-    /// </summary>
-    private void WireCatalogSource()
-    {
-        if (ViewModel is not { } vm) return;
-#if WINDOWS
-        LeagueList.ItemsSource = null;
-        BindableLayout.SetItemsSource(WindowsLeagueRows, vm.Rows);
-#else
-        BindableLayout.SetItemsSource(WindowsLeagueRows, null);
-        if (!ReferenceEquals(LeagueList.ItemsSource, vm.Rows))
-        {
-            LeagueList.ItemsSource = vm.Rows;
-        }
-#endif
-    }
 
     private void OnSizeChanged(object? sender, EventArgs e)
     {

@@ -7,12 +7,9 @@ namespace VardyParty.HomeUi.Views;
 /// it is never focusable (D-pad/tab traversal skips it; the menu button
 /// beside it stays focusable).
 /// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/>)
-/// the crest spins; when rows render it eases to rest with a sheen sweep.
-/// WinUI has no cheap PlaneProjection, so the loading spin uses 2D
-/// <see cref="VisualElement.Rotation"/> there and <c>RotationY</c> elsewhere.
-/// Settling is delayed one dispatcher interval so it does not abort an
-/// animation on the same CoreMessaging tick as catalog materialization
-/// (that pairing is what 0xc000027b'd, not the crest XAML itself).
+/// the crest spins on a 3D RotationY turntable; when rows render it eases
+/// to rest with a sheen sweep. Settling is delayed so it does not abort an
+/// animation on the same CoreMessaging tick as catalog materialization.
 /// </summary>
 public partial class BrandLogoView : ContentView
 {
@@ -35,11 +32,6 @@ public partial class BrandLogoView : ContentView
     public BrandLogoView()
     {
         InitializeComponent();
-#if WINDOWS
-        // MAUI Shadow is a WinUI DropShadow: keep it off the crest. The glow
-        // ring is the focus chrome instead.
-        LogoOuter.ClearValue(Border.ShadowProperty);
-#endif
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -130,15 +122,17 @@ public partial class BrandLogoView : ContentView
     /// <summary>TV/keyboard focus entered the header: scale + glow + sheen.</summary>
     public void OnHeaderFocusEntered()
     {
-        _ = LogoOuter.ScaleToAsync(1.08, FocusScaleMs, Easing.CubicOut);
-        _ = GlowRing.FadeToAsync(0.7, FocusScaleMs);
+        if (!IsLoaded) return;
+        ObserveVisual(LogoOuter.ScaleToAsync(1.08, FocusScaleMs, Easing.CubicOut));
+        ObserveVisual(GlowRing.FadeToAsync(0.7, FocusScaleMs));
         RunSheenSweep(0.85);
     }
 
     public void OnHeaderFocusExited()
     {
-        _ = LogoOuter.ScaleToAsync(1.0, FocusScaleMs, Easing.CubicOut);
-        _ = GlowRing.FadeToAsync(0.0, FocusScaleMs);
+        if (!IsLoaded) return;
+        ObserveVisual(LogoOuter.ScaleToAsync(1.0, FocusScaleMs, Easing.CubicOut));
+        ObserveVisual(GlowRing.FadeToAsync(0.0, FocusScaleMs));
     }
 
     private void StartLoadingSpin()
@@ -187,7 +181,7 @@ public partial class BrandLogoView : ContentView
         _spinning = false;
         this.AbortAnimation(SpinAnimation);
 
-        var current = CurrentSpinAngle() % 360;
+        var current = LogoOuter.RotationY % 360;
         if (current < 0) current += 360;
         var target = current <= 180 ? 0.0 : 360.0;
 
@@ -202,23 +196,10 @@ public partial class BrandLogoView : ContentView
         });
     }
 
-    private double CurrentSpinAngle()
-    {
-#if WINDOWS
-        return LogoOuter.Rotation;
-#else
-        return LogoOuter.RotationY;
-#endif
-    }
-
     private void ResetSpinVisuals()
     {
         LogoOuter.Opacity = 1;
-#if WINDOWS
-        LogoOuter.Rotation = 0;
-#else
         LogoOuter.RotationY = 0;
-#endif
         EdgeRim.Opacity = 0;
         LogoSheen.Opacity = 0;
         LogoSheen.TranslationX = -26;
@@ -231,11 +212,7 @@ public partial class BrandLogoView : ContentView
         var absSin = Math.Abs(sin);
         var faceVisibility = Math.Abs(Math.Cos(radians));
 
-#if WINDOWS
-        LogoOuter.Rotation = angleDegrees;
-#else
         LogoOuter.RotationY = angleDegrees;
-#endif
 
         EdgeRim.ScaleX = RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * absSin;
         EdgeRim.TranslationX = sin * RimDriftPx;
@@ -282,5 +259,22 @@ public partial class BrandLogoView : ContentView
         loop.Add(0.00, 0.05, new Animation(v => LogoSheen.Opacity = v, 0.0, AmbientOpacity));
         loop.Add(0.18, 0.25, new Animation(v => LogoSheen.Opacity = v, AmbientOpacity, 0.0));
         loop.Commit(this, AmbientAnimation, length: 6000, repeat: () => _ambientRunning);
+    }
+
+    private static void ObserveVisual(Task animation)
+    {
+        _ = ObserveVisualAsync(animation);
+    }
+
+    private static async Task ObserveVisualAsync(Task animation)
+    {
+        try
+        {
+            await animation.ConfigureAwait(true);
+        }
+        catch
+        {
+            // Element unloaded or handler torn down; do not throw on the XAML thread.
+        }
     }
 }

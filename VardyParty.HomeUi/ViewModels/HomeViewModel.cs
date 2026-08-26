@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
 using VardyParty.Ports;
@@ -20,6 +21,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly IBadgeImageLoader _images;
     private readonly IHomeAssetLocator _assets;
     private readonly UiSoundService _sounds;
+    private readonly ILogger<HomeViewModel> _logger;
     private readonly ScoreChangeDetector _scoreChanges = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
@@ -46,7 +48,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         IBadgeImageLoader images,
         IHomeAssetLocator assets,
         IDispatcher dispatcher,
-        UiSoundService sounds)
+        UiSoundService sounds,
+        ILogger<HomeViewModel> logger)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -54,6 +57,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
         _ = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         _leagueFilter.Changed += OnFilterChanged;
     }
@@ -284,40 +288,47 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             _pendingResetScores = false;
         }
 
-        if (resetScores)
+        try
         {
-            _scoreChanges.Reset();
-        }
-
-        if (error != null)
-        {
-            if (error.Length > 0 && _errorMessage.Length == 0)
+            if (resetScores)
             {
-                _sounds.Play(UiSound.Error);
+                _scoreChanges.Reset();
             }
 
-            ErrorMessage = error;
-        }
-
-        if (clearResolving)
-        {
-            foreach (var card in EnumerateCards())
+            if (error != null)
             {
-                card.IsResolving = false;
-            }
-        }
+                if (error.Length > 0 && _errorMessage.Length == 0)
+                {
+                    _sounds.Play(UiSound.Error);
+                }
 
-        if (apply != null)
-        {
-            if (_scoreChanges.Observe(apply.Display).Count > 0)
-            {
-                _sounds.Play(UiSound.Goal);
+                ErrorMessage = error;
             }
 
-            Apply(apply.Rows, apply.Display.Count, apply.Dict);
-        }
+            if (clearResolving)
+            {
+                foreach (var card in EnumerateCards())
+                {
+                    card.IsResolving = false;
+                }
+            }
 
-        DrainPendingImageAssigns();
+            if (apply != null)
+            {
+                if (_scoreChanges.Observe(apply.Display).Count > 0)
+                {
+                    _sounds.Play(UiSound.Goal);
+                }
+
+                Apply(apply.Rows, apply.Display.Count, apply.Dict);
+            }
+
+            DrainPendingImageAssigns();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Homepage UI apply failed");
+        }
     }
 
     private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)
@@ -389,7 +400,14 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 assign = _pendingUiAssign.Dequeue();
             }
 
-            assign();
+            try
+            {
+                assign();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Homepage image assign failed");
+            }
         }
     }
 

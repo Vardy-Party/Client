@@ -425,8 +425,9 @@ public partial class MatchCardView : ContentView
 
         if (animate)
         {
-            _ = CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut);
-            _ = FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut);
+            if (!IsLoaded) return;
+            ObserveVisual(CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut));
+            ObserveVisual(FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut));
         }
         else
         {
@@ -473,5 +474,18 @@ public partial class MatchCardView : ContentView
         _resolvingPulseRunning = false;
         this.AbortAnimation(ResolvingPulseAnimation);
         SelectedVeil.Opacity = 0;
+    }
+
+    private static void ObserveVisual(Task animation) => _ = ObserveVisualAsync(animation);
+
+    private static async Task ObserveVisualAsync(Task animation)
+    {
+        try
+        {
+            await animation.ConfigureAwait(true);
+        }
+        catch
+        {
+        }
     }
 }

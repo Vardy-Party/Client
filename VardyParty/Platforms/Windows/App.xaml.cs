@@ -36,9 +36,11 @@ namespace VardyParty.WinUI
         }
 
         /// <summary>
-        /// Last-chance handler for exceptions thrown on the XAML UI thread.
-        /// Marking them handled keeps the app alive where possible; either way the
-        /// exception is logged instead of dying as an anonymous stowed exception.
+        /// Last-chance observer for exceptions thrown on the XAML UI thread.
+        /// We do not mark them handled: swallowing hid faults and left the UI
+        /// inconsistent. Callers on this thread must catch (homepage apply,
+        /// host overlay updates, animations). An exception that still reaches
+        /// here is a remaining bug — WinAppSDK may convert it to 0xc000027b.
         /// </summary>
         private static void OnXamlUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
         {
@@ -56,7 +58,7 @@ namespace VardyParty.WinUI
                 // The crash hook itself must never throw.
             }
 
-            e.Handled = true;
+            e.Handled = false;
         }
 
         /// <summary>

@@ -185,7 +185,7 @@ public partial class HomeHostPage : ContentPage
         _logger.LogInformation("[HomeHost] Sign in pressed (IsTv={IsTv})", MauiProgram.IsTv);
         _isAuthenticating = true;
         _deviceCode = null;
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             SignInButton.IsEnabled = false;
             SignInButton.Text = "Signing in…";
@@ -231,7 +231,7 @@ public partial class HomeHostPage : ContentPage
             _isAuthenticating = false;
             _deviceCode = null;
             UpdateBackSuppression();
-            Dispatcher.Dispatch(() =>
+            PostUi(() =>
             {
                 DeviceCodePanel.IsVisible = false;
                 SignInButton.IsEnabled = true;
@@ -287,7 +287,7 @@ public partial class HomeHostPage : ContentPage
         _isAuthenticating = false;
         UpdateBackSuppression();
         SetAuthStatus("Sign-in canceled.");
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             DeviceCodePanel.IsVisible = false;
             SignInButton.IsEnabled = true;
@@ -330,7 +330,7 @@ public partial class HomeHostPage : ContentPage
         _homeShell.ClearSelection();
         _isAuthenticated = false;
 
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             _viewModel.CanSignOut = false;
             _viewModel.CloseMenu();
@@ -366,7 +366,7 @@ public partial class HomeHostPage : ContentPage
             _logger.LogWarning(ex, "[HomeHost] Failed to generate QR code locally");
         }
 
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             DeviceCodeLabel.Text = $"Code {deviceCode.UserCode}";
             DeviceUriLabel.Text = $"Scan the QR code, or open {target}";
@@ -379,7 +379,7 @@ public partial class HomeHostPage : ContentPage
         });
     }
 
-    private void SetAuthOverlayVisible(bool visible) => Dispatcher.Dispatch(() =>
+    private void SetAuthOverlayVisible(bool visible) => PostUi(() =>
     {
         AuthOverlay.IsVisible = visible;
         if (visible)
@@ -388,7 +388,7 @@ public partial class HomeHostPage : ContentPage
         }
     });
 
-    private void SetAuthStatus(string? message) => Dispatcher.Dispatch(() =>
+    private void SetAuthStatus(string? message) => PostUi(() =>
     {
         AuthStatusLabel.Text = message ?? string.Empty;
         AuthStatusLabel.IsVisible = !string.IsNullOrWhiteSpace(message);
@@ -496,7 +496,7 @@ public partial class HomeHostPage : ContentPage
                     _isResolvingStreams = false;
                     _viewModel.OnStreamResolutionEnded();
                     UpdateBackSuppression();
-                    Dispatcher.Dispatch(() =>
+                    PostUi(() =>
                     {
                         ResolveOverlay.IsVisible = false;
                         TryResumeAfterPlayer();
@@ -539,7 +539,7 @@ public partial class HomeHostPage : ContentPage
         _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");
 
-        Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
+        PostUi(() => ResolveOverlay.IsVisible = false);
     }
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
@@ -549,7 +549,7 @@ public partial class HomeHostPage : ContentPage
         _sounds.SuppressAll = visible;
         if (!visible)
         {
-            Dispatcher.Dispatch(TryResumeAfterPlayer);
+            PostUi(TryResumeAfterPlayer);
         }
     }
 
@@ -581,7 +581,7 @@ public partial class HomeHostPage : ContentPage
         }
     }
 
-    private void ShowResolveOverlay(string subtitle) => Dispatcher.Dispatch(() =>
+    private void ShowResolveOverlay(string subtitle) => PostUi(() =>
     {
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
@@ -592,7 +592,7 @@ public partial class HomeHostPage : ContentPage
         ResolveCancelButton.Focus();
     });
 
-    private void UpdateResolveOverlay(StreamResolutionProgress progress) => Dispatcher.Dispatch(() =>
+    private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
     {
         var isNoHealthy = !string.IsNullOrEmpty(progress.Status)
             && progress.Status.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
@@ -619,7 +619,7 @@ public partial class HomeHostPage : ContentPage
         PushErrorBanner();
         _isResolvingStreams = false;
         UpdateBackSuppression();
-        Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
+        PostUi(() => ResolveOverlay.IsVisible = false);
     }
 
     // ------------------------------------------------------------- android --
@@ -629,7 +629,7 @@ public partial class HomeHostPage : ContentPage
     {
         if (_viewModel.IsMenuOpen)
         {
-            Dispatcher.Dispatch(_viewModel.CloseMenu);
+            PostUi(_viewModel.CloseMenu);
             return;
         }
 
@@ -648,7 +648,7 @@ public partial class HomeHostPage : ContentPage
     }
 
     private void AndroidMenuHandler(global::Android.Views.Keycode keyCode) =>
-        Dispatcher.Dispatch(_viewModel.ToggleMenu);
+        PostUi(_viewModel.ToggleMenu);
 #endif
 
     /// <summary>
@@ -671,5 +671,35 @@ public partial class HomeHostPage : ContentPage
         {
         }
 #endif
+    }
+
+    /// <summary>
+    /// Run UI work on the page dispatcher. If we are already on the UI thread,
+    /// run inline (a queued Dispatch into WinUI layout is a 0xc000027b trigger).
+    /// Fail the update and log; do not throw back into CoreMessaging.
+    /// </summary>
+    private void PostUi(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        void Run()
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[HomeHost] UI-thread update failed");
+            }
+        }
+
+        if (Dispatcher.IsDispatchRequired)
+        {
+            Dispatcher.Dispatch(Run);
+            return;
+        }
+
+        Run();
     }
 }
