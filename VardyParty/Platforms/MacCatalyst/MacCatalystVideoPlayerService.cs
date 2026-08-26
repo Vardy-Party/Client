@@ -54,15 +54,21 @@ namespace VardyParty
                 AVAssetResourceLoader resourceLoader,
                 AVAssetResourceLoadingRequest loadingRequest)
             {
-                var reqUrl = loadingRequest?.Request?.Url;
-                if (reqUrl == null)
+                // Binding annotations lie occasionally: guard the request object
+                // itself, and its URL string, before any dereference (CS8602).
+                if (loadingRequest is null)
                 {
-                    try { loadingRequest?.FinishLoadingWithError(new NSError(new NSString("NSURLErrorDomain"), -1)); }
+                    return false;
+                }
+
+                var urlString = loadingRequest.Request?.Url?.AbsoluteString;
+                if (string.IsNullOrEmpty(urlString))
+                {
+                    try { loadingRequest.FinishLoadingWithError(new NSError(new NSString("NSURLErrorDomain"), -1)); }
                     catch { }
                     return false;
                 }
 
-                var urlString = reqUrl.AbsoluteString;
                 if (urlString.StartsWith("fakehttp"))
                     urlString = urlString.Replace("fakehttp", "http");
                 else if (urlString.StartsWith("fakehttps"))
