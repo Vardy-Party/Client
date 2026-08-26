@@ -145,12 +145,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     public void SetError(string? message)
     {
         var incoming = message ?? string.Empty;
-        if (incoming.Length > 0 && _errorMessage.Length == 0)
-        {
-            _sounds.Play(UiSound.Error);
-        }
 
-        _dispatcher.Dispatch(() => ErrorMessage = incoming);
+        // Both the was-empty check and the Play run inside the dispatch: the
+        // check reads _errorMessage (a UI-thread field, so reading it from the
+        // caller thread races with concurrent SetError calls), and playing from
+        // the UI thread keeps every sound trigger on one thread — no platform
+        // player is forced to be re-entrant from arbitrary caller threads.
+        _dispatcher.Dispatch(() =>
+        {
+            if (incoming.Length > 0 && _errorMessage.Length == 0)
+            {
+                _sounds.Play(UiSound.Error);
+            }
+
+            ErrorMessage = incoming;
+        });
     }
 
     /// <summary>Reclassify the layout for a new viewport size / idiom.</summary>
