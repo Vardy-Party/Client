@@ -262,8 +262,11 @@ jobs:
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       # .NET 11 Android is CoreCLR-only: UseMonoRuntime is gone (NETSDK1242) and
       # PublishTrimmed must stay ON (XA linker requires it for CoreCLR R2R).
+      # PublishReadyToRun=true at restore records the Crossgen2 + android
+      # runtime packs as restore downloads; without it the --no-restore build
+      # fails on a cold runner with NETSDK1094 (no valid runtime package).
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:RuntimeIdentifiers=android-arm64 -r android-arm64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:PublishReadyToRun=true
       - name: Restore domain libraries without Android RID
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
@@ -455,8 +458,10 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+      # maui-tizen carries the plain-TFM MAUI SDK on Linux; maui-android is
+      # needed because VardyParty.HomeUi cross-targets net11.0-android here.
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
       - name: Restore desktop head
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Build desktop head
@@ -486,8 +491,9 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+      # Same workloads as build-desktop (HomeUi cross-targets net11.0-android).
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update

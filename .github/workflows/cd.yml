@@ -805,7 +805,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
@@ -1053,7 +1053,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux

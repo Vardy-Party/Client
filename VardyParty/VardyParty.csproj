@@ -86,11 +86,8 @@
         <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
-      <UseMonoRuntime>true</UseMonoRuntime>
-    </PropertyGroup>
-
-    <!-- .NET 11 Android is CoreCLR-only (NETSDK1242): UseMonoRuntime must stay off for android. -->
+    <!-- .NET 11 is CoreCLR-only on android, ios and maccatalyst (NETSDK1242):
+         UseMonoRuntime stays off everywhere. -->
 
     <!-- GenerateBuildInfo: always on Debug; Release via RunGenerateBuildInfo=true (CI publish). -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true' Or '$(Configuration)' == 'Debug'">
