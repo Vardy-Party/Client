@@ -107,7 +107,16 @@
         <_BuildInfoLine Include="Commit=$(GitHash)" />
         <_BuildInfoLine Include="Built=$(BuildTimestamp)" />
       </ItemGroup>
-      <WriteLinesToFile File="$(MSBuildProjectDirectory)\Resources\Raw\buildinfo.txt" Lines="@(_BuildInfoLine)" Overwrite="true" />
+      <!-- Generated into obj (ignored), not Resources\Raw: the build rewrites this
+           file every run, and a tracked copy kept dirtying the working tree. The
+           MauiAsset below still ships it in packages under the same logical name. -->
+      <PropertyGroup>
+        <_BuildInfoFile>$(IntermediateOutputPath)buildinfo.txt</_BuildInfoFile>
+      </PropertyGroup>
+      <WriteLinesToFile File="$(_BuildInfoFile)" Lines="@(_BuildInfoLine)" Overwrite="true" />
+      <ItemGroup>
+        <MauiAsset Include="$(_BuildInfoFile)" LogicalName="buildinfo.txt" />
+      </ItemGroup>
       <Message Importance="high" Text="GenerateBuildInfo: $(BuildTimestamp) commit=$(GitHash)" />
     </Target>
 
