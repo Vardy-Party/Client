@@ -6,6 +6,7 @@
 @inject IEnrichedGameService GameService
 
 @inject ILeagueFilterService LeagueFilter
+@inject MenuViewModel MenuVm
 
 @inject IBuildInfoService BuildInfoService
 
@@ -248,7 +249,7 @@
 
     {
 
-        _menu = new MenuViewModel(LeagueFilter);
+        _menu = MenuVm;
         buildInfo = await BuildInfoService.GetAsync();
 
         isAuthenticated = IsAuthenticated || await AuthTokenProvider.IsAuthenticatedAsync();

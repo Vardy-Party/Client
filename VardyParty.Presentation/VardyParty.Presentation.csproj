@@ -17,6 +17,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+		<ProjectReference Include="..\VardyParty.Ports\VardyParty.Ports.csproj" />
 	</ItemGroup>
 
 </Project>

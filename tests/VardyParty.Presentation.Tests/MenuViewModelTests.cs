@@ -85,4 +85,61 @@ public class MenuViewModelTests
         // Assert
         filter.Verify(f => f.ResetToDefaults(), Times.Once);
     }
+
+    /// <summary>
+    /// UiSoundService is concrete: inject a hand-built instance so AutoFixture's
+    /// auto-property population can't randomly flip SuppressAll.
+    /// </summary>
+    private (Mock<VardyParty.Ports.IUiSoundPlayer> Player, Mock<VardyParty.Ports.ISoundPreferencesStore> Prefs) InjectUiSounds()
+    {
+        var player = _fixture.GetMock<VardyParty.Ports.IUiSoundPlayer>();
+        var prefs = _fixture.GetMock<VardyParty.Ports.ISoundPreferencesStore>();
+        _fixture.Inject(new UiSoundService(player.Object, prefs.Object));
+        return (player, prefs);
+    }
+
+    [Fact]
+    public void UiSoundsEnabled_DefaultsOn_WhenNothingSaved()
+    {
+        // Arrange
+        var (_, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadUiSoundsEnabled()).Returns(true);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act & Assert
+        Assert.True(sut.UiSoundsEnabled);
+    }
+
+    [Fact]
+    public void ToggleUiSounds_TurnsOff_AndPersists()
+    {
+        // Arrange
+        var (_, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadUiSoundsEnabled()).Returns(true);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act
+        sut.ToggleUiSounds();
+
+        // Assert
+        prefs.Verify(p => p.SaveUiSoundsEnabled(false), Times.Once);
+        Assert.False(sut.UiSoundsEnabled);
+    }
+
+    [Fact]
+    public void ToggleUiSounds_TurnsOn_PlaysSelectConfirmation()
+    {
+        // Arrange
+        var (player, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadUiSoundsEnabled()).Returns(false);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act
+        sut.ToggleUiSounds();
+
+        // Assert
+        prefs.Verify(p => p.SaveUiSoundsEnabled(true), Times.Once);
+        player.Verify(p => p.Play(VardyParty.Ports.UiSound.Select), Times.Once);
+        Assert.True(sut.UiSoundsEnabled);
+    }
 }
