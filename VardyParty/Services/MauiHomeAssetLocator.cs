@@ -9,12 +9,14 @@ namespace VardyParty.MauiServices;
 /// League logos ship as MauiAssets (LogicalName images/leagues/*). MAUI app
 /// packages (Android assets, MSIX) are not plain directories, so the file is
 /// copied once into the cache dir and the on-disk path handed to the shared
-/// <see cref="IBadgeImageLoader"/>. Called from the badge loader's background
-/// task, never the UI thread.
+/// <see cref="IBadgeImageLoader"/>. Reached on the UI thread at first render
+/// (HomeViewModel.Apply -> LoadImagesAsync before its first await), which is
+/// why the package extraction is genuinely async — a blocking
+/// GetAwaiter().GetResult() here stalled the WinUI dispatcher during startup.
 /// </summary>
 public sealed class MauiHomeAssetLocator : IHomeAssetLocator
 {
-    public string? ResolveLeagueLogoPath(Game game)
+    public async Task<string?> ResolveLeagueLogoPathAsync(Game game)
     {
         var webPath = LeagueLogoMapper.GetLogoForLeague(game);
         if (string.IsNullOrWhiteSpace(webPath)) return null;
@@ -29,9 +31,9 @@ public sealed class MauiHomeAssetLocator : IHomeAssetLocator
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
-            using var source = FileSystem.OpenAppPackageFileAsync(logical).GetAwaiter().GetResult();
+            using var source = await FileSystem.OpenAppPackageFileAsync(logical);
             using var target = File.Create(cached);
-            source.CopyTo(target);
+            await source.CopyToAsync(target);
             return cached;
         }
         catch

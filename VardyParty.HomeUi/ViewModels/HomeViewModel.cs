@@ -327,7 +327,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             var firstGame = row.Cards.FirstOrDefault()?.Game;
             if (firstGame != null)
             {
-                var iconPath = _assets.ResolveLeagueLogoPath(firstGame);
+                var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame);
                 var icon = await _images.LoadLocalAsync(iconPath);
                 if (icon != null)
                 {
