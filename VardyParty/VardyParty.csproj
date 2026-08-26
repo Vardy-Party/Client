@@ -407,6 +407,29 @@
             Condition="Exists('$(_WinOutputRoot)AppX')" />
     </Target>
 
+    <!-- Same staleness issue for the UI sound MauiAssets (LogicalName Sounds/*.wav):
+         SyncWindowsAppXLayout's binary allowlist never refreshes the Sounds
+         subfolder, so VS/dotnet-driven incremental syncs shipped stale or missing
+         WAVs and WindowsUiSoundPlayer found nothing to preload. Mirrors the
+         league-logos target above (run-windows-debug.ps1's recursive sync already
+         covers script-driven deploys). -->
+    <Target Name="SyncSoundsToWindowsLayout" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
+      <ItemGroup>
+        <_UiSoundFile Include="$(MSBuildProjectDirectory)\Resources\Raw\Sounds\**\*.*" />
+      </ItemGroup>
+      <PropertyGroup>
+        <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
+      </PropertyGroup>
+      <MakeDir Directories="$(_WinOutputRoot)Sounds;$(_WinOutputRoot)AppX\Sounds" />
+      <Copy SourceFiles="@(_UiSoundFile)"
+            DestinationFiles="@(_UiSoundFile->'$(_WinOutputRoot)Sounds\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true" />
+      <Copy SourceFiles="@(_UiSoundFile)"
+            DestinationFiles="@(_UiSoundFile->'$(_WinOutputRoot)AppX\Sounds\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true"
+            Condition="Exists('$(_WinOutputRoot)AppX')" />
+    </Target>
+
     <!-- Auto-update Windows Package.appxmanifest version from ApplicationDisplayVersion -->
     <Target Name="UpdateWindowsManifestVersion" BeforeTargets="BeforeBuild" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
         <PropertyGroup>
