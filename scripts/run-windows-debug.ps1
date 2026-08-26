@@ -95,11 +95,39 @@ function Sync-AppXLayoutFromBuildOutput {
 
     Write-Host 'Syncing fresh build output into AppX (loose-register runs from here)...'
 
-    Get-ChildItem -Path $OutputRoot -File |
-        Where-Object { $_.Extension -in '.dll', '.exe', '.json', '.pri' } |
+    # Copy EVERYTHING the build refreshed, not a fixed extension list: any file
+    # under the output root (recursively) that is newer than — or missing from,
+    # or a different size than — its AppX copy. Three identical stale-bits crash
+    # signatures traced back to the old .dll/.exe/.json/.pri allowlist silently
+    # skipping changed satellite files.
+    # The AppX folder itself is excluded (it is the destination), and the MSIX
+    # layout's own manifest/recipe are never overwritten by root-level copies.
+    $outputRootFull = (Get-Item -Path $OutputRoot).FullName
+    $appXFull = (Get-Item -Path $appX).FullName
+    $neverOverwrite = @('AppxManifest.xml', 'vs.appxrecipe')
+    $synced = 0
+
+    Get-ChildItem -Path $OutputRoot -File -Recurse |
+        Where-Object { -not $_.FullName.StartsWith($appXFull + [IO.Path]::DirectorySeparatorChar) } |
         ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination (Join-Path $appX $_.Name) -Force
+            $relative = $_.FullName.Substring($outputRootFull.Length).TrimStart('\', '/')
+            if ($neverOverwrite -contains (Split-Path -Leaf $relative)) { return }
+
+            $dest = Join-Path $appXFull $relative
+            $destItem = Get-Item -Path $dest -ErrorAction SilentlyContinue
+            if (-not $destItem -or
+                $_.LastWriteTimeUtc -gt $destItem.LastWriteTimeUtc -or
+                $_.Length -ne $destItem.Length) {
+                $destDir = Split-Path -Parent $dest
+                if (-not (Test-Path $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                }
+                Copy-Item -Path $_.FullName -Destination $dest -Force
+                $synced++
+            }
         }
+
+    Write-Host "Synced $synced changed file(s) from build output into AppX."
 
     # League logo MauiAssets: AppX is not always refreshed on incremental builds.
     $leagueSource = Join-Path $ProjectRoot 'Resources\Images\Leagues'
@@ -138,19 +166,36 @@ function Sync-AppXLayoutFromBuildOutput {
 function Test-AppXBinaryFresh {
     param([string]$OutputRoot)
 
-    $rootDll = Join-Path $OutputRoot 'VardyParty.dll'
-    $appxDll = Join-Path $OutputRoot 'AppX\VardyParty.dll'
-    if (-not ((Test-Path $rootDll) -and (Test-Path $appxDll))) {
-        return
-    }
+    # Hash-compare the app binaries between build output and the AppX layout.
+    # Timestamps/sizes proved insufficient (three identical crash signatures
+    # against stale registered bits): only identical content is acceptable —
+    # the loose-registered package runs from AppX, so a mismatch means the app
+    # about to launch is NOT the code that was just built. Fail loudly.
+    foreach ($name in @('VardyParty.exe', 'VardyParty.dll')) {
+        $rootFile = Join-Path $OutputRoot $name
+        $appxFile = Join-Path $OutputRoot (Join-Path 'AppX' $name)
 
-    $rootInfo = Get-Item $rootDll
-    $appxInfo = Get-Item $appxDll
-    Write-Host "Build output: $($rootInfo.LastWriteTime) $($rootInfo.Length) bytes"
-    Write-Host "AppX package: $($appxInfo.LastWriteTime) $($appxInfo.Length) bytes"
+        if (-not (Test-Path $rootFile)) {
+            if ($name -eq 'VardyParty.exe') {
+                Write-Warning "Build output has no $name — cannot verify AppX freshness for it."
+            }
+            continue
+        }
 
-    if ($appxInfo.LastWriteTime -lt $rootInfo.LastWriteTime -or $appxInfo.Length -ne $rootInfo.Length) {
-        throw "AppX\VardyParty.dll is stale. Expected the same timestamp/size as win-x64\VardyParty.dll before register."
+        if (-not (Test-Path $appxFile)) {
+            throw "AppX\$name is missing while the build output has one. The AppX layout is incomplete — rerun with -Rebuild."
+        }
+
+        $rootInfo = Get-Item $rootFile
+        $appxInfo = Get-Item $appxFile
+        $rootHash = (Get-FileHash -Path $rootFile -Algorithm SHA256).Hash
+        $appxHash = (Get-FileHash -Path $appxFile -Algorithm SHA256).Hash
+        Write-Host "$name build output: $($rootInfo.LastWriteTime) $($rootInfo.Length) bytes sha256=$($rootHash.Substring(0,12))..."
+        Write-Host "$name AppX package: $($appxInfo.LastWriteTime) $($appxInfo.Length) bytes sha256=$($appxHash.Substring(0,12))..."
+
+        if ($rootHash -ne $appxHash) {
+            throw "AppX\$name is STALE: content hash differs from the freshly built win-x64\$name. The registered package would run old bits. Rerun with -Rebuild (and check nothing holds the AppX files locked)."
+        }
     }
 }
 
