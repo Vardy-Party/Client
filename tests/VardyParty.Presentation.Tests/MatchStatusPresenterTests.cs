@@ -92,6 +92,56 @@ public class MatchStatusPresenterTests
     }
 
     [Fact]
+    public void FormatStartTime_UtcKind_ConvertsToLocalExactlyOnce()
+    {
+        // Arrange: expected value computed with the same single conversion the
+        // presenter must perform, so the test is timezone-agnostic on any runner.
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        var startUtc = new DateTime(2026, 8, 26, 14, 0, 0, DateTimeKind.Utc);
+        var expectedLocal = startUtc.ToLocalTime();
+        var nowLocal = expectedLocal.Date.AddHours(9);
+
+        // Act
+        var text = MatchStatusPresenter.FormatStartTime(startUtc, nowLocal);
+
+        // Assert
+        Assert.Equal(expectedLocal.ToString("h:mm tt"), text);
+    }
+
+    [Fact]
+    public void FormatStartTime_LocalKind_IsNotConvertedAgain()
+    {
+        // Arrange: an already-local value must render its own wall clock.
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        var startLocal = new DateTime(2026, 8, 26, 15, 0, 0, DateTimeKind.Local);
+        var nowLocal = new DateTime(2026, 8, 26, 9, 0, 0, DateTimeKind.Local);
+
+        // Act
+        var text = MatchStatusPresenter.FormatStartTime(startLocal, nowLocal);
+
+        // Assert
+        Assert.Equal("3:00 PM", text);
+    }
+
+    [Fact]
+    public void FormatStartTime_UnspecifiedKind_IsTreatedAsUtc()
+    {
+        // Arrange: ingestion normalizes to UTC, so any leaked Unspecified value
+        // must be read as UTC — identical output to the same ticks with Kind.Utc.
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        var startUnspecified = new DateTime(2026, 8, 26, 14, 0, 0, DateTimeKind.Unspecified);
+        var startUtc = DateTime.SpecifyKind(startUnspecified, DateTimeKind.Utc);
+        var nowLocal = startUtc.ToLocalTime().Date.AddHours(9);
+
+        // Act
+        var unspecifiedText = MatchStatusPresenter.FormatStartTime(startUnspecified, nowLocal);
+        var utcText = MatchStatusPresenter.FormatStartTime(startUtc, nowLocal);
+
+        // Assert
+        Assert.Equal(utcText, unspecifiedText);
+    }
+
+    [Fact]
     public void GetStatusText_DefaultStart_IsEmpty()
     {
         // Act & Assert

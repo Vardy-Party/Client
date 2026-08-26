@@ -19,6 +19,55 @@ namespace VardyParty.Streaming.Tests
         private readonly IFixture _fixture = AutoMoqFixture.Create();
 
         [Fact]
+        public void NormalizeGames_UnspecifiedKind_IsStampedAsUtcWithoutShifting()
+        {
+            // Arrange: the API wire format is UTC, so an Unspecified kind must be
+            // re-stamped, never run through ToUniversalTime (device offset).
+            var wireTicks = new DateTime(2026, 8, 26, 14, 0, 0, DateTimeKind.Unspecified);
+            var game = _fixture.Build<Game>().With(g => g.Start, wireTicks).Create();
+            var dict = new Dictionary<string, List<Game>> { { "League Alpha", [game] } };
+
+            // Act
+            ApiService.NormalizeGames(dict);
+
+            // Assert
+            Assert.Equal(DateTimeKind.Utc, game.Start.Kind);
+            Assert.Equal(wireTicks.Ticks, game.Start.Ticks);
+        }
+
+        [Fact]
+        public void NormalizeGames_UtcKind_IsUnchanged()
+        {
+            // Arrange
+            var startUtc = new DateTime(2026, 8, 26, 14, 0, 0, DateTimeKind.Utc);
+            var game = _fixture.Build<Game>().With(g => g.Start, startUtc).Create();
+            var dict = new Dictionary<string, List<Game>> { { "League Alpha", [game] } };
+
+            // Act
+            ApiService.NormalizeGames(dict);
+
+            // Assert
+            Assert.Equal(startUtc, game.Start);
+            Assert.Equal(DateTimeKind.Utc, game.Start.Kind);
+        }
+
+        [Fact]
+        public void NormalizeGames_LocalKind_IsConvertedToUtc()
+        {
+            // Arrange
+            var startLocal = new DateTime(2026, 8, 26, 15, 0, 0, DateTimeKind.Local);
+            var game = _fixture.Build<Game>().With(g => g.Start, startLocal).Create();
+            var dict = new Dictionary<string, List<Game>> { { "League Alpha", [game] } };
+
+            // Act
+            ApiService.NormalizeGames(dict);
+
+            // Assert
+            Assert.Equal(DateTimeKind.Utc, game.Start.Kind);
+            Assert.Equal(startLocal.ToUniversalTime(), game.Start);
+        }
+
+        [Fact]
         public async Task GetAllGamesAsync_SetsLeagueFields()
         {
             // Arrange

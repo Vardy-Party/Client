@@ -221,7 +221,14 @@ public class ApiService(
         }
     }
 
-    private void NormalizeGames(Dictionary<string, List<Game>> dict)
+    /// <summary>
+    /// The games API emits Z-suffixed UTC timestamps, so <see cref="Game.Start"/>
+    /// normally arrives as <see cref="DateTimeKind.Utc"/> already. Insurance for
+    /// the other kinds: Unspecified is stamped as UTC (the wire value IS UTC —
+    /// running it through ToUniversalTime would wrongly apply the device offset),
+    /// and Local is converted. Public static so tests can pin this contract.
+    /// </summary>
+    public static void NormalizeGames(Dictionary<string, List<Game>> dict)
     {
         foreach (var kvp in dict)
         {
@@ -231,7 +238,14 @@ public class ApiService(
             {
                 if (string.IsNullOrEmpty(g.ApiLeague)) g.ApiLeague = leagueKey;
                 if (string.IsNullOrEmpty(g.League)) g.League = leagueKey;
-                if (g.Start.Kind != DateTimeKind.Utc) g.Start = g.Start.ToUniversalTime();
+                if (g.Start.Kind == DateTimeKind.Unspecified)
+                {
+                    g.Start = DateTime.SpecifyKind(g.Start, DateTimeKind.Utc);
+                }
+                else if (g.Start.Kind == DateTimeKind.Local)
+                {
+                    g.Start = g.Start.ToUniversalTime();
+                }
             }
         }
     }

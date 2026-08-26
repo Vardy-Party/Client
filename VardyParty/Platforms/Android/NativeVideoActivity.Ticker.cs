@@ -169,7 +169,9 @@ namespace VardyParty.Platforms.Android
 
         private static string FormatUpcomingLine(Game game)
         {
-            var localKickoff = game.Start.Kind == DateTimeKind.Utc ? game.Start.ToLocalTime() : game.Start;
+            // Same rule as MatchStatusPresenter.FormatStartTime: exactly one
+            // conversion to device-local; non-Local kinds are UTC by ingestion.
+            var localKickoff = game.Start.Kind == DateTimeKind.Local ? game.Start : game.Start.ToLocalTime();
             var kickoffText = localKickoff == default ? "TBD" : localKickoff.ToString("HH:mm");
             var international = InternationalTeamDisplay.IsInternationalGame(game);
             var home = FormatTeamForDisplay(game.DisplayHome, international);
