@@ -27,6 +27,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private string _subtitle = string.Empty;
     private string _errorMessage = string.Empty;
     private bool _hasGames;
+    private bool _isContentLoading = true;
 
     public HomeViewModel(
         ILeagueFilterService leagueFilter,
@@ -114,6 +115,23 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool ShowEmptyState => !HasGames;
+
+    /// <summary>
+    /// True until the first real games dictionary lands (and again after a
+    /// sign-out clears the feed). This is the crest's spin signal: it reflects
+    /// actual catalog readiness, never a timer — an empty-but-delivered
+    /// catalog counts as ready (the empty state shows; the crest rests).
+    /// </summary>
+    public bool IsContentLoading
+    {
+        get => _isContentLoading;
+        private set
+        {
+            if (_isContentLoading == value) return;
+            _isContentLoading = value;
+            Raise(nameof(IsContentLoading));
+        }
+    }
 
     /// <summary>Feed the latest games dictionary. Safe to call from any thread.</summary>
     public void UpdateGames(IDictionary<string, List<Game>>? gamesByLeague)
@@ -236,6 +254,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
 
         GameCount = gameCount;
+        IsContentLoading = dict == null;
         HasGames = gameCount > 0;
         var liveCount = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
         Subtitle = liveCount > 0 ? $"{gameCount} games · {liveCount} live" : $"{gameCount} games";

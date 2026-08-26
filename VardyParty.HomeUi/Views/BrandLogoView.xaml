@@ -28,6 +28,14 @@
             <GradientStop Color="#59FFFFFF" Offset="0.5" />
             <GradientStop Color="#00FFFFFF" Offset="1" />
         </LinearGradientBrush>
+
+        <!-- Dark metallic coin-edge behind the face; ScaleX/TranslationX/Opacity
+             driven per spin frame from code-behind (3D thickness illusion) -->
+        <LinearGradientBrush x:Key="LogoEdgeBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#8A9099" Offset="0" />
+            <GradientStop Color="#3A3F47" Offset="0.5" />
+            <GradientStop Color="#14171C" Offset="1" />
+        </LinearGradientBrush>
     </ContentView.Resources>
 
     <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
@@ -41,6 +49,16 @@
                 BackgroundColor="Transparent"
                 Opacity="0"
                 Scale="1.12"
+                InputTransparent="True" />
+
+        <!-- Coin-edge rim: sits behind the face; width + shading derive from the
+             spin angle in code-behind, like a coin turning edge-on -->
+        <Border x:Name="EdgeRim"
+                StrokeShape="Ellipse"
+                StrokeThickness="0"
+                Background="{StaticResource LogoEdgeBrush}"
+                Opacity="0"
+                ScaleX="0.12"
                 InputTransparent="True" />
 
         <!-- Metallic ring + shadow: the 3D backplate -->
