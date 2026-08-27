@@ -23,13 +23,13 @@ public partial class BrandLogoView : ContentView
     private const double RimMaxScaleX = 0.34;
     private const double RimDriftPx = 7.0;
 
+    // Lifecycle decisions (spin/abort/restart/settle/snap) live in the pure,
+    // clock-injectable BrandCrestSpinMachine; this view only executes Steps
+    // and feeds animation facts back in.
+    private readonly BrandCrestSpinMachine _crest = new();
+
     private bool _ambientRunning;
-    private bool _spinning;
-    private bool _settleRequested;
-    private bool _restartPending;
-    private bool _atRest;
     private bool _settlingInline;
-    private long _settleRequestedAtMs = -1;
     private double _angle;
     private HomeViewModel? _observedViewModel;
 
@@ -78,14 +78,11 @@ public partial class BrandLogoView : ContentView
 
         if (ShouldSpin)
         {
-            _settleRequested = false;
-            _settleRequestedAtMs = -1;
-            _atRest = false;
-            StartLoadingSpin();
+            RunStep(_crest.BeginLoading());
             return;
         }
 
-        RequestSettle();
+        RunStep(RequestSettleStep());
     }
 
     /// <summary>
@@ -105,7 +102,33 @@ public partial class BrandLogoView : ContentView
             return;
         }
 
-        RequestSettle();
+        RunStep(RequestSettleStep());
+    }
+
+    private BrandCrestSpinMachine.Step RequestSettleStep() =>
+        _crest.RequestSettle(
+            this.AnimationIsRunning(SpinAnimation),
+            this.AnimationIsRunning(SettleAnimation),
+            BrandCrestSpin.IsFaceOnRest(_angle));
+
+    /// <summary>Execute a machine decision; the machine never touches visuals.</summary>
+    private void RunStep(BrandCrestSpinMachine.Step step)
+    {
+        switch (step)
+        {
+            case BrandCrestSpinMachine.Step.StartSpin:
+                StartLoadingSpin();
+                break;
+            case BrandCrestSpinMachine.Step.SettleAnimated:
+                ExecuteSettle(snap: false);
+                break;
+            case BrandCrestSpinMachine.Step.SnapToRest:
+                ExecuteSettle(snap: true);
+                break;
+            case BrandCrestSpinMachine.Step.Defer:
+                ScheduleCrestTick();
+                break;
+        }
     }
 
     private void OnLoaded(object? sender, EventArgs e)
@@ -118,14 +141,11 @@ public partial class BrandLogoView : ContentView
     private void OnUnloaded(object? sender, EventArgs e)
     {
         _ambientRunning = false;
-        _spinning = false;
-        _settleRequested = false;
-        _settleRequestedAtMs = -1;
-        _restartPending = false;
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(AmbientAnimation);
         this.AbortAnimation(SpinAnimation);
         this.AbortAnimation(SettleAnimation);
+        _crest.Reset();
         ResetSpinVisuals();
     }
 
@@ -159,12 +179,6 @@ public partial class BrandLogoView : ContentView
 
     private void StartLoadingSpin()
     {
-        if (_spinning) return;
-        _spinning = true;
-        _settleRequested = false;
-        _settleRequestedAtMs = -1;
-        _atRest = false;
-
         _ambientRunning = false;
         this.AbortAnimation(AmbientAnimation);
         this.AbortAnimation(SheenAnimation);
@@ -177,47 +191,27 @@ public partial class BrandLogoView : ContentView
             length: BrandCrestSpin.TurnMs,
             easing: Easing.Linear,
             finished: OnSpinCycleFinished,
-            repeat: () => BrandCrestSpin.ContinueSpinCycle(_spinning, _settleRequested));
+            repeat: () => _crest.ShouldContinueSpin);
     }
 
     private void OnSpinCycleFinished(double _, bool cancelled)
     {
         if (_settlingInline)
         {
-            // SettleFromAngle is force-aborting a zombie turn; it owns the
-            // rest of this pass.
+            // ExecuteSettle is force-aborting a zombie turn; it owns the rest
+            // of this pass.
             return;
         }
 
-        if (_settleRequested || !ShouldSpin)
+        // The machine decides: a queued settle outranks a restart, a layout
+        // abort while loading defers the restart (never Dispatcher.Dispatch
+        // from this layout-adjacent callback on Windows — the stowed-
+        // exception class 0x800710DD/0xc000027b the apply pump exists to
+        // avoid), and a natural cycle rollover is a no-op.
+        var step = _crest.SpinCycleFinished(cancelled, ShouldSpin);
+        if (IsLoaded)
         {
-            // A queued settle outranks a restart: the rows are painted, so
-            // the crest eases to rest even if the cycle was layout-cancelled.
-            if (IsLoaded)
-            {
-                SettleFromAngle(_angle);
-            }
-
-            return;
-        }
-
-        if (cancelled)
-        {
-            // Layout aborted the spinner (catalog materializing). Do not
-            // Commit synchronously — that fights the same layout pass — and
-            // never Dispatcher.Dispatch visual-tree work from this
-            // layout-adjacent callback on Windows: that is the stowed-
-            // exception class (0x800710DD/0xc000027b) the catalog apply pump
-            // exists to avoid. Defer the restart the same way the catalog
-            // defers its apply.
-            _spinning = false;
-            if (IsLoaded)
-            {
-                _restartPending = true;
-                ScheduleCrestTick();
-            }
-
-            return;
+            RunStep(step);
         }
     }
 
@@ -227,7 +221,7 @@ public partial class BrandLogoView : ContentView
     /// <see cref="HomeView"/> keeps its 50ms UI-thread apply pump ticking
     /// while this is set.
     /// </summary>
-    public bool HasPendingCrestWork => _restartPending || (_settleRequested && !_atRest);
+    public bool HasPendingCrestWork => _crest.HasDeferredWork;
 
 #if WINDOWS
     /// <summary>
@@ -259,109 +253,37 @@ public partial class BrandLogoView : ContentView
     {
         if (!IsLoaded)
         {
-            _restartPending = false;
             return;
         }
 
-        if (_settleRequested && !_atRest)
-        {
-            // Re-drive a pending settle: wait for a live turn to finish,
-            // retry an aborted ease, or snap once overdue. The settle
-            // outranks any queued restart — the rows are painted.
-            _restartPending = false;
-            if (!this.AnimationIsRunning(SettleAnimation))
-            {
-                SettleFromAngle(_angle);
-            }
-
-            return;
-        }
-
-        if (_restartPending)
-        {
-            _restartPending = false;
-            if (ShouldSpin && !_spinning)
-            {
-                StartLoadingSpin();
-            }
-        }
+        // Re-drive whatever is pending: restart an aborted turn, retry an
+        // aborted ease, wait on in-flight animations, or snap once overdue.
+        RunStep(_crest.DeferredTick(
+            ShouldSpin,
+            this.AnimationIsRunning(SpinAnimation),
+            this.AnimationIsRunning(SettleAnimation),
+            BrandCrestSpin.IsFaceOnRest(_angle)));
     }
 
-    private void RequestSettle()
+    /// <summary>
+    /// Ease (or, for overdue settles, snap) from the current angle to face-on
+    /// rest. The machine guarantees no live turn should survive this call, so
+    /// any still-registered animation is a zombie and is aborted inline.
+    /// </summary>
+    private void ExecuteSettle(bool snap)
     {
-        if (_atRest && BrandCrestSpin.IsFaceOnRest(_angle))
-        {
-            return;
-        }
-
-        if (!_settleRequested)
-        {
-            _settleRequested = true;
-            _settleRequestedAtMs = Environment.TickCount64;
-        }
-
-        _restartPending = false;
-
-        if (this.AnimationIsRunning(SettleAnimation))
-        {
-            // The ease is already in flight; its finished callback completes
-            // (or retries) the rest. Restarting it on every catalog/image
-            // flush would keep resetting the 480ms ease.
-            return;
-        }
-
-        if (BrandCrestSpin.SettleNowBecauseSpinDied(_settleRequested, this.AnimationIsRunning(SpinAnimation)))
-        {
-            SettleFromAngle(_angle);
-            return;
-        }
-
-        // The turn in flight stops repeating (ContinueSpinCycle) and
-        // OnSpinCycleFinished settles — an animation-frame tick that fires on
-        // every platform. Also arm the deferred crest tick as the watchdog:
-        // on Windows it keeps the apply pump running until the crest rests;
-        // on Android/Desktop it is a posted re-check. Never an
-        // IDispatcherTimer — Android TV starves those under Choreographer
-        // load, which used to leave the crest edge-on.
-        ScheduleCrestTick();
-    }
-
-    private void SettleFromAngle(double current)
-    {
-        _spinning = false;
-        if (!_settleRequested)
-        {
-            _settleRequested = true;
-            _settleRequestedAtMs = Environment.TickCount64;
-        }
-
-        var overdue = _settleRequestedAtMs >= 0
-            && Environment.TickCount64 - _settleRequestedAtMs >= BrandCrestSpin.SettleOverdueMs;
-
-        if (this.AnimationIsRunning(SpinAnimation))
-        {
-            if (!overdue)
-            {
-                // Finish the cycle via repeat=false; do not abort mid-turn.
-                return;
-            }
-
-            // The turn had a full cycle plus the ease plus slack to finish
-            // and did not (zombie after a layout-abort storm): kill it.
-            AbortInline(SpinAnimation);
-        }
-
+        AbortInline(SpinAnimation);
         AbortInline(SettleAnimation);
 
-        if (overdue || BrandCrestSpin.IsFaceOnRest(current))
+        if (snap || BrandCrestSpin.IsFaceOnRest(_angle))
         {
-            // Overdue settles snap: a direct property write cannot be
-            // aborted by layout, so face-on rest is guaranteed.
+            // Snapping is a direct property write that layout cannot abort:
+            // the guaranteed terminal state.
             CompleteRest();
             return;
         }
 
-        var from = BrandCrestSpin.NormalizeDegrees(current);
+        var from = BrandCrestSpin.NormalizeDegrees(_angle);
         var target = BrandCrestSpin.RestTargetDegrees(from);
         var settle = new Animation(ApplySpinFrame, from, target, Easing.CubicOut);
         settle.Commit(this, SettleAnimation, length: BrandCrestSpin.SettleMs, finished: OnSettleAnimationFinished);
@@ -371,7 +293,7 @@ public partial class BrandLogoView : ContentView
     {
         if (_settlingInline)
         {
-            // SettleFromAngle is replacing the ease it just aborted.
+            // ExecuteSettle is replacing the ease it just aborted.
             return;
         }
 
@@ -384,9 +306,10 @@ public partial class BrandLogoView : ContentView
         // Layout aborted the settle mid-ease. Retry from the deferred crest
         // tick (Windows: apply pump; Android/Desktop: posted continuation)
         // until the crest rests — never from a timer.
-        if (IsLoaded && _settleRequested)
+        var step = _crest.SettleAnimationFinished(cancelled: true);
+        if (IsLoaded)
         {
-            ScheduleCrestTick();
+            RunStep(step);
         }
     }
 
@@ -406,9 +329,7 @@ public partial class BrandLogoView : ContentView
     private void CompleteRest()
     {
         ResetSpinVisuals();
-        _atRest = true;
-        _settleRequested = false;
-        _settleRequestedAtMs = -1;
+        _crest.RestCompleted();
         if (IsLoaded)
         {
             RunSheenSweep(0.85);
@@ -448,7 +369,7 @@ public partial class BrandLogoView : ContentView
 
     private void RunSheenSweep(double peakOpacity)
     {
-        if (_spinning || this.AnimationIsRunning(SettleAnimation)) return;
+        if (_crest.Spinning || this.AnimationIsRunning(SettleAnimation)) return;
 
         _ambientRunning = false;
         this.AbortAnimation(AmbientAnimation);

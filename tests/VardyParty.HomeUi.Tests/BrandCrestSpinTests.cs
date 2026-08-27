@@ -99,32 +99,4 @@ public class BrandCrestSpinTests
         // Assert
         Assert.True(repeat);
     }
-
-    [Fact]
-    public void SettleNowBecauseSpinDied_WhenCatalogKilledAnimation()
-    {
-        // Arrange
-        const bool settleRequested = true;
-        const bool spinAnimationRunning = false;
-
-        // Act
-        var settleNow = BrandCrestSpin.SettleNowBecauseSpinDied(settleRequested, spinAnimationRunning);
-
-        // Assert
-        Assert.True(settleNow);
-    }
-
-    [Fact]
-    public void SettleNowBecauseSpinDied_WaitsWhenTurnStillRunning()
-    {
-        // Arrange
-        const bool settleRequested = true;
-        const bool spinAnimationRunning = true;
-
-        // Act
-        var settleNow = BrandCrestSpin.SettleNowBecauseSpinDied(settleRequested, spinAnimationRunning);
-
-        // Assert
-        Assert.False(settleNow);
-    }
 }

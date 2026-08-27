@@ -52,12 +52,4 @@ public static class BrandCrestSpin
     /// </summary>
     public static bool ContinueSpinCycle(bool spinning, bool settleRequested) =>
         spinning && !settleRequested;
-
-    /// <summary>
-    /// When catalog layout cancels the spinner, settle from the last known
-    /// angle immediately. If the spinner is still alive, wait for the cycle
-    /// to finish (no AbortAnimation).
-    /// </summary>
-    public static bool SettleNowBecauseSpinDied(bool settleRequested, bool spinAnimationRunning) =>
-        settleRequested && !spinAnimationRunning;
 }
