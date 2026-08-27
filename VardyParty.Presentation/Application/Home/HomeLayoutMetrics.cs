@@ -20,7 +20,8 @@ public sealed record HomeLayoutMetrics(
     double PagePadding,
     double RowSpacing,
     double CardSpacing,
-    double BrandLogoSize)
+    double BrandLogoSize,
+    bool FlatCardChrome = false)
 {
     public static HomeLayoutMetrics For(HomeLayoutClass layoutClass) => layoutClass switch
     {
@@ -41,11 +42,18 @@ public sealed record HomeLayoutMetrics(
         // next to the header title read as a barely-legible dot on a desktop
         // window. It now sits clearly above the title's line height
         // (>= ~1.6x LeagueTitleFontSize) so it reads as a proper crest.
+        // FlatCardChrome: the TV class drops the per-card composition Shadows
+        // (card drop shadow + four badge shadows) and simplifies the team
+        // wash — ~37 shadow blurs + diagonal 4-stop gradients were a large
+        // slice of the 1.3s full-tree pass on the 32-bit box, and a flat card
+        // with a subtle border reads fine at 10 feet. Desktop/phone keep the
+        // full treatment (GPU headroom).
         HomeLayoutClass.Tv => new(
             CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
             TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
             LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
-            PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68),
+            PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
+            FlatCardChrome: true),
 
         HomeLayoutClass.Desktop => new(
             CardWidth: 350, CardHeight: 192, CardCornerRadius: 14, BadgeSize: 54,

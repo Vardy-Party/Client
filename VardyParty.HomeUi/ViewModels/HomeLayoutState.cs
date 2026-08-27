@@ -32,6 +32,9 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double PageSubtitleFontSize => _metrics.PageSubtitleFontSize;
     public double BrandLogoSize => _metrics.BrandLogoSize;
 
+    /// <summary>TV raster budget: no per-card shadows, cheap team wash.</summary>
+    public bool FlatCardChrome => _metrics.FlatCardChrome;
+
     /// <summary>Row height for the horizontal card strip: card + focus-scale headroom.</summary>
     public double RowHeight => _metrics.CardHeight + 24;
 
@@ -66,6 +69,6 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
         nameof(RowHeight), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
-        nameof(CardSpacing), nameof(BrandLogoSize),
+        nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome),
     ];
 }

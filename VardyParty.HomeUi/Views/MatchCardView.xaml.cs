@@ -91,6 +91,7 @@ public partial class MatchCardView : ContentView
             _observedViewModel = vm;
             _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
             ApplyCornerRadius();
+            ApplyCardChrome();
             ApplyInteractionState(animate: false);
             if (IsLoaded)
             {
@@ -113,6 +114,11 @@ public partial class MatchCardView : ContentView
         if (e.PropertyName is null or nameof(HomeLayoutState.Class))
         {
             ApplyLivePulseState();
+        }
+
+        if (e.PropertyName is null or nameof(HomeLayoutState.FlatCardChrome))
+        {
+            ApplyCardChrome();
         }
     }
 
@@ -137,6 +143,49 @@ public partial class MatchCardView : ContentView
         CardOuter.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
         FocusRing.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
     }
+
+    // XAML-declared shadows, captured once so the TV raster budget can strip
+    // and (on reclassification) restore them.
+    private Shadow? _cardShadow;
+    private Shadow? _homeBadgeShadow;
+    private Shadow? _homeMonogramShadow;
+    private Shadow? _awayBadgeShadow;
+    private Shadow? _awayMonogramShadow;
+    private bool _shadowsCaptured;
+
+    /// <summary>
+    /// TV raster budget (<see cref="HomeLayoutState.FlatCardChrome"/>): the
+    /// card drop shadow and the four badge shadows are composition blurs that
+    /// re-render on every invalidation — a large slice of the 1.3s full-tree
+    /// pass on the 32-bit box. On TV the card goes flat with a slightly
+    /// stronger border for definition; other classes keep the full chrome.
+    /// </summary>
+    private void ApplyCardChrome()
+    {
+        if (!_shadowsCaptured)
+        {
+            _cardShadow = CardOuter.Shadow;
+            _homeBadgeShadow = HomeBadgeChrome.Shadow;
+            _homeMonogramShadow = HomeMonogramChrome.Shadow;
+            _awayBadgeShadow = AwayBadgeChrome.Shadow;
+            _awayMonogramShadow = AwayMonogramChrome.Shadow;
+            _shadowsCaptured = true;
+        }
+
+        var flat = ViewModel?.Layout.FlatCardChrome == true;
+
+        // Shadow is declared non-nullable but null IS its default (no shadow);
+        // assigning null is the supported way to remove one.
+        CardOuter.Shadow = (flat ? null : _cardShadow)!;
+        HomeBadgeChrome.Shadow = (flat ? null : _homeBadgeShadow)!;
+        HomeMonogramChrome.Shadow = (flat ? null : _homeMonogramShadow)!;
+        AwayBadgeChrome.Shadow = (flat ? null : _awayBadgeShadow)!;
+        AwayMonogramChrome.Shadow = (flat ? null : _awayMonogramShadow)!;
+        CardOuter.Stroke = flat ? FlatCardStrokeBrush : DefaultCardStrokeBrush;
+    }
+
+    private static readonly SolidColorBrush DefaultCardStrokeBrush = new(Color.FromArgb("#26FFFFFF"));
+    private static readonly SolidColorBrush FlatCardStrokeBrush = new(Color.FromArgb("#3DFFFFFF"));
 
     private void OnLoaded(object? sender, EventArgs e)
     {

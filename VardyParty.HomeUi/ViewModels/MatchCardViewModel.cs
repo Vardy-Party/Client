@@ -264,7 +264,7 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
             var awayColors = TeamPalette.GetColors(awayTeam);
             HomeAccent = new SolidColorBrush(Color.FromArgb(homeColors.Primary));
             AwayAccent = new SolidColorBrush(Color.FromArgb(awayColors.Primary));
-            CardBackground = BuildWash(homeColors.Primary, awayColors.Primary);
+            CardBackground = BuildWash(homeColors.Primary, awayColors.Primary, Layout.FlatCardChrome);
         }
 
         if (!string.Equals(_homeBadgeUrl, game.HomeBadgeUrl, StringComparison.OrdinalIgnoreCase))
@@ -281,11 +281,27 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Diagonal wash: home colour bleeds in from the top-left, away colour
-    /// from the bottom-right, with the dark card base showing through the middle.
+    /// Team-colour wash. Full chrome (desktop/phone): diagonal 4-stop wash —
+    /// home colour bleeds in from the top-left, away colour from the
+    /// bottom-right, with the dark card base showing through the middle.
+    /// Flat chrome (TV raster budget): a single horizontal 2-stop gradient at
+    /// lower alpha — keeps the two-colour identity at a fraction of the
+    /// raster cost on the 32-bit box (axis-aligned, half the stops, and the
+    /// 5px accent edge bars still anchor each team's colour).
     /// </summary>
-    private static Brush BuildWash(string homeHex, string awayHex)
+    private static Brush BuildWash(string homeHex, string awayHex, bool flatChrome)
     {
+        if (flatChrome)
+        {
+            return new LinearGradientBrush(
+                [
+                    new GradientStop(WithAlpha(Color.FromArgb(homeHex), 0x4A), 0.0f),
+                    new GradientStop(WithAlpha(Color.FromArgb(awayHex), 0x4A), 1.0f),
+                ],
+                new Point(0, 0),
+                new Point(1, 0));
+        }
+
         var home = WithAlpha(Color.FromArgb(homeHex), 0x6E);
         var away = WithAlpha(Color.FromArgb(awayHex), 0x6E);
 

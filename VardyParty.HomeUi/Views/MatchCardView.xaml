@@ -118,7 +118,8 @@
                               HeightRequest="{Binding Layout.BadgeSize}"
                               HorizontalOptions="Center">
                             <!-- Treated badge: metallic ring, inner plate, gloss -->
-                            <Border StrokeShape="Ellipse"
+                            <Border x:Name="HomeBadgeChrome"
+                                    StrokeShape="Ellipse"
                                     StrokeThickness="0"
                                     Background="{StaticResource MetallicRingBrush}"
                                     Padding="3"
@@ -136,7 +137,8 @@
                                 </Grid>
                             </Border>
                             <!-- Monogram fallback in team colour -->
-                            <Border StrokeShape="Ellipse"
+                            <Border x:Name="HomeMonogramChrome"
+                                    StrokeShape="Ellipse"
                                     Stroke="#40FFFFFF"
                                     StrokeThickness="1"
                                     Background="{Binding HomeAccent}"
@@ -181,7 +183,8 @@
                         <Grid WidthRequest="{Binding Layout.BadgeSize}"
                               HeightRequest="{Binding Layout.BadgeSize}"
                               HorizontalOptions="Center">
-                            <Border StrokeShape="Ellipse"
+                            <Border x:Name="AwayBadgeChrome"
+                                    StrokeShape="Ellipse"
                                     StrokeThickness="0"
                                     Background="{StaticResource MetallicRingBrush}"
                                     Padding="3"
@@ -198,7 +201,8 @@
                                             InputTransparent="True" />
                                 </Grid>
                             </Border>
-                            <Border StrokeShape="Ellipse"
+                            <Border x:Name="AwayMonogramChrome"
+                                    StrokeShape="Ellipse"
                                     Stroke="#40FFFFFF"
                                     StrokeThickness="1"
                                     Background="{Binding AwayAccent}"
