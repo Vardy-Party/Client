@@ -45,14 +45,17 @@ public sealed class HomeViewModelTests : IDisposable
         _assets.Setup(a => a.ResolveLeagueLogoPathAsync(It.IsAny<Game>()))
             .ReturnsAsync((string?)null);
 
-        var sounds = new UiSoundService(new NullUiSoundPlayer(), new InMemorySoundPreferencesStore());
-        var menu = new MenuViewModel(_filter.Object, sounds);
+        var preferences = new InMemorySoundPreferencesStore();
+        var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
+        var notifications = new MatchEventNotificationPolicy(preferences);
+        var menu = new MenuViewModel(_filter.Object, sounds, notifications);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
             _images.Object,
             _assets.Object,
             sounds,
+            notifications,
             NullLogger<HomeViewModel>.Instance);
     }
 

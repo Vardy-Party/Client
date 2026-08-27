@@ -30,6 +30,7 @@ public partial class HomeHostPage : ContentPage
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
     private readonly SelectionState _selection;
     private readonly UiSoundService _sounds;
+    private readonly MatchEventNotificationPolicy _notifications;
     private readonly IUiSoundPlayer _soundPlayer;
     private readonly HomeShellViewModel _homeShell = new();
 
@@ -63,6 +64,7 @@ public partial class HomeHostPage : ContentPage
         ILocalLanServiceAvailabilityMonitor lanMonitor,
         SelectionState selection,
         UiSoundService sounds,
+        MatchEventNotificationPolicy notifications,
         IUiSoundPlayer soundPlayer)
     {
         _logger = logger;
@@ -75,6 +77,7 @@ public partial class HomeHostPage : ContentPage
         _lanMonitor = lanMonitor;
         _selection = selection;
         _sounds = sounds;
+        _notifications = notifications;
         _soundPlayer = soundPlayer;
 
         // Hand the Leanback TV detection (MainApplication) to the shared view
@@ -553,6 +556,11 @@ public partial class HomeHostPage : ContentPage
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         _sounds.SuppressAll = visible;
+
+        // The homepage stops being the active surface while a stream plays:
+        // match events downgrade to toast-only (no sting) per the
+        // notification policy table.
+        _notifications.IsPlaybackActive = visible;
         if (!visible)
         {
             PostUi(TryResumeAfterPlayer);

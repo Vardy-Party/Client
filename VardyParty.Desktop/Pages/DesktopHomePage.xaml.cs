@@ -35,6 +35,7 @@ public partial class DesktopHomePage : ContentPage
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
     private readonly SelectionState _selection;
     private readonly UiSoundService _sounds;
+    private readonly MatchEventNotificationPolicy _notifications;
     private readonly IUiSoundPlayer _soundPlayer;
     private readonly Auth0Settings _auth0Settings;
     private readonly HomeShellViewModel _homeShell = new();
@@ -72,6 +73,7 @@ public partial class DesktopHomePage : ContentPage
         ILocalLanServiceAvailabilityMonitor lanMonitor,
         SelectionState selection,
         UiSoundService sounds,
+        MatchEventNotificationPolicy notifications,
         IUiSoundPlayer soundPlayer,
         IOptions<Auth0Settings> auth0Settings)
     {
@@ -85,6 +87,7 @@ public partial class DesktopHomePage : ContentPage
         _lanMonitor = lanMonitor;
         _selection = selection;
         _sounds = sounds;
+        _notifications = notifications;
         _soundPlayer = soundPlayer;
         _auth0Settings = auth0Settings.Value;
 
@@ -544,6 +547,10 @@ public partial class DesktopHomePage : ContentPage
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         _sounds.SuppressAll = visible;
+
+        // Homepage stays visible next to the native VLC window, but it is no
+        // longer the active surface: match events downgrade to toast-only.
+        _notifications.IsPlaybackActive = visible;
         Dispatcher.Dispatch(() =>
         {
             PlaybackOverlay.IsVisible = visible;

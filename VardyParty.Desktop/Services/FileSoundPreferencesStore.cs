@@ -29,16 +29,7 @@ public sealed class FileSoundPreferencesStore : ISoundPreferencesStore
     {
         lock (_gate)
         {
-            try
-            {
-                if (!File.Exists(_path)) return true;
-                var model = JsonSerializer.Deserialize<Model>(File.ReadAllText(_path));
-                return model?.UiSoundsEnabled ?? true;
-            }
-            catch
-            {
-                return true; // unreadable file falls back to default ON
-            }
+            return Load().UiSoundsEnabled;
         }
     }
 
@@ -46,15 +37,53 @@ public sealed class FileSoundPreferencesStore : ISoundPreferencesStore
     {
         lock (_gate)
         {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-                File.WriteAllText(_path, JsonSerializer.Serialize(new Model { UiSoundsEnabled = enabled }));
-            }
-            catch
-            {
-                // Persistence loss must never crash the UI toggle.
-            }
+            var model = Load();
+            model.UiSoundsEnabled = enabled;
+            Save(model);
+        }
+    }
+
+    public bool LoadGoalNotificationsEnabled()
+    {
+        lock (_gate)
+        {
+            return Load().GoalNotificationsEnabled;
+        }
+    }
+
+    public void SaveGoalNotificationsEnabled(bool enabled)
+    {
+        lock (_gate)
+        {
+            var model = Load();
+            model.GoalNotificationsEnabled = enabled;
+            Save(model);
+        }
+    }
+
+    private Model Load()
+    {
+        try
+        {
+            if (!File.Exists(_path)) return new Model();
+            return JsonSerializer.Deserialize<Model>(File.ReadAllText(_path)) ?? new Model();
+        }
+        catch
+        {
+            return new Model(); // unreadable file falls back to defaults (ON)
+        }
+    }
+
+    private void Save(Model model)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            File.WriteAllText(_path, JsonSerializer.Serialize(model));
+        }
+        catch
+        {
+            // Persistence loss must never crash the UI toggle.
         }
     }
 
@@ -75,5 +104,7 @@ public sealed class FileSoundPreferencesStore : ISoundPreferencesStore
     private sealed class Model
     {
         public bool UiSoundsEnabled { get; set; } = true;
+
+        public bool GoalNotificationsEnabled { get; set; } = true;
     }
 }

@@ -21,11 +21,31 @@ public class App : Application
         // LAN local-service availability monitoring runs for the app lifetime.
         _services.GetService<ILocalLanServiceAvailabilityMonitor>()?.Start();
 
-        return new Window(page)
+        var window = new Window(page)
         {
             Title = "Vardy Party",
             Width = 1280,
             Height = 800,
         };
+        WireForegroundState(window);
+        return window;
+    }
+
+    /// <summary>
+    /// Match-event notifications follow the window lifecycle (same mapping
+    /// as the MAUI head's App): visible = foregrounded; Stopped/minimized
+    /// delivers nothing; Deactivated (e.g. the native VLC window taking
+    /// focus during playback) keeps notifications flowing so the
+    /// "playing → toast only" policy row still delivers. If the Avalonia
+    /// preview backend never raises Stopped, the state simply stays
+    /// foregrounded — the pre-feature behaviour.
+    /// </summary>
+    private void WireForegroundState(Window window)
+    {
+        var notifications = _services.GetRequiredService<VardyParty.Presentation.MatchEventNotificationPolicy>();
+        window.Activated += (_, _) => notifications.IsAppForegrounded = true;
+        window.Resumed += (_, _) => notifications.IsAppForegrounded = true;
+        window.Stopped += (_, _) => notifications.IsAppForegrounded = false;
+        window.Destroying += (_, _) => notifications.IsAppForegrounded = false;
     }
 }

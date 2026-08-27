@@ -21,6 +21,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly IBadgeImageLoader _images;
     private readonly IHomeAssetLocator _assets;
     private readonly UiSoundService _sounds;
+    private readonly MatchEventNotificationPolicy _notifications;
     private readonly ILogger<HomeViewModel> _logger;
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
@@ -70,6 +71,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         IBadgeImageLoader images,
         IHomeAssetLocator assets,
         UiSoundService sounds,
+        MatchEventNotificationPolicy notifications,
         ILogger<HomeViewModel> logger)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
@@ -77,6 +79,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _images = images ?? throw new ArgumentNullException(nameof(images));
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
+        _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         _leagueFilter.Changed += OnFilterChanged;
@@ -370,10 +373,15 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             if (apply != null)
             {
                 // The detector sees the FILTERED display list, so games in
-                // hidden leagues are never observed and never fire.
+                // hidden leagues are never observed and never fire. Delivery
+                // (sting/toast/flash vs nothing) is the policy's call:
+                // backgrounded events are dropped entirely, never queued.
                 var events = _matchEvents.Observe(apply.Display);
-                if (events.Count > 0)
+                if (events.Count > 0 && _notifications.ShouldPresent && _notifications.ShouldPlayAudio)
                 {
+                    // One sting per apply, however many events it carried;
+                    // UiSoundService adds the "UI sounds" toggle + playback
+                    // suppression on top.
                     _sounds.Play(UiSound.Goal);
                 }
 

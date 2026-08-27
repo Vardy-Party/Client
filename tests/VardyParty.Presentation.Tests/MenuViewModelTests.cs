@@ -87,14 +87,16 @@ public class MenuViewModelTests
     }
 
     /// <summary>
-    /// UiSoundService is concrete: inject a hand-built instance so AutoFixture's
-    /// auto-property population can't randomly flip SuppressAll.
+    /// UiSoundService and MatchEventNotificationPolicy are concrete: inject
+    /// hand-built instances so AutoFixture's auto-property population can't
+    /// randomly flip SuppressAll / the foreground and playback flags.
     /// </summary>
     private (Mock<VardyParty.Ports.IUiSoundPlayer> Player, Mock<VardyParty.Ports.ISoundPreferencesStore> Prefs) InjectUiSounds()
     {
         var player = _fixture.GetMock<VardyParty.Ports.IUiSoundPlayer>();
         var prefs = _fixture.GetMock<VardyParty.Ports.ISoundPreferencesStore>();
         _fixture.Inject(new UiSoundService(player.Object, prefs.Object));
+        _fixture.Inject(new MatchEventNotificationPolicy(prefs.Object));
         return (player, prefs);
     }
 
@@ -141,5 +143,49 @@ public class MenuViewModelTests
         prefs.Verify(p => p.SaveUiSoundsEnabled(true), Times.Once);
         player.Verify(p => p.Play(VardyParty.Ports.UiSound.Select), Times.Once);
         Assert.True(sut.UiSoundsEnabled);
+    }
+
+    [Fact]
+    public void GoalNotificationsEnabled_DefaultsOn_WhenNothingSaved()
+    {
+        // Arrange
+        var (_, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadGoalNotificationsEnabled()).Returns(true);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act & Assert
+        Assert.True(sut.GoalNotificationsEnabled);
+    }
+
+    [Fact]
+    public void ToggleGoalNotifications_TurnsOff_AndPersists()
+    {
+        // Arrange
+        var (_, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadGoalNotificationsEnabled()).Returns(true);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act
+        sut.ToggleGoalNotifications();
+
+        // Assert
+        prefs.Verify(p => p.SaveGoalNotificationsEnabled(false), Times.Once);
+        Assert.False(sut.GoalNotificationsEnabled);
+    }
+
+    [Fact]
+    public void ToggleGoalNotifications_TurnsBackOn_AndPersists()
+    {
+        // Arrange
+        var (_, prefs) = InjectUiSounds();
+        prefs.Setup(p => p.LoadGoalNotificationsEnabled()).Returns(false);
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act
+        sut.ToggleGoalNotifications();
+
+        // Assert
+        prefs.Verify(p => p.SaveGoalNotificationsEnabled(true), Times.Once);
+        Assert.True(sut.GoalNotificationsEnabled);
     }
 }
