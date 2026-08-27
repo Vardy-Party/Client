@@ -506,6 +506,17 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void GoalNotificationsEnabled_DefaultsOn_TogglePersistsToPolicy()
+    {
+        Assert.True(_sut.GoalNotificationsEnabled);
+
+        _sut.GoalNotificationsEnabled = false;
+
+        Assert.False(_sut.GoalNotificationsEnabled);
+        Assert.False(_notifications.NotificationsEnabled);
+    }
+
+    [Fact]
     public void FlushPendingApply_Goal_PublishesToastAndBusEvent()
     {
         // Arrange: the fixture observed once, then its score moves.

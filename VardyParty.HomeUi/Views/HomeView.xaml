@@ -220,6 +220,17 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="Goal notifications"
+                               TextColor="#E5E7EB"
+                               FontSize="15"
+                               VerticalOptions="Center" />
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding GoalNotificationsEnabled, Mode=TwoWay}"
+                                Focused="OnMenuItemFocused"
+                                OnColor="#34D399"
+                                VerticalOptions="Center" />
+                    </Grid>
                     <Button Text="Sign out"
                             Clicked="OnSignOutClicked"
                             Focused="OnMenuItemFocused"

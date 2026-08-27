@@ -267,6 +267,22 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// Settings: the persisted "Goal notifications" switch (default ON).
+    /// OFF suppresses the sting, the toast AND the card flash; the separate
+    /// "UI sounds" switch still gates the sting's audio when this is ON.
+    /// </summary>
+    public bool GoalNotificationsEnabled
+    {
+        get => _menu.GoalNotificationsEnabled;
+        set
+        {
+            if (_menu.GoalNotificationsEnabled == value) return;
+            _menu.ToggleGoalNotifications();
+            Raise(nameof(GoalNotificationsEnabled));
+        }
+    }
+
     private bool _canSignOut;
 
     /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>
