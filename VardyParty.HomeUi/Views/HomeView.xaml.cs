@@ -20,6 +20,11 @@ public partial class HomeView : ContentView
         SizeChanged += OnSizeChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+#if WINDOWS
+        // Deferred crest work (spin restart after a layout abort) rides the
+        // same UI-thread pump as the catalog apply — never Dispatcher.Dispatch.
+        BrandLogo.PumpRequested += QueuePumpStart;
+#endif
     }
 
     private HomeViewModel? ViewModel => BindingContext as HomeViewModel;
@@ -121,7 +126,7 @@ public partial class HomeView : ContentView
             _applyPump.Tick += OnApplyPumpTick;
         }
 
-        if (ViewModel?.HasPendingWork != true)
+        if (ViewModel?.HasPendingWork != true && !BrandLogo.HasPendingCrestWork)
         {
             return;
         }
@@ -148,7 +153,8 @@ public partial class HomeView : ContentView
     {
         ViewModel?.FlushPendingApply();
         BrandLogo.OnCatalogApplied();
-        if (ViewModel?.HasPendingWork != true)
+        BrandLogo.PumpCrest();
+        if (ViewModel?.HasPendingWork != true && !BrandLogo.HasPendingCrestWork)
         {
             _applyPump?.Stop();
         }

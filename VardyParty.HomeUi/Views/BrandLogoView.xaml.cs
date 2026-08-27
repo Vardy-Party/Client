@@ -26,6 +26,7 @@ public partial class BrandLogoView : ContentView
     private bool _ambientRunning;
     private bool _spinning;
     private bool _settleRequested;
+    private bool _restartPending;
     private bool _atRest;
     private double _angle;
     private HomeViewModel? _observedViewModel;
@@ -114,6 +115,7 @@ public partial class BrandLogoView : ContentView
         _ambientRunning = false;
         _spinning = false;
         _settleRequested = false;
+        _restartPending = false;
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(AmbientAnimation);
         this.AbortAnimation(SpinAnimation);
@@ -176,17 +178,17 @@ public partial class BrandLogoView : ContentView
         if (ShouldSpin && cancelled)
         {
             // Layout aborted the spinner (catalog materializing). Do not
-            // Commit synchronously — that fights the same layout pass.
+            // Commit synchronously — that fights the same layout pass — and
+            // never Dispatcher.Dispatch visual-tree work from this
+            // layout-adjacent callback on Windows: that is the stowed-
+            // exception class (0x800710DD/0xc000027b) the catalog apply pump
+            // exists to avoid. Defer the restart the same way the catalog
+            // defers its apply.
             _spinning = false;
             if (IsLoaded)
             {
-                Dispatcher.Dispatch(() =>
-                {
-                    if (IsLoaded && ShouldSpin && !_spinning)
-                    {
-                        StartLoadingSpin();
-                    }
-                });
+                _restartPending = true;
+                ScheduleCrestTick();
             }
 
             return;
@@ -195,6 +197,57 @@ public partial class BrandLogoView : ContentView
         if (_settleRequested || !ShouldSpin)
         {
             SettleFromAngle(_angle);
+        }
+    }
+
+    /// <summary>
+    /// True while the crest has deferred work (a spin restart after a layout
+    /// abort). On Windows, <see cref="HomeView"/> keeps its 50ms UI-thread
+    /// apply pump ticking while this is set.
+    /// </summary>
+    public bool HasPendingCrestWork => _restartPending;
+
+#if WINDOWS
+    /// <summary>
+    /// Raised when deferred crest work needs <see cref="HomeView"/>'s
+    /// UI-thread apply pump started (the crest never starts its own timer).
+    /// </summary>
+    public event Action? PumpRequested;
+
+    /// <summary>Apply-pump tick: run deferred crest work on the UI thread.</summary>
+    public void PumpCrest() => OnCrestTick();
+#endif
+
+    private void ScheduleCrestTick()
+    {
+#if WINDOWS
+        // Routed through HomeView's 50ms UI-thread apply pump — the same
+        // mechanism the catalog apply uses instead of Dispatcher.Dispatch
+        // into WinUI layout.
+        PumpRequested?.Invoke();
+#else
+        // Android/Desktop: a posted continuation, like the catalog's
+        // MainThread flush. Deliberately not an IDispatcherTimer — Android TV
+        // skips timer ticks under Choreographer load.
+        Dispatcher.Dispatch(OnCrestTick);
+#endif
+    }
+
+    private void OnCrestTick()
+    {
+        if (!IsLoaded)
+        {
+            _restartPending = false;
+            return;
+        }
+
+        if (_restartPending)
+        {
+            _restartPending = false;
+            if (ShouldSpin && !_spinning)
+            {
+                StartLoadingSpin();
+            }
         }
     }
 
