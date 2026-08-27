@@ -264,10 +264,11 @@ be turned off in the menu's Settings section (persisted per platform).
    `SetTargetFramework` negotiation used by *cross-targeting* references, so
    a project declaring plural `<TargetFrameworks>` returns **no compiled
    output** to its referencing project (CS0234/CS0246 despite a successful
-   reference build). `VardyParty.HomeUi` and `VardyParty.Desktop` therefore
-   declare singular `<TargetFramework>`. When HomeUi later multi-targets
-   (`net11.0;net11.0-android`), referencing heads must override
-   `GlobalPropertiesToRemove` on that `ProjectReference`.
+   reference build). Heads referencing `VardyParty.HomeUi` therefore override
+   `GlobalPropertiesToRemove` so the head TFM flows in (windows/android).
+   `VardyParty.Desktop` also sets `AdditionalProperties` `TargetFrameworks=net11.0`
+   so Desktop restore never pulls the android workload even though HomeUi
+   lists `net11.0;net11.0-android` on Linux.
 2. **SkiaSharp native mismatch**: `Svg.Skia` pins
    `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
    SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at

@@ -54,9 +54,11 @@
             </Border>
 
             <!-- Netflix-style rows: one vertical CollectionView. The inner strip
-                 is BindableLayout, not a nested CollectionView — nested WinUI
-                 ItemsRepeaters are 0x800710DD. A homepage has few fixtures per
-                 row, so the strip does not need to virtualize. -->
+                 is a horizontal ScrollView + BindableLayout, not a nested
+                 CollectionView — nested WinUI ItemsRepeaters are 0x800710DD.
+                 Strips are not virtualized; that is fine for a handful of
+                 fixtures, not a 30-card row on TV. TvDpadFocusRouter walks
+                 this tree (outer RecyclerView + strip scroller). -->
             <CollectionView Grid.Row="2"
                             ItemsSource="{Binding Rows}"
                             VerticalScrollBarVisibility="Never"

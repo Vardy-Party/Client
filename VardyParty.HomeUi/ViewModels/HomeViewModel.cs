@@ -25,6 +25,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly ScoreChangeDetector _scoreChanges = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
+    private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
     private bool _isMenuOpen;
     private string _subtitle = string.Empty;
@@ -47,7 +48,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MenuViewModel menu,
         IBadgeImageLoader images,
         IHomeAssetLocator assets,
-        IDispatcher dispatcher,
         UiSoundService sounds,
         ILogger<HomeViewModel> logger)
     {
@@ -55,7 +55,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
         _images = images ?? throw new ArgumentNullException(nameof(images));
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
-        _ = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -72,6 +71,31 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>Raised on the UI thread after rows are rebuilt, with the visible game count.</summary>
     public event Action<int>? GamesUpdated;
+
+    /// <summary>
+    /// Raised when catalog/error/image work is queued from any thread.
+    /// <see cref="Views.HomeView"/> starts the UI apply pump from this.
+    /// </summary>
+    public event Action? WorkQueued;
+
+    /// <summary>
+    /// Gets a value that indicates whether the UI-thread apply pump still has
+    /// catalog, error, or image work to drain.
+    /// </summary>
+    public bool HasPendingWork
+    {
+        get
+        {
+            lock (_pendingLock)
+            {
+                return _pendingApply != null
+                    || _pendingError != null
+                    || _pendingClearResolving
+                    || _pendingResetScores
+                    || _pendingUiAssign.Count > 0;
+            }
+        }
+    }
 
     public HomeLayoutState Layout { get; } = new();
 
@@ -167,6 +191,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingError = message ?? string.Empty;
         }
+
+        NotifyWorkQueued();
     }
 
     /// <summary>Reclassify the layout for a new viewport size / idiom.</summary>
@@ -242,6 +268,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingResetScores = true;
         }
+
+        NotifyWorkQueued();
     }
 
     public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
@@ -264,6 +292,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingApply = new PendingApply(rowModels, display, dict);
         }
+
+        NotifyWorkQueued();
     }
 
     /// <summary>
@@ -350,6 +380,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             _pendingUiAssign.Clear();
         }
 
+        var epoch = Interlocked.Increment(ref _imageEpoch);
+
         Rows.Clear();
         var rowViewModels = new List<LeagueRowViewModel>(rowModels.Count);
         foreach (var model in rowModels)
@@ -378,7 +410,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         GamesUpdated?.Invoke(gameCount);
 
-        _ = LoadImagesAsync(rowViewModels);
+        _ = LoadImagesAsync(rowViewModels, epoch);
     }
 
     private void EnqueueUiAssign(Action assign)
@@ -387,6 +419,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingUiAssign.Enqueue(assign);
         }
+
+        NotifyWorkQueued();
     }
 
     private void DrainPendingImageAssigns()
@@ -435,16 +469,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private async Task LoadImagesAsync(IReadOnlyList<LeagueRowViewModel> rows)
+    private async Task LoadImagesAsync(IReadOnlyList<LeagueRowViewModel> rows, int epoch)
     {
         foreach (var row in rows)
         {
+            if (Volatile.Read(ref _imageEpoch) != epoch)
+            {
+                return;
+            }
+
             var firstGame = row.Cards.FirstOrDefault()?.Game;
             if (firstGame != null)
             {
                 var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame).ConfigureAwait(false);
                 var icon = await _images.LoadLocalAsync(iconPath).ConfigureAwait(false);
-                if (icon != null)
+                if (icon != null && Volatile.Read(ref _imageEpoch) == epoch)
                 {
                     EnqueueUiAssign(() => row.LeagueIcon = icon);
                 }
@@ -452,9 +491,19 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
             foreach (var card in row.Cards)
             {
+                if (Volatile.Read(ref _imageEpoch) != epoch)
+                {
+                    return;
+                }
+
                 var home = await _images.LoadRemoteAsync(card.Game.HomeBadgeUrl).ConfigureAwait(false);
                 var away = await _images.LoadRemoteAsync(card.Game.AwayBadgeUrl).ConfigureAwait(false);
                 if (home == null && away == null) continue;
+                if (Volatile.Read(ref _imageEpoch) != epoch)
+                {
+                    return;
+                }
+
                 EnqueueUiAssign(() =>
                 {
                     if (home != null) card.HomeBadge = home;
@@ -497,9 +546,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingClearResolving = true;
         }
+
+        NotifyWorkQueued();
     }
 
     private void OnCardFocused(MatchCardViewModel card) => OnFocusPulse();
+
+    private void NotifyWorkQueued() => WorkQueued?.Invoke();
 
     private void Raise(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

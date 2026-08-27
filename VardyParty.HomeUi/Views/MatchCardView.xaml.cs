@@ -276,43 +276,51 @@ public partial class MatchCardView : ContentView
     private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
 
     /// <summary>
-    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: ask
-    /// both CollectionViews to keep it fully on screen. Native RecyclerView
-    /// focus scrolling only reveals a card partially — enough to receive
-    /// focus, not enough to show the whole card plus its focus glow.
-    /// MakeVisible is a no-op when the card is already fully visible.
+    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: keep
+    /// the card fully in the horizontal strip ScrollView and the row fully in
+    /// the outer CollectionView. Native scrollers only reveal enough to take
+    /// focus, not the focus glow. MakeVisible is a no-op when already in view.
     /// </summary>
     private void EnsureFocusedCardVisible()
     {
-        if (ViewModel is not { } card)
+        if (ViewModel is null)
         {
             return;
         }
 
-        CollectionView? strip = null;
-        for (Element? element = Parent; element != null; element = element.Parent)
+        ScrollView? strip = null;
+        CollectionView? rows = null;
+        LeagueRowViewModel? row = null;
+
+        for (Element? element = this; element != null; element = element.Parent)
         {
-            if (element is not CollectionView list)
+            if (row is null && element.BindingContext is LeagueRowViewModel leagueRow)
             {
-                continue;
+                row = leagueRow;
             }
 
-            if (strip is null)
+            if (strip is null
+                && element is ScrollView scroll
+                && scroll.Orientation == ScrollOrientation.Horizontal)
             {
-                // Nearest list: the horizontal card strip of this row.
-                strip = list;
-                list.ScrollTo(card, position: ScrollToPosition.MakeVisible, animate: true);
+                strip = scroll;
             }
-            else
-            {
-                // Outer list: the vertical league rows; scroll our row into view.
-                if (strip.BindingContext is LeagueRowViewModel row)
-                {
-                    list.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
-                }
 
+            if (element is CollectionView list)
+            {
+                rows = list;
                 break;
             }
+        }
+
+        if (strip != null)
+        {
+            ObserveVisual(strip.ScrollToAsync(this, ScrollToPosition.MakeVisible, true));
+        }
+
+        if (rows != null && row != null)
+        {
+            rows.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
         }
     }
 

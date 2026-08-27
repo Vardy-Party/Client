@@ -60,10 +60,11 @@ dotnet workload install maui-tizen
 dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
 ```
 
-If restore still asks for `android` (`NETSDK1147`), HomeUi is being evaluated
-with its CI TFM list. Rebuild from `VardyParty.Desktop` (or
-`scripts/launch-linux-app.cmd`); do not restore `VardyParty.HomeUi.csproj`
-on its own unless you pass `-p:IncludeAndroidTfm=true` for an Android APK.
+The `maui-tizen` workload carries the plain-TFM MAUI SDK on Linux. You do
+**not** need the `android` workload to run the Desktop head: that project
+pins HomeUi to `net11.0` on its `ProjectReference`. Restoring
+`VardyParty.HomeUi.csproj` by itself on Linux still lists `net11.0-android`
+(for APK-from-Linux); use the Desktop project or `-f net11.0`.
 
 For video playback:
 

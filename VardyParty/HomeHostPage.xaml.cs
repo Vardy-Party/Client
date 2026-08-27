@@ -696,7 +696,11 @@ public partial class HomeHostPage : ContentPage
 
         if (Dispatcher.IsDispatchRequired)
         {
-            Dispatcher.Dispatch(Run);
+            if (!Dispatcher.Dispatch(Run))
+            {
+                _logger.LogError("[HomeHost] Dispatcher rejected a UI-thread update");
+            }
+
             return;
         }
 
