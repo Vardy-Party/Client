@@ -26,6 +26,14 @@ namespace VardyParty
         /// </summary>
         public static OverlayBackSuppressionTracker OverlaySuppression { get; } = new();
 
+        /// <summary>
+        /// Monotonic timestamp of the last Back an overlay consumed. Feeds
+        /// <see cref="HomeBackDecision"/>'s exit grace: on the saturated TV
+        /// main thread the menu closes long before the panel repaints, so a
+        /// repeat Back against the stale frame must not exit the app.
+        /// </summary>
+        private static long _lastOverlayBackMs;
+
         public static void SetFlyoutMenuOpen(bool open)
         {
             _flyoutMenuOpen = open;
@@ -65,31 +73,37 @@ namespace VardyParty
                 return;
             }
 
-            if (OverlaySuppression.IsSuppressed)
+            switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
             {
-                // Overlay is active and wants to consume Back. Dispatch to the remote handler so the
-                // overlay can cancel resolution and close itself.
-                Log.Info("MainActivity",
-                    $"[MAIN] Back pressed while overlay visible ({OverlaySuppression.DescribeActive()}) - delegating to overlay handler");
-                try
-                {
-                    if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
+                case HomeBackDecision.BackAction.DelegateToOverlays:
+                    // Overlay is active and wants to consume Back. Dispatch to the remote handler so the
+                    // overlay can cancel resolution and close itself.
+                    Log.Info("MainActivity",
+                        $"[MAIN] Back pressed while overlay visible ({OverlaySuppression.DescribeActive()}) - delegating to overlay handler");
+                    _lastOverlayBackMs = System.Environment.TickCount64;
+                    try
                     {
-                        return;
+                        if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
+                        {
+                            return;
+                        }
                     }
-                }
-                catch { }
+                    catch { }
 
-                // Fallback: if no handler consumed the event, cancel any stream switching state but do not navigate.
-                OverlaySuppression.Reset();
-                try
-                {
-                    var services = IPlatformApplication.Current?.Services;
-                    var switching = services?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
-                    switching?.Cleanup();
-                }
-                catch { }
-                return;
+                    // Fallback: if no handler consumed the event, cancel any stream switching state but do not navigate.
+                    OverlaySuppression.Reset();
+                    try
+                    {
+                        var services = IPlatformApplication.Current?.Services;
+                        var switching = services?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
+                        switching?.Cleanup();
+                    }
+                    catch { }
+                    return;
+
+                case HomeBackDecision.BackAction.IgnoreStaleExit:
+                    Log.Info("MainActivity", "[MAIN] Back within exit grace of an overlay close - ignored");
+                    return;
             }
 
             HandleNavigationBack();
@@ -106,6 +120,7 @@ namespace VardyParty
             // resolution) left the static suppression active on an idle homepage.
             OverlaySuppression.Reset();
             SetFlyoutMenuOpen(false);
+            _lastOverlayBackMs = 0;
 
             // Wire hardware back to logical navigation
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
@@ -131,14 +146,25 @@ namespace VardyParty
                 return;
             }
 
-            // If an overlay (e.g., stream discovery) is active and intends to consume Back,
-            // do not perform navigation here; let the overlay handler handle cancelation.
-            if (OverlaySuppression.IsSuppressed)
+            // This handler is subscribed in OnCreate, BEFORE HomeHostPage's
+            // overlay handler joins the multicast, so it always sees the
+            // suppression state as it was when the user pressed Back — the
+            // page handler closing the menu later in the same invocation
+            // cannot turn this press into an app exit.
+            switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
             {
-                Log.Info("MainActivity",
-                    $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
-                return;
+                case HomeBackDecision.BackAction.DelegateToOverlays:
+                    // The overlay handler (later in this multicast) consumes it.
+                    Log.Info("MainActivity",
+                        $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
+                    _lastOverlayBackMs = System.Environment.TickCount64;
+                    return;
+
+                case HomeBackDecision.BackAction.IgnoreStaleExit:
+                    Log.Info("MainActivity", "[MAIN] Remote Back within exit grace of an overlay close - ignored");
+                    return;
             }
+
             HandleNavigationBack();
         }
 
