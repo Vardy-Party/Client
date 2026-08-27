@@ -1,4 +1,5 @@
 #if ANDROID
+using Android.Widget;
 using AndroidX.RecyclerView.Widget;
 using AView = Android.Views.View;
 using AViewGroup = Android.Views.ViewGroup;
@@ -6,15 +7,15 @@ using AViewGroup = Android.Views.ViewGroup;
 namespace VardyParty.HomeUi.Views;
 
 /// <summary>
-/// Netflix-style D-pad routing for the nested CollectionViews (RecyclerViews)
-/// on Android TV. Android's default nearest-neighbour focus search judges the
-/// clipped on-screen rectangles, so moving down often lands on whatever card
-/// pokes out after scrolling — usually the start of the next row. This router
-/// implements column memory instead: down/up lands on the card in the adjacent
-/// row whose screen X is nearest the currently focused card, and left/right is
-/// clamped at row edges so focus never leaps to a different row.
-/// Everything here runs on the UI thread per key press with zero per-move
-/// heap allocations (one shared scratch array for screen coordinates).
+/// Netflix-style D-pad routing for the homepage catalog on Android TV.
+/// Rows are a vertical <see cref="RecyclerView"/> (MAUI CollectionView);
+/// each row's cards are a horizontal ScrollView + BindableLayout, not a
+/// nested RecyclerView. Nested ItemsRepeaters crash WinUI, so the strip
+/// is shared XAML — this router walks that tree instead of assuming two
+/// RecyclerViews.
+/// Down/up land on the card in the adjacent row whose screen X is nearest
+/// the focused card. Left/right at a row edge are consumed so focus cannot
+/// leap to another row. UI-thread only; one scratch array for coordinates.
 /// </summary>
 internal static class TvDpadFocusRouter
 {
@@ -38,14 +39,13 @@ internal static class TvDpadFocusRouter
 
     private static bool TryMoveVertical(AView card, bool down)
     {
-        var strip = FindParentRecycler(card);
-        var outer = strip is null ? null : FindParentRecycler(strip);
-        if (strip is null || outer is null)
+        var outer = FindParentRecycler(card);
+        if (outer is null)
         {
             return false;
         }
 
-        var rowItem = FindDirectChild(outer, strip);
+        var rowItem = FindDirectChild(outer, card);
         if (rowItem is null)
         {
             return false;
@@ -60,23 +60,18 @@ internal static class TvDpadFocusRouter
         var targetPosition = rowPosition + (down ? 1 : -1);
         if (targetPosition < 0)
         {
-            // Above the first row: the default search must run so focus can
-            // reach the header (Menu button).
             return false;
         }
 
         if (targetPosition >= (outer.GetAdapter()?.ItemCount ?? 0))
         {
-            // Below the last row there is nothing; consume so focus stays put.
             return true;
         }
 
         var targetRow = outer.FindViewHolderForAdapterPosition(targetPosition)?.ItemView;
-        var targetStrip = targetRow is null ? null : FindDescendantRecycler(targetRow);
+        var targetStrip = targetRow is null ? null : FindStripInRow(targetRow);
         if (targetStrip is null)
         {
-            // Adjacent row not laid out yet: fall back to the default search,
-            // whose focus-search-failed path scrolls the outer list.
             return false;
         }
 
@@ -84,14 +79,9 @@ internal static class TvDpadFocusRouter
         return target?.RequestFocus() == true;
     }
 
-    /// <summary>
-    /// True when the card is the first (left) / last (right) of its strip:
-    /// the key is consumed so the default search cannot jump focus to a
-    /// neighbouring row's card that happens to sit past the row edge.
-    /// </summary>
     private static bool IsAtRowEdge(AView card, bool lastCard)
     {
-        var strip = FindParentRecycler(card);
+        var strip = FindStrip(card);
         if (strip is null)
         {
             return false;
@@ -103,14 +93,14 @@ internal static class TvDpadFocusRouter
             return false;
         }
 
-        var position = strip.GetChildAdapterPosition(item);
-        if (position == RecyclerView.NoPosition)
+        var position = IndexOfDirectChild(strip, item);
+        if (position < 0)
         {
             return false;
         }
 
         return lastCard
-            ? position == (strip.GetAdapter()?.ItemCount ?? 0) - 1
+            ? position == strip.ChildCount - 1
             : position == 0;
     }
 
@@ -127,25 +117,35 @@ internal static class TvDpadFocusRouter
         return null;
     }
 
-    /// <summary>The direct child of <paramref name="parent"/> containing <paramref name="descendant"/>.</summary>
-    private static AView? FindDirectChild(RecyclerView parent, AView descendant)
+    private static AViewGroup? FindStrip(AView card)
     {
-        for (var current = descendant; current != null; current = current.Parent as AView)
+        for (var parent = card.Parent as AView; parent != null; parent = parent.Parent as AView)
         {
-            if (ReferenceEquals(current.Parent, parent))
+            if (parent is RecyclerView)
             {
-                return current;
+                return null;
+            }
+
+            if (IsScroller(parent) && parent is AViewGroup scroller)
+            {
+                return ContentHost(scroller);
             }
         }
 
         return null;
     }
 
-    private static RecyclerView? FindDescendantRecycler(AView root)
+    private static AViewGroup? FindStripInRow(AView row)
     {
-        if (root is RecyclerView recycler)
+        var scroller = FindDescendantScroller(row);
+        return scroller is AViewGroup group ? ContentHost(group) : null;
+    }
+
+    private static AView? FindDescendantScroller(AView root)
+    {
+        if (IsScroller(root))
         {
-            return recycler;
+            return root;
         }
 
         if (root is not AViewGroup group)
@@ -161,7 +161,7 @@ internal static class TvDpadFocusRouter
                 continue;
             }
 
-            if (FindDescendantRecycler(child) is { } found)
+            if (FindDescendantScroller(child) is { } found)
             {
                 return found;
             }
@@ -170,7 +170,74 @@ internal static class TvDpadFocusRouter
         return null;
     }
 
-    private static AView? FindNearestFocusableByCenterX(RecyclerView strip, int targetCenterX)
+    /// <summary>
+    /// MAUI's horizontal ScrollView is a platform scroller (MauiScrollView /
+    /// HorizontalScrollView / NestedScrollView), not a RecyclerView.
+    /// </summary>
+    private static bool IsScroller(AView view)
+    {
+        if (view is RecyclerView)
+        {
+            return false;
+        }
+
+        if (view is HorizontalScrollView)
+        {
+            return true;
+        }
+
+        var name = view.Class?.SimpleName;
+        return name is not null && name.Contains("ScrollView", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Unwrap single-child scroller padding hosts until the BindableLayout
+    /// stack (one child per card) is reached. Do not descend into a focusable
+    /// card root — a one-card row would otherwise treat chrome as siblings.
+    /// </summary>
+    private static AViewGroup? ContentHost(AViewGroup scroller)
+    {
+        var current = scroller;
+        while (current.ChildCount == 1 && current.GetChildAt(0) is AViewGroup only)
+        {
+            if (only.Focusable)
+            {
+                break;
+            }
+
+            current = only;
+        }
+
+        return current.ChildCount >= 1 ? current : null;
+    }
+
+    private static AView? FindDirectChild(AViewGroup parent, AView descendant)
+    {
+        for (var current = descendant; current != null; current = current.Parent as AView)
+        {
+            if (ReferenceEquals(current.Parent, parent))
+            {
+                return current;
+            }
+        }
+
+        return null;
+    }
+
+    private static int IndexOfDirectChild(AViewGroup parent, AView child)
+    {
+        for (var i = 0; i < parent.ChildCount; i++)
+        {
+            if (ReferenceEquals(parent.GetChildAt(i), child))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static AView? FindNearestFocusableByCenterX(AViewGroup strip, int targetCenterX)
     {
         AView? best = null;
         var bestDistance = int.MaxValue;

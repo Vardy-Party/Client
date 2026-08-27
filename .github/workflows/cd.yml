@@ -785,6 +785,8 @@ jobs:
     name: Package Linux x64 Snap
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -808,7 +810,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
@@ -1033,6 +1035,8 @@ jobs:
     name: Package Linux ARM64 Snap
     runs-on: ubuntu-24.04-arm
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1056,7 +1060,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux

@@ -56,10 +56,10 @@ public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var localPath = Path.Combine(cacheDir, Path.GetFileName(asset));
-                if (!File.Exists(localPath))
+                if (!File.Exists(localPath) || new FileInfo(localPath).Length == 0)
                 {
-                    using var source = await FileSystem.OpenAppPackageFileAsync(asset);
-                    using var target = File.Create(localPath);
+                    await using var source = await OpenSoundStreamAsync(asset);
+                    await using var target = File.Create(localPath);
                     await source.CopyToAsync(target, cancellationToken);
                 }
 
@@ -95,6 +95,42 @@ public sealed class WindowsUiSoundPlayer : IUiSoundPlayer, IDisposable
         {
             _logger.LogWarning(ex, "UI sound init failed; sounds disabled");
         }
+    }
+
+    private static async Task<Stream> OpenSoundStreamAsync(string asset)
+    {
+        var names = new[]
+        {
+            asset,
+            asset.Replace('/', '\\'),
+            Path.GetFileName(asset),
+            Path.Combine("Sounds", Path.GetFileName(asset)),
+        };
+
+        foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                return await FileSystem.OpenAppPackageFileAsync(name);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        foreach (var dir in new[] { AppContext.BaseDirectory, FileSystem.AppDataDirectory })
+        {
+            var disk = Path.Combine(dir, "Sounds", Path.GetFileName(asset));
+            if (File.Exists(disk))
+            {
+                return File.OpenRead(disk);
+            }
+        }
+
+        throw new FileNotFoundException($"UI sound asset not found: {asset}");
     }
 
     private void OnMediaFailed(UiSound sound, MediaPlayerFailedEventArgs args)

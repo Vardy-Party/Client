@@ -13,8 +13,9 @@ env:
   SKIP_UNITTESTS: "false"
   SKIP_CODEQUALITY: "false"
 
-# Feature-branch CI runs via pull_request only. Push is main-only so a PR push
-# does not also fire a duplicate branch push workflow.
+# Feature-branch CI runs via pull_request (any base, including stacked
+# branches). Push is main-only so a PR push does not also fire a duplicate
+# branch-push workflow.
 #
 # Version.props-only bot bump PRs used to skip this workflow (paths allowlist).
 # ApplicationVersion now lands on the feature branch; Version.props is in the
@@ -25,8 +26,6 @@ on:
     branches:
       - main
   pull_request:
-    branches:
-      - main
     paths:
       - "**/*.sln"
       - "**/*.slnx"
@@ -80,6 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: resolve-flags
     if: ${{ needs.resolve-flags.outputs.skip_unittests != 'true' }}
+    env:
+      # Flows into HomeUi as an MSBuild property (not stripped on ProjectReference).
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
       - name: Display version info
@@ -97,6 +99,8 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       # - name: Restore dependencies
       #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
+      - name: Install MAUI workload (HomeUi.Tests restores net11.0 HomeUi)
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Build test projects
         run: |
           set -euo pipefail
@@ -132,7 +136,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-android --ignore-failed-sources
+        run: dotnet workload install maui-android maui-tizen --ignore-failed-sources
       # - name: Restore dependencies
       #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       # Warnings-as-errors + code-style enforcement. Android Release packaging is
@@ -161,6 +165,8 @@ jobs:
       # projects stay excluded from formatting (they are exercised by
       # build-desktop / the head builds instead).
       - name: Restore test projects for format check
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: |
           set -euo pipefail
           while IFS= read -r -d '' proj; do
@@ -473,13 +479,17 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      # maui-tizen carries the plain-TFM MAUI SDK on Linux; maui-android is
-      # needed because VardyParty.HomeUi cross-targets net11.0-android here.
+      # maui-tizen carries the plain-TFM MAUI SDK on Linux. HomeUiTargetFrameworks
+      # keeps HomeUi on net11.0 so restore does not demand maui-android.
       - name: Install MAUI workloads
-        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Build desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -506,16 +516,20 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      # Same workloads as build-desktop (HomeUi cross-targets net11.0-android).
+      # Same workload as build-desktop (HomeUi is pinned to net11.0).
       - name: Install MAUI workloads
-        run: dotnet workload install maui-tizen maui-android --ignore-failed-sources
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libvlc-dev vlc xvfb
       - name: Restore desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Build desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
       - name: Runtime smoke test (xvfb, sample data)
         run: |

@@ -81,6 +81,8 @@ public partial class HomeHostPage : ContentPage
         BindingContext = _viewModel;
 
         _viewModel.GamePicked += OnGamePicked;
+        _viewModel.GamesUpdated += count =>
+            _logger.LogInformation("[HomeHost] Games updated count={Count}", count);
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
         _viewModel.PropertyChanged += (_, e) =>
         {
@@ -183,7 +185,7 @@ public partial class HomeHostPage : ContentPage
         _logger.LogInformation("[HomeHost] Sign in pressed (IsTv={IsTv})", MauiProgram.IsTv);
         _isAuthenticating = true;
         _deviceCode = null;
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             SignInButton.IsEnabled = false;
             SignInButton.Text = "Signing in…";
@@ -194,29 +196,7 @@ public partial class HomeHostPage : ContentPage
         {
             if (MauiProgram.IsTv || !MauiProgram.IsWindowsPackaged)
             {
-                var deviceLogin = await _authLogin.StartDeviceLoginAsync();
-                if (deviceLogin == null)
-                {
-                    SetAuthStatus("Unable to start device sign-in.");
-                    return;
-                }
-
-                _deviceCode = deviceLogin.DeviceCode;
-                ShowDeviceCode(_deviceCode);
-                UpdateBackSuppression();
-
-                _authCts?.Cancel();
-                _authCts = new CancellationTokenSource();
-
-                var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
-                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
-                {
-                    OnSignedIn();
-                }
-                else if (!string.IsNullOrWhiteSpace(result.Error))
-                {
-                    SetAuthStatus(result.Error);
-                }
+                await SignInWithDeviceCodeAsync();
             }
             else
             {
@@ -224,6 +204,12 @@ public partial class HomeHostPage : ContentPage
                 if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
                 {
                     OnSignedIn();
+                }
+                else if (LooksLikeMissingRedirectCheck(result.Error))
+                {
+                    _logger.LogWarning("[HomeHost] Interactive Auth0 login missing redirect check; falling back to device sign-in");
+                    SetAuthStatus("Browser sign-in unavailable — use the code below.");
+                    await SignInWithDeviceCodeAsync();
                 }
                 else if (!string.IsNullOrWhiteSpace(result.Error))
                 {
@@ -245,12 +231,43 @@ public partial class HomeHostPage : ContentPage
             _isAuthenticating = false;
             _deviceCode = null;
             UpdateBackSuppression();
-            Dispatcher.Dispatch(() =>
+            PostUi(() =>
             {
                 DeviceCodePanel.IsVisible = false;
                 SignInButton.IsEnabled = true;
                 SignInButton.Text = "Sign in — Continue";
             });
+        }
+    }
+
+    private static bool LooksLikeMissingRedirectCheck(string? error) =>
+        !string.IsNullOrWhiteSpace(error)
+        && error.Contains("redirection check", StringComparison.OrdinalIgnoreCase);
+
+    private async Task SignInWithDeviceCodeAsync()
+    {
+        var deviceLogin = await _authLogin.StartDeviceLoginAsync();
+        if (deviceLogin == null)
+        {
+            SetAuthStatus("Unable to start device sign-in.");
+            return;
+        }
+
+        _deviceCode = deviceLogin.DeviceCode;
+        ShowDeviceCode(_deviceCode);
+        UpdateBackSuppression();
+
+        _authCts?.Cancel();
+        _authCts = new CancellationTokenSource();
+
+        var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
+        if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+        {
+            OnSignedIn();
+        }
+        else if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            SetAuthStatus(result.Error);
         }
     }
 
@@ -270,7 +287,7 @@ public partial class HomeHostPage : ContentPage
         _isAuthenticating = false;
         UpdateBackSuppression();
         SetAuthStatus("Sign-in canceled.");
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             DeviceCodePanel.IsVisible = false;
             SignInButton.IsEnabled = true;
@@ -313,7 +330,7 @@ public partial class HomeHostPage : ContentPage
         _homeShell.ClearSelection();
         _isAuthenticated = false;
 
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             _viewModel.CanSignOut = false;
             _viewModel.CloseMenu();
@@ -349,7 +366,7 @@ public partial class HomeHostPage : ContentPage
             _logger.LogWarning(ex, "[HomeHost] Failed to generate QR code locally");
         }
 
-        Dispatcher.Dispatch(() =>
+        PostUi(() =>
         {
             DeviceCodeLabel.Text = $"Code {deviceCode.UserCode}";
             DeviceUriLabel.Text = $"Scan the QR code, or open {target}";
@@ -362,7 +379,7 @@ public partial class HomeHostPage : ContentPage
         });
     }
 
-    private void SetAuthOverlayVisible(bool visible) => Dispatcher.Dispatch(() =>
+    private void SetAuthOverlayVisible(bool visible) => PostUi(() =>
     {
         AuthOverlay.IsVisible = visible;
         if (visible)
@@ -371,7 +388,7 @@ public partial class HomeHostPage : ContentPage
         }
     });
 
-    private void SetAuthStatus(string? message) => Dispatcher.Dispatch(() =>
+    private void SetAuthStatus(string? message) => PostUi(() =>
     {
         AuthStatusLabel.Text = message ?? string.Empty;
         AuthStatusLabel.IsVisible = !string.IsNullOrWhiteSpace(message);
@@ -479,7 +496,7 @@ public partial class HomeHostPage : ContentPage
                     _isResolvingStreams = false;
                     _viewModel.OnStreamResolutionEnded();
                     UpdateBackSuppression();
-                    Dispatcher.Dispatch(() =>
+                    PostUi(() =>
                     {
                         ResolveOverlay.IsVisible = false;
                         TryResumeAfterPlayer();
@@ -522,7 +539,7 @@ public partial class HomeHostPage : ContentPage
         _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");
 
-        Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
+        PostUi(() => ResolveOverlay.IsVisible = false);
     }
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
@@ -532,7 +549,7 @@ public partial class HomeHostPage : ContentPage
         _sounds.SuppressAll = visible;
         if (!visible)
         {
-            Dispatcher.Dispatch(TryResumeAfterPlayer);
+            PostUi(TryResumeAfterPlayer);
         }
     }
 
@@ -564,7 +581,7 @@ public partial class HomeHostPage : ContentPage
         }
     }
 
-    private void ShowResolveOverlay(string subtitle) => Dispatcher.Dispatch(() =>
+    private void ShowResolveOverlay(string subtitle) => PostUi(() =>
     {
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
@@ -575,7 +592,7 @@ public partial class HomeHostPage : ContentPage
         ResolveCancelButton.Focus();
     });
 
-    private void UpdateResolveOverlay(StreamResolutionProgress progress) => Dispatcher.Dispatch(() =>
+    private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
     {
         var isNoHealthy = !string.IsNullOrEmpty(progress.Status)
             && progress.Status.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
@@ -602,7 +619,7 @@ public partial class HomeHostPage : ContentPage
         PushErrorBanner();
         _isResolvingStreams = false;
         UpdateBackSuppression();
-        Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
+        PostUi(() => ResolveOverlay.IsVisible = false);
     }
 
     // ------------------------------------------------------------- android --
@@ -612,7 +629,7 @@ public partial class HomeHostPage : ContentPage
     {
         if (_viewModel.IsMenuOpen)
         {
-            Dispatcher.Dispatch(_viewModel.CloseMenu);
+            PostUi(_viewModel.CloseMenu);
             return;
         }
 
@@ -631,7 +648,7 @@ public partial class HomeHostPage : ContentPage
     }
 
     private void AndroidMenuHandler(global::Android.Views.Keycode keyCode) =>
-        Dispatcher.Dispatch(_viewModel.ToggleMenu);
+        PostUi(_viewModel.ToggleMenu);
 #endif
 
     /// <summary>
@@ -654,5 +671,39 @@ public partial class HomeHostPage : ContentPage
         {
         }
 #endif
+    }
+
+    /// <summary>
+    /// Run UI work on the page dispatcher. If we are already on the UI thread,
+    /// run inline (a queued Dispatch into WinUI layout is a 0xc000027b trigger).
+    /// Fail the update and log; do not throw back into CoreMessaging.
+    /// </summary>
+    private void PostUi(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        void Run()
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[HomeHost] UI-thread update failed");
+            }
+        }
+
+        if (Dispatcher.IsDispatchRequired)
+        {
+            if (!Dispatcher.Dispatch(Run))
+            {
+                _logger.LogError("[HomeHost] Dispatcher rejected a UI-thread update");
+            }
+
+            return;
+        }
+
+        Run();
     }
 }

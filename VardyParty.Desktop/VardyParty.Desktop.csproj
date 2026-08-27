@@ -66,6 +66,8 @@
 		-->
 		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
 			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+			<!-- Pin HomeUi to the Avalonia TFM so restore never pulls net11.0-android. -->
+			<AdditionalProperties>TargetFrameworks=net11.0;HomeUiTargetFrameworks=net11.0</AdditionalProperties>
 		</ProjectReference>
 		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
 		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />

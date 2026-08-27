@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Maui;
 using Microsoft.Maui.Controls.Shapes;
 
 namespace VardyParty.HomeUi.Views;
@@ -51,7 +52,15 @@ public partial class MatchCardView : ContentView
         Unloaded += OnUnloaded;
         CardOuter.Focused += OnCardFocused;
         CardOuter.Unfocused += OnCardUnfocused;
+#if WINDOWS
+        CardOuter.HandlerChanged += OnWindowsCardHandlerChanged;
+#else
         CardOuter.HandlerChanged += OnCardHandlerChanged;
+        var hover = new PointerGestureRecognizer();
+        hover.PointerEntered += OnPointerEntered;
+        hover.PointerExited += OnPointerExited;
+        CardOuter.GestureRecognizers.Add(hover);
+#endif
     }
 
     private MatchCardViewModel? ViewModel => BindingContext as MatchCardViewModel;
@@ -123,6 +132,37 @@ public partial class MatchCardView : ContentView
         ApplyInteractionState(animate: false);
         EnableTvFocus();
     }
+
+#if WINDOWS
+    private Microsoft.UI.Xaml.FrameworkElement? _windowsPointerElement;
+
+    private void OnWindowsCardHandlerChanged(object? sender, EventArgs e)
+    {
+        DetachWindowsPointerHover();
+        if (CardOuter.Handler?.PlatformView is Microsoft.UI.Xaml.FrameworkElement fe)
+        {
+            _windowsPointerElement = fe;
+            fe.PointerEntered += OnWindowsPointerEntered;
+            fe.PointerExited += OnWindowsPointerExited;
+        }
+    }
+
+    private void DetachWindowsPointerHover()
+    {
+        if (_windowsPointerElement == null) return;
+        _windowsPointerElement.PointerEntered -= OnWindowsPointerEntered;
+        _windowsPointerElement.PointerExited -= OnWindowsPointerExited;
+        _windowsPointerElement = null;
+    }
+
+    private void OnWindowsPointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        ViewModel?.FocusMoved();
+        EnterHighlight();
+    }
+
+    private void OnWindowsPointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => ExitHighlight();
+#endif
 
     /// <summary>
     /// Runs whenever the platform view is (re)created: the native focus wiring
@@ -236,43 +276,51 @@ public partial class MatchCardView : ContentView
     private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
 
     /// <summary>
-    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: ask
-    /// both CollectionViews to keep it fully on screen. Native RecyclerView
-    /// focus scrolling only reveals a card partially — enough to receive
-    /// focus, not enough to show the whole card plus its focus glow.
-    /// MakeVisible is a no-op when the card is already fully visible.
+    /// Focus (D-pad/keyboard, never pointer hover) landed on this card: keep
+    /// the card fully in the horizontal strip ScrollView and the row fully in
+    /// the outer CollectionView. Native scrollers only reveal enough to take
+    /// focus, not the focus glow. MakeVisible is a no-op when already in view.
     /// </summary>
     private void EnsureFocusedCardVisible()
     {
-        if (ViewModel is not { } card)
+        if (ViewModel is null)
         {
             return;
         }
 
-        CollectionView? strip = null;
-        for (Element? element = Parent; element != null; element = element.Parent)
+        ScrollView? strip = null;
+        CollectionView? rows = null;
+        LeagueRowViewModel? row = null;
+
+        for (Element? element = this; element != null; element = element.Parent)
         {
-            if (element is not CollectionView list)
+            if (row is null && element.BindingContext is LeagueRowViewModel leagueRow)
             {
-                continue;
+                row = leagueRow;
             }
 
-            if (strip is null)
+            if (strip is null
+                && element is ScrollView scroll
+                && scroll.Orientation == ScrollOrientation.Horizontal)
             {
-                // Nearest list: the horizontal card strip of this row.
-                strip = list;
-                list.ScrollTo(card, position: ScrollToPosition.MakeVisible, animate: true);
+                strip = scroll;
             }
-            else
-            {
-                // Outer list: the vertical league rows; scroll our row into view.
-                if (strip.BindingContext is LeagueRowViewModel row)
-                {
-                    list.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
-                }
 
+            if (element is CollectionView list)
+            {
+                rows = list;
                 break;
             }
+        }
+
+        if (strip != null)
+        {
+            ObserveVisual(strip.ScrollToAsync(this, ScrollToPosition.MakeVisible, true));
+        }
+
+        if (rows != null && row != null)
+        {
+            rows.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
         }
     }
 
@@ -294,6 +342,10 @@ public partial class MatchCardView : ContentView
             _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _observedViewModel = null;
         }
+
+#if WINDOWS
+        DetachWindowsPointerHover();
+#endif
 
 #if ANDROID
         UnwireNativeTvFocus();
@@ -381,8 +433,9 @@ public partial class MatchCardView : ContentView
 
         if (animate)
         {
-            _ = CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut);
-            _ = FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut);
+            if (!IsLoaded) return;
+            ObserveVisual(CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut));
+            ObserveVisual(FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut));
         }
         else
         {
@@ -429,5 +482,18 @@ public partial class MatchCardView : ContentView
         _resolvingPulseRunning = false;
         this.AbortAnimation(ResolvingPulseAnimation);
         SelectedVeil.Opacity = 0;
+    }
+
+    private static void ObserveVisual(Task animation) => _ = ObserveVisualAsync(animation);
+
+    private static async Task ObserveVisualAsync(Task animation)
+    {
+        try
+        {
+            await animation.ConfigureAwait(true);
+        }
+        catch
+        {
+        }
     }
 }
