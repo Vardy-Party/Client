@@ -35,6 +35,13 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     /// <summary>TV raster budget: no per-card shadows, cheap team wash.</summary>
     public bool FlatCardChrome => _metrics.FlatCardChrome;
 
+    /// <summary>
+    /// Strip staging: a NEW row materializes at most this many cards up
+    /// front; the rest are appended in dispatcher-idle chunks. 0 = full
+    /// materialization (non-TV classes).
+    /// </summary>
+    public int StagedStripCards => _metrics.StagedStripCards;
+
     /// <summary>Row height for the horizontal card strip: card + focus-scale headroom.</summary>
     public double RowHeight => _metrics.CardHeight + 24;
 
@@ -69,6 +76,6 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
         nameof(RowHeight), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
-        nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome),
+        nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome), nameof(StagedStripCards),
     ];
 }

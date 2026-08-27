@@ -21,7 +21,8 @@ public sealed record HomeLayoutMetrics(
     double RowSpacing,
     double CardSpacing,
     double BrandLogoSize,
-    bool FlatCardChrome = false)
+    bool FlatCardChrome = false,
+    int StagedStripCards = 0)
 {
     public static HomeLayoutMetrics For(HomeLayoutClass layoutClass) => layoutClass switch
     {
@@ -48,12 +49,19 @@ public sealed record HomeLayoutMetrics(
         // slice of the 1.3s full-tree pass on the 32-bit box, and a flat card
         // with a subtle border reads fine at 10 feet. Desktop/phone keep the
         // full treatment (GPU headroom).
+        // StagedStripCards: the card strips are BindableLayouts (PR #76's
+        // WinUI-crash constraint forbids nested CollectionViews), so a strip
+        // materializes EVERY card in the row when it binds — a 15-card cup
+        // row is a >500ms single layout pass on the weak core. On TV a new
+        // row materializes its first 8 cards (~5.5 visible + headroom) and
+        // the rest arrive in dispatcher-idle chunks. Rows themselves are
+        // already virtualized by the outer CollectionView (RecyclerView).
         HomeLayoutClass.Tv => new(
             CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
             TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
             LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
             PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
-            FlatCardChrome: true),
+            FlatCardChrome: true, StagedStripCards: 8),
 
         HomeLayoutClass.Desktop => new(
             CardWidth: 350, CardHeight: 192, CardCornerRadius: 14, BadgeSize: 54,

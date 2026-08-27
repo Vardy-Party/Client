@@ -121,6 +121,7 @@ public partial class HomeView : ContentView
         {
             ViewModel.FlushPendingApply();
             BrandLogo.OnCatalogApplied();
+            PumpStagedStrips();
             return;
         }
 
@@ -128,8 +129,40 @@ public partial class HomeView : ContentView
         {
             ViewModel?.FlushPendingApply();
             BrandLogo.OnCatalogApplied();
+            PumpStagedStrips();
         });
 #endif
+    }
+
+    private bool _stagedPumpScheduled;
+
+    /// <summary>
+    /// Drain staged strip cards (TV: rows over the
+    /// <see cref="HomeLayoutState.StagedStripCards"/> budget) one chunk per
+    /// dispatcher message: each post yields back to the looper, so frames and
+    /// D-pad input interleave with the appends instead of one huge layout pass.
+    /// </summary>
+    private void PumpStagedStrips()
+    {
+        if (_stagedPumpScheduled || ViewModel?.HasStagedStripWork != true)
+        {
+            return;
+        }
+
+        _stagedPumpScheduled = true;
+        if (!Dispatcher.Dispatch(OnStagedPumpTick))
+        {
+            MainThread.BeginInvokeOnMainThread(OnStagedPumpTick);
+        }
+    }
+
+    private void OnStagedPumpTick()
+    {
+        _stagedPumpScheduled = false;
+        if (ViewModel?.MaterializeNextStagedStripChunk() == true)
+        {
+            PumpStagedStrips();
+        }
     }
 
 #if WINDOWS
@@ -184,6 +217,7 @@ public partial class HomeView : ContentView
         ViewModel?.FlushPendingApply();
         BrandLogo.OnCatalogApplied();
         BrandLogo.PumpCrest();
+        PumpStagedStrips();
         if (ViewModel?.HasPendingWork != true && !BrandLogo.HasPendingCrestWork)
         {
             _applyPump?.Stop();

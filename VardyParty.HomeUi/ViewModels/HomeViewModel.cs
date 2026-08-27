@@ -25,6 +25,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly ScoreChangeDetector _scoreChanges = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
+    private readonly Queue<StagedStrip> _stagedStrips = new();
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
     private HashSet<string> _lastLiveLeagues = new(StringComparer.OrdinalIgnoreCase);
@@ -53,6 +54,15 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         IReadOnlyList<LeagueRowModel> Rows,
         IReadOnlyList<Game> Display,
         IDictionary<string, List<Game>>? Dict);
+
+    /// <summary>Cards a new row still owes its strip (staged materialization).</summary>
+    private sealed class StagedStrip
+    {
+        public required LeagueRowViewModel Row { get; init; }
+        public required IReadOnlyList<Game> Games { get; init; }
+        public required int Epoch { get; init; }
+        public int Next { get; set; }
+    }
 
     public HomeViewModel(
         ILeagueFilterService leagueFilter,
@@ -493,8 +503,94 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         return -1;
     }
 
-    private LeagueRowViewModel CreateRow(LeagueRowModel model) =>
-        new(model.League, model.HasLiveGames, model.Games.Select(CreateCard).ToList(), Layout);
+    /// <summary>
+    /// Strip staging (<see cref="HomeLayoutState.StagedStripCards"/>, TV
+    /// only): card strips are BindableLayouts, so a NEW row materializes
+    /// every card the moment it binds — a 15-card cup row is one huge layout
+    /// pass on the weak TV core. Over the budget, the row starts with its
+    /// first N cards and owes the rest to <see cref="MaterializeNextStagedStripChunk"/>,
+    /// which the view pumps in dispatcher-idle chunks. Existing rows are
+    /// exempt: in-place diffs insert a handful of cards at most.
+    /// </summary>
+    private LeagueRowViewModel CreateRow(LeagueRowModel model)
+    {
+        var budget = Layout.StagedStripCards;
+        if (budget <= 0 || model.Games.Count <= budget)
+        {
+            return new(model.League, model.HasLiveGames, model.Games.Select(CreateCard).ToList(), Layout);
+        }
+
+        var row = new LeagueRowViewModel(
+            model.League,
+            model.HasLiveGames,
+            model.Games.Take(budget).Select(CreateCard).ToList(),
+            Layout);
+        _stagedStrips.Enqueue(new StagedStrip
+        {
+            Row = row,
+            Games = model.Games,
+            Epoch = _imageEpoch,
+            Next = budget,
+        });
+        return row;
+    }
+
+    /// <summary>How many staged cards one dispatcher-idle pump tick appends.</summary>
+    public const int StagedStripChunkSize = 4;
+
+    /// <summary>Whether any row still owes staged cards to its strip. UI thread only.</summary>
+    public bool HasStagedStripWork
+    {
+        get
+        {
+            PruneStaleStagedStrips();
+            return _stagedStrips.Count > 0;
+        }
+    }
+
+    /// <summary>
+    /// Append the next chunk of staged cards (UI thread only; the view posts
+    /// one call per dispatcher message so frames and D-pad input interleave).
+    /// Returns true while more chunks remain. A newer apply supersedes staged
+    /// work: its diff plans against the full board, so stale entries are
+    /// simply dropped.
+    /// </summary>
+    public bool MaterializeNextStagedStripChunk()
+    {
+        PruneStaleStagedStrips();
+        if (_stagedStrips.Count == 0)
+        {
+            return false;
+        }
+
+        var entry = _stagedStrips.Peek();
+        var end = Math.Min(entry.Next + StagedStripChunkSize, entry.Games.Count);
+        for (var i = entry.Next; i < end; i++)
+        {
+            entry.Row.Cards.Add(CreateCard(entry.Games[i]));
+        }
+
+        entry.Next = end;
+        if (entry.Next >= entry.Games.Count)
+        {
+            _stagedStrips.Dequeue();
+        }
+
+        // Newly materialized cards need their badges; the plan only contains
+        // still-missing images so this is cheap and idempotent.
+        _ = LoadImagesAsync(BuildImagePlan(), Volatile.Read(ref _imageEpoch));
+
+        PruneStaleStagedStrips();
+        return _stagedStrips.Count > 0;
+    }
+
+    private void PruneStaleStagedStrips()
+    {
+        while (_stagedStrips.Count > 0 && _stagedStrips.Peek().Epoch != Volatile.Read(ref _imageEpoch))
+        {
+            _stagedStrips.Dequeue();
+        }
+    }
 
     private MatchCardViewModel CreateCard(Game game) =>
         new(game, Layout, OnCardPicked, OnCardFocused)

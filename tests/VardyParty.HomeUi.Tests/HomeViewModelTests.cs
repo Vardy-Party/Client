@@ -436,6 +436,69 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Equal("Cup Beta", _sut.Rows[0].League);
     }
 
+    [Fact]
+    public void FlushPendingApply_TvWideStrip_StagesCardsBeyondBudget()
+    {
+        // Arrange: TV class stages strips (BindableLayout materializes every
+        // card in a row at bind time — a wide row must not become one huge
+        // layout pass on the weak core).
+        _sut.Layout.Apply(HomeLayoutClass.Tv);
+
+        // Act: 12 fixtures in one league, budget is 8.
+        _sut.UpdateGames(CatalogWithUpcomingGames(12));
+        _sut.FlushPendingApply();
+
+        // Assert: first chunk shown, remainder owed; initial focus is armed
+        // on a materialized card.
+        Assert.Equal(_sut.Layout.StagedStripCards, _sut.Rows[0].Cards.Count);
+        Assert.True(_sut.HasStagedStripWork);
+        Assert.True(_sut.Rows[0].Cards[0].RequestsInitialFocus);
+
+        // Act: drain the staged chunks like the view's dispatcher pump does.
+        var guard = 0;
+        while (_sut.MaterializeNextStagedStripChunk() && ++guard < 10)
+        {
+        }
+
+        // Assert: the full board materialized exactly once per game.
+        Assert.Equal(12, _sut.Rows[0].Cards.Count);
+        Assert.Equal(12, _sut.Rows[0].Cards.Select(c => HomeBoardDiffer.GameKey(c.Game)).Distinct().Count());
+        Assert.False(_sut.HasStagedStripWork);
+    }
+
+    [Fact]
+    public void FlushPendingApply_NonTv_MaterializesTheFullStripImmediately()
+    {
+        // Desktop/phone have no staging budget: the strip is complete at bind.
+        _sut.UpdateGames(CatalogWithUpcomingGames(12));
+        _sut.FlushPendingApply();
+
+        Assert.Equal(12, _sut.Rows[0].Cards.Count);
+        Assert.False(_sut.HasStagedStripWork);
+        Assert.False(_sut.MaterializeNextStagedStripChunk());
+    }
+
+    [Fact]
+    public void FlushPendingApply_NewApplySupersedesStagedWork_NoDuplicates()
+    {
+        // Arrange: staged work is pending when the next poll lands.
+        _sut.Layout.Apply(HomeLayoutClass.Tv);
+        _sut.UpdateGames(CatalogWithUpcomingGames(12));
+        _sut.FlushPendingApply();
+        Assert.True(_sut.HasStagedStripWork);
+
+        // Act: the new apply's diff plans against the FULL board, so it
+        // inserts the cards the stale staged entries still owed.
+        _sut.UpdateGames(CatalogWithUpcomingGames(12));
+        _sut.FlushPendingApply();
+
+        // Assert: complete, no duplicates, stale staged entries dropped.
+        Assert.Equal(12, _sut.Rows[0].Cards.Count);
+        Assert.Equal(12, _sut.Rows[0].Cards.Select(c => HomeBoardDiffer.GameKey(c.Game)).Distinct().Count());
+        Assert.False(_sut.HasStagedStripWork);
+        Assert.False(_sut.MaterializeNextStagedStripChunk());
+    }
+
     private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
     {
         var game = _fixture.Build<Game>()
