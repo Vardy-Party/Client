@@ -23,6 +23,8 @@ public sealed class HomeViewModelTests : IDisposable
     private readonly Mock<ILeagueFilterService> _filter;
     private readonly Mock<IBadgeImageLoader> _images;
     private readonly Mock<IHomeAssetLocator> _assets;
+    private readonly MatchEventNotificationPolicy _notifications;
+    private readonly MatchEventBus _bus = new();
     private readonly HomeViewModel _sut;
 
     public HomeViewModelTests()
@@ -47,15 +49,16 @@ public sealed class HomeViewModelTests : IDisposable
 
         var preferences = new InMemorySoundPreferencesStore();
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
-        var notifications = new MatchEventNotificationPolicy(preferences);
-        var menu = new MenuViewModel(_filter.Object, sounds, notifications);
+        _notifications = new MatchEventNotificationPolicy(preferences);
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
             _images.Object,
             _assets.Object,
             sounds,
-            notifications,
+            _notifications,
+            _bus,
             NullLogger<HomeViewModel>.Instance);
     }
 
@@ -502,6 +505,70 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.False(_sut.MaterializeNextStagedStripChunk());
     }
 
+    [Fact]
+    public void FlushPendingApply_Goal_PublishesToastAndBusEvent()
+    {
+        // Arrange: the fixture observed once, then its score moves.
+        var delivered = new List<MatchEvent>();
+        _bus.Published += delivered.Add;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+
+        // Act
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        // Assert: one delivered event on the bus and a showing toast whose
+        // headline attributes the sting ("3 notes, no idea what it means").
+        var matchEvent = Assert.Single(delivered);
+        Assert.Equal(MatchEventKind.Goal, matchEvent.Kind);
+        Assert.NotNull(_sut.Toast.Current);
+        Assert.Equal("GOAL — Home United 1–0 Away City", _sut.Toast.Current!.Headline);
+        Assert.Equal("League Alpha", _sut.Toast.Current.LeagueName);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Goal_NotificationsOff_DeliversNothing()
+    {
+        // Arrange
+        var delivered = 0;
+        _bus.Published += _ => delivered++;
+        _notifications.SetNotificationsEnabled(false);
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+
+        // Act
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        // Assert: OFF suppresses sting + toast + card flash entirely.
+        Assert.Equal(0, delivered);
+        Assert.Null(_sut.Toast.Current);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Goal_Backgrounded_DroppedNotQueued()
+    {
+        // Arrange
+        var delivered = 0;
+        _bus.Published += _ => delivered++;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        _notifications.IsAppForegrounded = false;
+
+        // Act: the goal lands while the app is backgrounded, then the app
+        // resumes and a scoreless refresh applies.
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+        _notifications.IsAppForegrounded = true;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 24));
+        _sut.FlushPendingApply();
+
+        // Assert: nothing at all — no catch-up toast on resume.
+        Assert.Equal(0, delivered);
+        Assert.Null(_sut.Toast.Current);
+    }
+
     private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
     {
         var game = _fixture.Build<Game>()
@@ -518,7 +585,9 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)minute)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)awayScore)
-            .With(g => g.Start, DateTime.UtcNow.AddMinutes(-minute))
+            // Fixed kickoff: the event detector keys on Home|Away|Start, so
+            // refreshes of the same fixture must carry the same Start.
+            .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
             .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
             .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
             .Create();

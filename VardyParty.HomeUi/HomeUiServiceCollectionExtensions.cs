@@ -22,6 +22,7 @@ public static class HomeUiServiceCollectionExtensions
         services.TryAddSingleton<ISoundPreferencesStore, InMemorySoundPreferencesStore>();
         services.TryAddSingleton<UiSoundService>();
         services.TryAddSingleton<MatchEventNotificationPolicy>();
+        services.TryAddSingleton<MatchEventBus>();
         services.AddSingleton<HomeViewModel>();
         services.AddSingleton<Views.HomePage>();
         return services;

@@ -22,6 +22,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly IHomeAssetLocator _assets;
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
+    private readonly MatchEventBus _events;
     private readonly ILogger<HomeViewModel> _logger;
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
@@ -72,6 +73,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         IHomeAssetLocator assets,
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
+        MatchEventBus events,
         ILogger<HomeViewModel> logger)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
@@ -80,7 +82,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _assets = assets ?? throw new ArgumentNullException(nameof(assets));
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+        _events = events ?? throw new ArgumentNullException(nameof(events));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
     }
@@ -122,6 +126,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public HomeLayoutState Layout { get; } = new();
+
+    /// <summary>The homepage match-event toast (queue/dismiss state machine).</summary>
+    public MatchEventToastViewModel Toast { get; }
 
     public ObservableCollection<LeagueRowViewModel> Rows { get; } = new();
 
@@ -377,15 +384,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 // (sting/toast/flash vs nothing) is the policy's call:
                 // backgrounded events are dropped entirely, never queued.
                 var events = _matchEvents.Observe(apply.Display);
-                if (events.Count > 0 && _notifications.ShouldPresent && _notifications.ShouldPlayAudio)
-                {
-                    // One sting per apply, however many events it carried;
-                    // UiSoundService adds the "UI sounds" toggle + playback
-                    // suppression on top.
-                    _sounds.Play(UiSound.Goal);
-                }
-
                 Apply(apply.Rows, apply.Display.Count, apply.Dict);
+                DeliverMatchEvents(events);
             }
 
             DrainPendingImageAssigns();
@@ -394,6 +394,55 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _logger.LogError(ex, "Homepage UI apply failed");
         }
+    }
+
+    /// <summary>
+    /// Deliver detected events AFTER the board applied, so the row/card VMs
+    /// the toast borrows (league icon, badges) already carry the new state.
+    /// <see cref="MatchEventNotificationPolicy.ShouldPresent"/> gates
+    /// everything — backgrounded or toggled-off events are dropped here,
+    /// never queued for a catch-up. Audio additionally requires the homepage
+    /// to be the active surface (no stream playing): one sting per apply,
+    /// however many events it carried, routed through UiSoundService which
+    /// adds the "UI sounds" toggle + playback suppression on top.
+    /// </summary>
+    private void DeliverMatchEvents(IReadOnlyList<MatchEvent> events)
+    {
+        if (events.Count == 0 || !_notifications.ShouldPresent)
+        {
+            return;
+        }
+
+        if (_notifications.ShouldPlayAudio)
+        {
+            _sounds.Play(UiSound.Goal);
+        }
+
+        foreach (var matchEvent in events)
+        {
+            // Delivered-event stream: the homepage toast consumes it below;
+            // the planned playback overlays subscribe to the same bus.
+            _events.Publish(matchEvent);
+
+            var row = FindRowForEvent(matchEvent);
+            var card = FindCardForEvent(matchEvent);
+            Toast.Publish(new MatchEventToastItem(
+                matchEvent, row?.LeagueIcon, card?.HomeBadge, card?.AwayBadge));
+        }
+    }
+
+    private LeagueRowViewModel? FindRowForEvent(MatchEvent matchEvent)
+    {
+        var league = MatchEventPresenter.LeagueName(matchEvent);
+        return Rows.FirstOrDefault(r =>
+            string.Equals(r.League, league, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private MatchCardViewModel? FindCardForEvent(MatchEvent matchEvent)
+    {
+        var key = HomeBoardDiffer.GameKey(matchEvent.Game);
+        return EnumerateCards().FirstOrDefault(c =>
+            string.Equals(HomeBoardDiffer.GameKey(c.Game), key, StringComparison.Ordinal));
     }
 
     private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)

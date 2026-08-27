@@ -232,5 +232,9 @@
                 </VerticalStackLayout>
             </Grid>
         </Border>
+
+        <!-- Match-event toast overlay: topmost, input-transparent, never
+             focusable. Placement/animations live in its code-behind. -->
+        <views:MatchEventToastView BindingContext="{Binding Toast}" />
     </Grid>
 </ContentView>
