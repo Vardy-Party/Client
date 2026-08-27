@@ -112,6 +112,7 @@ public static class TvDpadStripWalk
         if (group.ChildCount == 1
             && group.GetChild(0) is { } only
             && !only.Focusable
+            && only.ChildCount > 1
             && ChildrenAreAllCardItems(only))
         {
             return false;
@@ -192,45 +193,74 @@ public static class TvDpadStripWalk
         return -1;
     }
 
-    public static bool IsAtRowEdge(INode card, bool lastCard)
+    /// <summary>
+    /// Shown focusable leaves under a strip scroller. Card roots use
+    /// BlockDescendants, so we stop at the first focusable and never treat
+    /// inner chrome as sibling cards — including a one-card BindableLayout.
+    /// </summary>
+    public static void CollectShownFocusables(INode root, IList<INode> dest)
     {
-        var strip = FindStripFromCard(card);
-        if (strip is null)
+        if (root.Focusable && root.IsShown)
         {
-            return false;
+            dest.Add(root);
+            return;
         }
 
-        var item = FindDirectChild(strip, card);
-        if (item is null)
+        for (var i = 0; i < root.ChildCount; i++)
         {
-            return false;
-        }
-
-        var position = IndexOfDirectChild(strip, item);
-        if (position < 0)
-        {
-            return false;
-        }
-
-        return lastCard
-            ? position == strip.ChildCount - 1
-            : position == 0;
-    }
-
-    public static INode? FindNearestFocusableByCenterX(INode strip, int targetCenterX)
-    {
-        INode? best = null;
-        var bestDistance = int.MaxValue;
-
-        for (var i = 0; i < strip.ChildCount; i++)
-        {
-            var item = strip.GetChild(i);
-            var focusable = item is null ? null : FindFocusableDescendant(item);
-            if (focusable is null)
+            var child = root.GetChild(i);
+            if (child is null)
             {
                 continue;
             }
 
+            CollectShownFocusables(child, dest);
+        }
+    }
+
+    public static bool IsAtRowEdge(INode card, bool lastCard)
+    {
+        var scroller = FindAncestorScroller(card);
+        if (scroller is null)
+        {
+            return false;
+        }
+
+        var cards = new List<INode>();
+        CollectShownFocusables(scroller, cards);
+        if (cards.Count == 0)
+        {
+            return false;
+        }
+
+        var index = -1;
+        for (var i = 0; i < cards.Count; i++)
+        {
+            if (cards[i].RepresentsSame(card))
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return false;
+        }
+
+        return lastCard ? index == cards.Count - 1 : index == 0;
+    }
+
+    public static INode? FindNearestFocusableByCenterX(INode root, int targetCenterX)
+    {
+        var searchRoot = root.IsScroller ? root : FindDescendantScroller(root) ?? root;
+        var cards = new List<INode>();
+        CollectShownFocusables(searchRoot, cards);
+
+        INode? best = null;
+        var bestDistance = int.MaxValue;
+        foreach (var focusable in cards)
+        {
             var distance = Math.Abs(CenterX(focusable) - targetCenterX);
             if (distance < bestDistance)
             {

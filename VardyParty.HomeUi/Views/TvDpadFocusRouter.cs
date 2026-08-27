@@ -75,13 +75,12 @@ internal static class TvDpadFocusRouter
         }
 
         var scroller = TvDpadStripWalk.FindDescendantScroller(Wrap(targetRow));
-        var strip = scroller is null ? null : TvDpadStripWalk.FindCardStrip(scroller);
-        if (strip is null)
+        if (scroller is null)
         {
             return false;
         }
 
-        var target = TvDpadStripWalk.FindNearestFocusableByCenterX(strip, CenterXOnScreen(card));
+        var target = TvDpadStripWalk.FindNearestFocusableByCenterX(scroller, CenterXOnScreen(card));
         return target is AndroidNode node && node.View.RequestFocus();
     }
 

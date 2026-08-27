@@ -199,9 +199,10 @@ would skip the cards entirely and MAUI focus events would never fire.
   in the adjacent row whose screen X is nearest the current card (Netflix
   behaviour) instead of Android's clipped nearest-neighbour pick (which
   tends to reset to row start), and clamps DpadLeft/Right at row edges so
-  focus never leaps rows. The walk unwraps ScrollView padding until the
-  **BindableLayout stack** (one child per card). It must not enter a
-  one-card row's inner Grid — chrome is not a sibling card.
+  focus never leaps rows. Column memory and edge clamps collect **shown
+  focusable leaves** under the row scroller (card roots use
+  BlockDescendants), so a one-card BindableLayout is not mistaken for
+  inner Grid chrome.
   Up from the first row and not-yet-laid-out rows fall through to the
   default search (header reachability, focus-search-failed scrolling).
 - One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using VardyParty.HomeUi;
 using VardyParty.HomeUi.Views;
@@ -9,35 +10,36 @@ namespace VardyParty.HomeUi.Tests;
 public class TvDpadStripWalkTests
 {
     [Fact]
-    public void FindCardStrip_StopsOnBindableLayout_NotInsideOneCardChrome()
+    public void CollectShownFocusables_OneCardRow_IgnoresInnerChrome()
     {
         // Arrange — one-card row: scroller → padding → stack → card → grid chrome.
-        var (scroller, stack, cardOuter) = BuildRow(cardCount: 1, firstCardScreenX: 40);
+        var (scroller, _, cardOuter) = BuildRow(cardCount: 1, firstCardScreenX: 40);
+        var cards = new List<TvDpadStripWalk.INode>();
 
         // Act
-        var strip = TvDpadStripWalk.FindCardStrip(scroller);
+        TvDpadStripWalk.CollectShownFocusables(scroller, cards);
         var atLeft = TvDpadStripWalk.IsAtRowEdge(cardOuter, lastCard: false);
         var atRight = TvDpadStripWalk.IsAtRowEdge(cardOuter, lastCard: true);
 
         // Assert
-        Assert.Same(stack, strip);
-        Assert.Equal(1, strip!.ChildCount);
+        Assert.Single(cards);
+        Assert.True(cardOuter.RepresentsSame(cards[0]));
         Assert.True(atLeft);
         Assert.True(atRight);
     }
 
     [Fact]
-    public void FindCardStrip_MultiCardRow_DoesNotUnwrapIntoFirstCard()
+    public void CollectShownFocusables_MultiCardRow_OneLeafPerCard()
     {
         // Arrange
-        var (scroller, stack, _) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var (scroller, _, _) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var cards = new List<TvDpadStripWalk.INode>();
 
         // Act
-        var strip = TvDpadStripWalk.FindCardStrip(scroller);
+        TvDpadStripWalk.CollectShownFocusables(scroller, cards);
 
         // Assert
-        Assert.Same(stack, strip);
-        Assert.Equal(3, strip!.ChildCount);
+        Assert.Equal(3, cards.Count);
     }
 
     [Fact]
@@ -45,11 +47,10 @@ public class TvDpadStripWalkTests
     {
         // Arrange — adjacent row scrolled so card 0 is off-screen to the left.
         var (targetScroller, _, _) = BuildRow(cardCount: 3, firstCardScreenX: -200);
-        var strip = TvDpadStripWalk.FindCardStrip(targetScroller);
         const int focusedCenterX = 170; // card 0 in the unshifted row (x=0, w=340)
 
         // Act
-        var nearest = TvDpadStripWalk.FindNearestFocusableByCenterX(strip!, focusedCenterX);
+        var nearest = TvDpadStripWalk.FindNearestFocusableByCenterX(targetScroller, focusedCenterX);
 
         // Assert
         Assert.NotNull(nearest);
