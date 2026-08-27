@@ -25,8 +25,10 @@ public partial class MatchCardView : ContentView
     private const string EventFlashAnimation = "MatchEventFlash";
     private const uint HoverScaleMs = 130;
 
-    // 1.045 was invisible from the sofa; 1.09 plus the bright ring reads at 10 feet.
-    private const double FocusScale = 1.09;
+    // 1.045 was invisible from the sofa; 1.09 plus the bright ring reads at
+    // 10 feet. Shared with the scroll math: EnsureFocusedCardVisible inflates
+    // its targets by the overflow this scale actually renders.
+    private const double FocusScale = TvFocusScrollMath.FocusScale;
     private const double ResolvingScale = 1.06;
 
     // Focus moves closer together than this (D-pad autorepeat) skip animation:
@@ -434,7 +436,7 @@ public partial class MatchCardView : ContentView
 
         if (strip != null)
         {
-            ObserveVisual(strip.ScrollToAsync(CardOuter, ScrollToPosition.MakeVisible, true));
+            ScrollStripToFocusedCard(strip);
         }
 
         if (rows != null && row != null)
@@ -453,6 +455,53 @@ public partial class MatchCardView : ContentView
             }
 #endif
             rows.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
+        }
+    }
+
+    /// <summary>
+    /// Field report: "scrolls into view but is sometimes still clipped by
+    /// edge". MakeVisible aligns the card's LAYOUT rect only, but the focused
+    /// card renders +9% scale plus the ring beyond it — a card revealed
+    /// "exactly" clipped its chrome at the viewport edge. Scroll to a target
+    /// computed from the card rect inflated by the real chrome overhead
+    /// (scale overflow at the current card size + scaled ring + comfort pad,
+    /// ~23dp/side on TV). The vertical axis is covered structurally: the row
+    /// item the rows list aligns already wraps the strip's 12dp chrome
+    /// headroom (RowHeight = CardHeight + 24), which exceeds the 7-8dp
+    /// vertical scale overflow at every metrics class.
+    /// </summary>
+    private void ScrollStripToFocusedCard(ScrollView strip)
+    {
+        // Card left edge in strip-content coordinates: sum frame offsets from
+        // the focusable chrome up to (excluding) the strip's content element.
+        double cardLeft = 0;
+        VisualElement? element = CardOuter;
+        while (element != null && !ReferenceEquals(element.Parent, strip))
+        {
+            cardLeft += element.X;
+            element = element.Parent as VisualElement;
+        }
+
+        if (element is null || CardOuter.Width <= 0 || strip.Width <= 0)
+        {
+            // Geometry not settled yet (first-frame focus / detached walk):
+            // the un-inflated reveal beats none at all.
+            ObserveVisual(strip.ScrollToAsync(CardOuter, ScrollToPosition.MakeVisible, true));
+            return;
+        }
+
+        var overhead = TvFocusScrollMath.FocusChromeOverhead(
+            CardOuter.Width, ViewModel?.Layout.FocusRingThickness ?? 3);
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft,
+            CardOuter.Width,
+            overhead,
+            strip.Width,
+            strip.ContentSize.Width,
+            strip.ScrollX);
+        if (target is { } scrollX)
+        {
+            ObserveVisual(strip.ScrollToAsync(scrollX, strip.ScrollY, true));
         }
     }
 

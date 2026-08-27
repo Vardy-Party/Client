@@ -10,6 +10,119 @@ namespace VardyParty.HomeUi.Tests;
 public class TvFocusScrollMathTests
 {
     [Fact]
+    public void FocusChromeOverhead_TvMetrics_MatchesFieldEstimate()
+    {
+        // Arrange — TV card width 300dp, TV focus ring 5dp.
+        const double cardWidth = 300;
+        const double ringThickness = 5;
+
+        // Act
+        var overhead = TvFocusScrollMath.FocusChromeOverhead(cardWidth, ringThickness);
+
+        // Assert — 13.5 scale overflow + 5.45 scaled ring + 4 comfort ≈ 23
+        // per side, the "~24px" clipped-ring estimate from the field report.
+        Assert.Equal(22.95, overhead, precision: 2);
+    }
+
+    [Fact]
+    public void StripTarget_CardChromeAlreadyInsideViewport_NoScroll()
+    {
+        // Arrange — card at 400 with room for chrome on both sides.
+        var target = default(double?);
+
+        // Act
+        target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 400, cardWidth: 300, overhead: 23,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 200);
+
+        // Assert
+        Assert.Null(target);
+    }
+
+    [Fact]
+    public void StripTarget_CardLayoutVisibleButChromeClipped_ScrollsForChrome()
+    {
+        // Arrange — card layout rect ends exactly at the viewport's right
+        // edge (the MakeVisible end state that still clipped the ring).
+        const double cardLeft = 1100;
+        const double cardWidth = 300;
+        const double overhead = 23;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft, cardWidth, overhead,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 200);
+
+        // Assert — right edge + chrome fits: 1100 + 300 + 23 - 1200 = 223.
+        Assert.Equal(223, target);
+    }
+
+    [Fact]
+    public void StripTarget_CardOffLeft_AlignsChromeToLeftEdge()
+    {
+        // Arrange
+        const double cardLeft = 500;
+        const double cardWidth = 300;
+        const double overhead = 23;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft, cardWidth, overhead,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 900);
+
+        // Assert — reveal left edge minus chrome: 500 - 23 = 477.
+        Assert.Equal(477, target);
+    }
+
+    [Fact]
+    public void StripTarget_FirstCard_ClampsToContentStart()
+    {
+        // Arrange — first card sits at the strip padding; chrome inflation
+        // would ask for a negative scroll.
+        const double cardLeft = 24;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft, cardWidth: 300, overhead: 23,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 600);
+
+        // Assert
+        Assert.Equal(0, target);
+    }
+
+    [Fact]
+    public void StripTarget_LastCard_ClampsToMaxScroll()
+    {
+        // Arrange — last card at the content end; inflated right edge would
+        // overshoot the scrollable range.
+        const double contentWidth = 4000;
+        const double viewportWidth = 1200;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 3676, cardWidth: 300, overhead: 23,
+            viewportWidth: viewportWidth, contentWidth: contentWidth, currentScrollX: 2000);
+
+        // Assert
+        Assert.Equal(contentWidth - viewportWidth, target);
+    }
+
+    [Fact]
+    public void StripTarget_UnmeasuredGeometry_NoScroll()
+    {
+        // Arrange
+        const double cardWidth = 0;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 100, cardWidth: cardWidth, overhead: 23,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 0);
+
+        // Assert
+        Assert.Null(target);
+    }
+
+    [Fact]
     public void VerticalRevealDelta_RowFullyVisible_NoScroll()
     {
         // Arrange
