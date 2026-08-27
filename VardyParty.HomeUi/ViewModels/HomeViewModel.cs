@@ -22,7 +22,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly IHomeAssetLocator _assets;
     private readonly UiSoundService _sounds;
     private readonly ILogger<HomeViewModel> _logger;
-    private readonly ScoreChangeDetector _scoreChanges = new();
+    private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
     private readonly Queue<StagedStrip> _stagedStrips = new();
@@ -346,7 +346,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             if (resetScores)
             {
-                _scoreChanges.Reset();
+                _matchEvents.Reset();
             }
 
             if (error != null)
@@ -369,7 +369,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
             if (apply != null)
             {
-                if (_scoreChanges.Observe(apply.Display).Count > 0)
+                // The detector sees the FILTERED display list, so games in
+                // hidden leagues are never observed and never fire.
+                var events = _matchEvents.Observe(apply.Display);
+                if (events.Count > 0)
                 {
                     _sounds.Play(UiSound.Goal);
                 }
