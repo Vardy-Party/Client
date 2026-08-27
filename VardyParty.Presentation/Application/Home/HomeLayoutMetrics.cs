@@ -30,28 +30,32 @@ public sealed record HomeLayoutMetrics(
         // rows visible; type/badge sizes stay at the 10-foot floors (status
         // chip >= 15, score >= 34, badge >= 56) and still fit the card box
         // (inner 312x158: status row + badge + two team-name lines).
+        // LeagueIconSize: field-tested up from 30/26/22/20 — the league mark
+        // next to the header title read as a barely-legible dot on a desktop
+        // window. It now sits clearly above the title's line height
+        // (>= ~1.6x LeagueTitleFontSize) so it reads as a proper crest.
         HomeLayoutClass.Tv => new(
             CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
             TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
-            LeagueTitleFontSize: 24, LeagueIconSize: 30, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
+            LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
             PagePadding: 44, RowSpacing: 28, CardSpacing: 16, BrandLogoSize: 68),
 
         HomeLayoutClass.Desktop => new(
             CardWidth: 350, CardHeight: 192, CardCornerRadius: 14, BadgeSize: 54,
             TeamFontSize: 17, ScoreFontSize: 32, StatusFontSize: 13, AggregateFontSize: 12,
-            LeagueTitleFontSize: 20, LeagueIconSize: 26, PageTitleFontSize: 28, PageSubtitleFontSize: 14,
+            LeagueTitleFontSize: 20, LeagueIconSize: 34, PageTitleFontSize: 28, PageSubtitleFontSize: 14,
             PagePadding: 32, RowSpacing: 28, CardSpacing: 16, BrandLogoSize: 58),
 
         HomeLayoutClass.PhoneLandscape => new(
             CardWidth: 300, CardHeight: 168, CardCornerRadius: 12, BadgeSize: 46,
             TeamFontSize: 14, ScoreFontSize: 26, StatusFontSize: 12, AggregateFontSize: 11,
-            LeagueTitleFontSize: 17, LeagueIconSize: 22, PageTitleFontSize: 22, PageSubtitleFontSize: 13,
+            LeagueTitleFontSize: 17, LeagueIconSize: 28, PageTitleFontSize: 22, PageSubtitleFontSize: 13,
             PagePadding: 20, RowSpacing: 20, CardSpacing: 12, BrandLogoSize: 46),
 
         HomeLayoutClass.PhonePortrait => new(
             CardWidth: 268, CardHeight: 160, CardCornerRadius: 12, BadgeSize: 42,
             TeamFontSize: 13, ScoreFontSize: 24, StatusFontSize: 12, AggregateFontSize: 11,
-            LeagueTitleFontSize: 16, LeagueIconSize: 20, PageTitleFontSize: 20, PageSubtitleFontSize: 12,
+            LeagueTitleFontSize: 16, LeagueIconSize: 26, PageTitleFontSize: 20, PageSubtitleFontSize: 12,
             PagePadding: 14, RowSpacing: 18, CardSpacing: 10, BrandLogoSize: 40),
 
         _ => For(HomeLayoutClass.Desktop),

@@ -103,6 +103,30 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_LeagueIconReadsAsAProperMarkNextToTheTitle()
+    {
+        // Arrange: field report — the league icon rendered as a barely-legible
+        // ~26px dot next to a 20px bold title on a desktop window.
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+        var desktop = HomeLayoutMetrics.For(HomeLayoutClass.Desktop);
+        var landscape = HomeLayoutMetrics.For(HomeLayoutClass.PhoneLandscape);
+        var portrait = HomeLayoutMetrics.For(HomeLayoutClass.PhonePortrait);
+
+        // Act
+        var all = new[] { tv, desktop, landscape, portrait };
+
+        // Assert: the icon clears the title's line height on every class
+        // (>= 1.6x the title font size), holds the 10-foot/desktop floors,
+        // and still scales down through the classes.
+        Assert.All(all, m => Assert.True(m.LeagueIconSize >= 1.6 * m.LeagueTitleFontSize));
+        Assert.True(tv.LeagueIconSize >= 38);
+        Assert.True(desktop.LeagueIconSize >= 32);
+        Assert.True(tv.LeagueIconSize > desktop.LeagueIconSize);
+        Assert.True(desktop.LeagueIconSize > landscape.LeagueIconSize);
+        Assert.True(landscape.LeagueIconSize > portrait.LeagueIconSize);
+    }
+
+    [Fact]
     public void Metrics_EveryLayoutClassHasPositiveSizes()
     {
         foreach (HomeLayoutClass layoutClass in Enum.GetValues<HomeLayoutClass>())
