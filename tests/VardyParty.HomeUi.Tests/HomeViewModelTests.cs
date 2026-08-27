@@ -120,21 +120,26 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
-    public void FlushPendingApply_EmptyCatalog_StaysLoading_NeverSettles()
+    public void FlushPendingApply_EmptyDeliveredCatalog_IsReady_ShowsEmptyState()
     {
-        // Arrange & Act: an apply WITHOUT API data (empty pre-API board) must
-        // not settle the crest or flip the subtitle — "ready" strictly means
-        // API games are present (the enriched-first feed guarantees the real
-        // initial board is never empty-as-settled).
-        _sut.UpdateGames(new Dictionary<string, List<Game>>());
+        // Arrange: the enriched service never publishes before its first API
+        // fetch, so ANY non-null board is a real delivery — including a
+        // legitimately empty one (late night, all matches finished: the API
+        // answers 404 and the client delivers an empty board). That must
+        // settle the crest and show the empty state, never spin forever.
+        var emptyDeliveredBoard = new Dictionary<string, List<Game>>();
+
+        // Act
+        _sut.UpdateGames(emptyDeliveredBoard);
         _sut.FlushPendingApply();
 
         // Assert
-        Assert.True(_sut.IsContentLoading);
+        Assert.False(_sut.IsContentLoading);
         Assert.False(_sut.HasGames);
-        Assert.False(_sut.ShowEmptyState);
+        Assert.True(_sut.ShowEmptyState);
         Assert.Empty(_sut.Rows);
         Assert.Equal(0, _sut.GameCount);
+        Assert.NotEqual(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
     }
 
     [Fact]
@@ -246,19 +251,21 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Subtitle_EmptyCatalog_StaysLoading()
+    public void Subtitle_EmptyDeliveredCatalog_Reads0Games_NotLoading()
     {
-        // Arrange: an empty board is a pre-API artifact under the enriched-
-        // first contract — the subtitle must keep reading Loading…, never
-        // "0 games".
+        // Arrange: the service never publishes before its first API fetch, so
+        // an empty non-null board is a genuine delivery (the API answers 404
+        // when its catalog is empty) — the subtitle must read "0 games", and
+        // the crest must settle rather than spin forever.
         _sut.UpdateGames(new Dictionary<string, List<Game>>());
 
         // Act
         _sut.FlushPendingApply();
 
         // Assert
-        Assert.True(_sut.IsContentLoading);
-        Assert.Equal(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
+        Assert.False(_sut.IsContentLoading);
+        Assert.NotEqual(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
+        Assert.Contains("0 games", _sut.Subtitle);
     }
 
     [Fact]

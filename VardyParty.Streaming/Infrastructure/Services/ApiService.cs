@@ -114,6 +114,16 @@ public class ApiService(
                 {
                     using var cts = new CancellationTokenSource(_callTimeout);
                     var response = await httpClient.GetAsync(url, cts.Token);
+
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        // The API answers 404 when its catalog is empty (e.g. late
+                        // night, all matches finished) — a semantic "no games",
+                        // not a failure. Deliver an empty board, never retry.
+                        logger.LogInformation("[Api] Games catalog is empty (404) — returning an empty board");
+                        return new Dictionary<string, List<Game>>();
+                    }
+
                     response.EnsureSuccessStatusCode();
                     var json = await response.Content.ReadAsStringAsync(cts.Token);
                     var parsed = JsonSerializer.Deserialize<Dictionary<string, List<Game>>>(json,
@@ -184,6 +194,14 @@ public class ApiService(
                 {
                     // Do not retry on 401 - credentials/authorization issue needs user action
                     logger.LogWarning("[Api] Received 401 Unauthorized for {Url} - aborting without retry", url);
+                    return null;
+                }
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // 404 is a semantic answer from this API (no streams / no games
+                    // for the request), never transient — retrying cannot change it.
+                    logger.LogInformation("[Api] 404 Not Found for {Url} - not retrying", url);
                     return null;
                 }
 
