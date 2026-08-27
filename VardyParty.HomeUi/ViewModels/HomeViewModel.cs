@@ -282,7 +282,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         // Filter/group off the caller thread. WinAppSDK 1.8 stows a
         // 0xc000027b if we Dispatcher.Dispatch from the Rx/HTTP thread into
-        // WinUI layout; HomeView's UI-thread timer drains this queue instead.
+        // WinUI layout; HomeView drains this queue on the UI thread (timer on
+        // Windows, MainThread on Android/Desktop).
         var display = dict == null
             ? new List<Game>()
             : _leagueFilter.FilterGames(dict.ToDisplay());
@@ -298,7 +299,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>
     /// Drain catalog/error/image work that arrived off the UI thread. Must run
-    /// on the UI thread (HomeView's apply pump).
+    /// on the UI thread (HomeView starts the drain; hosts only call UpdateGames).
     /// </summary>
     public void FlushPendingApply()
     {

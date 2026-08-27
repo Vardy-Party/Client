@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- HomeViewModel lives in the MAUI homepage assembly (ImageSource). CI
+         installs maui-tizen so this restore of HomeUi net11.0 succeeds. -->
+    <UseMaui>true</UseMaui>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+    <PackageReference Update="Microsoft.Extensions.Configuration" Version="11.0.0-preview.7.26381.103" />
+    <ProjectReference Include="..\..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+      <AdditionalProperties>TargetFrameworks=net11.0</AdditionalProperties>
+    </ProjectReference>
+    <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Ports\VardyParty.Ports.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+  </ItemGroup>
+</Project>

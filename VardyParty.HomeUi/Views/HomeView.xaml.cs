@@ -4,11 +4,14 @@ namespace VardyParty.HomeUi.Views;
 /// The shared homepage surface. Embed it in any host page (the Desktop head's
 /// <see cref="HomePage"/>, the MAUI head's HomeHostPage) with a
 /// <see cref="HomeViewModel"/> BindingContext; hosts push games into the view
-/// model and handle <see cref="HomeViewModel.GamePicked"/>.
+/// model and handle <see cref="HomeViewModel.GamePicked"/>. Catalog apply is
+/// owned here: Windows drains a UI timer; Android/Desktop flush on MainThread.
 /// </summary>
 public partial class HomeView : ContentView
 {
+#if WINDOWS
     private IDispatcherTimer? _applyPump;
+#endif
     private HomeViewModel? _wiredViewModel;
 
     public HomeView()
@@ -25,6 +28,7 @@ public partial class HomeView : ContentView
     {
         base.OnBindingContextChanged();
         WireViewModel(ViewModel);
+        DrainIfPending();
     }
 
     private void WireViewModel(HomeViewModel? vm)
@@ -49,29 +53,82 @@ public partial class HomeView : ContentView
     private void OnLoaded(object? sender, EventArgs e)
     {
         WireViewModel(ViewModel);
+        DrainIfPending();
+    }
 
-        if (_applyPump != null)
+    private void OnUnloaded(object? sender, EventArgs e)
+    {
+        // Keep WorkQueued wired: Android handler reconnect Unloads this view
+        // without a later Loaded. The catalog must still be able to drain.
+#if WINDOWS
+        StopApplyPump();
+#endif
+    }
+
+    private void OnWorkQueued() => DrainIfPending();
+
+    private void DrainIfPending()
+    {
+        if (ViewModel?.HasPendingWork != true)
         {
             return;
         }
 
-        // WinAppSDK stows 0xc000027b if catalog apply is Dispatcher.Dispatch'd
-        // from the Rx/HTTP thread. Drain the pending queue on this view's
-        // UI-thread timer instead — same Rows binding on every platform.
-        // The timer runs only while work is queued (TV should not tick at 20 Hz idle).
-        _applyPump = Dispatcher.CreateTimer();
-        _applyPump.Interval = TimeSpan.FromMilliseconds(50);
-        _applyPump.Tick += OnApplyPumpTick;
-        if (ViewModel?.HasPendingWork == true)
+#if WINDOWS
+        // WinAppSDK 1.8 stows 0xc000027b if catalog apply is Dispatcher.Dispatch'd
+        // from the Rx/HTTP thread into WinUI layout. A UI-thread timer drains instead.
+        QueuePumpStart();
+#else
+        // Android TV (and Desktop): IDispatcherTimer often never ticks while the
+        // main thread is skipping hundreds of frames at startup. Flush on the
+        // platform main thread — that is not a WinUI layout Dispatch.
+        if (MainThread.IsMainThread)
+        {
+            ViewModel.FlushPendingApply();
+            return;
+        }
+
+        MainThread.BeginInvokeOnMainThread(() => ViewModel?.FlushPendingApply());
+#endif
+    }
+
+#if WINDOWS
+    private void QueuePumpStart()
+    {
+        if (!Dispatcher.IsDispatchRequired)
+        {
+            EnsureApplyPumpRunning();
+            return;
+        }
+
+        if (!Dispatcher.Dispatch(EnsureApplyPumpRunning))
+        {
+            MainThread.BeginInvokeOnMainThread(EnsureApplyPumpRunning);
+        }
+    }
+
+    private void EnsureApplyPumpRunning()
+    {
+        if (_applyPump == null)
+        {
+            _applyPump = Dispatcher.CreateTimer();
+            _applyPump.Interval = TimeSpan.FromMilliseconds(50);
+            _applyPump.Tick += OnApplyPumpTick;
+        }
+
+        if (ViewModel?.HasPendingWork != true)
+        {
+            return;
+        }
+
+        if (!_applyPump.IsRunning)
         {
             _applyPump.Start();
         }
     }
 
-    private void OnUnloaded(object? sender, EventArgs e)
+    private void StopApplyPump()
     {
-        WireViewModel(null);
-
         if (_applyPump == null)
         {
             return;
@@ -82,27 +139,6 @@ public partial class HomeView : ContentView
         _applyPump = null;
     }
 
-    private void OnWorkQueued()
-    {
-        if (Dispatcher.IsDispatchRequired)
-        {
-            _ = Dispatcher.Dispatch(EnsureApplyPumpRunning);
-            return;
-        }
-
-        EnsureApplyPumpRunning();
-    }
-
-    private void EnsureApplyPumpRunning()
-    {
-        if (_applyPump is not { IsRunning: false })
-        {
-            return;
-        }
-
-        _applyPump.Start();
-    }
-
     private void OnApplyPumpTick(object? sender, EventArgs e)
     {
         ViewModel?.FlushPendingApply();
@@ -111,6 +147,7 @@ public partial class HomeView : ContentView
             _applyPump?.Stop();
         }
     }
+#endif
 
     private void OnSizeChanged(object? sender, EventArgs e)
     {

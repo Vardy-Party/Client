@@ -53,6 +53,7 @@
   <Project Path="tests/VardyParty.Streaming.Tests/VardyParty.Streaming.Tests.csproj" />
   <Project Path="tests/VardyParty.Playback.Tests/VardyParty.Playback.Tests.csproj" />
   <Project Path="tests/VardyParty.Presentation.Tests/VardyParty.Presentation.Tests.csproj" />
+  <Project Path="tests/VardyParty.HomeUi.Tests/VardyParty.HomeUi.Tests.csproj" />
   <Project Path="tests/VardyParty.Hosting.Tests/VardyParty.Hosting.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
   <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />

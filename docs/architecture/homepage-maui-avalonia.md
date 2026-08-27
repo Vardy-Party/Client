@@ -127,9 +127,11 @@ packaging flows are zero-warning again). CI/CD pins a single
 
 ### The Netflix-style UI in XAML terms
 
-- **Rows**: a vertical `CollectionView` of league rows; each row hosts a
-  horizontal `CollectionView` of match cards. Both virtualize, which is the
-  point on 32-bit Android TV hardware.
+- **Rows**: a vertical `CollectionView` of league rows. Each row's cards sit
+  in a horizontal `ScrollView` + `BindableLayout` — **not** a nested
+  `CollectionView`. Nested WinUI ItemsRepeaters are the `0x800710DD` /
+  `0xc000027b` layout defect. Inner strips are not virtualized; that is
+  acceptable for a handful of fixtures per league, not a 30-card row.
 - **Match cards**: home/away names, in-game score, aggregate ("Agg 1-1"),
   kick-off time ("3:00 PM" / "Tomorrow 12:30 PM" / "Sep 02, 8:00 PM"),
   playing minutes with stoppage ("45+2'"), HT/FT/extra time/penalties/
@@ -187,12 +189,10 @@ would skip the cards entirely and MAUI focus events would never fire.
 - The wiring follows the platform view (`HandlerChanged` + `Loaded` +
   `BindingContextChanged`), so handler-timing and RecyclerView recycling
   can never leave a card unfocusable, and it is torn down on `Unloaded`.
-- On focus gained the card calls `ScrollTo(..., MakeVisible, animate: true)`
-  on both its horizontal strip and the vertical rows list — the MAUI
-  Android handler maps animated ScrollTo to RecyclerView smooth scrolling
-  (`ScrollHelper.AnimateScrollToPosition` → `SmoothScrollToPosition`), so
-  crossing the viewport edge slides instead of snapping. Native RecyclerView
-  focus scrolling alone reveals a card only partially, clipping the ring.
+- On focus gained the card scrolls itself fully on-screen: the row
+  `ScrollView` via `ScrollToAsync(..., MakeVisible)` and the outer rows
+  `CollectionView` via `ScrollTo`. Native focus scrolling alone often
+  reveals a card only partially, clipping the ring.
 - **Column memory** (`TvDpadFocusRouter`): a native `KeyPress` listener on
   the focused card routes DpadDown/Up to the card in the adjacent row whose
   screen X is nearest the current card (Netflix behaviour) instead of
@@ -281,6 +281,10 @@ be turned off in the menu's Settings section (persisted per platform).
    libvlc open its own native video window; the in-app "Now Playing"
    overlay owns the Close control. libvlc is initialised lazily on first
    play so machines without VLC still run the homepage.
+4. **Catalog apply must not `Dispatcher.Dispatch` from Rx into WinUI**:
+   queue on `HomeViewModel`, drain on the UI thread. Windows: idle
+   `IDispatcherTimer`. Android/Desktop: `MainThread` (TV Choreographer
+   skips starve the timer). Hosts must not flush from the subscription.
 
 ## CI shape
 
@@ -419,26 +423,35 @@ games update renders, and hardened the remaining path end to end:
   is ever raised for them. It is wired as the first statement of the WinUI
   `App` constructor (`Application.Current` is valid from the base ctor, so
   even `InitializeComponent` failures are covered), logs exception + stack
-  via `WindowsEventLogger.Fatal`, and marks the exception handled so the
-  app survives where possible.
+  via `WindowsEventLogger.Fatal`, and leaves `e.Handled = false` so a
+  remaining uncaught XAML-thread throw is still visible rather than
+  swallowed.
 - **Serialized + coalesced games publishes** (`EnrichedGameService`): the
   API and BBC pollers each ended in `RunMatching` → `_subject.OnNext` with
   no synchronization, so `GamesStream` could emit from two threads at once,
   and the two startup fetches published two full boards ~1s apart — a full
-  board reset mid-first-materialization of the nested CollectionViews is
-  WinUI's documented 0x800710DD failure mode, making this the leading crash
-  trigger. A private publish lock now serializes the whole match+publish
+  board reset mid-first-materialization used to hit nested CollectionViews
+  (WinUI's documented 0x800710DD failure mode). The shared catalog is no
+  longer nested Repeaters; coalescing still avoids two full boards ~1s
+  apart at startup. A private publish lock now serializes the whole match+publish
   body, and the startup burst is coalesced: if the API fetch wins the race
   its standalone publish is skipped (at most once, ever) and the initial
   BBC completion — success or failure — publishes the one enriched board; a
   3s grace fallback publishes the API-only board if BBC hangs. Steady-state
   live-score publishes are never delayed (no debounce; the skip is spent
   after startup).
+- **Queued UI apply** (`HomeViewModel` / `HomeView`): catalog, errors, and
+  badge assigns are queued off the Rx/HTTP thread. Windows drains that
+  queue from a UI-thread `IDispatcherTimer` (must not `Dispatcher.Dispatch`
+  apply into WinUI layout). Android and Desktop flush via
+  `MainThread.BeginInvokeOnMainThread` — TV startup often skips hundreds of
+  Choreographer frames, so the idle timer never ticks and the crest would
+  spin forever. Hosts only call `UpdateGames`; `HomeView` owns the drain.
 - **Single-threaded goal detector** (`HomeViewModel`): the
-  `ScoreChangeDetector`'s plain `Dictionary` is now only touched inside the
-  dispatched `Apply` (and `ResetScoreObservations` dispatches too), so it
-  is single-threaded by construction rather than by the publisher's lock
-  discipline.
+  `ScoreChangeDetector`'s plain `Dictionary` is now only touched inside
+  `FlushPendingApply` (and `ResetScoreObservations` queues onto that path),
+  so it is single-threaded by construction rather than by the publisher's
+  lock discipline.
 - **No sync-over-async on the dispatcher** (`MauiHomeAssetLocator`):
   `ResolveLeagueLogoPath` blocked on `OpenAppPackageFileAsync` with
   `GetAwaiter().GetResult()` and is reached on the UI thread at first
@@ -463,6 +476,9 @@ games update renders, and hardened the remaining path end to end:
   1.8 stowed-exception crash into logged, survivable failures — needs a
   launch check on the affected machine (use `VARDYPARTY_NO_CHROME=1` to
   bisect if anything still misbehaves).
+- **Crest settle / first catalog paint**: the board leaving loading can
+  freeze the header spin mid-turn; polish that handoff later. Inner
+  `BindableLayout` strips are not virtualized.
 
 ## Risk register
 
