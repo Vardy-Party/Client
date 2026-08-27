@@ -11,9 +11,6 @@ on:
         type: boolean
         default: true
 
-env:
-  RELEASE_ASSET_TAG: ${{ replace(github.ref_name, '/', '-') }}
-
 jobs:
   create-release:
     name: Create GitHub Release
@@ -42,6 +39,9 @@ jobs:
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
@@ -85,6 +85,9 @@ jobs:
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
@@ -128,6 +131,9 @@ jobs:
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
@@ -165,6 +171,9 @@ jobs:
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
@@ -210,6 +219,9 @@ jobs:
       HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
