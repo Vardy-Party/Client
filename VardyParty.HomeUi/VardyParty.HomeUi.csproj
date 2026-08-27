@@ -16,8 +16,11 @@
 			TargetFramework negotiation intact (see VardyParty.csproj and
 			VardyParty.Desktop.csproj).
 		-->
-		<!-- Linux (this CI/dev VM): Desktop head TFM + Android. -->
-		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net11.0;net11.0-android</TargetFrameworks>
+		<!-- Linux local Desktop: net11.0 only so `dotnet run` does not require
+		     the android workload. CI and explicit Android-on-Linux builds still
+		     cross-target (GitHub Actions sets CI=true). -->
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true' AND '$(CI)' != 'true' AND '$(IncludeAndroidTfm)' != 'true'">net11.0</TargetFrameworks>
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true' AND ('$(CI)' == 'true' OR '$(IncludeAndroidTfm)' == 'true')">net11.0;net11.0-android</TargetFrameworks>
 		<!-- macOS CI: plain TFM only (the ios/maccatalyst heads consume net11.0). -->
 		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0</TargetFrameworks>
 		<!-- Windows CI: only the Windows TFM (CI installs only maui-windows). -->
