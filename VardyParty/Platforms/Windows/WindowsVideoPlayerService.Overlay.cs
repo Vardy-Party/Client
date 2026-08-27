@@ -170,6 +170,7 @@ namespace VardyParty.Platforms.Windows
                 if (nativeWindow is not null)
                     nativeWindow.Content = playerGrid;
                 playerOverlayAttached = true;
+                if (matchEventHandler == null) InitializeMatchToastOverlay();
                 _host._logger.LogInformation("Player grid set as window content");
             }
 
@@ -182,6 +183,7 @@ namespace VardyParty.Platforms.Windows
                     nativeWindow.Content = restored;
                 }
 
+                TeardownMatchToastOverlay();
                 playerOverlayAttached = false;
             }
 
