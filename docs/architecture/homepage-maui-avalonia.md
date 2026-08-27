@@ -193,7 +193,12 @@ would skip the cards entirely and MAUI focus events would never fire.
   `ScrollView` via `ScrollToAsync(CardOuter, MakeVisible)` (posted on
   Android so the 1.09 scale + ring are included) and the outer rows
   `CollectionView` via `ScrollTo`. Native focus scrolling alone often
-  reveals a card only partially, clipping the ring.
+  reveals a card only partially, clipping the ring. **Scroll-into-view has
+  exactly one owner per platform**: on Android the native `FocusChange`
+  handler owns it (posted after the next frame — the reliable path once
+  the scale/ring have applied) and the MAUI `Focused` handler scrolls only
+  when the native TV bridge is not wired; previously both fired, issuing
+  two `ScrollToAsync` calls per D-pad move.
 - **Column memory** (`TvDpadFocusRouter` / `TvDpadStripWalk`): a native
   `KeyPress` listener on the focused card routes DpadDown/Up to the card
   in the adjacent row whose screen X is nearest the current card (Netflix
@@ -202,7 +207,10 @@ would skip the cards entirely and MAUI focus events would never fire.
   focus never leaps rows. Column memory and edge clamps collect **shown
   focusable leaves** under the row scroller (card roots use
   BlockDescendants), so a one-card BindableLayout is not mistaken for
-  inner Grid chrome.
+  inner Grid chrome. `TvDpadStripWalk` carries only that surface
+  (leaf collection + nearest-X + edge detection); its unit tests are pure
+  geometry over simplified fakes — traversal against the real
+  MAUI/Android handler tree is device-only coverage.
   Up from the first row and not-yet-laid-out rows fall through to the
   default search (header reachability, focus-search-failed scrolling).
 - One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
@@ -243,6 +251,30 @@ the subtitle beneath, on every adaptive layout
   response when TV focus enters the header (the Menu button). Same
   performance discipline as the cards — opacity/transform only, everything
   aborted on unload.
+- **Lifecycle decisions** live in `BrandCrestSpinMachine`, a pure,
+  clock-injectable state machine (extending the `BrandCrestSpin` helpers);
+  `BrandLogoView` executes the returned steps and feeds animation facts
+  back in, so the rules below are unit-tested headless:
+  - **Restart after a layout abort is deferred, never dispatched.** On
+    Windows the restart rides `HomeView`'s 50 ms apply pump
+    (`PumpRequested`/`PumpCrest`, pump runs while `HasPendingCrestWork`);
+    `Dispatcher.Dispatch` from the animation-finished callback was the
+    same layout-adjacent-queueing class that stowed
+    0x800710DD/0xc000027b. Android/Desktop restart via a posted
+    continuation, matching the catalog's MainThread flush.
+  - **Settle is guaranteed without any `IDispatcherTimer`** (Android TV
+    starves timers under Choreographer load). `OnCatalogApplied` always
+    queues the settle — even while `ShouldSpin` is still true — so a live
+    turn stops repeating and settles from its own cycle-completion
+    callback, a layout-killed spinner settles immediately, an aborted
+    ease retries from the deferred tick, and a settle still unresolved
+    after `SettleOverdueMs` (turn + ease + slack) **snaps** to face-on
+    with direct property writes layout cannot abort. Invariant: once
+    content is ready the crest always reaches face-on rest, on every
+    platform.
+  - **The settle never reverses through the coin-edge**: angles at or past
+    180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — the
+    edge-on freeze case — rests at 360, not 0.
 
 ### UI sound design
 
@@ -460,6 +492,10 @@ games update renders, and hardened the remaining path end to end:
   `MainThread.BeginInvokeOnMainThread` — TV startup often skips hundreds of
   Choreographer frames, so the idle timer never ticks and the crest would
   spin forever. Hosts only call `UpdateGames`; `HomeView` owns the drain.
+  The crest's deferred work (restart after a layout abort, settle
+  retries/snap) rides the same channels: the Windows pump keeps ticking
+  while `BrandLogoView.HasPendingCrestWork`, and Android/Desktop use
+  posted continuations — the crest never owns a timer.
 - **Single-threaded goal detector** (`HomeViewModel`): the
   `ScoreChangeDetector`'s plain `Dictionary` is now only touched inside
   `FlushPendingApply` (and `ResetScoreObservations` queues onto that path),
