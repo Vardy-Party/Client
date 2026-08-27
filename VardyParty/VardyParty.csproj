@@ -307,8 +307,9 @@
     -->
     <ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-      <!-- Linux HomeUi is net11.0-only; this head must name the android TFM. -->
-      <AdditionalProperties Condition="'$(TargetFramework)' == 'net11.0-android'">TargetFrameworks=net11.0-android</AdditionalProperties>
+      <!-- Restore does not set TargetFramework, so this cannot be gated on the
+           inner TFM. Linux HomeUi is net11.0-only; this head is android-only. -->
+      <AdditionalProperties Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">TargetFrameworks=net11.0-android</AdditionalProperties>
     </ProjectReference>
     <!-- Strip MAUI TargetFrameworks/RID so net11.0 domain libraries restore as net11.0, not NETSDK1005. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">

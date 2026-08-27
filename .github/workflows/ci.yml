@@ -268,6 +268,11 @@ jobs:
         run: |
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
+      # Linux HomeUi defaults to net11.0 (unit tests / Desktop). The head restore
+      # above may leave HomeUi assets without net11.0-android; --no-restore build
+      # then fails NETSDK1005. Restore HomeUi for the android TFM with no RID.
+      - name: Restore HomeUi for net11.0-android
+        run: dotnet restore VardyParty.HomeUi/VardyParty.HomeUi.csproj --ignore-failed-sources -p:TargetFrameworks=net11.0-android
       - name: Build Android app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-android --no-restore -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false
       - name: Upload artifact
