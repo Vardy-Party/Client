@@ -622,6 +622,7 @@ namespace VardyParty.Platforms.Android
 
             SubscribeToGamesSnapshot();
             SubscribeToStreamSwitching();
+            InitializeMatchToast(root, density);
 
             if (!string.IsNullOrEmpty(_m3u8Url))
             {
@@ -766,6 +767,7 @@ namespace VardyParty.Platforms.Android
         protected override void OnStop()
         {
             StopAndReleasePlayer(release: false);
+            MatchToastOnStop();
             base.OnStop();
         }
 
@@ -778,6 +780,7 @@ namespace VardyParty.Platforms.Android
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
                 RemoveCallback(_overlayHandler, _overlayHideRunnable);
+                MatchToastOnDestroy();
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
