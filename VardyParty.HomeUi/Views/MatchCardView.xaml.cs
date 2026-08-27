@@ -280,7 +280,18 @@ public partial class MatchCardView : ContentView
     {
         ViewModel?.FocusMoved();
         EnterHighlight();
+#if ANDROID
+        // When the native TV focus bridge is wired, OnNativeFocusChange owns
+        // scroll-into-view (it posts EnsureFocusedCardVisible after the next
+        // frame, which is the reliable path once the scale/ring have applied).
+        // Scrolling here too issued two ScrollToAsync calls per D-pad move.
+        if (_wiredNative is null)
+        {
+            EnsureFocusedCardVisible();
+        }
+#else
         EnsureFocusedCardVisible();
+#endif
     }
 
     private void OnCardUnfocused(object? sender, FocusEventArgs e) => ExitHighlight();
