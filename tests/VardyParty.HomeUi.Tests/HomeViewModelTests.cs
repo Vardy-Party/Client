@@ -312,6 +312,197 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.NotNull(liveCard.HomeBadge);
     }
 
+    [Fact]
+    public void FlushPendingApply_Refresh_UpdatesCardsInPlace_SameInstances()
+    {
+        // Arrange: same fixture, fresh Game instance with a new score.
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        var row = _sut.Rows[0];
+        var card = row.Cards[0];
+
+        // Act
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        // Assert: no re-materialization — the SAME row and card instances,
+        // with updated INPC properties.
+        Assert.Same(row, _sut.Rows[0]);
+        Assert.Same(card, _sut.Rows[0].Cards[0]);
+        Assert.Equal("1 - 0", card.ScoreText);
+        Assert.Contains("23", card.StatusText);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_PreservesLoadedBadgesAndLeagueIcon()
+    {
+        // Arrange: a badge already loaded on the card, an icon on the row.
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        var badge = new FileImageSource { File = "loaded-badge.png" };
+        var icon = new FileImageSource { File = "league-icon.png" };
+        _sut.Rows[0].Cards[0].HomeBadge = badge;
+        _sut.Rows[0].LeagueIcon = icon;
+
+        // Act: the same fixture refreshes (same badge URLs).
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 2, awayScore: 1, minute: 60));
+        _sut.FlushPendingApply();
+
+        // Assert: images survive the poll — nothing re-decodes or re-assigns.
+        Assert.Same(badge, _sut.Rows[0].Cards[0].HomeBadge);
+        Assert.Same(icon, _sut.Rows[0].LeagueIcon);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_RemovesGoneCards_AddsNewOnes()
+    {
+        // Arrange: two fixtures shown.
+        _sut.UpdateGames(CatalogWithFixtures("League Alpha", ("Home United", "Away City"), ("North Rovers", "South Wanderers")));
+        _sut.FlushPendingApply();
+        var keptCard = _sut.Rows[0].Cards[0];
+
+        // Act: the second fixture is gone; a third appears.
+        _sut.UpdateGames(CatalogWithFixtures("League Alpha", ("Home United", "Away City"), ("East Athletic", "West Albion")));
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.Equal(2, _sut.Rows[0].Cards.Count);
+        Assert.Same(keptCard, _sut.Rows[0].Cards[0]);
+        Assert.Equal("East Athletic", _sut.Rows[0].Cards[1].HomeTeam);
+        Assert.Equal("2 matches", _sut.Rows[0].MatchCountText);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_FocusedRowNeverMoves()
+    {
+        // Arrange: two leagues shown, focus lands in the first row; the next
+        // poll makes the OTHER league live (a re-tier that would put it on top).
+        _sut.UpdateGames(TwoLeagueCatalog(betaLive: false));
+        _sut.FlushPendingApply();
+        Assert.Equal("League Alpha", _sut.Rows[0].League);
+        _sut.Rows[0].Cards[0].FocusMoved();
+
+        // Act
+        _sut.UpdateGames(TwoLeagueCatalog(betaLive: true));
+        _sut.FlushPendingApply();
+
+        // Assert: the focused row holds its position.
+        Assert.Equal("League Alpha", _sut.Rows[0].League);
+        Assert.Equal("Cup Beta", _sut.Rows[1].League);
+        Assert.True(_sut.Rows[1].HasLiveGames);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_UnfocusedReTier_UsesLiveFirstOrder()
+    {
+        // Arrange: same transition as above but nothing is focused — the
+        // live-set change re-tiers to the builder's live-first order.
+        _sut.UpdateGames(TwoLeagueCatalog(betaLive: false));
+        _sut.FlushPendingApply();
+
+        // Act
+        _sut.UpdateGames(TwoLeagueCatalog(betaLive: true));
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.Equal("Cup Beta", _sut.Rows[0].League);
+    }
+
+    private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
+    {
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)minute)
+            .With(g => g.HomeScore, (int?)homeScore)
+            .With(g => g.AwayScore, (int?)awayScore)
+            .With(g => g.Start, DateTime.UtcNow.AddMinutes(-minute))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = [game],
+        };
+    }
+
+    private Dictionary<string, List<Game>> CatalogWithFixtures(string league, params (string Home, string Away)[] fixtures)
+    {
+        var games = fixtures.Select(f => _fixture.Build<Game>()
+            .With(g => g.Home, f.Home)
+            .With(g => g.Away, f.Away)
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, league)
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.Start, DateTime.UtcNow.AddHours(2))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create()).ToList();
+
+        return new Dictionary<string, List<Game>>
+        {
+            [league] = games,
+        };
+    }
+
+    private Dictionary<string, List<Game>> TwoLeagueCatalog(bool betaLive)
+    {
+        var alpha = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.Start, DateTime.UtcNow.AddHours(1))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        var beta = _fixture.Build<Game>()
+            .With(g => g.Home, "River Town")
+            .With(g => g.Away, "Lake Borough")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "Cup Beta")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, betaLive)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, betaLive ? 12 : (int?)null)
+            .With(g => g.Start, betaLive ? DateTime.UtcNow.AddMinutes(-12) : DateTime.UtcNow.AddHours(2))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = [alpha],
+            ["Cup Beta"] = [beta],
+        };
+    }
+
     private Dictionary<string, List<Game>> CatalogWithOneGame(string home = "Home United")
     {
         var game = _fixture.Build<Game>()

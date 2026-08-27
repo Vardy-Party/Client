@@ -27,6 +27,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly Queue<Action> _pendingUiAssign = new();
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
+    private HashSet<string> _lastLiveLeagues = new(StringComparer.OrdinalIgnoreCase);
+    private string? _focusedLeague;
     private bool _isMenuOpen;
     private string _subtitle = LoadingSubtitle;
     private string _errorMessage = string.Empty;
@@ -391,24 +393,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         var epoch = Interlocked.Increment(ref _imageEpoch);
 
-        Rows.Clear();
-        var rowViewModels = new List<LeagueRowViewModel>(rowModels.Count);
-        foreach (var model in rowModels)
-        {
-            var cards = model.Games
-                .Select(game => new MatchCardViewModel(game, Layout, OnCardPicked, OnCardFocused)
-                {
-                    IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game),
-                })
-                .ToList();
-            var row = new LeagueRowViewModel(model.League, model.HasLiveGames, cards, Layout);
-            rowViewModels.Add(row);
-            Rows.Add(row);
-        }
+        ApplyRowsDiff(rowModels);
 
-        if (!hadGames && rowViewModels.Count > 0 && rowViewModels[0].Cards.Count > 0)
+        if (!hadGames && Rows.Count > 0 && Rows[0].Cards.Count > 0)
         {
-            rowViewModels[0].Cards[0].RequestsInitialFocus = true;
+            Rows[0].Cards[0].RequestsInitialFocus = true;
         }
 
         GameCount = gameCount;
@@ -419,7 +408,140 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         GamesUpdated?.Invoke(gameCount);
 
-        _ = LoadImagesAsync(rowViewModels, epoch);
+        _ = LoadImagesAsync(BuildImagePlan(), epoch);
+    }
+
+    /// <summary>
+    /// In-place board update (replaces the old Clear+rebuild-per-poll):
+    /// <see cref="HomeBoardDiffer"/> plans a sticky ordering — rows keep their
+    /// positions except on live-set transitions, the focused row never moves,
+    /// card order inside a row is stable — and this method mutates the
+    /// ObservableCollections to match: existing card VMs update their INPC
+    /// properties in place, only real additions/removals touch the
+    /// collections. Materialized card views (and loaded badges/icons) survive
+    /// every poll.
+    /// </summary>
+    private void ApplyRowsDiff(IReadOnlyList<LeagueRowModel> rowModels)
+    {
+        var planned = HomeBoardDiffer.PlanRowOrder(
+            Rows.Select(r => r.League).ToList(),
+            rowModels,
+            _lastLiveLeagues,
+            _focusedLeague);
+
+        var plannedLeagues = new HashSet<string>(
+            planned.Select(r => r.League), StringComparer.OrdinalIgnoreCase);
+        for (var i = Rows.Count - 1; i >= 0; i--)
+        {
+            if (!plannedLeagues.Contains(Rows[i].League))
+            {
+                Rows.RemoveAt(i);
+            }
+        }
+
+        for (var i = 0; i < planned.Count; i++)
+        {
+            var model = planned[i];
+            var existingIdx = IndexOfRow(model.League, startAt: i);
+            if (existingIdx < 0)
+            {
+                Rows.Insert(i, CreateRow(model));
+                continue;
+            }
+
+            if (existingIdx != i)
+            {
+                // Re-tier move (rare: live-set transitions only, never the
+                // focused row). Remove+Insert rather than Move: WinUI's
+                // CollectionView Move handling is the platform this repo has
+                // scar tissue with, and moved rows re-materialize anyway.
+                var row = Rows[existingIdx];
+                Rows.RemoveAt(existingIdx);
+                Rows.Insert(i, row);
+            }
+
+            UpdateRowInPlace(Rows[i], model);
+        }
+
+        _lastLiveLeagues = new HashSet<string>(
+            rowModels.Where(r => r.HasLiveGames).Select(r => r.League),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private int IndexOfRow(string league, int startAt)
+    {
+        for (var i = startAt; i < Rows.Count; i++)
+        {
+            if (string.Equals(Rows[i].League, league, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private LeagueRowViewModel CreateRow(LeagueRowModel model) =>
+        new(model.League, model.HasLiveGames, model.Games.Select(CreateCard).ToList(), Layout);
+
+    private MatchCardViewModel CreateCard(Game game) =>
+        new(game, Layout, OnCardPicked, OnCardFocused)
+        {
+            IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game),
+        };
+
+    private void UpdateRowInPlace(LeagueRowViewModel row, LeagueRowModel model)
+    {
+        var planned = HomeBoardDiffer.PlanCardOrder(
+            row.Cards.Select(c => HomeBoardDiffer.GameKey(c.Game)).ToList(),
+            model.Games);
+
+        var plannedKeys = new HashSet<string>(
+            planned.Select(HomeBoardDiffer.GameKey), StringComparer.Ordinal);
+        for (var i = row.Cards.Count - 1; i >= 0; i--)
+        {
+            if (!plannedKeys.Contains(HomeBoardDiffer.GameKey(row.Cards[i].Game)))
+            {
+                row.Cards.RemoveAt(i);
+            }
+        }
+
+        for (var i = 0; i < planned.Count; i++)
+        {
+            var game = planned[i];
+            var key = HomeBoardDiffer.GameKey(game);
+            var existingIdx = IndexOfCard(row, key, startAt: i);
+            if (existingIdx < 0)
+            {
+                row.Cards.Insert(i, CreateCard(game));
+                continue;
+            }
+
+            if (existingIdx != i)
+            {
+                var card = row.Cards[existingIdx];
+                row.Cards.RemoveAt(existingIdx);
+                row.Cards.Insert(i, card);
+            }
+
+            row.Cards[i].UpdateFrom(game);
+            row.Cards[i].IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game);
+        }
+
+        row.Refresh(model.HasLiveGames);
+    }
+
+    private static int IndexOfCard(LeagueRowViewModel row, string key, int startAt)
+    {
+        for (var i = startAt; i < row.Cards.Count; i++)
+        {
+            if (string.Equals(HomeBoardDiffer.GameKey(row.Cards[i].Game), key, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private void EnqueueUiAssign(Action assign)
@@ -478,35 +600,78 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private async Task LoadImagesAsync(IReadOnlyList<LeagueRowViewModel> rows, int epoch)
+    private sealed record RowImagePlan(
+        LeagueRowViewModel Row,
+        Game? IconGame,
+        IReadOnlyList<CardImagePlan> Cards);
+
+    private sealed record CardImagePlan(
+        MatchCardViewModel Card,
+        string? HomeBadgeUrl,
+        string? AwayBadgeUrl);
+
+    /// <summary>
+    /// Snapshot of the image work still missing, taken ON the UI thread: the
+    /// row/card collections are mutated in place by later applies, so the
+    /// background loader must never iterate them. With in-place diff updates
+    /// most refreshes produce an empty plan — icons and badges survive on the
+    /// long-lived VMs (no per-poll re-decode; the loader's URL-keyed cache is
+    /// only consulted for genuinely new fixtures).
+    /// </summary>
+    private IReadOnlyList<RowImagePlan> BuildImagePlan()
     {
-        foreach (var row in rows)
+        var plan = new List<RowImagePlan>(Rows.Count);
+        foreach (var row in Rows)
+        {
+            var cards = new List<CardImagePlan>();
+            foreach (var card in row.Cards)
+            {
+                var homeUrl = card.HomeBadge == null ? card.Game.HomeBadgeUrl : null;
+                var awayUrl = card.AwayBadge == null ? card.Game.AwayBadgeUrl : null;
+                if (homeUrl != null || awayUrl != null)
+                {
+                    cards.Add(new CardImagePlan(card, homeUrl, awayUrl));
+                }
+            }
+
+            var iconGame = row.LeagueIcon == null ? row.Cards.FirstOrDefault()?.Game : null;
+            if (iconGame != null || cards.Count > 0)
+            {
+                plan.Add(new RowImagePlan(row, iconGame, cards));
+            }
+        }
+
+        return plan;
+    }
+
+    private async Task LoadImagesAsync(IReadOnlyList<RowImagePlan> plan, int epoch)
+    {
+        foreach (var rowPlan in plan)
         {
             if (Volatile.Read(ref _imageEpoch) != epoch)
             {
                 return;
             }
 
-            var firstGame = row.Cards.FirstOrDefault()?.Game;
-            if (firstGame != null)
+            if (rowPlan.IconGame != null)
             {
-                var iconPath = await _assets.ResolveLeagueLogoPathAsync(firstGame).ConfigureAwait(false);
+                var iconPath = await _assets.ResolveLeagueLogoPathAsync(rowPlan.IconGame).ConfigureAwait(false);
                 var icon = await _images.LoadLocalAsync(iconPath).ConfigureAwait(false);
                 if (icon != null && Volatile.Read(ref _imageEpoch) == epoch)
                 {
-                    EnqueueUiAssign(() => row.LeagueIcon = icon);
+                    EnqueueUiAssign(() => rowPlan.Row.LeagueIcon = icon);
                 }
             }
 
-            foreach (var card in row.Cards)
+            foreach (var cardPlan in rowPlan.Cards)
             {
                 if (Volatile.Read(ref _imageEpoch) != epoch)
                 {
                     return;
                 }
 
-                var home = await _images.LoadRemoteAsync(card.Game.HomeBadgeUrl).ConfigureAwait(false);
-                var away = await _images.LoadRemoteAsync(card.Game.AwayBadgeUrl).ConfigureAwait(false);
+                var home = await _images.LoadRemoteAsync(cardPlan.HomeBadgeUrl).ConfigureAwait(false);
+                var away = await _images.LoadRemoteAsync(cardPlan.AwayBadgeUrl).ConfigureAwait(false);
                 if (home == null && away == null) continue;
                 if (Volatile.Read(ref _imageEpoch) != epoch)
                 {
@@ -515,8 +680,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
                 EnqueueUiAssign(() =>
                 {
-                    if (home != null) card.HomeBadge = home;
-                    if (away != null) card.AwayBadge = away;
+                    if (home != null) cardPlan.Card.HomeBadge = home;
+                    if (away != null) cardPlan.Card.AwayBadge = away;
                 });
             }
         }
@@ -559,7 +724,16 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         NotifyWorkQueued();
     }
 
-    private void OnCardFocused(MatchCardViewModel card) => OnFocusPulse();
+    /// <summary>
+    /// Focus tracking feeds the differ's focus-row protection: the row holding
+    /// the focused card never moves on refresh (not even on live-set
+    /// re-tiers). UI-thread only, like all focus callbacks.
+    /// </summary>
+    private void OnCardFocused(MatchCardViewModel card)
+    {
+        _focusedLeague = Rows.FirstOrDefault(r => r.Cards.Contains(card))?.League ?? _focusedLeague;
+        OnFocusPulse();
+    }
 
     private void NotifyWorkQueued() => WorkQueued?.Invoke();
 
