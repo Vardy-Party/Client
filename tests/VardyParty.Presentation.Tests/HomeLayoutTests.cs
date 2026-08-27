@@ -177,6 +177,24 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_FlatChromeOnTvAndPhones_FullChromeOnDesktop()
+    {
+        // Arrange & Act: composition shadows x ~37 cards are the biggest
+        // raster line-item everywhere; only Desktop (few visible cards, GPU
+        // headroom, 2-foot viewing distance) keeps the full treatment.
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+        var desktop = HomeLayoutMetrics.For(HomeLayoutClass.Desktop);
+        var landscape = HomeLayoutMetrics.For(HomeLayoutClass.PhoneLandscape);
+        var portrait = HomeLayoutMetrics.For(HomeLayoutClass.PhonePortrait);
+
+        // Assert
+        Assert.True(tv.FlatCardChrome);
+        Assert.True(landscape.FlatCardChrome);
+        Assert.True(portrait.FlatCardChrome);
+        Assert.False(desktop.FlatCardChrome);
+    }
+
+    [Fact]
     public void Metrics_LeagueSectionsGetRealSeparation()
     {
         // Arrange: field report — league sections ran together, the next

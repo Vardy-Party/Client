@@ -83,17 +83,28 @@ public sealed record HomeLayoutMetrics(
         // and hold arm's-length floors (badge >= 38, score >= 22, team >= 12
         // at typical phone density). Chrome (status chip, league header,
         // page furniture, spacing) is unchanged — it read fine in the field.
+        // FlatCardChrome on phones too: shadows x ~37 cards (card drop shadow
+        // + four badge blurs each) are the biggest raster line-item on ANY
+        // renderer — phones are stronger than the TV box but spend that
+        // strength on 60fps touch scrolling, and the TV evidence (the blurs
+        // were a large slice of the full-tree pass) transfers directly. The
+        // flat treatment also keeps phones visually consistent with TV.
+        // Desktop keeps the full chrome: a handful of visible cards, real GPU
+        // headroom, and a 2-foot viewing distance where the depth cues earn
+        // their cost.
         HomeLayoutClass.PhoneLandscape => new(
             CardWidth: 272, CardHeight: 150, CardCornerRadius: 12, BadgeSize: 42,
             TeamFontSize: 13, ScoreFontSize: 24, StatusFontSize: 12, AggregateFontSize: 11,
             LeagueTitleFontSize: 17, LeagueIconSize: 28, PageTitleFontSize: 22, PageSubtitleFontSize: 13,
-            PagePadding: 20, RowSpacing: 20, CardSpacing: 12, BrandLogoSize: 46),
+            PagePadding: 20, RowSpacing: 20, CardSpacing: 12, BrandLogoSize: 46,
+            FlatCardChrome: true),
 
         HomeLayoutClass.PhonePortrait => new(
             CardWidth: 244, CardHeight: 140, CardCornerRadius: 12, BadgeSize: 38,
             TeamFontSize: 12, ScoreFontSize: 22, StatusFontSize: 12, AggregateFontSize: 11,
             LeagueTitleFontSize: 16, LeagueIconSize: 26, PageTitleFontSize: 20, PageSubtitleFontSize: 12,
-            PagePadding: 14, RowSpacing: 18, CardSpacing: 10, BrandLogoSize: 40),
+            PagePadding: 14, RowSpacing: 18, CardSpacing: 10, BrandLogoSize: 40,
+            FlatCardChrome: true),
 
         _ => For(HomeLayoutClass.Desktop),
     };
