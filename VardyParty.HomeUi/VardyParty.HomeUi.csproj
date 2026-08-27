@@ -16,12 +16,12 @@
 			TargetFramework negotiation intact (see VardyParty.csproj and
 			VardyParty.Desktop.csproj).
 		-->
-		<!-- Linux default is net11.0 only (Desktop, unit tests, maui-tizen).
-		     The MAUI head opts into net11.0-android via AdditionalProperties on
-		     its ProjectReference — listing android here made HomeUi.Tests
-		     restore fail NETSDK1147 on CI (P2P AdditionalProperties does not
-		     always win on the restore graph). -->
-		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net11.0</TargetFrameworks>
+		<!-- Linux: both TFMs so the MAUI head restore has net11.0-android.
+		     Unit tests set HomeUiTargetFrameworks=net11.0 (job env / -p:) so
+		     they do not restore the android workload. Desktop still pins
+		     TargetFrameworks=net11.0 on its ProjectReference. -->
+		<HomeUiTargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true' AND '$(HomeUiTargetFrameworks)' == ''">net11.0;net11.0-android</HomeUiTargetFrameworks>
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">$(HomeUiTargetFrameworks)</TargetFrameworks>
 		<!-- macOS CI: plain TFM only (the ios/maccatalyst heads consume net11.0). -->
 		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0</TargetFrameworks>
 		<!-- Windows CI: only the Windows TFM (CI installs only maui-windows). -->

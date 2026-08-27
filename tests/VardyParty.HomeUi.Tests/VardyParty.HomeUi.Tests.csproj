@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <!-- HomeViewModel lives in the MAUI homepage assembly (ImageSource).
-         Linux HomeUi is net11.0-only; maui-tizen is enough (no android TFM). -->
+         CI sets HomeUiTargetFrameworks=net11.0 so restore skips android. -->
     <UseMaui>true</UseMaui>
   </PropertyGroup>
   <ItemGroup>
@@ -9,7 +9,7 @@
     <PackageReference Update="Microsoft.Extensions.Configuration" Version="11.0.0-preview.7.26381.103" />
     <ProjectReference Include="..\..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
-      <AdditionalProperties>TargetFrameworks=net11.0</AdditionalProperties>
+      <AdditionalProperties>TargetFrameworks=net11.0;HomeUiTargetFrameworks=net11.0</AdditionalProperties>
     </ProjectReference>
     <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
     <ProjectReference Include="..\..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
