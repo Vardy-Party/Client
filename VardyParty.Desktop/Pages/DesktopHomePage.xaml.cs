@@ -119,6 +119,17 @@ public partial class DesktopHomePage : ContentPage
         {
             _logger.LogInformation("[DesktopHome] Sample data mode: skipping auth");
             _viewModel.UpdateGames(SampleGames.Build());
+
+            // Exercise the in-place diff path (goal, minute ticks, add/remove,
+            // live-set re-tier) on the real UI a few seconds in — the headless
+            // CI smoke keeps the app alive for ~20s, so a crash in the refresh
+            // path fails the gate instead of shipping.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                _logger.LogInformation("[DesktopHome] Sample data mode: applying refreshed board");
+                _viewModel.UpdateGames(SampleGames.BuildRefreshed());
+            });
             return;
         }
 

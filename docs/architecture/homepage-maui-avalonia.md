@@ -142,9 +142,10 @@ packaging flows are zero-warning again). CI/CD pins a single
 - **Treated badges**: remote BBC SVG badges are rasterized with `Svg.Skia`
   and wrapped in a metallic gradient ring with a gloss highlight and drop
   shadow; teams without a badge get a monogram disc in their team colour.
-- **Animation, kept cheap**: pulsing live dot (opacity/scale), card scale on
-  hover/focus, a sheen sweep on pointer-over — transforms and opacity only,
-  no per-frame layout.
+- **Animation, kept cheap**: pulsing live dot (opacity/scale; static on the
+  TV class per the idle invariant below), card scale on hover/focus, a
+  sheen sweep on pointer-over — transforms and opacity only, no per-frame
+  layout.
 - **League menu**: overlay bound to the existing `MenuViewModel`/
   `ILeagueFilterService` — checkbox per league, Show all, Reset to defaults.
 
@@ -154,11 +155,15 @@ packaging flows are zero-warning again). CI/CD pins a single
 PhonePortrait** from window size + television idiom, and
 `HomeLayoutMetrics` supplies concrete sizes (card size, badge size, brand
 logo size, font sizes, paddings) which the XAML binds. TV gets 10-foot
-sizing (340×180 cards after two field reports that 440×232 then 360×190
-were oversized — 5 cards per row and ~3.6 league rows now fit a 1080p
-panel; type and badge sizes hold the 10-foot floors, so the TV card box is
-now slightly smaller than desktop's while TV type stays the largest);
-phones get smaller cards and tighter padding, portrait tighter still.
+sizing (300×160 cards after THREE field reports that 440×232, then
+360×190, then 340×180 were oversized — ~5.8 cards per row and ~3.9 league
+rows now fit a 1080p panel; type and badge sizes hold the revised 10-foot
+floors, badge ≥ 50 / score ≥ 30, guarded by
+`Metrics_TvKeepsTenFootReadabilityFloors`); phones get smaller cards and
+tighter padding, portrait tighter still. The TV class also carries the
+raster-budget flags described under "TV performance package" below
+(`FlatCardChrome`, `StagedStripCards`, `FocusRingThickness`,
+`FocusedCardLift`).
 
 Two later field reports (Windows/Desktop) tuned the league header: the
 league icon was raised to read as a proper mark next to the bold title
@@ -207,7 +212,9 @@ would skip the cards entirely and MAUI focus events would never fire.
   `FocusableInTouchMode`), with `DescendantFocusability=BlockDescendants` so
   focus search always lands on the card root, never a child.
 - A native `FocusChange` listener drives the **same** highlight chrome as
-  the MAUI `Focused` path (scale 1.09 + a bright `#AFCBFF` 3 px focus ring)
+  the MAUI `Focused` path (scale 1.09 + the focus ring — on TV a 5 px
+  near-white `#E2ECFF` ring plus a subtle white lift of the card itself,
+  elsewhere the quiet 3 px `#AFCBFF` ring)
   and the focus-tick sound (`UiSoundService.FocusMove` via
   `MatchCardViewModel.FocusMoved`, throttled to one per 40 ms), so whichever
   focus system fires, the card lights up and ticks. The MAUI-side
@@ -282,8 +289,10 @@ the subtitle beneath, on every adaptive layout
   mid-rotation (that froze the crest edge-on). If layout kills the spinner,
   `HomeView` tells the logo after apply and it settles from the last angle.
   After rest, a slow ambient shimmer loop (a low-opacity sheen crosses the
-  crest for a quarter of a 6 s loop), and a subtle scale + glow + sheen
-  response when TV focus enters the header (the Menu button). Same
+  crest for a quarter of a 6 s loop) — **suspended entirely on the TV class**
+  (`HomeIdleAnimationPolicy.AllowAmbientCrestShimmer`; the idle TV homepage
+  must schedule zero recurring animation work) — and a subtle scale + glow +
+  sheen response when TV focus enters the header (the Menu button). Same
   performance discipline as the cards — opacity/transform only, everything
   aborted on unload.
 - **Lifecycle decisions** live in `BrandCrestSpinMachine`, a pure,
@@ -298,15 +307,17 @@ the subtitle beneath, on every adaptive layout
     0x800710DD/0xc000027b. Android/Desktop restart via a posted
     continuation, matching the catalog's MainThread flush.
   - **Settle is guaranteed without any `IDispatcherTimer`** (Android TV
-    starves timers under Choreographer load). `OnCatalogApplied` always
-    queues the settle — even while `ShouldSpin` is still true — so a live
-    turn stops repeating and settles from its own cycle-completion
-    callback, a layout-killed spinner settles immediately, an aborted
-    ease retries from the deferred tick, and a settle still unresolved
-    after `SettleOverdueMs` (turn + ease + slack) **snaps** to face-on
-    with direct property writes layout cannot abort. Invariant: once
-    content is ready the crest always reaches face-on rest, on every
-    platform.
+    starves timers under Choreographer load). `CatalogApplied` queues the
+    settle **only when the apply carried API data** — "ready" strictly
+    means API games are present, so the BehaviorSubject's null seed and
+    empty pre-API boards keep the crest spinning (they used to settle it
+    onto a "0 games" board). When content IS ready, a live turn stops
+    repeating and settles from its own cycle-completion callback, a
+    layout-killed spinner settles immediately, an aborted ease retries
+    from the deferred tick, and a settle still unresolved after
+    `SettleOverdueMs` (turn + ease + slack) **snaps** to face-on with
+    direct property writes layout cannot abort. Invariant: once content
+    is ready the crest always reaches face-on rest, on every platform.
   - **The settle never reverses through the coin-edge**: angles at or past
     180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — the
     edge-on freeze case — rests at 360, not 0.
@@ -514,12 +525,15 @@ games update renders, and hardened the remaining path end to end:
   (WinUI's documented 0x800710DD failure mode). The shared catalog is no
   longer nested Repeaters; coalescing still avoids two full boards ~1s
   apart at startup. A private publish lock now serializes the whole match+publish
-  body, and the startup burst is coalesced: if the API fetch wins the race
-  its standalone publish is skipped (at most once, ever) and the initial
-  BBC completion — success or failure — publishes the one enriched board; a
-  3s grace fallback publishes the API-only board if BBC hangs. Steady-state
-  live-score publishes are never delayed (no debounce; the skip is spent
-  after startup).
+  body, and the startup contract is **enriched-first**: every API publish is
+  held until the initial BBC completion (success or failure) delivers the
+  one enriched board; a 10s valve from polling start
+  (`EnrichedGameService.InitialEnrichmentValve`) releases the freshest
+  API-only board if BBC hangs (the field TV's BBC parse blew the old 3s
+  grace, so users saw "0 games" → scoreless games → a reorder). A null or
+  empty pre-API board is never delivered as a settled state. Steady-state
+  live-score publishes are never delayed (no debounce; the hold is spent
+  once the first board is out).
 - **Queued UI apply** (`HomeViewModel` / `HomeView`): catalog, errors, and
   badge assigns are queued off the Rx/HTTP thread. Windows drains that
   queue from a UI-thread `IDispatcherTimer` (must not `Dispatcher.Dispatch`
@@ -550,6 +564,59 @@ games update renders, and hardened the remaining path end to end:
   the WAVs ship solely as MauiAssets (`assets/Sounds/*.wav`, loaded via
   `Assets.OpenFd`) and an unconditioned Content item earned one XA0101
   "build action not supported" warning per file.
+
+## TV performance package (field-driven, 32-bit cortex-a9 box)
+
+Field evidence from a real Android TV (~37 games / 17 live): Choreographer
+skipped 79–315 frames in a steady ~1.4s rhythm **while the homepage idled**,
+indefinitely. Root cause validated in code: ~17 infinite live-dot pulse
+animations plus the crest's ambient shimmer each tick the MAUI animation
+manager every frame; every tick invalidates, and with ~37 fully-materialized
+BindableLayout cards (each with a composition shadow + 4 badge shadows + a
+diagonal 4-stop gradient) one pass took ~1.3s on the single weak core — the
+next tick was already queued, so the loop never drained. On top of that,
+every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
+
+- **TV idle invariant** (`HomeIdleAnimationPolicy`, unit-tested): on the
+  `HomeLayoutClass.Tv` class NOTHING schedules recurring animation work
+  while the homepage idles. The live dot is a static treatment (no pulse),
+  the crest's ambient shimmer is suspended (sheen only on header focus
+  change), and the crest's loading spin stops all ticking once settled
+  (already timer-less). Every animation on the homepage is now either
+  event-driven and finite (focus glide, sheen sweep, settle) or gated off
+  on TV. The resolving pulse on a picked card is the single sanctioned
+  loop, and only while stream resolution is in flight.
+- **Diff-based in-place updates + sticky ordering** (`HomeBoardDiffer`,
+  pure + unit-tested): polls update existing card VMs' INPC properties in
+  place; rows keep their positions except when the set of live leagues
+  actually changes; the row holding the focused card NEVER moves; card
+  order within a row is stable. Materialized card views and loaded badges
+  survive every poll.
+- **Enriched-first initial reveal**: see the coalescing bullet above (10s
+  valve; "ready" = API data present; empty applies keep the crest spinning
+  and the subtitle on Loading…).
+- **Flat TV card chrome** (`HomeLayoutMetrics.FlatCardChrome`): TV cards
+  drop the card + badge composition shadows (slightly stronger border
+  instead) and use a horizontal 2-stop team wash instead of the diagonal
+  4-stop one. Desktop/phone visuals unchanged.
+- **Staged strip materialization** (`HomeLayoutMetrics.StagedStripCards`,
+  TV: 8): rows are already virtualized by the outer CollectionView
+  (RecyclerView), but a BindableLayout strip materializes every card at
+  bind — so a new row over the budget starts with its first 8 cards and
+  appends the rest in chunks of 4, one per dispatcher message. A newer
+  apply supersedes staged work (epoch-pruned; the diff inserts whatever is
+  still owed).
+- **Back = close, never exit** (`HomeBackDecision`, unit-tested): with any
+  overlay registered (menu, device-code sign-in, stream resolution) Back
+  delegates to the overlay chain; after an overlay consumes Back, app-exit
+  Backs are ignored for a 1.5s grace (a repeat press against a stale frame
+  on the saturated main thread must not exit). `RemoteKeyHandler` isolates
+  every subscriber (per-delegate catch + log) because `OnKeyDown` has no
+  exception guard — a throwing close handler used to be an app crash.
+- **10-foot focus chrome**: TV focus ring is 5px near-white plus a subtle
+  white veil (0.10) lifting the focused card; all transitions remain
+  opacity/transform-only. TV cards took a third size notch to 300×160
+  (badge 50, score 30) for ~5.8 cards per row on 1080p.
 
 ## Follow-ups
 
