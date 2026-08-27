@@ -95,6 +95,10 @@ public partial class HomeView : ContentView
     {
         // Keep WorkQueued wired: Android handler reconnect Unloads this view
         // without a later Loaded. The catalog must still be able to drain.
+        // The interaction pause must not outlive its cooldown timer, or
+        // staged appends could stick paused across a handler reconnect.
+        _stripInteractionCooldown?.Stop();
+        ViewModel?.ResumeStagedStripAppends();
 #if WINDOWS
         StopApplyPump();
 #endif
@@ -163,6 +167,43 @@ public partial class HomeView : ContentView
         {
             PumpStagedStrips();
         }
+    }
+
+    private IDispatcherTimer? _stripInteractionCooldown;
+
+    /// <summary>
+    /// Chunk appends yield to interaction (phone field report: chunks landing
+    /// mid-drag hitch the strip). Any strip scroll event — touch drag, fling,
+    /// or a focus-driven ScrollToAsync — pauses staged appends; a ONE-SHOT
+    /// cooldown timer (restarted per event, so it fires once after the last
+    /// scroll callback) resumes them and re-kicks the pump. Not a recurring
+    /// tick: nothing runs while the strip is idle.
+    /// </summary>
+    private void OnStripScrolled(object? sender, ScrolledEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        vm.PauseStagedStripAppends();
+
+        if (_stripInteractionCooldown == null)
+        {
+            _stripInteractionCooldown = Dispatcher.CreateTimer();
+            _stripInteractionCooldown.Interval = TimeSpan.FromMilliseconds(250);
+            _stripInteractionCooldown.IsRepeating = false;
+            _stripInteractionCooldown.Tick += OnStripInteractionCooldown;
+        }
+
+        _stripInteractionCooldown.Stop();
+        _stripInteractionCooldown.Start();
+    }
+
+    private void OnStripInteractionCooldown(object? sender, EventArgs e)
+    {
+        ViewModel?.ResumeStagedStripAppends();
+        PumpStagedStrips();
     }
 
 #if WINDOWS

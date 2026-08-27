@@ -628,17 +628,31 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private bool _stagedAppendsPaused;
+
+    /// <summary>
+    /// Appends yield to interaction: while a strip ScrollView is being
+    /// dragged/scrolled, chunk appends would land mid-gesture and hitch the
+    /// touch drag (phone field report). The view pauses on scroll events and
+    /// resumes (re-kicking the pump) once the scroll goes quiet. UI thread only.
+    /// </summary>
+    public void PauseStagedStripAppends() => _stagedAppendsPaused = true;
+
+    /// <summary>Scroll idle again: appends may continue (the view re-kicks the pump).</summary>
+    public void ResumeStagedStripAppends() => _stagedAppendsPaused = false;
+
     /// <summary>
     /// Append the next chunk of staged cards (UI thread only; the view posts
     /// one call per dispatcher message so frames and D-pad input interleave).
     /// Returns true while more chunks remain. A newer apply supersedes staged
     /// work: its diff plans against the full board, so stale entries are
-    /// simply dropped.
+    /// simply dropped. While appends are paused (strip scroll in flight) this
+    /// refuses without appending — the view resumes the pump on idle.
     /// </summary>
     public bool MaterializeNextStagedStripChunk()
     {
         PruneStaleStagedStrips();
-        if (_stagedStrips.Count == 0)
+        if (_stagedAppendsPaused || _stagedStrips.Count == 0)
         {
             return false;
         }

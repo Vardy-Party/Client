@@ -97,7 +97,8 @@
                             <ScrollView HeightRequest="{Binding Layout.RowHeight}"
                                         Orientation="Horizontal"
                                         HorizontalScrollBarVisibility="Never"
-                                        VerticalScrollBarVisibility="Never">
+                                        VerticalScrollBarVisibility="Never"
+                                        Scrolled="OnStripScrolled">
                                 <HorizontalStackLayout Spacing="{Binding Layout.CardSpacing}"
                                                        Padding="24,12"
                                                        BindableLayout.ItemsSource="{Binding Cards}">

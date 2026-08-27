@@ -485,6 +485,35 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void MaterializeNextStagedStripChunk_PausedDuringStripScroll_Refuses_ThenResumes()
+    {
+        // Arrange: staged work owed, then a strip drag starts.
+        _sut.Layout.Apply(HomeLayoutClass.Tv);
+        _sut.UpdateGames(CatalogWithUpcomingGames(12));
+        _sut.FlushPendingApply();
+        var shownDuringDrag = _sut.Rows[0].Cards.Count;
+
+        // Act: appends must yield to the interaction.
+        _sut.PauseStagedStripAppends();
+
+        // Assert: refused without appending; the work is still owed.
+        Assert.False(_sut.MaterializeNextStagedStripChunk());
+        Assert.Equal(shownDuringDrag, _sut.Rows[0].Cards.Count);
+        Assert.True(_sut.HasStagedStripWork);
+
+        // Act: scroll idle again — the pump resumes and drains fully.
+        _sut.ResumeStagedStripAppends();
+        var guard = 0;
+        while (_sut.MaterializeNextStagedStripChunk() && ++guard < 10)
+        {
+        }
+
+        // Assert
+        Assert.Equal(12, _sut.Rows[0].Cards.Count);
+        Assert.False(_sut.HasStagedStripWork);
+    }
+
+    [Fact]
     public void FlushPendingApply_NewApplySupersedesStagedWork_NoDuplicates()
     {
         // Arrange: staged work is pending when the next poll lands.
