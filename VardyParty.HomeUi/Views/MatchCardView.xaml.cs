@@ -257,7 +257,17 @@ public partial class MatchCardView : ContentView
         {
             ViewModel?.FocusMoved();
             EnterHighlight();
-            EnsureFocusedCardVisible();
+            // Post: scale/ring and BindableLayout layout may not have settled
+            // on the same focus callback; MakeVisible after the next frame
+            // keeps the whole card (glow included) in the strip.
+            if (sender is global::Android.Views.View native)
+            {
+                native.Post(EnsureFocusedCardVisible);
+            }
+            else
+            {
+                EnsureFocusedCardVisible();
+            }
         }
         else
         {
@@ -292,7 +302,10 @@ public partial class MatchCardView : ContentView
         CollectionView? rows = null;
         LeagueRowViewModel? row = null;
 
-        for (Element? element = this; element != null; element = element.Parent)
+        // Walk from the focusable chrome (CardOuter), not the ContentView
+        // wrapper: BindableLayout parents the MatchCardView, and MakeVisible
+        // must use the same bounds as the 1.09 focus scale + ring.
+        for (Element? element = CardOuter; element != null; element = element.Parent)
         {
             if (row is null && element.BindingContext is LeagueRowViewModel leagueRow)
             {
@@ -315,7 +328,7 @@ public partial class MatchCardView : ContentView
 
         if (strip != null)
         {
-            ObserveVisual(strip.ScrollToAsync(this, ScrollToPosition.MakeVisible, true));
+            ObserveVisual(strip.ScrollToAsync(CardOuter, ScrollToPosition.MakeVisible, true));
         }
 
         if (rows != null && row != null)

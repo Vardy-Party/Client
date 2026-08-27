@@ -85,10 +85,15 @@ public partial class HomeView : ContentView
         if (MainThread.IsMainThread)
         {
             ViewModel.FlushPendingApply();
+            BrandLogo.OnCatalogApplied();
             return;
         }
 
-        MainThread.BeginInvokeOnMainThread(() => ViewModel?.FlushPendingApply());
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            ViewModel?.FlushPendingApply();
+            BrandLogo.OnCatalogApplied();
+        });
 #endif
     }
 
@@ -142,6 +147,7 @@ public partial class HomeView : ContentView
     private void OnApplyPumpTick(object? sender, EventArgs e)
     {
         ViewModel?.FlushPendingApply();
+        BrandLogo.OnCatalogApplied();
         if (ViewModel?.HasPendingWork != true)
         {
             _applyPump?.Stop();
