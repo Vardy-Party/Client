@@ -19,6 +19,13 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
     private const int SvgRasterPixels = 160;
 
     private static readonly HttpClient Http = new();
+
+    // Two-level cache: DISPLAY bytes (PNG for rasterised SVGs, original bytes
+    // otherwise) keyed by source, and ImageSources wrapping them. The byte
+    // level is exposed via LoadRemoteBytesAsync/LoadLocalBytesAsync so
+    // MAUI-less surfaces (the Android video activity's native match-event
+    // banner) render the SAME artwork from the SAME single fetch.
+    private readonly ConcurrentDictionary<string, Task<byte[]?>> _byteCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Task<ImageSource?>> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger? _logger;
 
@@ -30,16 +37,28 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
     public Task<ImageSource?> LoadRemoteAsync(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return Task.FromResult<ImageSource?>(null);
-        return _cache.GetOrAdd(url, LoadRemoteCoreAsync);
+        return _cache.GetOrAdd(url, key => WrapAsImageSourceAsync(LoadRemoteBytesAsync(key)));
     }
 
     public Task<ImageSource?> LoadLocalAsync(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return Task.FromResult<ImageSource?>(null);
-        return _cache.GetOrAdd(path, LoadLocalCoreAsync);
+        return _cache.GetOrAdd(path, key => WrapAsImageSourceAsync(LoadLocalBytesAsync(key)));
     }
 
-    private async Task<ImageSource?> LoadRemoteCoreAsync(string url)
+    public Task<byte[]?> LoadRemoteBytesAsync(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return Task.FromResult<byte[]?>(null);
+        return _byteCache.GetOrAdd(url, LoadRemoteBytesCoreAsync);
+    }
+
+    public Task<byte[]?> LoadLocalBytesAsync(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return Task.FromResult<byte[]?>(null);
+        return _byteCache.GetOrAdd(path, LoadLocalBytesCoreAsync);
+    }
+
+    private async Task<byte[]?> LoadRemoteBytesCoreAsync(string url)
     {
         try
         {
@@ -47,7 +66,7 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
             var extension = Uri.TryCreate(url, UriKind.Absolute, out var uri)
                 ? Path.GetExtension(uri.AbsolutePath)
                 : Path.GetExtension(url);
-            return Decode(bytes, extension, url);
+            return ToDisplayBytes(bytes, extension, url);
         }
         catch (Exception ex)
         {
@@ -56,13 +75,13 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
         }
     }
 
-    private async Task<ImageSource?> LoadLocalCoreAsync(string path)
+    private async Task<byte[]?> LoadLocalBytesCoreAsync(string path)
     {
         try
         {
             if (!File.Exists(path)) return null;
             var bytes = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
-            return Decode(bytes, Path.GetExtension(path), path);
+            return ToDisplayBytes(bytes, Path.GetExtension(path), path);
         }
         catch (Exception ex)
         {
@@ -71,16 +90,16 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
         }
     }
 
-    private ImageSource? Decode(byte[] bytes, string extension, string source)
+    private static async Task<ImageSource?> WrapAsImageSourceAsync(Task<byte[]?> bytesTask)
     {
-        if (extension.Equals(".svg", StringComparison.OrdinalIgnoreCase))
-        {
-            var png = RasterizeSvg(bytes, source);
-            return png == null ? null : ToImageSource(png);
-        }
-
-        return ToImageSource(bytes);
+        var bytes = await bytesTask.ConfigureAwait(false);
+        return bytes == null ? null : ToImageSource(bytes);
     }
+
+    private byte[]? ToDisplayBytes(byte[] bytes, string extension, string source) =>
+        extension.Equals(".svg", StringComparison.OrdinalIgnoreCase)
+            ? RasterizeSvg(bytes, source)
+            : bytes;
 
     private byte[]? RasterizeSvg(byte[] bytes, string source)
     {
