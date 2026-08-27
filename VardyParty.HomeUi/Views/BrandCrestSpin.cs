@@ -11,6 +11,15 @@ public static class BrandCrestSpin
     public const uint SettleMs = 480;
     public const double RestEpsilonDegrees = 1.5;
 
+    /// <summary>
+    /// A requested settle that has waited a full turn plus the ease plus
+    /// slack is stuck (zombie turn after a layout-abort storm): snap to rest
+    /// instead of animating again. Checked from animation callbacks and the
+    /// deferred crest tick — never from an <c>IDispatcherTimer</c>, which
+    /// Android TV starves under Choreographer load.
+    /// </summary>
+    public const uint SettleOverdueMs = TurnMs + SettleMs + 200;
+
     public static double NormalizeDegrees(double angle)
     {
         var n = angle % 360.0;
