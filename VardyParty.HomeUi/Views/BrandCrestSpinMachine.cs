@@ -9,11 +9,17 @@ namespace VardyParty.HomeUi.Views;
 /// injectable for tests. Two invariants are encoded here:
 /// deferred work never runs inline from a layout-adjacent callback (Windows
 /// stowed-exception class — <see cref="Step.Defer"/> rides HomeView's apply
-/// pump on Windows and a posted continuation elsewhere, never an
+/// pump on Windows and a bounded posted-continuation chain elsewhere, never an
 /// <c>IDispatcherTimer</c>), and once a settle is requested the machine keeps
 /// answering with settle steps until <see cref="RestCompleted"/> — snapping
 /// after <see cref="BrandCrestSpin.SettleOverdueMs"/> — so the crest always
-/// reaches face-on rest.
+/// reaches face-on rest. While a settle is pending the machine never answers
+/// <see cref="Step.None"/> for "animation still in flight": it answers
+/// <see cref="Step.Defer"/> so the view's tick chain stays alive and the
+/// overdue snap is evaluated from a tick source that provably fires, even on
+/// backends whose animation completion callbacks never arrive (the Desktop
+/// head's Avalonia preview backend stalls MAUI animation frames, so a "live"
+/// turn can be a zombie that never calls back).
 /// </summary>
 public sealed class BrandCrestSpinMachine
 {
@@ -164,17 +170,18 @@ public sealed class BrandCrestSpinMachine
 
         if (settleAnimationRunning)
         {
-            // The ease is in flight; its finished callback completes or
-            // retries. Restarting it on every catalog/image flush would keep
-            // resetting the 480ms ease.
-            return Step.None;
+            // The ease is in flight; restarting it on every catalog/image
+            // flush would keep resetting the 480ms ease. Defer (not None)
+            // keeps the tick chain alive in case the ease's finished
+            // callback never fires (dead Avalonia animation ticker).
+            return Step.Defer;
         }
 
         if (spinAnimationRunning)
         {
             // The turn stops repeating (ShouldContinueSpin is now false) and
-            // SpinCycleFinished settles — an animation-frame tick that fires
-            // on every platform. Defer also arms the pump/post as watchdog.
+            // SpinCycleFinished settles where animation callbacks work. Defer
+            // arms the pump/tick chain as watchdog for where they do not.
             return Step.Defer;
         }
 
@@ -233,9 +240,13 @@ public sealed class BrandCrestSpinMachine
 
             if (settleAnimationRunning || spinAnimationRunning)
             {
-                // In flight; the animation's own callbacks resolve it (the
-                // Windows pump keeps ticking via HasDeferredWork meanwhile).
-                return Step.None;
+                // Nominally in flight; where animation callbacks fire they
+                // resolve it first. Defer (never None) keeps the tick chain
+                // alive so the overdue check above keeps being evaluated —
+                // on the Desktop head's Avalonia backend a "running"
+                // animation can be a zombie whose callback never comes, and
+                // a None here would kill the only remaining tick source.
+                return Step.Defer;
             }
 
             Spinning = false;

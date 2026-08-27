@@ -127,9 +127,18 @@ public partial class BrandLogoView : ContentView
             case BrandCrestSpinMachine.Step.SnapToRest:
                 ExecuteSettle(snap: true);
                 break;
-            case BrandCrestSpinMachine.Step.Defer:
-                ScheduleCrestTick();
-                break;
+        }
+
+        // Whatever the step was, deferred work left behind arms the tick
+        // chain (Step.Defer always implies HasDeferredWork; SettleAnimated
+        // leaves SettleRequested set until rest). This is the liveness
+        // guarantee: a settle in flight is watched by ticks that do not
+        // depend on animation callbacks — on the Desktop head's Avalonia
+        // backend those callbacks can simply never fire, which froze the
+        // crest mid-turn with no snap to rescue it.
+        if (_crest.HasDeferredWork)
+        {
+            ScheduleCrestTick();
         }
     }
 
@@ -236,23 +245,46 @@ public partial class BrandLogoView : ContentView
     public void PumpCrest() => OnCrestTick();
 #endif
 
+#if !WINDOWS
+    /// <summary>Matches the Windows apply pump's 50ms cadence.</summary>
+    private const int CrestTickIntervalMs = 50;
+
+    private bool _crestTickScheduled;
+#endif
+
     private void ScheduleCrestTick()
     {
 #if WINDOWS
         // Routed through HomeView's 50ms UI-thread apply pump — the same
         // mechanism the catalog apply uses instead of Dispatcher.Dispatch
-        // into WinUI layout.
+        // into WinUI layout. The pump keeps ticking while HasPendingCrestWork.
         PumpRequested?.Invoke();
 #else
-        // Android/Desktop: a posted continuation, like the catalog's
-        // MainThread flush. Deliberately not an IDispatcherTimer — Android TV
-        // skips timer ticks under Choreographer load.
-        Dispatcher.Dispatch(OnCrestTick);
+        // Android/Desktop: a BOUNDED chain of one-shot posted continuations
+        // (Task.Delay → MainThread), like the catalog's MainThread flush.
+        // Deliberately not an IDispatcherTimer (Android TV skips timer ticks
+        // under Choreographer load) and not Dispatcher-driven animation
+        // callbacks (the Desktop head's Avalonia backend can stall them
+        // entirely). The chain terminates: it only re-arms while the machine
+        // has deferred work, and an unresolved settle snaps once overdue —
+        // so an idle homepage schedules zero recurring work (TV invariant).
+        if (_crestTickScheduled)
+        {
+            return;
+        }
+
+        _crestTickScheduled = true;
+        _ = Task.Delay(CrestTickIntervalMs).ContinueWith(
+            _ => MainThread.BeginInvokeOnMainThread(OnCrestTick),
+            TaskScheduler.Default);
 #endif
     }
 
     private void OnCrestTick()
     {
+#if !WINDOWS
+        _crestTickScheduled = false;
+#endif
         if (!IsLoaded)
         {
             return;

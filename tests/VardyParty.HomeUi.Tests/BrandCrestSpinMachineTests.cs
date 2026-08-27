@@ -282,9 +282,13 @@ public class BrandCrestSpinMachineTests
     }
 
     [Fact]
-    public void RequestSettle_EaseAlreadyInFlight_DoesNotRestartIt()
+    public void RequestSettle_EaseAlreadyInFlight_DoesNotRestartIt_ButKeepsTheTickChainAlive()
     {
         // Arrange — image/catalog flushes arrive while the 480ms ease runs.
+        // The ease must not restart (that would keep resetting it), but the
+        // answer is Defer, never None: on the Desktop head's Avalonia backend
+        // a "running" ease can be a zombie whose finished callback never
+        // fires, so the tick chain must stay armed until rest.
         var machine = new BrandCrestSpinMachine();
         machine.BeginLoading();
         machine.RequestSettle(spinAnimationRunning: false, settleAnimationRunning: false, atFaceOnRest: false);
@@ -296,7 +300,8 @@ public class BrandCrestSpinMachineTests
             atFaceOnRest: false);
 
         // Assert
-        Assert.Equal(BrandCrestSpinMachine.Step.None, step);
+        Assert.Equal(BrandCrestSpinMachine.Step.Defer, step);
+        Assert.True(machine.HasDeferredWork);
     }
 
     [Fact]
@@ -324,9 +329,12 @@ public class BrandCrestSpinMachineTests
     }
 
     [Fact]
-    public void DeferredTick_SettlePendingButAnimationsInFlight_WaitsForTheirCallbacks()
+    public void DeferredTick_SettlePendingButAnimationsInFlight_KeepsTheTickChainAlive()
     {
-        // Arrange
+        // Arrange — the nominally-live turn may be a zombie (Avalonia
+        // backend: frames stalled, callbacks dead), so waiting must answer
+        // Defer, never None — a None here would end the posted-continuation
+        // chain and leave nothing to evaluate the overdue snap.
         var now = 0L;
         var machine = new BrandCrestSpinMachine(() => now);
         machine.BeginLoading();
@@ -340,8 +348,8 @@ public class BrandCrestSpinMachineTests
             settleAnimationRunning: false,
             atFaceOnRest: false);
 
-        // Assert — still deferred work, so the Windows pump keeps ticking.
-        Assert.Equal(BrandCrestSpinMachine.Step.None, step);
+        // Assert — deferred work continues, so the pump/chain keeps ticking.
+        Assert.Equal(BrandCrestSpinMachine.Step.Defer, step);
         Assert.True(machine.HasDeferredWork);
     }
 
@@ -453,6 +461,73 @@ public class BrandCrestSpinMachineTests
         // Assert
         Assert.Equal(BrandCrestSpinMachine.Step.SettleAnimated, step);
         Assert.Equal(360, target);
+    }
+
+    [Fact]
+    public void DeferredTick_SpinCallbackNeverFires_TickChainAloneReachesTheSnap()
+    {
+        // Arrange — the Desktop head's Avalonia backend can stall animation
+        // frames entirely: the turn stays registered ("running") but its
+        // cycle-completion callback never fires. The settle must still reach
+        // face-on rest from the tick chain alone: every pre-overdue tick
+        // answers Defer (chain stays alive), and the first overdue tick
+        // snaps.
+        var now = 0L;
+        var machine = new BrandCrestSpinMachine(() => now);
+        machine.BeginLoading();
+        machine.RequestSettle(spinAnimationRunning: true, settleAnimationRunning: false, atFaceOnRest: false);
+
+        // Act — 50ms ticks with the spin forever "running" and no callback.
+        var step = BrandCrestSpinMachine.Step.None;
+        var preOverdueStepsAllDefer = true;
+        while (now < BrandCrestSpin.SettleOverdueMs + 50)
+        {
+            now += 50;
+            step = machine.DeferredTick(
+                shouldSpin: false,
+                spinAnimationRunning: true,
+                settleAnimationRunning: false,
+                atFaceOnRest: false);
+            if (step != BrandCrestSpinMachine.Step.SnapToRest)
+            {
+                preOverdueStepsAllDefer &= step == BrandCrestSpinMachine.Step.Defer;
+            }
+        }
+
+        // Assert
+        Assert.True(preOverdueStepsAllDefer);
+        Assert.Equal(BrandCrestSpinMachine.Step.SnapToRest, step);
+        Assert.False(machine.Spinning);
+    }
+
+    [Fact]
+    public void DeferredTick_SettleEaseCallbackNeverFires_TickChainAloneReachesTheSnap()
+    {
+        // Arrange — the ease was committed (SettleAnimated) but its frames
+        // stalled and the finished callback never fires; the tick chain must
+        // carry the settle to the overdue snap on its own.
+        var now = 0L;
+        var machine = new BrandCrestSpinMachine(() => now);
+        machine.BeginLoading();
+        machine.SpinCycleFinished(cancelled: true, shouldSpin: true);
+        machine.RequestSettle(spinAnimationRunning: false, settleAnimationRunning: false, atFaceOnRest: false);
+
+        // Act — waiting ticks answer Defer while the zombie ease "runs".
+        var waitingStep = machine.DeferredTick(
+            shouldSpin: false,
+            spinAnimationRunning: false,
+            settleAnimationRunning: true,
+            atFaceOnRest: false);
+        now = BrandCrestSpin.SettleOverdueMs;
+        var overdueStep = machine.DeferredTick(
+            shouldSpin: false,
+            spinAnimationRunning: false,
+            settleAnimationRunning: true,
+            atFaceOnRest: false);
+
+        // Assert
+        Assert.Equal(BrandCrestSpinMachine.Step.Defer, waitingStep);
+        Assert.Equal(BrandCrestSpinMachine.Step.SnapToRest, overdueStep);
     }
 
     [Fact]
