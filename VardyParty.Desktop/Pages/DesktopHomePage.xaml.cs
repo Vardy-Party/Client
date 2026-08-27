@@ -37,8 +37,10 @@ public partial class DesktopHomePage : ContentPage
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly IUiSoundPlayer _soundPlayer;
+    private readonly MatchEventBus _matchEvents;
     private readonly Auth0Settings _auth0Settings;
     private readonly HomeShellViewModel _homeShell = new();
+    private readonly MatchEventToastViewModel _playbackToast;
 
     private readonly List<IDisposable> _subscriptions = new();
     private IDisposable? _progressSubscription;
@@ -75,6 +77,7 @@ public partial class DesktopHomePage : ContentPage
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
         IUiSoundPlayer soundPlayer,
+        MatchEventBus matchEvents,
         IOptions<Auth0Settings> auth0Settings)
     {
         _logger = logger;
@@ -89,10 +92,22 @@ public partial class DesktopHomePage : ContentPage
         _sounds = sounds;
         _notifications = notifications;
         _soundPlayer = soundPlayer;
+        _matchEvents = matchEvents;
         _auth0Settings = auth0Settings.Value;
 
         InitializeComponent();
         BindingContext = _viewModel;
+
+        // In-playback match-event toast: the chrome strip's MatchEventToastView
+        // runs the same queue/dismiss state machine as the homepage toast, fed
+        // from the delivered-event bus while the playback panel is up. Events
+        // on the bus already passed MatchEventNotificationPolicy.ShouldPresent
+        // (foreground + goal-notifications toggle); the playback filter here is
+        // just surface routing. Audio stays suppressed during playback via
+        // ShouldPlayAudio (the homepage sting never fires) — toast-yes/audio-no.
+        _playbackToast = new MatchEventToastViewModel(_viewModel.Layout);
+        PlaybackToast.BindingContext = _playbackToast;
+        _matchEvents.Published += OnMatchEventPublished;
 
         _viewModel.GamePicked += OnGamePicked;
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
@@ -698,6 +713,21 @@ public partial class DesktopHomePage : ContentPage
         }
 
         Dispatcher.Dispatch(() => PlaybackOverlay.IsVisible = false);
+    }
+
+    /// <summary>
+    /// Bus callbacks arrive on the UI thread (the catalog apply pump). Only
+    /// the playback surface consumes here — the homepage toast has its own
+    /// subscriber inside HomeViewModel and shows when the panel is down.
+    /// </summary>
+    private void OnMatchEventPublished(MatchEvent matchEvent)
+    {
+        if (!_notifications.IsPlaybackActive)
+        {
+            return;
+        }
+
+        _playbackToast.Publish(_viewModel.BuildToastItem(matchEvent));
     }
 
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)

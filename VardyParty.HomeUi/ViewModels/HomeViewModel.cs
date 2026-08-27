@@ -439,18 +439,33 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         foreach (var matchEvent in events)
         {
             // Delivered-event stream: the homepage toast consumes it below;
-            // the planned playback overlays subscribe to the same bus.
+            // the playback overlays (Desktop panel, Android banner, Windows
+            // player grid) subscribe to the same bus.
             _events.Publish(matchEvent);
 
-            var row = FindRowForEvent(matchEvent);
-            var card = FindCardForEvent(matchEvent);
-            Toast.Publish(new MatchEventToastItem(
-                matchEvent, row?.LeagueIcon, card?.HomeBadge, card?.AwayBadge));
+            Toast.Publish(BuildToastItem(matchEvent));
 
             // Synchronized card flash — only when the card is materialized
             // (a staged strip's unmaterialized tail simply has no card).
-            card?.RequestFlash();
+            FindCardForEvent(matchEvent)?.RequestFlash();
         }
+    }
+
+    /// <summary>
+    /// One toast payload for a delivered event, borrowing the league icon and
+    /// team badges from whatever the board already has materialized (the
+    /// shared badge cache's ImageSources — a staged/hidden card simply has
+    /// none and the monogram initials cover it). The homepage toast uses this
+    /// directly; the in-playback overlays call it from their bus subscribers
+    /// so every surface renders the SAME league logo + both badges.
+    /// UI thread only (walks the live row/card collections).
+    /// </summary>
+    public MatchEventToastItem BuildToastItem(MatchEvent matchEvent)
+    {
+        var row = FindRowForEvent(matchEvent);
+        var card = FindCardForEvent(matchEvent);
+        return new MatchEventToastItem(
+            matchEvent, row?.LeagueIcon, card?.HomeBadge, card?.AwayBadge);
     }
 
     private LeagueRowViewModel? FindRowForEvent(MatchEvent matchEvent)
