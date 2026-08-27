@@ -12,16 +12,25 @@ public class EnrichedGameService(
     IGameMatcher matcher,
     IOptions<BbcFixturesSettings> bbcFixturesSettings,
     IOptions<GamesApiSettings> gamesApiSettings,
-    ILogger<EnrichedGameService> logger
+    ILogger<EnrichedGameService> logger,
+    TimeSpan? initialEnrichmentValve = null
 ) : IEnrichedGameService, IDisposable
 {
     /// <summary>
-    /// How long a coalesced initial API publish waits for the initial BBC fetch
-    /// before giving up and publishing the un-enriched board anyway (a hung BBC
-    /// endpoint must never hold the whole homepage hostage).
+    /// The FIRST board the UI sees must be the ENRICHED one: API games with
+    /// BBC scores/minutes matched in. On the field TV the BBC parse outlasted
+    /// the old 3s grace, so users saw an API-only board (games without
+    /// scores) that then reshuffled when enrichment landed. Every API-driven
+    /// publish is therefore held until the initial BBC fetch completes; this
+    /// valve — measured FROM POLLING START — releases the un-enriched board
+    /// as a fallback if BBC hangs (a dead fixtures endpoint must never hold
+    /// the homepage hostage). An initial BBC FAILURE releases immediately.
+    /// Steady state is unaffected: once the initial BBC fetch has completed,
+    /// every publish goes out immediately.
     /// </summary>
-    public static readonly TimeSpan InitialPublishGrace = TimeSpan.FromSeconds(3);
+    public static readonly TimeSpan InitialEnrichmentValve = TimeSpan.FromSeconds(10);
 
+    private readonly TimeSpan _initialValve = initialEnrichmentValve ?? InitialEnrichmentValve;
     private readonly int _apiTtl = gamesApiSettings.Value?.RefreshSchedule ?? 300;
     private readonly int _bbcTtl = bbcFixturesSettings.Value?.RefreshSchedule ?? 300;
     private readonly BehaviorSubject<string?> _errorSubject = new(null);
@@ -35,7 +44,8 @@ public class EnrichedGameService(
     private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
     private bool _initialBbcCompleted;
-    private bool _initialApiPublishSkipped;
+    private bool _initialApiPublishHeld;
+    private bool _initialValveExpired;
     private List<BbcFixture> _latestBbcFixtures = new();
     private bool _timersStarted;
 
@@ -73,6 +83,7 @@ public class EnrichedGameService(
                     _bbcTimer = new Timer(_ => _ = FetchBbcFixtures(), null, _bbcTtl * 1000, _bbcTtl * 1000);
 
                     _timersStarted = true;
+                    ScheduleInitialEnrichmentValve();
                 }
             }
             catch (Exception ex)
@@ -146,8 +157,9 @@ public class EnrichedGameService(
 
                 // Publish on success (new fixtures), or — when the very first
                 // BBC fetch failed — to release an initial API board whose
-                // publish was coalesced while waiting for these fixtures.
-                publish = fetched || (wasInitial && _initialApiPublishSkipped);
+                // publish was held for enrichment (the failure valve: a down
+                // fixtures endpoint releases the API-only board immediately).
+                publish = fetched || (wasInitial && _initialApiPublishHeld);
             }
 
             if (publish) RunMatching(fromApiFetch: false);
@@ -164,23 +176,23 @@ public class EnrichedGameService(
         {
             if (!_hasFetchedApi) return;
 
-            // Startup coalescing: the two initial fetches used to complete ~1s
-            // apart and produce two near-simultaneous full-board publishes — the
-            // second one reset the homepage mid-first-materialization of the
-            // nested CollectionViews (WinUI's documented 0x800710DD failure
-            // mode). If the API fetch wins the race, skip its standalone publish
-            // (at most once, ever) and let the initial BBC completion publish
-            // the single enriched board; a grace timer publishes anyway if BBC
-            // never comes back. Steady-state live-score updates are unaffected:
-            // once the initial BBC fetch has completed (or the one skip is
-            // spent), every RunMatching publishes immediately.
-            if (fromApiFetch && !_initialBbcCompleted && !_initialApiPublishSkipped)
+            // Enriched-first initial publish: the first board the UI sees must
+            // have BBC enrichment matched in (user decision — an API-only
+            // board rendered games without scores that then reshuffled when
+            // enrichment landed; it also caused WinUI's 0x800710DD double
+            // full-board reset mid-first-materialization). EVERY API-driven
+            // publish is held while the initial BBC fetch is still in flight;
+            // the initial BBC completion (success OR failure) publishes the
+            // single initial board, and the enrichment valve (armed at
+            // polling start) releases the un-enriched board if BBC hangs.
+            // Steady state is unaffected: once the initial BBC fetch has
+            // completed or the valve has expired, publishes are immediate.
+            if (fromApiFetch && !_initialBbcCompleted && !_initialValveExpired)
             {
-                _initialApiPublishSkipped = true;
+                _initialApiPublishHeld = true;
                 logger.LogInformation(
-                    "[Enriched] Coalescing initial publish: waiting up to {Grace}s for the first BBC fetch",
-                    InitialPublishGrace.TotalSeconds);
-                SchedulePublishGraceFallback();
+                    "[Enriched] Holding initial publish for BBC enrichment (valve {Valve}s from polling start)",
+                    _initialValve.TotalSeconds);
                 return;
             }
 
@@ -214,37 +226,38 @@ public class EnrichedGameService(
     }
 
     /// <summary>
-    /// Armed when the initial API publish is coalesced: if the initial BBC fetch
-    /// still hasn't completed after <see cref="InitialPublishGrace"/>, publish
-    /// the un-enriched board so the homepage never sits on the loading screen
-    /// behind a hung fixtures endpoint. Harmless if BBC completes concurrently
+    /// Armed once at polling start: if the initial BBC fetch still hasn't
+    /// completed after <see cref="InitialEnrichmentValve"/>, release the held
+    /// API-only board so the homepage never sits on the loading screen behind
+    /// a hung fixtures endpoint. Harmless if BBC completes concurrently
     /// (publishes are serialized; the board content is consistent either way).
     /// </summary>
-    private void SchedulePublishGraceFallback()
+    private void ScheduleInitialEnrichmentValve()
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(InitialPublishGrace);
+                await Task.Delay(_initialValve);
 
                 bool release;
                 lock (_stateLock)
                 {
-                    release = !_initialBbcCompleted;
+                    _initialValveExpired = true;
+                    release = !_initialBbcCompleted && _hasFetchedApi;
                 }
 
                 if (release)
                 {
                     logger.LogWarning(
-                        "[Enriched] Initial BBC fetch still pending after {Grace}s; publishing API-only board",
-                        InitialPublishGrace.TotalSeconds);
+                        "[Enriched] Initial BBC fetch still pending after {Valve}s; releasing the API-only board",
+                        _initialValve.TotalSeconds);
                     RunMatching(fromApiFetch: false);
                 }
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "[Enriched] Publish grace fallback failed");
+                logger.LogError(ex, "[Enriched] Initial enrichment valve failed");
             }
         });
     }

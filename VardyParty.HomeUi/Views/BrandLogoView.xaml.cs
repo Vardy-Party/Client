@@ -86,14 +86,12 @@ public partial class BrandLogoView : ContentView
     }
 
     /// <summary>
-    /// HomeView calls this after a catalog apply so a spinner killed by
-    /// BindableLayout/CollectionView materialization can ease to rest from
-    /// the last applied angle instead of staying edge-on. Rows are painted:
-    /// even when the loading flag has not flipped yet (ShouldSpin still true)
-    /// the settle is queued rather than dropped — the spinner finishes the
-    /// turn it is on and eases to rest, and a later reload restarts the
-    /// turntable via ApplyLoadState. The old ShouldSpin early-return left a
-    /// layout-killed spinner sitting edge-on until IsContentLoading flipped.
+    /// HomeView calls this after a catalog apply. Ready applies (API data
+    /// present — IsContentLoading false) queue the settle so a spinner killed
+    /// by BindableLayout/CollectionView materialization eases to rest from
+    /// its last angle instead of staying edge-on. NOT-ready applies (pre-API
+    /// null/empty boards) never settle: the crest keeps spinning until real
+    /// content lands, and the machine self-heals a layout-killed turn.
     /// </summary>
     public void OnCatalogApplied()
     {
@@ -102,7 +100,11 @@ public partial class BrandLogoView : ContentView
             return;
         }
 
-        RunStep(RequestSettleStep());
+        RunStep(_crest.CatalogApplied(
+            contentReady: _observedViewModel is { IsContentLoading: false },
+            this.AnimationIsRunning(SpinAnimation),
+            this.AnimationIsRunning(SettleAnimation),
+            BrandCrestSpin.IsFaceOnRest(_angle)));
     }
 
     private BrandCrestSpinMachine.Step RequestSettleStep() =>

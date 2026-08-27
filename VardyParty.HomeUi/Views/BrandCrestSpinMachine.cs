@@ -100,6 +100,42 @@ public sealed class BrandCrestSpinMachine
     }
 
     /// <summary>
+    /// A catalog apply flushed while the view is loaded. Supersedes the old
+    /// "queue settle on any catalog apply" rule for the not-ready case: an
+    /// apply WITHOUT API data (the pre-API null/empty boards the enriched-
+    /// first feed can still deliver) must NOT settle the crest — it keeps
+    /// spinning until real content lands (<paramref name="contentReady"/>
+    /// false → self-heal a layout-killed turn instead of settling). A ready
+    /// apply queues the settle as before, so a spinner killed by
+    /// materialization still eases to rest from its last angle.
+    /// </summary>
+    public Step CatalogApplied(bool contentReady, bool spinAnimationRunning, bool settleAnimationRunning, bool atFaceOnRest)
+    {
+        if (contentReady)
+        {
+            return RequestSettle(spinAnimationRunning, settleAnimationRunning, atFaceOnRest);
+        }
+
+        if (spinAnimationRunning || settleAnimationRunning)
+        {
+            // Still loading with a live animation: leave it alone.
+            return Step.None;
+        }
+
+        if (Spinning || RestartPending)
+        {
+            // Layout killed the turn (the paint that delivered this apply is
+            // exactly the abort trigger) — re-drive the deferred restart so
+            // the crest never sits edge-on while loading continues.
+            Spinning = false;
+            RestartPending = true;
+            return Step.Defer;
+        }
+
+        return Step.None;
+    }
+
+    /// <summary>
     /// Content is ready (loading flag cleared, or the catalog painted while
     /// the flag lags — ShouldSpin still true). The settle is queued, never
     /// dropped: a live turn finishes its cycle first, a dead spinner settles

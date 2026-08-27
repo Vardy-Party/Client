@@ -114,16 +114,42 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
-    public void FlushPendingApply_EmptyDeliveredCatalog_ShowsEmptyState()
+    public void FlushPendingApply_EmptyCatalog_StaysLoading_NeverSettles()
     {
+        // Arrange & Act: an apply WITHOUT API data (empty pre-API board) must
+        // not settle the crest or flip the subtitle — "ready" strictly means
+        // API games are present (the enriched-first feed guarantees the real
+        // initial board is never empty-as-settled).
         _sut.UpdateGames(new Dictionary<string, List<Game>>());
         _sut.FlushPendingApply();
 
+        // Assert
+        Assert.True(_sut.IsContentLoading);
+        Assert.False(_sut.HasGames);
+        Assert.False(_sut.ShowEmptyState);
+        Assert.Empty(_sut.Rows);
+        Assert.Equal(0, _sut.GameCount);
+    }
+
+    [Fact]
+    public void FlushPendingApply_AllLeaguesFilteredOut_IsReady_ShowsEmptyState()
+    {
+        // Arrange: the board HAS API data but the user hid every league — that
+        // is a delivered, settled board, so the empty state (not the spinner)
+        // must show.
+        _filter
+            .Setup(f => f.FilterGames(It.IsAny<IEnumerable<Game>?>()))
+            .Returns(new List<Game>());
+        _sut.UpdateGames(CatalogWithOneGame());
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
         Assert.False(_sut.IsContentLoading);
         Assert.False(_sut.HasGames);
         Assert.True(_sut.ShowEmptyState);
-        Assert.Empty(_sut.Rows);
-        Assert.Equal(0, _sut.GameCount);
+        Assert.Equal("0 games", _sut.Subtitle);
     }
 
     [Fact]
@@ -214,17 +240,19 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Subtitle_EmptyDeliveredCatalog_ShowsZeroGames()
+    public void Subtitle_EmptyCatalog_StaysLoading()
     {
-        // Arrange: an empty-but-delivered catalog is a legitimate zero.
+        // Arrange: an empty board is a pre-API artifact under the enriched-
+        // first contract — the subtitle must keep reading Loading…, never
+        // "0 games".
         _sut.UpdateGames(new Dictionary<string, List<Game>>());
 
         // Act
         _sut.FlushPendingApply();
 
         // Assert
-        Assert.False(_sut.IsContentLoading);
-        Assert.Equal("0 games", _sut.Subtitle);
+        Assert.True(_sut.IsContentLoading);
+        Assert.Equal(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
     }
 
     [Fact]

@@ -41,10 +41,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _pendingResetScores;
 
     /// <summary>
-    /// Header subtitle until the first real catalog lands (the games feed is a
-    /// BehaviorSubject seeded with null, so subscribing delivers a null board
-    /// immediately — that must read as loading, never "0 games"). Pairs with
-    /// the spinning crest; an empty-but-delivered catalog shows "0 games".
+    /// Header subtitle until the first catalog WITH API data lands (the games
+    /// feed is a BehaviorSubject seeded with null, so subscribing delivers a
+    /// null board immediately — that must read as loading, never "0 games").
+    /// Pairs with the spinning crest: empty/pre-API applies keep both going;
+    /// "ready" strictly means API games are present.
     /// </summary>
     public const string LoadingSubtitle = "Loading…";
 
@@ -164,16 +165,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Empty copy only after a real catalog has arrived. Startup coalescing can
-    /// withhold the first board while BBC is in flight; that is still loading.
+    /// Empty copy only after a board WITH API data has arrived (all leagues
+    /// filtered out by the user). Null and empty boards are still loading —
+    /// the enriched-first service never delivers an empty initial board as a
+    /// settled state.
     /// </summary>
     public bool ShowEmptyState => !_hasGames && !_isContentLoading;
 
     /// <summary>
-    /// True until the first real games dictionary lands (and again after a
+    /// True until a games dictionary WITH API data lands (and again after a
     /// sign-out clears the feed). This is the crest's spin signal: it reflects
-    /// actual catalog readiness, never a timer — an empty-but-delivered
-    /// catalog counts as ready (the empty state shows; the crest rests).
+    /// actual catalog readiness, never a timer — empty/pre-API applies keep it
+    /// loading ("ready" = API data present).
     /// </summary>
     public bool IsContentLoading
     {
@@ -401,10 +404,19 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
 
         GameCount = gameCount;
-        IsContentLoading = dict == null;
+
+        // "Ready" means API data is present: a null board (the BehaviorSubject
+        // seed / sign-out) AND an empty pre-API board both keep the crest
+        // spinning and the subtitle on Loading… — the enriched-first service
+        // contract guarantees a real initial board, so an empty apply is a
+        // pre-API artifact, never a settled state. A delivered board whose
+        // games are merely filtered out (gameCount == 0 with API data) IS
+        // ready and shows the empty state.
+        var hasApiData = dict != null && dict.Values.Any(games => games is { Count: > 0 });
+        IsContentLoading = !hasApiData;
         HasGames = gameCount > 0;
         var liveCount = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
-        Subtitle = dict == null ? LoadingSubtitle : FormatSubtitle(gameCount, liveCount);
+        Subtitle = hasApiData ? FormatSubtitle(gameCount, liveCount) : LoadingSubtitle;
 
         GamesUpdated?.Invoke(gameCount);
 

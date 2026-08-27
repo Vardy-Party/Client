@@ -179,6 +179,91 @@ public class BrandCrestSpinMachineTests
     }
 
     [Fact]
+    public void CatalogApplied_ContentNotReady_NeverSettles_KeepsSpinning()
+    {
+        // Arrange — a pre-API/empty apply flushes while the turntable runs.
+        // The enriched-first contract: "ready" = API data present, so this
+        // apply must not queue a settle.
+        var machine = new BrandCrestSpinMachine();
+        machine.BeginLoading();
+
+        // Act
+        var step = machine.CatalogApplied(
+            contentReady: false,
+            spinAnimationRunning: true,
+            settleAnimationRunning: false,
+            atFaceOnRest: false);
+
+        // Assert
+        Assert.Equal(BrandCrestSpinMachine.Step.None, step);
+        Assert.False(machine.SettleRequested);
+        Assert.True(machine.ShouldContinueSpin);
+    }
+
+    [Fact]
+    public void CatalogApplied_ContentNotReady_SpinKilledByLayout_DefersRestart()
+    {
+        // Arrange — the paint that delivered the (still not ready) apply
+        // aborted the turn; the crest must self-heal, not settle edge-on.
+        var machine = new BrandCrestSpinMachine();
+        machine.BeginLoading();
+
+        // Act: the spin animation is no longer running but the machine still
+        // believes it spins.
+        var step = machine.CatalogApplied(
+            contentReady: false,
+            spinAnimationRunning: false,
+            settleAnimationRunning: false,
+            atFaceOnRest: false);
+
+        // Assert
+        Assert.Equal(BrandCrestSpinMachine.Step.Defer, step);
+        Assert.True(machine.RestartPending);
+        Assert.False(machine.SettleRequested);
+    }
+
+    [Fact]
+    public void CatalogApplied_ContentReady_QueuesSettleBehindTheLiveTurn()
+    {
+        // Arrange — the real (enriched) board painted while the loading flag
+        // lags: same queued-settle behaviour as before.
+        var machine = new BrandCrestSpinMachine();
+        machine.BeginLoading();
+
+        // Act
+        var step = machine.CatalogApplied(
+            contentReady: true,
+            spinAnimationRunning: true,
+            settleAnimationRunning: false,
+            atFaceOnRest: false);
+
+        // Assert
+        Assert.Equal(BrandCrestSpinMachine.Step.Defer, step);
+        Assert.True(machine.SettleRequested);
+        Assert.False(machine.ShouldContinueSpin);
+    }
+
+    [Fact]
+    public void CatalogApplied_ContentReady_DeadSpinner_SettlesImmediately()
+    {
+        // Arrange
+        var machine = new BrandCrestSpinMachine();
+        machine.BeginLoading();
+        machine.SpinCycleFinished(cancelled: true, shouldSpin: true);
+
+        // Act
+        var step = machine.CatalogApplied(
+            contentReady: true,
+            spinAnimationRunning: false,
+            settleAnimationRunning: false,
+            atFaceOnRest: false);
+
+        // Assert
+        Assert.Equal(BrandCrestSpinMachine.Step.SettleAnimated, step);
+        Assert.False(machine.RestartPending);
+    }
+
+    [Fact]
     public void RequestSettle_AlreadyAtFaceOnRest_DoesNothing()
     {
         // Arrange
