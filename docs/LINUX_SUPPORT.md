@@ -53,15 +53,24 @@ Scripted install: <https://learn.microsoft.com/en-us/dotnet/core/install/linux-s
 ## Run the Desktop head
 
 The `maui-tizen` workload carries the plain-TFM MAUI SDK on Linux. You do
-**not** need the `android` workload to run the Desktop head: that project
-pins HomeUi to `net11.0` on its `ProjectReference`. HomeUi on Linux lists
-`net11.0;net11.0-android` so APK-from-Linux restore has the android TFM.
-Unit tests set `HomeUiTargetFrameworks=net11.0` and do not need the android
-workload.
+**not** need the `android` workload to run the Desktop head — but you must
+pin HomeUi to `net11.0` in the **environment**, not rely on the Desktop
+head's `ProjectReference` pin alone. HomeUi on Linux defaults to
+`net11.0;net11.0-android` (so APK-from-Linux restore has the android TFM),
+and restore evaluates HomeUi with those defaults regardless of the
+`ProjectReference` `AdditionalProperties` — a plain
+`dotnet run --project VardyParty.Desktop/...` therefore fails with
+NETSDK1147 ("workloads must be installed: android") when the android
+workload is absent. CI's build-desktop job, the unit-test job and
+`scripts/launch-linux-app.cmd` all use the same fix: set
+`HomeUiTargetFrameworks=net11.0` for restore AND build so HomeUi's android
+target never enters the desktop build graph.
 
 ```bash
 dotnet workload install maui-tizen
-dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
+export HomeUiTargetFrameworks=net11.0
+dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj
+dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
 ```
 
 For video playback:
@@ -72,4 +81,7 @@ sudo apt install vlc libvlc-dev
 
 From Windows/WSL, `scripts/launch-linux-app.cmd` builds and launches the
 Desktop head inside WSLg. That script calls `$HOME/.dotnet/dotnet` directly,
-so step 1 is enough even if `which dotnet` is still 10.
+so step 1 is enough even if `which dotnet` is still 10. It pins
+`HomeUiTargetFrameworks=net11.0` itself (no android workload needed) and, if
+NETSDK1147 still surfaces, prints the fallback remedy
+(`dotnet workload install android`).
