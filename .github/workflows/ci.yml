@@ -479,13 +479,17 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      # maui-tizen carries the plain-TFM MAUI SDK on Linux. Desktop pins HomeUi
-      # to net11.0, so maui-android is not required for this job.
+      # maui-tizen carries the plain-TFM MAUI SDK on Linux. HomeUiTargetFrameworks
+      # keeps HomeUi on net11.0 so restore does not demand maui-android.
       - name: Install MAUI workloads
         run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Build desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -520,8 +524,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libvlc-dev vlc xvfb
       - name: Restore desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Build desktop head
+        env:
+          HomeUiTargetFrameworks: net11.0
         run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
       - name: Runtime smoke test (xvfb, sample data)
         run: |
