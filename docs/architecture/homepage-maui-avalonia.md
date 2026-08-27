@@ -169,6 +169,32 @@ header binds visually to its own card strip — desktop 40, TV only 32
 because TV rows stay deliberately tight (~3.5 rows on a 1080p panel,
 guarded by `Metrics_TvCardsFitAGridOnA1080pPanel`).
 
+**The layout class is seeded before the first frame renders.**
+`HomeLayoutState` used to boot with Desktop metrics and only reclassify on
+the first `SizeChanged` — after the first paint — so an Android TV rendered
+one Desktop-sized frame and then every bound metric jumped to the Tv class
+at once, which a field report described as the whole UI "zooming in" ~0.5s
+after launch. Now `HomeView` seeds synchronously when its BindingContext
+lands (hosts set it during page construction):
+`HomeLayoutClassifier.ClassifyInitial(isTv, displayPixelW, displayPixelH,
+density)` — the TV flag wins outright, otherwise the physical display size
+is converted to DIPs and classified; unknown display info falls back to
+Desktop (the old default, and what the headless Desktop smoke run hits).
+The MAUI head hands its Leanback TV detection to the shared view via
+`HomeView.KnownTelevision = MauiProgram.IsTv` before `InitializeComponent`,
+and `HomeView.IsTelevision()` ORs that flag with the MAUI idiom so the
+construction-time seed and every later `SizeChanged` reclassification agree
+(a disagreement would reintroduce the first-paint jump). `SizeChanged`
+still owns live reclassification (window resizes, phone rotation).
+
+Relatedly, the header subtitle no longer reads "0 games" during startup:
+the games feed is a `BehaviorSubject` seeded with `null`, so subscribing
+delivers a null board immediately, and `HomeViewModel.Apply` used to format
+that as "0 games" under the spinning crest. The subtitle is now
+`HomeViewModel.LoadingSubtitle` ("Loading…") whenever no catalog has been
+delivered (startup and after sign-out); an empty-but-delivered catalog
+still legitimately shows "0 games" alongside the empty state.
+
 ### TV focus (Android leanback, D-pad)
 
 MAUI's `Focused`/`VisualStateManager` and Android's native view focus are

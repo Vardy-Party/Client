@@ -34,6 +34,45 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void ClassifyInitial_Television_WinsBeforeAnyDisplayInfo()
+    {
+        // Arrange: an Android TV host knows the Leanback flag at construction,
+        // possibly before display info is available (zero density).
+
+        // Act & Assert: the first paint must be Tv regardless of display data —
+        // seeding after the first frame read as a startup "zoom" on real TVs.
+        Assert.Equal(HomeLayoutClass.Tv, HomeLayoutClassifier.ClassifyInitial(true, 0, 0, 0));
+        Assert.Equal(HomeLayoutClass.Tv, HomeLayoutClassifier.ClassifyInitial(true, 1920, 1080, 1));
+    }
+
+    [Fact]
+    public void ClassifyInitial_UnknownDisplayInfo_FallsBackToDesktop()
+    {
+        // Arrange: headless/early hosts may have no usable display density.
+
+        // Act & Assert: same fallback as Classify's unknown-size default.
+        Assert.Equal(HomeLayoutClass.Desktop, HomeLayoutClassifier.ClassifyInitial(false, 1920, 1080, 0));
+        Assert.Equal(HomeLayoutClass.Desktop, HomeLayoutClassifier.ClassifyInitial(false, 1920, 1080, -1));
+    }
+
+    [Theory]
+    [InlineData(1920, 1080, 1.0, HomeLayoutClass.Desktop)] // desktop monitor
+    [InlineData(1080, 2400, 3.0, HomeLayoutClass.PhonePortrait)] // phone, portrait pixels
+    [InlineData(2400, 1080, 3.0, HomeLayoutClass.PhoneLandscape)] // phone, landscape pixels
+    [InlineData(2560, 1600, 2.0, HomeLayoutClass.Desktop)] // tablet: shortest side above threshold
+    public void ClassifyInitial_ConvertsPixelsToDipBeforeClassifying(
+        double pixelWidth, double pixelHeight, double density, HomeLayoutClass expected)
+    {
+        // Arrange: physical display pixels + density, as DeviceDisplay reports.
+
+        // Act
+        var initialClass = HomeLayoutClassifier.ClassifyInitial(false, pixelWidth, pixelHeight, density);
+
+        // Assert
+        Assert.Equal(expected, initialClass);
+    }
+
+    [Fact]
     public void Metrics_TvTypeIsLargestPhonePortraitIsSmallest()
     {
         // Arrange

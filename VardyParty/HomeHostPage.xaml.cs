@@ -77,6 +77,12 @@ public partial class HomeHostPage : ContentPage
         _sounds = sounds;
         _soundPlayer = soundPlayer;
 
+        // Hand the Leanback TV detection (MainApplication) to the shared view
+        // BEFORE InitializeComponent builds it: HomeView seeds the layout
+        // class synchronously when BindingContext lands, so the first frame
+        // already renders TV metrics instead of Desktop-then-zoom.
+        HomeUi.Views.HomeView.KnownTelevision = MauiProgram.IsTv;
+
         InitializeComponent();
         BindingContext = _viewModel;
 

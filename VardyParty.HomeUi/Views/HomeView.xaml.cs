@@ -1,3 +1,5 @@
+using VardyParty.Presentation;
+
 namespace VardyParty.HomeUi.Views;
 
 /// <summary>
@@ -52,7 +54,35 @@ public partial class HomeView : ContentView
         if (_wiredViewModel != null)
         {
             _wiredViewModel.WorkQueued += OnWorkQueued;
+            SeedViewport(_wiredViewModel);
         }
+    }
+
+    /// <summary>
+    /// Classify the layout BEFORE the first frame renders. Hosts set
+    /// BindingContext during page construction, which lands here synchronously
+    /// — the TV flag plus the physical display size pick the metrics class up
+    /// front, so the first paint never shows Desktop sizes on a TV and then
+    /// "zooms" when the first SizeChanged reclassifies. SizeChanged still owns
+    /// live reclassification (window resizes, phone rotation).
+    /// </summary>
+    private static void SeedViewport(HomeViewModel vm)
+    {
+        double pixelWidth = 0, pixelHeight = 0, density = 0;
+        try
+        {
+            var display = DeviceDisplay.Current.MainDisplayInfo;
+            pixelWidth = display.Width;
+            pixelHeight = display.Height;
+            density = display.Density;
+        }
+        catch
+        {
+            // Headless/early hosts without display info: ClassifyInitial
+            // falls back to Desktop, same as the pre-seeding default.
+        }
+
+        vm.Layout.Apply(HomeLayoutClassifier.ClassifyInitial(IsTelevision(), pixelWidth, pixelHeight, density));
     }
 
     private void OnLoaded(object? sender, EventArgs e)
@@ -167,8 +197,20 @@ public partial class HomeView : ContentView
         ViewModel?.SetViewport(Width, Height, IsTelevision());
     }
 
+    /// <summary>
+    /// Extra TV signal from the head: the Android head detects TV via the
+    /// Leanback/Television package features (MauiProgram.IsTv), which can be
+    /// true on boxes where the MAUI idiom is not. ORed into
+    /// <see cref="IsTelevision"/> so the construction-time viewport seed and
+    /// every later SizeChanged reclassification agree — a disagreement would
+    /// reintroduce the first-paint metrics jump.
+    /// </summary>
+    public static bool KnownTelevision { get; set; }
+
     internal static bool IsTelevision()
     {
+        if (KnownTelevision) return true;
+
         try
         {
             return DeviceInfo.Current.Idiom == DeviceIdiom.TV;
