@@ -1035,6 +1035,8 @@ jobs:
     name: Package Linux ARM64 Snap
     runs-on: ubuntu-24.04-arm
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
