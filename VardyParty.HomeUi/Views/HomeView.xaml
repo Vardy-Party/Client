@@ -140,7 +140,8 @@
         </BoxView>
 
         <!-- Menu: league hide/show + settings -->
-        <Border WidthRequest="340"
+        <Border x:Name="MenuPanel"
+                WidthRequest="340"
                 HorizontalOptions="End"
                 VerticalOptions="Fill"
                 Margin="{OnPlatform WinUI='0,48,0,0', Default=0}"

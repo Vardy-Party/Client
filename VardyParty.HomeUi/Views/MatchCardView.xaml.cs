@@ -373,6 +373,10 @@ public partial class MatchCardView : ContentView
             // keeps the whole card (glow included) in the strip.
             if (sender is global::Android.Views.View native)
             {
+                // Column memory for the header/menu round trip: the menu
+                // focus trap restores here on close, and down-from-Menu
+                // returns here.
+                TvDpadFocusRouter.NoteCardFocused(native);
                 native.Post(EnsureFocusedCardVisible);
             }
             else

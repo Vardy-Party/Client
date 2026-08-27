@@ -27,7 +27,20 @@ public partial class HomeView : ContentView
         // same UI-thread pump as the catalog apply — never Dispatcher.Dispatch.
         BrandLogo.PumpRequested += QueuePumpStart;
 #endif
+        WireTvHeaderFocus();
     }
+
+    /// <summary>
+    /// Android TV only (HomeView.Tv.cs): native focus wiring for the header
+    /// Menu button. No-op elsewhere (unimplemented partial).
+    /// </summary>
+    partial void WireTvHeaderFocus();
+
+    /// <summary>
+    /// Android TV only (HomeView.Tv.cs): (re)subscribes the menu focus trap
+    /// to the new view model's IsMenuOpen. No-op elsewhere.
+    /// </summary>
+    partial void OnTvViewModelWired(HomeViewModel? vm);
 
     private HomeViewModel? ViewModel => BindingContext as HomeViewModel;
 
@@ -56,6 +69,8 @@ public partial class HomeView : ContentView
             _wiredViewModel.WorkQueued += OnWorkQueued;
             SeedViewport(_wiredViewModel);
         }
+
+        OnTvViewModelWired(_wiredViewModel);
     }
 
     /// <summary>

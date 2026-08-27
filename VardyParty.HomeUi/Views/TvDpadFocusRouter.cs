@@ -46,10 +46,9 @@ internal static class TvDpadFocusRouter
 
     /// <summary>
     /// Returns true when the key was fully handled (focus moved, or the move
-    /// was clamped); false lets Android's default focus search run — which is
-    /// still wanted for up from the first row (reaches the header Menu button)
-    /// and for adjacent rows that are not laid out yet (the default
-    /// focus-search-failed path scrolls them in).
+    /// was clamped); false lets Android's default focus search run — the
+    /// last-resort fallback when the router has nothing registered to move
+    /// to (e.g. up from the first row before the header wired).
     /// </summary>
     public static bool TryHandle(AView card, global::Android.Views.Keycode keyCode) => keyCode switch
     {
@@ -112,7 +111,15 @@ internal static class TvDpadFocusRouter
         var targetPosition = rowPosition + (down ? 1 : -1);
         if (targetPosition < 0)
         {
-            return false;
+            // Up from the first row goes to the header Menu button — a
+            // router-owned move (silent, deterministic), not the default
+            // focus search: the search often failed to leave the recycler
+            // (the field report's "Menu not selectable via D-pad") and
+            // plays the system navigation click when it does succeed. The
+            // crest stays skipped: this targets the registered header view
+            // directly. Falls through to the default search only when no
+            // header has wired yet.
+            return TryFocusHeaderTarget();
         }
 
         if (targetPosition >= (outer.GetAdapter()?.ItemCount ?? 0))
@@ -224,6 +231,40 @@ internal static class TvDpadFocusRouter
             }
         }
     }
+
+    // Weak references: the header button and cards are owned by the MAUI
+    // visual tree; the router must never keep a recycled/destroyed native
+    // view alive.
+    private static WeakReference<AView>? _headerTarget;
+    private static WeakReference<AView>? _lastFocusedCard;
+
+    /// <summary>
+    /// The header view (Menu button) that up-from-the-first-row lands on.
+    /// Registered by HomeView's TV wiring whenever the button's platform
+    /// view (re)creates.
+    /// </summary>
+    internal static void RegisterHeaderTarget(AView view) =>
+        _headerTarget = new WeakReference<AView>(view);
+
+    /// <summary>
+    /// The card that most recently held native focus — the menu focus trap
+    /// remembers it on open, and down-from-the-header returns to it (column
+    /// memory across the header round trip).
+    /// </summary>
+    internal static void NoteCardFocused(AView card) =>
+        _lastFocusedCard = new WeakReference<AView>(card);
+
+    internal static AView? LastFocusedCard() =>
+        _lastFocusedCard?.TryGetTarget(out var card) == true ? card : null;
+
+    internal static bool TryFocusLastCard() =>
+        LastFocusedCard() is { IsAttachedToWindow: true, IsShown: true } card
+        && card.RequestFocus();
+
+    private static bool TryFocusHeaderTarget() =>
+        _headerTarget?.TryGetTarget(out var header) == true
+        && header is { IsAttachedToWindow: true, IsShown: true }
+        && header.RequestFocus();
 
     private static RecyclerView? FindParentRecycler(AView view)
     {
