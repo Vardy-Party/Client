@@ -393,6 +393,18 @@ public partial class BrandLogoView : ContentView
 
     private void StartAmbientShimmer()
     {
+        // TV idle invariant (HomeIdleAnimationPolicy): the ambient loop is the
+        // second permanent tick source on the TV class (with the live-dot
+        // pulses) — an idle TV homepage must schedule zero recurring work.
+        // The crest still sheens on focus change (OnHeaderFocusEntered) and
+        // after a settle (both one-shot).
+        var layoutClass = _observedViewModel?.Layout.Class
+            ?? Presentation.HomeLayoutClass.Desktop;
+        if (!Presentation.HomeIdleAnimationPolicy.AllowAmbientCrestShimmer(layoutClass))
+        {
+            return;
+        }
+
         if (_ambientRunning) return;
         _ambientRunning = true;
 

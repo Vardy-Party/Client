@@ -92,6 +92,10 @@ public partial class MatchCardView : ContentView
             _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
             ApplyCornerRadius();
             ApplyInteractionState(animate: false);
+            if (IsLoaded)
+            {
+                ApplyLivePulseState();
+            }
 
             // Recycled containers can be rebound while still attached (no
             // Loaded), so the new VM's armed initial focus must be honoured here.
@@ -105,6 +109,11 @@ public partial class MatchCardView : ContentView
         {
             ApplyCornerRadius();
         }
+
+        if (e.PropertyName is null or nameof(HomeLayoutState.Class))
+        {
+            ApplyLivePulseState();
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -112,6 +121,13 @@ public partial class MatchCardView : ContentView
         if (e.PropertyName is null or nameof(MatchCardViewModel.IsResolving))
         {
             ApplyInteractionState(animate: true);
+        }
+
+        // In-place catalog refreshes can flip a card live/idle without a
+        // rebind; the pulse policy must follow.
+        if (e.PropertyName is null or nameof(MatchCardViewModel.IsLive))
+        {
+            ApplyLivePulseState();
         }
     }
 
@@ -124,11 +140,7 @@ public partial class MatchCardView : ContentView
 
     private void OnLoaded(object? sender, EventArgs e)
     {
-        if (ViewModel is { IsLive: true })
-        {
-            StartPulse();
-        }
-
+        ApplyLivePulseState();
         ApplyInteractionState(animate: false);
         EnableTvFocus();
     }
@@ -376,8 +388,24 @@ public partial class MatchCardView : ContentView
 #endif
     }
 
-    private void StartPulse()
+    /// <summary>
+    /// TV idle invariant (<see cref="VardyParty.Presentation.HomeIdleAnimationPolicy"/>):
+    /// on the TV class the live dot is a STATIC treatment — ~17 concurrent
+    /// infinite pulses kept the 32-bit TV box's Choreographer permanently
+    /// saturated. Other classes keep the pulse.
+    /// </summary>
+    private void ApplyLivePulseState()
     {
+        var wantsPulse = ViewModel is { IsLive: true }
+            && Presentation.HomeIdleAnimationPolicy.AllowLiveDotPulse(
+                ViewModel.Layout.Class);
+
+        if (!wantsPulse)
+        {
+            StopPulse();
+            return;
+        }
+
         if (_pulseRunning) return;
         _pulseRunning = true;
 
@@ -385,6 +413,17 @@ public partial class MatchCardView : ContentView
         pulse.Add(0.0, 0.5, new Animation(v => LiveDot.Opacity = v, 1.0, 0.25, Easing.SinInOut));
         pulse.Add(0.5, 1.0, new Animation(v => LiveDot.Opacity = v, 0.25, 1.0, Easing.SinInOut));
         pulse.Commit(this, PulseAnimation, length: 1400, repeat: () => _pulseRunning);
+    }
+
+    private void StopPulse()
+    {
+        if (_pulseRunning)
+        {
+            _pulseRunning = false;
+            this.AbortAnimation(PulseAnimation);
+        }
+
+        LiveDot.Opacity = 1.0;
     }
 
     private void OnCardTapped(object? sender, TappedEventArgs e) => ViewModel?.Pick();
