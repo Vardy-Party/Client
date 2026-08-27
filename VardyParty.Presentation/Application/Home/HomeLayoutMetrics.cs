@@ -29,11 +29,11 @@ public sealed record HomeLayoutMetrics(
     public static HomeLayoutMetrics For(HomeLayoutClass layoutClass) => layoutClass switch
     {
         // 10-foot UI: readable from the sofa without dominating the panel.
-        // Field-tested down twice from 440x232 (barely 2.5 rows on 1080p,
-        // reported oversized). 340x180 keeps 5 cards per row and ~3.6 league
-        // rows visible; type/badge sizes stay at the 10-foot floors (status
-        // chip >= 15, score >= 34, badge >= 56) and still fit the card box
-        // (inner 312x158: status row + badge + two team-name lines).
+        // Field-tested down THREE times from 440x232 (user: "too big", the
+        // last verdict on 340x180). 300x160 fits ~5.8 cards per row and ~3.9
+        // league rows on 1080p; type/badge sizes hold the revised 10-foot
+        // floors (status chip >= 15, score >= 30, badge >= 50) and still fit
+        // the card box (inner 272x138: status row + badge + two name lines).
         // RowSpacing is the inter-league gap, applied ABOVE each league header
         // (HomeLayoutState.RowMarginThickness) so a header binds visually to
         // its own card row. Field-tested up on Desktop (28->40: sections ran
@@ -63,8 +63,8 @@ public sealed record HomeLayoutMetrics(
         // of the focused card itself (FocusedCardLift is a veil opacity;
         // render-level only, no layout or shadow work on the focus path).
         HomeLayoutClass.Tv => new(
-            CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
-            TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
+            CardWidth: 300, CardHeight: 160, CardCornerRadius: 16, BadgeSize: 50,
+            TeamFontSize: 18, ScoreFontSize: 30, StatusFontSize: 15, AggregateFontSize: 13,
             LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
             PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
             FlatCardChrome: true, StagedStripCards: 8,

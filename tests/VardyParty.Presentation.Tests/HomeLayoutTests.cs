@@ -88,14 +88,16 @@ public class HomeLayoutTests
         var landscape = HomeLayoutMetrics.For(classes[2]);
         var portrait = HomeLayoutMetrics.For(classes[3]);
 
-        // Assert: 10-foot TYPE stays the largest (that is what 10-foot means),
-        // but the TV card BOX is grid-sized for a 1080p panel and may sit near
-        // (even just below) the desktop card. Cards still shrink desktop ->
-        // landscape -> portrait.
-        Assert.True(tv.ScoreFontSize > desktop.ScoreFontSize);
-        Assert.True(tv.BadgeSize > desktop.BadgeSize);
+        // Assert: after the third field-driven size notch the TV card BOX is
+        // grid-sized for a 1080p panel and may sit below the desktop card
+        // (score/badge included — the desktop window is 2 feet away, the TV
+        // is 10 and won its density by user demand). Ten-foot readability is
+        // guarded by Metrics_TvKeepsTenFootReadabilityFloors; here TV type
+        // must stay above desktop body type and clearly above the phones.
         Assert.True(tv.TeamFontSize > desktop.TeamFontSize);
-        Assert.True(tv.CardWidth > landscape.CardWidth);
+        Assert.True(tv.ScoreFontSize > landscape.ScoreFontSize);
+        Assert.True(tv.BadgeSize > landscape.BadgeSize);
+        Assert.True(tv.CardWidth >= landscape.CardWidth);
         Assert.True(desktop.CardWidth > landscape.CardWidth);
         Assert.True(landscape.CardWidth > portrait.CardWidth);
         Assert.True(tv.BadgeSize > portrait.BadgeSize);
@@ -114,13 +116,14 @@ public class HomeLayoutTests
         // Act
         var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
 
-        // Assert: at least 5 cards per row and 3 league rows visible at once.
+        // Assert: the third size notch targets ~5.5-6 cards per row and at
+        // least 3.5 league rows visible at once.
         var usableWidth = panelWidth - (2 * tv.PagePadding);
-        Assert.True(usableWidth / (tv.CardWidth + tv.CardSpacing) >= 5);
+        Assert.True(usableWidth / (tv.CardWidth + tv.CardSpacing) >= 5.5);
 
         var usableHeight = panelHeight - (2 * tv.PagePadding) - pageHeaderAllowance;
         var rowCost = tv.CardHeight + rowFocusHeadroom + tv.RowSpacing;
-        Assert.True(usableHeight / rowCost >= 3);
+        Assert.True(usableHeight / rowCost >= 3.5);
     }
 
     [Fact]
@@ -133,9 +136,10 @@ public class HomeLayoutTests
         var tv = HomeLayoutMetrics.For(layoutClass);
 
         // Assert: shrinking the cards must never shrink type below what reads
-        // from the sofa — the status chip especially.
-        Assert.True(tv.BadgeSize >= 52);
-        Assert.True(tv.ScoreFontSize >= 32);
+        // from the sofa — the status chip especially. Floors revised with the
+        // third size notch (300x160 cards): badge 50, score 30.
+        Assert.True(tv.BadgeSize >= 50);
+        Assert.True(tv.ScoreFontSize >= 30);
         Assert.True(tv.TeamFontSize >= 18);
         Assert.True(tv.StatusFontSize >= 14);
         Assert.True(tv.LeagueTitleFontSize >= 22);
