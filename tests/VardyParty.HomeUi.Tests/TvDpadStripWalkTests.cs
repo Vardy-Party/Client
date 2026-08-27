@@ -79,6 +79,55 @@ public class TvDpadStripWalkTests
         Assert.False(atRight);
     }
 
+    [Fact]
+    public void FindAdjacentInRow_MiddleCard_ReturnsBothNeighbours()
+    {
+        // Arrange
+        var (scroller, _, _) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var cards = new List<TvDpadStripWalk.INode>();
+        TvDpadStripWalk.CollectShownFocusables(scroller, cards);
+        var middle = cards[1];
+
+        // Act
+        var previous = TvDpadStripWalk.FindAdjacentInRow(middle, forward: false);
+        var next = TvDpadStripWalk.FindAdjacentInRow(middle, forward: true);
+
+        // Assert
+        Assert.True(cards[0].RepresentsSame(previous));
+        Assert.True(cards[2].RepresentsSame(next));
+    }
+
+    [Fact]
+    public void FindAdjacentInRow_EdgeCards_ReturnNullPastTheEdge()
+    {
+        // Arrange
+        var (scroller, _, firstCard) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var cards = new List<TvDpadStripWalk.INode>();
+        TvDpadStripWalk.CollectShownFocusables(scroller, cards);
+        var lastCard = cards[2];
+
+        // Act
+        var beforeFirst = TvDpadStripWalk.FindAdjacentInRow(firstCard, forward: false);
+        var afterLast = TvDpadStripWalk.FindAdjacentInRow(lastCard, forward: true);
+
+        // Assert
+        Assert.Null(beforeFirst);
+        Assert.Null(afterLast);
+    }
+
+    [Fact]
+    public void FindAdjacentInRow_CardOutsideAnyStrip_ReturnsNull()
+    {
+        // Arrange — a focusable with no ancestor scroller (e.g. a header control).
+        var orphan = new FakeNode { Focusable = true, IsShown = true, Width = 120 };
+
+        // Act
+        var neighbour = TvDpadStripWalk.FindAdjacentInRow(orphan, forward: true);
+
+        // Assert
+        Assert.Null(neighbour);
+    }
+
     private static (FakeNode Scroller, FakeNode Stack, FakeNode FirstCardOuter) BuildRow(
         int cardCount,
         int firstCardScreenX)

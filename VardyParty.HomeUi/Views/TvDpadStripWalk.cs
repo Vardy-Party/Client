@@ -124,6 +124,38 @@ public static class TvDpadStripWalk
         return lastCard ? index == cards.Count - 1 : index == 0;
     }
 
+    /// <summary>
+    /// The next/previous shown focusable card in this card's own strip, or
+    /// null when the card is the edge card in that direction (or is not part
+    /// of a strip at all — callers distinguish via <see cref="IsAtRowEdge"/>).
+    /// Lets the router OWN horizontal moves instead of falling through to
+    /// Android's default focus search, which plays the system navigation
+    /// click unconditionally.
+    /// </summary>
+    public static INode? FindAdjacentInRow(INode card, bool forward)
+    {
+        var scroller = FindAncestorScroller(card);
+        if (scroller is null)
+        {
+            return null;
+        }
+
+        var cards = new List<INode>();
+        CollectShownFocusables(scroller, cards);
+        for (var i = 0; i < cards.Count; i++)
+        {
+            if (!cards[i].RepresentsSame(card))
+            {
+                continue;
+            }
+
+            var target = i + (forward ? 1 : -1);
+            return target >= 0 && target < cards.Count ? cards[target] : null;
+        }
+
+        return null;
+    }
+
     public static INode? FindNearestFocusableByCenterX(INode root, int targetCenterX)
     {
         var searchRoot = root.IsScroller ? root : FindDescendantScroller(root) ?? root;

@@ -272,6 +272,20 @@ public partial class MatchCardView : ContentView
         native.Focusable = true;
         native.FocusableInTouchMode = false;
 
+        // Uniform system-sound opt-out (field report: Android's own click
+        // played alongside our tick on some rails). The view-level flag
+        // silences the sounds views play THEMSELVES (DPAD_CENTER's
+        // performClick → playSoundEffect(CLICK)); it must land on EVERY
+        // card, which is why it lives here — this method runs on all three
+        // materialization paths (Loaded, HandlerChanged, BindingContext
+        // rebinds), so the initial batch AND staged chunk appends get
+        // identical wiring. The containers get the same opt-out below; the
+        // framework's own navigation click is handled by the router OWNING
+        // every D-pad move instead (see TvDpadFocusRouter.TryMoveHorizontal —
+        // ViewRootImpl plays that click without consulting any view flag).
+        native.SoundEffectsEnabled = false;
+        TvDpadFocusRouter.DisableSystemSoundsOnContainers(native);
+
         // TV field report: "click right at the right-most card → it shifts
         // immediately, jumps back, then scrolls on". Android's focus system
         // auto-reveals a newly focused off-screen view by INSTANTLY scrolling

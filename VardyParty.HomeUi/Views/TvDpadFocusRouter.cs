@@ -55,10 +55,39 @@ internal static class TvDpadFocusRouter
     {
         global::Android.Views.Keycode.DpadDown => TryMoveVertical(card, down: true),
         global::Android.Views.Keycode.DpadUp => TryMoveVertical(card, down: false),
-        global::Android.Views.Keycode.DpadLeft => TvDpadStripWalk.IsAtRowEdge(Wrap(card), lastCard: false),
-        global::Android.Views.Keycode.DpadRight => TvDpadStripWalk.IsAtRowEdge(Wrap(card), lastCard: true),
+        global::Android.Views.Keycode.DpadLeft => TryMoveHorizontal(card, forward: false),
+        global::Android.Views.Keycode.DpadRight => TryMoveHorizontal(card, forward: true),
         _ => false,
     };
+
+    /// <summary>
+    /// Left/right within a row: the router moves focus ITSELF instead of
+    /// falling through to Android's default focus search. Field report
+    /// ("Android plays its own navigation click alongside our tick on some
+    /// rails"): ViewRootImpl.performFocusNavigation plays the system
+    /// navigation click UNCONDITIONALLY after a successful default-search
+    /// move — it never consults any view's SoundEffectsEnabled flag (AOSP
+    /// ViewRootImpl.java), so the per-view opt-out alone cannot silence it.
+    /// The asymmetry the user heard was exactly move OWNERSHIP: vertical
+    /// moves the router owned were silent, horizontal moves (and any other
+    /// fall-through) double-sounded. A router-owned RequestFocus plays
+    /// nothing; our UiSound tick stays the only focus sound. At a row edge
+    /// the key stays consumed so focus never leaps rows (existing clamp).
+    /// </summary>
+    private static bool TryMoveHorizontal(AView card, bool forward)
+    {
+        var node = Wrap(card);
+        if (TvDpadStripWalk.FindAdjacentInRow(node, forward) is AndroidNode target
+            && target.View.RequestFocus())
+        {
+            return true;
+        }
+
+        // Null neighbour is either the row edge (clamp: consume) or a card
+        // that is not inside a strip (fall through to the default search,
+        // same as before the router owned this axis).
+        return TvDpadStripWalk.IsAtRowEdge(node, lastCard: forward);
+    }
 
     private static bool TryMoveVertical(AView card, bool down)
     {
@@ -168,6 +197,30 @@ internal static class TvDpadFocusRouter
             if (!node.View.RequestFocus())
             {
                 _ownsRowReveal = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Uniform system-sound opt-out for the containers above a card: every
+    /// ancestor up to and including the rows RecyclerView (strip scroller,
+    /// row item, recycler itself) gets SoundEffectsEnabled=false, so no
+    /// container-initiated View.playSoundEffect (click/scroll effects) can
+    /// double-sound our UI ticks. Idempotent and called from every card
+    /// wiring pass, so containers materialized late (staged chunk appends,
+    /// recycled rows) are covered the moment any of their cards wires.
+    /// NOTE: the framework's focus-navigation click ignores these flags
+    /// entirely (see <see cref="TryMoveHorizontal"/>) — that one is silenced
+    /// by the router owning the move, not by any flag.
+    /// </summary>
+    internal static void DisableSystemSoundsOnContainers(AView card)
+    {
+        for (var parent = card.Parent; parent is AView view; parent = view.Parent)
+        {
+            view.SoundEffectsEnabled = false;
+            if (view is RecyclerView)
+            {
+                break;
             }
         }
     }
