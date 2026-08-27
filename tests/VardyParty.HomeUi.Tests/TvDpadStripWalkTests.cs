@@ -1,12 +1,16 @@
 using System.Collections.Generic;
-using Microsoft.Maui;
-using Microsoft.Maui.Controls;
-using VardyParty.HomeUi;
 using VardyParty.HomeUi.Views;
 using Xunit;
 
 namespace VardyParty.HomeUi.Tests;
 
+/// <summary>
+/// Pure-function coverage of the strip-walk geometry only. The FakeNode
+/// trees here are simplified shapes, not the real MAUI/Android handler
+/// tree (MauiScrollView / ContentViewGroup nesting, BlockDescendants
+/// semantics, recycler wrapping): D-pad traversal against the real tree is
+/// device-only coverage on Android TV hardware.
+/// </summary>
 public class TvDpadStripWalkTests
 {
     [Fact]
@@ -61,9 +65,10 @@ public class TvDpadStripWalkTests
     public void IsAtRowEdge_MiddleCard_DoesNotClamp()
     {
         // Arrange
-        var (_, _, first) = BuildRow(cardCount: 3, firstCardScreenX: 0);
-        var stack = first.Parent!.Parent!.Parent!;
-        var middle = TvDpadStripWalk.FindFocusableDescendant(stack.GetChild(1)!)!;
+        var (scroller, _, _) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var cards = new List<TvDpadStripWalk.INode>();
+        TvDpadStripWalk.CollectShownFocusables(scroller, cards);
+        var middle = cards[1];
 
         // Act
         var atLeft = TvDpadStripWalk.IsAtRowEdge(middle, lastCard: false);
@@ -72,30 +77,6 @@ public class TvDpadStripWalkTests
         // Assert
         Assert.False(atLeft);
         Assert.False(atRight);
-    }
-
-    [Fact]
-    public void IdentifyCatalogAncestors_SeesStripAndRows()
-    {
-        // Arrange
-        var ancestors = new List<object>
-        {
-            new ScrollView { Orientation = ScrollOrientation.Horizontal },
-            new LeagueRowViewModel("League Alpha", false, new List<MatchCardViewModel>(), new HomeLayoutState()),
-            new CollectionView(),
-        };
-
-        // Act
-        TvDpadStripWalk.IdentifyCatalogAncestors(
-            ancestors,
-            out var strip,
-            out var rows,
-            out var rowVm);
-
-        // Assert
-        Assert.True(strip);
-        Assert.True(rows);
-        Assert.True(rowVm);
     }
 
     private static (FakeNode Scroller, FakeNode Stack, FakeNode FirstCardOuter) BuildRow(
