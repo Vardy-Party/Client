@@ -8,7 +8,10 @@ public class BrandCrestSpinTests
     [Theory]
     [InlineData(0, 0)]
     [InlineData(10, 0)]
-    [InlineData(180, 0)]
+    [InlineData(179, 0)]
+    [InlineData(179.9, 0)]
+    [InlineData(180, 360)]
+    [InlineData(180.1, 360)]
     [InlineData(181, 360)]
     [InlineData(270, 360)]
     [InlineData(359, 360)]
@@ -24,9 +27,23 @@ public class BrandCrestSpinTests
     }
 
     [Fact]
-    public void RestTargetDegrees_540_NormalizesThenRestsAtZero()
+    public void RestTargetDegrees_ExactlyEdgeOn_EasesForwardNeverBackThroughEdge()
     {
-        // Arrange — 540° is face-on after one and a half turns (180°).
+        // Arrange — 180° is the edge-on freeze case (the worst case): the
+        // settle must ease forward to 360, never backward through the edge.
+        const double current = 180;
+
+        // Act
+        var target = BrandCrestSpin.RestTargetDegrees(current);
+
+        // Assert
+        Assert.Equal(360, target);
+    }
+
+    [Fact]
+    public void RestTargetDegrees_540_NormalizesThenRestsForwardAt360()
+    {
+        // Arrange — 540° normalizes to edge-on 180°, which rests forward.
         const double current = 540;
 
         // Act
@@ -35,7 +52,7 @@ public class BrandCrestSpinTests
 
         // Assert
         Assert.Equal(180, normalized);
-        Assert.Equal(0, target);
+        Assert.Equal(360, target);
     }
 
     [Theory]
