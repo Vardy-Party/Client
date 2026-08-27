@@ -22,7 +22,9 @@ public sealed record HomeLayoutMetrics(
     double CardSpacing,
     double BrandLogoSize,
     bool FlatCardChrome = false,
-    int StagedStripCards = 0)
+    int StagedStripCards = 0,
+    double FocusRingThickness = 3,
+    double FocusedCardLift = 0)
 {
     public static HomeLayoutMetrics For(HomeLayoutClass layoutClass) => layoutClass switch
     {
@@ -56,12 +58,17 @@ public sealed record HomeLayoutMetrics(
         // row materializes its first 8 cards (~5.5 visible + headroom) and
         // the rest arrive in dispatcher-idle chunks. Rows themselves are
         // already virtualized by the outer CollectionView (RecyclerView).
+        // Focus chrome: at 10 feet the 3px ring read as invisible even when
+        // frames flowed — TV escalates to a 5px ring plus a subtle white lift
+        // of the focused card itself (FocusedCardLift is a veil opacity;
+        // render-level only, no layout or shadow work on the focus path).
         HomeLayoutClass.Tv => new(
             CardWidth: 340, CardHeight: 180, CardCornerRadius: 16, BadgeSize: 56,
             TeamFontSize: 19, ScoreFontSize: 34, StatusFontSize: 15, AggregateFontSize: 13,
             LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
             PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
-            FlatCardChrome: true, StagedStripCards: 8),
+            FlatCardChrome: true, StagedStripCards: 8,
+            FocusRingThickness: 5, FocusedCardLift: 0.10),
 
         HomeLayoutClass.Desktop => new(
             CardWidth: 350, CardHeight: 192, CardCornerRadius: 14, BadgeSize: 54,

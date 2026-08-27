@@ -70,6 +70,13 @@
                      Opacity="0"
                      InputTransparent="True" />
 
+            <!-- Focus lift: a faint white veil brightening the focused card
+                 (TV only via Layout.FocusedCardLift; opacity-only, render-level) -->
+            <BoxView x:Name="FocusVeil"
+                     Color="White"
+                     Opacity="0"
+                     InputTransparent="True" />
+
             <Grid RowDefinitions="Auto,*" Padding="14,10,14,12">
                 <!-- Status + aggregate chips -->
                 <Grid ColumnDefinitions="Auto,*,Auto">

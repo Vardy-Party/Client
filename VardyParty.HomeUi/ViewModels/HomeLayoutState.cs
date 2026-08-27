@@ -42,6 +42,12 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     /// </summary>
     public int StagedStripCards => _metrics.StagedStripCards;
 
+    /// <summary>Focus ring stroke: 5px on TV (10-foot visibility), 3px elsewhere.</summary>
+    public double FocusRingThickness => _metrics.FocusRingThickness;
+
+    /// <summary>Opacity of the white focus veil lifting the focused card (TV only; 0 = off).</summary>
+    public double FocusedCardLift => _metrics.FocusedCardLift;
+
     /// <summary>Row height for the horizontal card strip: card + focus-scale headroom.</summary>
     public double RowHeight => _metrics.CardHeight + 24;
 
@@ -77,5 +83,6 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
         nameof(RowHeight), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
         nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome), nameof(StagedStripCards),
+        nameof(FocusRingThickness), nameof(FocusedCardLift),
     ];
 }

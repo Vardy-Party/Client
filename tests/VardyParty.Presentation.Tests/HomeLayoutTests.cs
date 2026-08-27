@@ -188,6 +188,22 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_TvFocusChromeIsUnmissableAtTenFeet()
+    {
+        // Arrange: field report — the 3px ring was effectively invisible from
+        // the sofa. TV escalates ring thickness and adds a brightness lift of
+        // the focused card; other classes keep the quiet chrome.
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+        var desktop = HomeLayoutMetrics.For(HomeLayoutClass.Desktop);
+
+        // Assert
+        Assert.True(tv.FocusRingThickness >= 4);
+        Assert.InRange(tv.FocusedCardLift, 0.05, 0.2);
+        Assert.Equal(3, desktop.FocusRingThickness);
+        Assert.Equal(0, desktop.FocusedCardLift);
+    }
+
+    [Fact]
     public void Metrics_EveryLayoutClassHasPositiveSizes()
     {
         foreach (HomeLayoutClass layoutClass in Enum.GetValues<HomeLayoutClass>())

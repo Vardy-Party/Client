@@ -33,6 +33,10 @@ public partial class MatchCardView : ContentView
     private const long FocusBurstMs = 200;
 
     private static readonly SolidColorBrush FocusRingBrush = new(Color.FromArgb("#AFCBFF"));
+
+    // TV ring: brighter, closer to white — #AFCBFF at 3px was invisible at 10
+    // feet on the field TV. Paired with Layout.FocusRingThickness (5px on TV).
+    private static readonly SolidColorBrush TvFocusRingBrush = new(Color.FromArgb("#E2ECFF"));
     private static readonly SolidColorBrush ResolvingRingBrush = new(Color.FromArgb("#FFD54F"));
 
     // Shared across cards deliberately: a burst is a property of the D-pad
@@ -182,6 +186,10 @@ public partial class MatchCardView : ContentView
         AwayBadgeChrome.Shadow = (flat ? null : _awayBadgeShadow)!;
         AwayMonogramChrome.Shadow = (flat ? null : _awayMonogramShadow)!;
         CardOuter.Stroke = flat ? FlatCardStrokeBrush : DefaultCardStrokeBrush;
+
+        // Bind-time only (never on the focus path): the 10-foot focus ring is
+        // thicker on TV. Focus moves only fade the pre-built ring in and out.
+        FocusRing.StrokeThickness = ViewModel?.Layout.FocusRingThickness ?? 3;
     }
 
     private static readonly SolidColorBrush DefaultCardStrokeBrush = new(Color.FromArgb("#26FFFFFF"));
@@ -524,8 +532,9 @@ public partial class MatchCardView : ContentView
     private void ApplyInteractionState(bool animate)
     {
         var resolving = ViewModel?.IsResolving == true;
+        var tv = ViewModel?.Layout.Class == Presentation.HomeLayoutClass.Tv;
 
-        var ringBrush = resolving ? ResolvingRingBrush : FocusRingBrush;
+        var ringBrush = resolving ? ResolvingRingBrush : tv ? TvFocusRingBrush : FocusRingBrush;
         if (!ReferenceEquals(FocusRing.Stroke, ringBrush))
         {
             FocusRing.Stroke = ringBrush;
@@ -543,18 +552,25 @@ public partial class MatchCardView : ContentView
         var targetScale = resolving ? ResolvingScale : _isFocused ? FocusScale : 1.0;
         var targetRing = resolving || _isFocused ? 1.0 : 0.0;
 
+        // The focus lift stays off while resolving: the gold veil pulse owns
+        // the card wash then, and the two must not stack.
+        var targetLift = !resolving && _isFocused ? ViewModel?.Layout.FocusedCardLift ?? 0 : 0.0;
+
         if (animate)
         {
             if (!IsLoaded) return;
             ObserveVisual(CardOuter.ScaleToAsync(targetScale, HoverScaleMs, Easing.CubicOut));
             ObserveVisual(FocusRing.FadeToAsync(targetRing, HoverScaleMs, Easing.CubicOut));
+            ObserveVisual(FocusVeil.FadeToAsync(targetLift, HoverScaleMs, Easing.CubicOut));
         }
         else
         {
             CardOuter.CancelAnimations();
             FocusRing.CancelAnimations();
+            FocusVeil.CancelAnimations();
             CardOuter.Scale = targetScale;
             FocusRing.Opacity = targetRing;
+            FocusVeil.Opacity = targetLift;
         }
     }
 
