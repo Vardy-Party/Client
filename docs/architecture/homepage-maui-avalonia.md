@@ -266,9 +266,10 @@ be turned off in the menu's Settings section (persisted per platform).
    output** to its referencing project (CS0234/CS0246 despite a successful
    reference build). Heads referencing `VardyParty.HomeUi` therefore override
    `GlobalPropertiesToRemove` so the head TFM flows in (windows/android).
-   `VardyParty.Desktop` also sets `AdditionalProperties` `TargetFrameworks=net11.0`
-   so Desktop restore never pulls the android workload even though HomeUi
-   lists `net11.0;net11.0-android` on Linux.
+   `VardyParty.Desktop` (and HomeUi.Tests) also set `AdditionalProperties`
+   `TargetFrameworks=net11.0`. Linux HomeUi itself lists only `net11.0`; the
+   MAUI head opts into `net11.0-android` on its ProjectReference so unit
+   tests never restore the android TFM.
 2. **SkiaSharp native mismatch**: `Svg.Skia` pins
    `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
    SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- HomeViewModel lives in the MAUI homepage assembly (ImageSource). CI
-         installs maui-tizen so this restore of HomeUi net11.0 succeeds. -->
+    <!-- HomeViewModel lives in the MAUI homepage assembly (ImageSource).
+         Linux HomeUi is net11.0-only; maui-tizen is enough (no android TFM). -->
     <UseMaui>true</UseMaui>
   </PropertyGroup>
   <ItemGroup>

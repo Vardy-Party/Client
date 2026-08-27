@@ -54,9 +54,9 @@ Scripted install: <https://learn.microsoft.com/en-us/dotnet/core/install/linux-s
 
 The `maui-tizen` workload carries the plain-TFM MAUI SDK on Linux. You do
 **not** need the `android` workload to run the Desktop head: that project
-pins HomeUi to `net11.0` on its `ProjectReference`. Restoring
-`VardyParty.HomeUi.csproj` by itself on Linux still lists `net11.0-android`
-(for APK-from-Linux); use the Desktop project or `-f net11.0`.
+pins HomeUi to `net11.0` on its `ProjectReference`. HomeUi on Linux is
+`net11.0` only; APK-from-Linux goes through `VardyParty.csproj`, which opts
+HomeUi into `net11.0-android`.
 
 ```bash
 dotnet workload install maui-tizen
