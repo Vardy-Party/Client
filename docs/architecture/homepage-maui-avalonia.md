@@ -160,6 +160,15 @@ panel; type and badge sizes hold the 10-foot floors, so the TV card box is
 now slightly smaller than desktop's while TV type stays the largest);
 phones get smaller cards and tighter padding, portrait tighter still.
 
+Two later field reports (Windows/Desktop) tuned the league header: the
+league icon was raised to read as a proper mark next to the bold title
+(`LeagueIconSize` TV 40 / desktop 34 / phones 28–26, ≥ ~1.6× the title font
+size on every class), and `RowSpacing` became the inter-league gap applied
+**above** each league header (`HomeLayoutState.RowMarginThickness`) so a
+header binds visually to its own card strip — desktop 40, TV only 32
+because TV rows stay deliberately tight (~3.5 rows on a 1080p panel,
+guarded by `Metrics_TvCardsFitAGridOnA1080pPanel`).
+
 ### TV focus (Android leanback, D-pad)
 
 MAUI's `Focused`/`VisualStateManager` and Android's native view focus are
@@ -510,7 +519,11 @@ games update renders, and hardened the remaining path end to end:
   mirrors the league-logos target so `Resources\Raw\Sounds\**` lands in
   both the win-x64 output root and `AppX\Sounds\` on VS/dotnet-driven
   incremental syncs; `run-windows-debug.ps1`'s recursive sync already
-  covered script-driven deploys.
+  covered script-driven deploys. The loose-file `@(Content)` items backing
+  this are conditioned to the windows TargetPlatformIdentifier: on Android
+  the WAVs ship solely as MauiAssets (`assets/Sounds/*.wav`, loaded via
+  `Assets.OpenFd`) and an unconditioned Content item earned one XA0101
+  "build action not supported" warning per file.
 
 ## Follow-ups
 
