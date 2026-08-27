@@ -28,7 +28,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
     private bool _isMenuOpen;
-    private string _subtitle = string.Empty;
+    private string _subtitle = LoadingSubtitle;
     private string _errorMessage = string.Empty;
     private bool _hasGames;
     private bool _isContentLoading = true;
@@ -37,6 +37,14 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private string? _pendingError;
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
+
+    /// <summary>
+    /// Header subtitle until the first real catalog lands (the games feed is a
+    /// BehaviorSubject seeded with null, so subscribing delivers a null board
+    /// immediately — that must read as loading, never "0 games"). Pairs with
+    /// the spinning crest; an empty-but-delivered catalog shows "0 games".
+    /// </summary>
+    public const string LoadingSubtitle = "Loading…";
 
     private sealed record PendingApply(
         IReadOnlyList<LeagueRowModel> Rows,
@@ -407,7 +415,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         IsContentLoading = dict == null;
         HasGames = gameCount > 0;
         var liveCount = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
-        Subtitle = FormatSubtitle(gameCount, liveCount);
+        Subtitle = dict == null ? LoadingSubtitle : FormatSubtitle(gameCount, liveCount);
 
         GamesUpdated?.Invoke(gameCount);
 

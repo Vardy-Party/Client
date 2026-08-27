@@ -155,6 +155,95 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Subtitle_StartsAsLoading_NeverZeroGames()
+    {
+        // Arrange: construction only — no catalog delivered yet.
+
+        // Act
+        var subtitle = _sut.Subtitle;
+
+        // Assert
+        Assert.Equal(HomeViewModel.LoadingSubtitle, subtitle);
+    }
+
+    [Fact]
+    public void Subtitle_NullCatalogWhileLoading_StaysLoading()
+    {
+        // Arrange: the games feed is a BehaviorSubject seeded with null, so
+        // subscribing delivers a null board before the first real catalog —
+        // this used to render "0 games" under the spinning crest.
+        _sut.UpdateGames(null);
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.True(_sut.IsContentLoading);
+        Assert.Equal(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
+    }
+
+    [Fact]
+    public void Subtitle_FirstCatalog_ShowsGameCount()
+    {
+        // Arrange: the startup null emit, then the first real catalog.
+        _sut.UpdateGames(null);
+        _sut.FlushPendingApply();
+        _sut.UpdateGames(CatalogWithUpcomingGames(1));
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.False(_sut.IsContentLoading);
+        Assert.Equal("1 game", _sut.Subtitle);
+    }
+
+    [Fact]
+    public void Subtitle_Refresh_ShowsCountsAndLiveGames()
+    {
+        // Arrange: first catalog applied, then a refresh adds a live game.
+        _sut.UpdateGames(CatalogWithUpcomingGames(1));
+        _sut.FlushPendingApply();
+        _sut.UpdateGames(CatalogWithUpcomingGames(2, liveGames: 1));
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.Equal("3 games · 1 live", _sut.Subtitle);
+    }
+
+    [Fact]
+    public void Subtitle_EmptyDeliveredCatalog_ShowsZeroGames()
+    {
+        // Arrange: an empty-but-delivered catalog is a legitimate zero.
+        _sut.UpdateGames(new Dictionary<string, List<Game>>());
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.False(_sut.IsContentLoading);
+        Assert.Equal("0 games", _sut.Subtitle);
+    }
+
+    [Fact]
+    public void Subtitle_SignOutNullCatalog_ReturnsToLoading()
+    {
+        // Arrange: a real catalog applied, then sign-out clears the feed.
+        _sut.UpdateGames(CatalogWithUpcomingGames(1));
+        _sut.FlushPendingApply();
+        _sut.UpdateGames(null);
+
+        // Act
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.True(_sut.IsContentLoading);
+        Assert.Equal(HomeViewModel.LoadingSubtitle, _sut.Subtitle);
+    }
+
+    [Fact]
     public void LeagueToggles_FillOnlyWhenMenuIsOpen()
     {
         _sut.UpdateGames(CatalogWithOneGame());
@@ -242,6 +331,55 @@ public sealed class HomeViewModelTests : IDisposable
         return new Dictionary<string, List<Game>>
         {
             ["League Alpha"] = [game],
+        };
+    }
+
+    private Dictionary<string, List<Game>> CatalogWithUpcomingGames(int upcomingGames, int liveGames = 0)
+    {
+        var games = new List<Game>();
+        for (var i = 0; i < upcomingGames; i++)
+        {
+            games.Add(_fixture.Build<Game>()
+                .With(g => g.Home, $"Home United {i}")
+                .With(g => g.Away, $"Away City {i}")
+                .With(g => g.BBCHome, "")
+                .With(g => g.BBCAway, "")
+                .With(g => g.League, "League Alpha")
+                .With(g => g.BBCLeague, "")
+                .With(g => g.StatusText, "")
+                .With(g => g.IsFinished, false)
+                .With(g => g.IsInProgress, false)
+                .With(g => g.IsHalfTime, false)
+                .With(g => g.Minute, (int?)null)
+                .With(g => g.Start, DateTime.UtcNow.AddHours(2))
+                .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+                .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+                .Create());
+        }
+
+        for (var i = 0; i < liveGames; i++)
+        {
+            games.Add(_fixture.Build<Game>()
+                .With(g => g.Home, $"Live Rovers {i}")
+                .With(g => g.Away, $"Live Wanderers {i}")
+                .With(g => g.BBCHome, "")
+                .With(g => g.BBCAway, "")
+                .With(g => g.League, "League Alpha")
+                .With(g => g.BBCLeague, "")
+                .With(g => g.StatusText, "")
+                .With(g => g.IsFinished, false)
+                .With(g => g.IsInProgress, true)
+                .With(g => g.IsHalfTime, false)
+                .With(g => g.Minute, (int?)30)
+                .With(g => g.Start, DateTime.UtcNow.AddMinutes(-30))
+                .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+                .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+                .Create());
+        }
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = games,
         };
     }
 
