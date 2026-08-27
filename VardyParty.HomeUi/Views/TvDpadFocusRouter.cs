@@ -22,6 +22,29 @@ internal static class TvDpadFocusRouter
     private static readonly int[] ScreenLocation = new int[2];
 
     /// <summary>
+    /// Frames the deferred focus of a not-yet-attached row keeps retrying
+    /// while the recycler smooth-scrolls it in (~1.5s at 60fps; the 32-bit
+    /// TV box drops frames, and each retry is one cheap looper post).
+    /// </summary>
+    private const int RowAttachRetryFrames = 90;
+
+    private static bool _ownsRowReveal;
+
+    /// <summary>
+    /// One-shot flag: the router revealed the target row itself for the
+    /// focus move currently being delivered. <see cref="MatchCardView"/>
+    /// consumes it to skip its own MAUI rows ScrollTo — a second, item-based
+    /// smooth scroll would cancel the router's in-flight animation mid-move
+    /// (the vertical flavour of the two-scroll-owners bug). UI thread only.
+    /// </summary>
+    internal static bool TryConsumeOwnedRowReveal()
+    {
+        var owned = _ownsRowReveal;
+        _ownsRowReveal = false;
+        return owned;
+    }
+
+    /// <summary>
     /// Returns true when the key was fully handled (focus moved, or the move
     /// was clamped); false lets Android's default focus search run — which is
     /// still wanted for up from the first row (reaches the header Menu button)
@@ -71,7 +94,15 @@ internal static class TvDpadFocusRouter
         var targetRow = outer.FindViewHolderForAdapterPosition(targetPosition)?.ItemView;
         if (targetRow is null)
         {
-            return false;
+            // The adjacent row is not attached yet. Previously this fell
+            // through to Android's focus-search-failed path, which scrolled
+            // the row in with an abrupt layout-time jump (and played the
+            // system navigation click, see OnNativeKeyPress). Own it
+            // instead: one animated recycler scroll, then land focus with
+            // column memory once the row attaches.
+            outer.SmoothScrollToPosition(targetPosition);
+            FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
+            return true;
         }
 
         var scroller = TvDpadStripWalk.FindDescendantScroller(Wrap(targetRow));
@@ -81,7 +112,64 @@ internal static class TvDpadFocusRouter
         }
 
         var target = TvDpadStripWalk.FindNearestFocusableByCenterX(scroller, CenterXOnScreen(card));
-        return target is AndroidNode node && node.View.RequestFocus();
+        if (target is not AndroidNode node)
+        {
+            return false;
+        }
+
+        // Reveal the row OURSELVES before moving focus: with a smooth scroll
+        // in flight, RecyclerView.LayoutManager.onRequestChildFocus reports
+        // isSmoothScrolling() and the framework skips its own
+        // requestChildOnScreen (which ignores revealOnFocusHint and reveals
+        // only the card rect, leaving the league header clipped on upward
+        // moves). One scroll owner per axis, same rule as the strips.
+        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(
+            targetRow.Top, targetRow.Bottom, outer.Height);
+        if (delta != 0)
+        {
+            outer.SmoothScrollBy(0, delta);
+        }
+
+        _ownsRowReveal = true;
+        if (node.View.RequestFocus())
+        {
+            return true;
+        }
+
+        _ownsRowReveal = false;
+        return delta != 0;
+    }
+
+    /// <summary>
+    /// Deferred column-memory focus for a row the recycler is still smooth-
+    /// scrolling in: retry once per frame until the row attaches and lays
+    /// out, then focus its nearest card. Focus landing mid-scroll is safe —
+    /// the in-flight smooth scroll suppresses the framework's own reveal.
+    /// </summary>
+    private static void FocusRowWhenAttached(
+        RecyclerView outer, int targetPosition, int centerX, int attemptsLeft)
+    {
+        if (attemptsLeft <= 0 || !outer.IsAttachedToWindow)
+        {
+            return;
+        }
+
+        var targetRow = outer.FindViewHolderForAdapterPosition(targetPosition)?.ItemView;
+        if (targetRow is null || targetRow.Width == 0)
+        {
+            outer.Post(() => FocusRowWhenAttached(outer, targetPosition, centerX, attemptsLeft - 1));
+            return;
+        }
+
+        var target = TvDpadStripWalk.FindNearestFocusableByCenterX(Wrap(targetRow), centerX);
+        if (target is AndroidNode node)
+        {
+            _ownsRowReveal = true;
+            if (!node.View.RequestFocus())
+            {
+                _ownsRowReveal = false;
+            }
+        }
     }
 
     private static RecyclerView? FindParentRecycler(AView view)

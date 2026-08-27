@@ -269,6 +269,28 @@ public partial class MatchCardView : ContentView
 
         native.Focusable = true;
         native.FocusableInTouchMode = false;
+
+        // TV field report: "click right at the right-most card → it shifts
+        // immediately, jumps back, then scrolls on". Android's focus system
+        // auto-reveals a newly focused off-screen view by INSTANTLY scrolling
+        // its ancestors (HorizontalScrollView.requestChildFocus →
+        // scrollToChild — the same reveal requestChildRectangleOnScreen
+        // serves), and MAUI's ScrollView never learns about it, so our
+        // animated ScrollToAsync then computed from the stale position.
+        // The platform containers gate that reveal on the FOCUSED view's
+        // revealOnFocusHint (API 25+): clearing it turns the strip
+        // container's auto-reveal into a no-op for card focus changes and
+        // leaves exactly one scroll owner — the animated
+        // EnsureFocusedCardVisible scroll below. (The vertical rows
+        // RecyclerView ignores this hint; TvDpadFocusRouter owns that axis
+        // by smooth-scrolling BEFORE it moves focus, which
+        // RecyclerView.LayoutManager.onRequestChildFocus detects via
+        // isSmoothScrolling() and skips its own requestChildOnScreen.)
+        if (OperatingSystem.IsAndroidVersionAtLeast(25))
+        {
+            native.RevealOnFocusHint = false;
+        }
+
         if (native is global::Android.Views.ViewGroup group)
         {
             // D-pad focus search must land on the card root, never on one of
@@ -417,6 +439,19 @@ public partial class MatchCardView : ContentView
 
         if (rows != null && row != null)
         {
+#if ANDROID
+            // The D-pad router reveals the target row itself (it smooth-
+            // scrolls the recycler BEFORE moving focus so the framework's
+            // requestChildOnScreen stays out of the way); issuing the MAUI
+            // item scroll on top would cancel that animation mid-move and
+            // retarget it — the vertical flavour of two scroll owners.
+            // Non-router focus paths (initial autofocus, focus restore)
+            // still get the MakeVisible below.
+            if (TvDpadFocusRouter.TryConsumeOwnedRowReveal())
+            {
+                return;
+            }
+#endif
             rows.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
         }
     }
