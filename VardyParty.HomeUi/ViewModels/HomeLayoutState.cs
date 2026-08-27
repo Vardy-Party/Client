@@ -36,7 +36,13 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double RowHeight => _metrics.CardHeight + 24;
 
     public Thickness PagePaddingThickness => new(_metrics.PagePadding);
-    public Thickness RowMarginThickness => new(0, 0, 0, _metrics.RowSpacing);
+
+    /// <summary>
+    /// Inter-league gap ABOVE each row (not below): the space belongs between
+    /// sections, so a league header binds visually to its own card strip
+    /// instead of floating under the previous league's cards.
+    /// </summary>
+    public Thickness RowMarginThickness => new(0, _metrics.RowSpacing, 0, 0);
     public Thickness CardMarginThickness => new(0, 0, _metrics.CardSpacing, 0);
     public double CardSpacing => _metrics.CardSpacing;
 

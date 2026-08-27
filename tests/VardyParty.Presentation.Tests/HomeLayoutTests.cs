@@ -103,6 +103,28 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_LeagueSectionsGetRealSeparation()
+    {
+        // Arrange: field report — league sections ran together, the next
+        // header sat directly under the previous row's cards. RowSpacing is
+        // the inter-league gap (applied above each header by the row template).
+        var tv = HomeLayoutMetrics.For(HomeLayoutClass.Tv);
+        var desktop = HomeLayoutMetrics.For(HomeLayoutClass.Desktop);
+        var landscape = HomeLayoutMetrics.For(HomeLayoutClass.PhoneLandscape);
+        var portrait = HomeLayoutMetrics.For(HomeLayoutClass.PhonePortrait);
+
+        // Act
+        var all = new[] { tv, desktop, landscape, portrait };
+
+        // Assert: desktop gets a real gap; TV only modest breathing room (its
+        // rows are deliberately tight so ~3.5 rows fit a 1080p panel — see
+        // Metrics_TvCardsFitAGridOnA1080pPanel); every class keeps a floor.
+        Assert.True(desktop.RowSpacing >= 36);
+        Assert.True(tv.RowSpacing >= 30);
+        Assert.All(all, m => Assert.True(m.RowSpacing >= 16));
+    }
+
+    [Fact]
     public void Metrics_LeagueIconReadsAsAProperMarkNextToTheTitle()
     {
         // Arrange: field report — the league icon rendered as a barely-legible
