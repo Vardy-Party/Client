@@ -190,8 +190,13 @@
 
         <!-- Packaged Windows never unpacked MauiAssets onto disk; MediaPlayer
              and OpenAppPackageFileAsync both miss Sounds/*.wav unless they
-             also copy next to the exe / into the loose AppX layout. -->
-        <Content Include="Resources\Raw\Sounds\*.wav"
+             also copy next to the exe / into the loose AppX layout.
+             Windows-only: on Android these WAVs ship solely as MauiAssets
+             (SoundPool loads assets/Sounds/*.wav via Assets.OpenFd) and an
+             unconditioned @(Content) item earns one XA0101 'build action
+             not supported' warning per file. -->
+        <Content Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'"
+                 Include="Resources\Raw\Sounds\*.wav"
                  Link="Sounds\%(Filename)%(Extension)"
                  CopyToOutputDirectory="PreserveNewest"
                  CopyToPublishDirectory="PreserveNewest" />
