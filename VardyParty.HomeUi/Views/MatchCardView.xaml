@@ -77,6 +77,14 @@
                      Opacity="0"
                      InputTransparent="True" />
 
+            <!-- Match-event flash: a brief team-colour pulse (the card's own
+                 wash, brighter) run from code-behind when this card's game
+                 fired a delivered event. Finite ~1.5s, render-only. -->
+            <BoxView x:Name="EventFlashVeil"
+                     Background="{Binding CardBackground}"
+                     Opacity="0"
+                     InputTransparent="True" />
+
             <Grid RowDefinitions="Auto,*" Padding="14,10,14,12">
                 <!-- Status + aggregate chips -->
                 <Grid ColumnDefinitions="Auto,*,Auto">
@@ -172,6 +180,7 @@
                     </VerticalStackLayout>
 
                     <Label Grid.Column="1"
+                           x:Name="ScoreLabel"
                            Text="{Binding ScoreText}"
                            Margin="12,0"
                            FontSize="{Binding Layout.ScoreFontSize}"

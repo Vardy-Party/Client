@@ -528,6 +528,24 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void FlushPendingApply_Goal_FlashesTheMaterializedCard()
+    {
+        // Arrange
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        var flashes = 0;
+        _sut.Rows[0].Cards[0].FlashRequested += () => flashes++;
+
+        // Act
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        // Assert: one flash, synchronized with the toast delivery.
+        Assert.Equal(1, flashes);
+        Assert.NotNull(_sut.Toast.Current);
+    }
+
+    [Fact]
     public void FlushPendingApply_Goal_NotificationsOff_DeliversNothing()
     {
         // Arrange
@@ -536,6 +554,8 @@ public sealed class HomeViewModelTests : IDisposable
         _notifications.SetNotificationsEnabled(false);
         _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
         _sut.FlushPendingApply();
+        var flashes = 0;
+        _sut.Rows[0].Cards[0].FlashRequested += () => flashes++;
 
         // Act
         _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
@@ -543,6 +563,7 @@ public sealed class HomeViewModelTests : IDisposable
 
         // Assert: OFF suppresses sting + toast + card flash entirely.
         Assert.Equal(0, delivered);
+        Assert.Equal(0, flashes);
         Assert.Null(_sut.Toast.Current);
     }
 

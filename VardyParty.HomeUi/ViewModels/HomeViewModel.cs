@@ -428,6 +428,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             var card = FindCardForEvent(matchEvent);
             Toast.Publish(new MatchEventToastItem(
                 matchEvent, row?.LeagueIcon, card?.HomeBadge, card?.AwayBadge));
+
+            // Synchronized card flash — only when the card is materialized
+            // (a staged strip's unmaterialized tail simply has no card).
+            card?.RequestFlash();
         }
     }
 

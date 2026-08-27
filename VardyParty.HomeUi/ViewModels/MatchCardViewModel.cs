@@ -223,6 +223,17 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
         return true;
     }
 
+    /// <summary>
+    /// Raised when this card's game fired a DELIVERED match event (goal /
+    /// extra time / penalties, after the notification policy said present).
+    /// The view answers with a ~1.5s finite render-only flash (score pop +
+    /// team-colour pulse) synchronized with the toast.
+    /// </summary>
+    public event Action? FlashRequested;
+
+    /// <summary>UI thread only (the catalog apply pump).</summary>
+    public void RequestFlash() => FlashRequested?.Invoke();
+
     public void Pick() => _onPicked(this);
 
     /// <summary>Keyboard/D-pad focus or pointer highlight landed on this card.</summary>

@@ -22,6 +22,7 @@ public partial class MatchCardView : ContentView
     private const string PulseAnimation = "LiveDotPulse";
     private const string SheenAnimation = "SheenSweep";
     private const string ResolvingPulseAnimation = "ResolvingPulse";
+    private const string EventFlashAnimation = "MatchEventFlash";
     private const uint HoverScaleMs = 130;
 
     // 1.045 was invisible from the sofa; 1.09 plus the bright ring reads at 10 feet.
@@ -82,11 +83,13 @@ public partial class MatchCardView : ContentView
         if (_observedViewModel != null)
         {
             _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _observedViewModel.FlashRequested -= OnFlashRequested;
             _observedViewModel = null;
         }
 
         // Recycled containers must not keep the previous card's focus chrome.
         _isFocused = false;
+        ResetEventFlash();
 
         if (ViewModel is { } vm)
         {
@@ -94,6 +97,7 @@ public partial class MatchCardView : ContentView
             _observedLayout.PropertyChanged += OnLayoutChanged;
             _observedViewModel = vm;
             _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _observedViewModel.FlashRequested += OnFlashRequested;
             ApplyCornerRadius();
             ApplyCardChrome();
             ApplyInteractionState(animate: false);
@@ -423,6 +427,7 @@ public partial class MatchCardView : ContentView
         StopResolvingPulse();
         this.AbortAnimation(PulseAnimation);
         this.AbortAnimation(SheenAnimation);
+        ResetEventFlash();
 
         if (_observedLayout != null)
         {
@@ -433,6 +438,7 @@ public partial class MatchCardView : ContentView
         if (_observedViewModel != null)
         {
             _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _observedViewModel.FlashRequested -= OnFlashRequested;
             _observedViewModel = null;
         }
 
@@ -481,6 +487,37 @@ public partial class MatchCardView : ContentView
         }
 
         LiveDot.Opacity = 1.0;
+    }
+
+    /// <summary>
+    /// Match-event flash, synchronized with the toast: a ~1.5s FINITE
+    /// render-only celebration — the score pops (transform-only scale) and
+    /// the card's own team-colour wash pulses brighter, then everything
+    /// settles back. No stroke/shadow/layout mutation (TV raster budget) and
+    /// no repeat (TV idle invariant).
+    /// </summary>
+    private void OnFlashRequested()
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        this.AbortAnimation(EventFlashAnimation);
+
+        var flash = new Animation();
+        flash.Add(0.00, 0.15, new Animation(v => EventFlashVeil.Opacity = v, 0.0, 0.55, Easing.CubicOut));
+        flash.Add(0.15, 1.00, new Animation(v => EventFlashVeil.Opacity = v, 0.55, 0.0, Easing.CubicIn));
+        flash.Add(0.00, 0.18, new Animation(v => ScoreLabel.Scale = v, 1.0, 1.30, Easing.CubicOut));
+        flash.Add(0.18, 0.60, new Animation(v => ScoreLabel.Scale = v, 1.30, 1.0, Easing.SpringOut));
+        flash.Commit(this, EventFlashAnimation, length: 1500);
+    }
+
+    private void ResetEventFlash()
+    {
+        this.AbortAnimation(EventFlashAnimation);
+        EventFlashVeil.Opacity = 0;
+        ScoreLabel.Scale = 1.0;
     }
 
     private void OnCardTapped(object? sender, TappedEventArgs e) => ViewModel?.Pick();
