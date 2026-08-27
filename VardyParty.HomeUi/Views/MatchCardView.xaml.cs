@@ -325,13 +325,48 @@ public partial class MatchCardView : ContentView
 
         if (ViewModel?.TryConsumeInitialFocus() == true)
         {
-            // Post: the view must be attached and laid out before focusing.
-            native.Post(() => native.RequestFocus());
+            // The flag is consumed exactly once, so the focus request must
+            // not be a single fire-and-forget Post: under enriched-reveal
+            // timing with staged materialization the platform view exists
+            // (HandlerChanged already ran) but is not attached/laid out on
+            // the next frame yet — a lone RequestFocus fails silently and
+            // the board's first appearance lights nothing (user report).
+            // Retry once per frame until the card is attached, shown and
+            // sized, same pattern as the router's deferred row focus.
+            RequestInitialFocusWhenReady(native, InitialFocusRetryFrames);
         }
 #endif
     }
 
 #if ANDROID
+    /// <summary>
+    /// Frames the one-shot initial autofocus keeps retrying while the first
+    /// card attaches and lays out (~1.5s at 60fps; the 32-bit TV box drops
+    /// frames during the initial catalog apply, and each retry is one cheap
+    /// looper post).
+    /// </summary>
+    private const int InitialFocusRetryFrames = 90;
+
+    private static void RequestInitialFocusWhenReady(
+        global::Android.Views.View native, int attemptsLeft)
+    {
+        if (attemptsLeft <= 0)
+        {
+            return;
+        }
+
+        native.Post(() =>
+        {
+            if (native is { IsAttachedToWindow: true, IsShown: true } && native.Width > 0
+                && native.RequestFocus())
+            {
+                return;
+            }
+
+            RequestInitialFocusWhenReady(native, attemptsLeft - 1);
+        });
+    }
+
     private global::Android.Views.View? _wiredNative;
 
     private void UnwireNativeTvFocus()
