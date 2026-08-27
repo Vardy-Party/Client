@@ -146,6 +146,37 @@ public class HomeLayoutTests
     }
 
     [Fact]
+    public void Metrics_PhoneNotchShowsAFullerStrip_AndKeepsReadabilityFloors()
+    {
+        // Arrange: typical phone viewports in dips (a 390x844 class device).
+        const double landscapeWidth = 844;
+        const double portraitWidth = 390;
+
+        // Act
+        var landscape = HomeLayoutMetrics.For(HomeLayoutClass.PhoneLandscape);
+        var portrait = HomeLayoutMetrics.For(HomeLayoutClass.PhonePortrait);
+
+        // Assert: the notch (272x150 / 244x140, down from 300x168 / 268x160)
+        // fits noticeably more strip — landscape approaches 3 cards, portrait
+        // a full card plus a real peek of the next.
+        var landscapeUsable = landscapeWidth - (2 * landscape.PagePadding);
+        Assert.True(landscapeUsable / (landscape.CardWidth + landscape.CardSpacing) >= 2.8);
+
+        var portraitUsable = portraitWidth - (2 * portrait.PagePadding);
+        Assert.True(portraitUsable / (portrait.CardWidth + portrait.CardSpacing) >= 1.4);
+
+        // Readability floors at arm's length: type/badges scale down with the
+        // cards but never below these.
+        Assert.True(landscape.BadgeSize >= 42);
+        Assert.True(landscape.ScoreFontSize >= 24);
+        Assert.True(landscape.TeamFontSize >= 13);
+        Assert.True(portrait.BadgeSize >= 38);
+        Assert.True(portrait.ScoreFontSize >= 22);
+        Assert.True(portrait.TeamFontSize >= 12);
+        Assert.All(new[] { landscape, portrait }, m => Assert.True(m.StatusFontSize >= 12));
+    }
+
+    [Fact]
     public void Metrics_LeagueSectionsGetRealSeparation()
     {
         // Arrange: field report — league sections ran together, the next
