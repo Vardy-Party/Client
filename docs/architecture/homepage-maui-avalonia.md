@@ -327,12 +327,69 @@ the subtitle beneath, on every adaptive layout
 Six generated WAV cues (`VardyParty/Resources/Raw/Sounds`) played through
 `UiSoundService` (`VardyParty.Presentation`): navigation blip on TV focus
 moves (rate-limited), select confirmation, stream-ready, error, goal chime
-(via `ScoreChangeDetector`) and app-open sting. Platform players:
-`SoundPool` on Android, `MediaPlayer` on Windows, SoundFlow (miniaudio) on
-the Desktop head — which disables itself cleanly when no audio device
-exists (headless CI). Sounds are suppressed while the native video player
-is visible (`INativeVideoPlayerService.PlaybackVisibilityChanged`) and can
-be turned off in the menu's Settings section (persisted per platform).
+(via `MatchEventDetector`, see the match-event section below) and app-open
+sting. Platform players: `SoundPool` on Android, `MediaPlayer` on Windows,
+SoundFlow (miniaudio) on the Desktop head — which disables itself cleanly
+when no audio device exists (headless CI). Sounds are suppressed while the
+native video player is visible
+(`INativeVideoPlayerService.PlaybackVisibilityChanged`) and can be turned
+off in the menu's Settings section (persisted per platform).
+
+### Match-event notifications
+
+Field report: the goal sting fired with no visual attribution ("3 notes, no
+idea what it means"). Match events now get a full delivery pipeline, all in
+shared code:
+
+- **`MatchEventDetector`** (`VardyParty.Presentation`, pure, unit-tested):
+  fed the FILTERED display list on every catalog apply (games in hidden
+  leagues are never observed), it emits GOAL (with the new score and which
+  side scored), EXTRA TIME and PENALTIES (phase transitions INTO those
+  phases via `MatchStatusPresenter.GetPhase`). A game's first observation
+  never fires — first load, a fixture appearing mid-match, or a league
+  being unhidden stays silent. Score corrections downward are ignored.
+- **`MatchEventNotificationPolicy`** (unit-tested decision table): heads
+  wire window lifecycle into `IsAppForegrounded` (Activated/Resumed =
+  foreground, Stopped = background; Deactivated — focus lost while still
+  visible, e.g. the desktop head's native VLC window taking focus —
+  deliberately still counts as foreground) and the existing
+  playback-visibility signal into `IsPlaybackActive`.
+- **Homepage toast** (`MatchEventToastViewModel` + `MatchEventToastView`):
+  a compact banner — league icon + league name, both team badges (monogram
+  fallback), "GOAL — Jablonec 2–1 Rangers", tinted with the two teams'
+  `TeamPalette` colours as the same cheap 2-stop wash the flat cards use.
+  Top-right within the safe area on Desktop/TV, bottom-centre on phones.
+  Auto-dismisses after ~4s with a short slide/fade; every animation is
+  event-driven and finite (TV idle invariant), and the whole overlay is
+  input-transparent and never focusable (the TV D-pad cannot land on it).
+  Near-simultaneous events queue sequentially, at most 3 deep behind the
+  showing toast (drop-oldest beyond that); the queue/dismiss state machine
+  is clock-injectable and unit-tested, with token-guarded dismissal so a
+  superseded presentation can never dismiss the wrong toast.
+- **Card flash**: when the event's card is materialized, a ~1.5s finite
+  render-only flash (score-label pop + the card's own team wash pulsed
+  brighter) runs synchronized with the toast. Transform/opacity only — no
+  stroke, shadow or layout mutation.
+- **`MatchEventBus`**: delivered events (the ones that passed the policy)
+  are published on an in-process bus. The homepage toast is today's only
+  consumer; toasts over the native video players (next dispatch) subscribe
+  to the same stream instead of growing their own detector.
+
+Delivery matrix (surface × behaviour), gated by two Settings toggles:
+
+| App state | Surface | Sting (audio) | Toast | Card flash |
+| --- | --- | --- | --- | --- |
+| Foreground | Homepage (no stream) | Yes | Yes | Yes |
+| Foreground | Stream playing | No | Yes | Yes (behind player) |
+| Background / minimized | any | No | No — dropped, no catch-up on resume | No |
+
+- **"Goal notifications"** (default ON, persisted via the
+  `ISoundPreferencesStore` pattern): OFF suppresses sting + toast + card
+  flash entirely.
+- **"UI sounds"** (existing toggle): still governs navigation ticks
+  independently, and still gates the sting's AUDIO when notifications are
+  ON (the sting routes through `UiSoundService`, which also keeps its
+  playback suppression).
 
 ## Exact stack versions (verified building and running on Linux)
 
@@ -617,6 +674,24 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
   white veil (0.10) lifting the focused card; all transitions remain
   opacity/transform-only. TV cards took a third size notch to 300×160
   (badge 50, score 30) for ~5.8 cards per row on 1080p.
+
+## Phone polish package (field-driven, Android touch testing)
+
+- **Appends yield to interaction**: staged strip chunk appends could land
+  during an active touch drag and hitch the strip. Any strip scroll event
+  pauses the appends; a one-shot cooldown (restarted per event — it fires
+  once after the last scroll callback, no recurring tick) resumes them and
+  re-kicks the pump. Epoch pruning is unchanged.
+- **Phone size notch**: cards went one notch down on both phone classes
+  (272×150 landscape, 244×140 portrait; badge/score/team proportional with
+  arm's-length floors), landed as an isolated revertable commit like the
+  TV notches.
+- **Flat chrome on phones**: `FlatCardChrome` now covers TV + both phone
+  classes. The TV evidence transfers — the card + badge composition
+  shadows are the biggest raster line-item at ~37 cards on any renderer,
+  phones spend their GPU headroom on 60fps touch scrolling instead, and
+  flat keeps phones visually consistent with TV. Desktop keeps the full
+  treatment (few visible cards, real headroom, 2-foot viewing distance).
 
 ## Follow-ups
 
