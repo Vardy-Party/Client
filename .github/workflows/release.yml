@@ -11,6 +11,9 @@ on:
         type: boolean
         default: true
 
+env:
+  RELEASE_ASSET_TAG: ${{ replace(github.ref_name, '/', '-') }}
+
 jobs:
   create-release:
     name: Create GitHub Release
@@ -61,7 +64,7 @@ jobs:
       - name: Package Windows
         run: |
           cd output/windows
-          7z a -tzip "VardyParty-windows-${{ github.ref_name }}.zip" *
+          7z a -tzip "VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip" *
           cd ../..
       
       - name: Upload Windows Release Asset
@@ -71,8 +74,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/windows/VardyParty-windows-${{ github.ref_name }}.zip
-          asset_name: VardyParty-windows-${{ github.ref_name }}.zip
+          asset_path: ./output/windows/VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip
+          asset_name: VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip
           asset_content_type: application/zip
 
   build-android-release:
@@ -115,7 +118,7 @@ jobs:
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ./output/android/com.vardyparty-Signed.apk
-          asset_name: VardyParty-android-${{ github.ref_name }}.apk
+          asset_name: VardyParty-android-${{ env.RELEASE_ASSET_TAG }}.apk
           asset_content_type: application/vnd.android.package-archive
 
   build-ios-release:
@@ -152,7 +155,7 @@ jobs:
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ./output/ios/VardyParty.ipa
-          asset_name: VardyParty-ios-${{ github.ref_name }}.ipa
+          asset_name: VardyParty-ios-${{ env.RELEASE_ASSET_TAG }}.ipa
           asset_content_type: application/octet-stream
 
   build-macos-release:
@@ -184,7 +187,7 @@ jobs:
       - name: Package macOS
         run: |
           cd output/macos
-          zip -r "VardyParty-macos-${{ github.ref_name }}.zip" VardyParty.app
+          zip -r "VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip" VardyParty.app
           cd ../..
       
       - name: Upload macOS Release Asset
@@ -194,8 +197,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/macos/VardyParty-macos-${{ github.ref_name }}.zip
-          asset_name: VardyParty-macos-${{ github.ref_name }}.zip
+          asset_path: ./output/macos/VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip
+          asset_name: VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip
           asset_content_type: application/zip
 
   build-linux-release:
@@ -235,13 +238,13 @@ jobs:
       - name: Package Linux x64
         run: |
           cd output
-          tar -czf "VardyParty-linux-x64-${{ github.ref_name }}.tar.gz" linux-x64/
+          tar -czf "VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz" linux-x64/
           cd ..
       
       - name: Package Linux ARM64
         run: |
           cd output
-          tar -czf "VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz" linux-arm64/
+          tar -czf "VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz" linux-arm64/
           cd ..
       
       - name: Upload Linux x64 Release Asset
@@ -251,8 +254,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/VardyParty-linux-x64-${{ github.ref_name }}.tar.gz
-          asset_name: VardyParty-linux-x64-${{ github.ref_name }}.tar.gz
+          asset_path: ./output/VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
+          asset_name: VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
           asset_content_type: application/gzip
       
       - name: Upload Linux ARM64 Release Asset
@@ -262,6 +265,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz
-          asset_name: VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz
+          asset_path: ./output/VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
+          asset_name: VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
           asset_content_type: application/gzip
