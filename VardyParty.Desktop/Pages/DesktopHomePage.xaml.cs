@@ -100,7 +100,105 @@ public partial class DesktopHomePage : ContentPage
         // Suppress all UI blips while the native VLC window is open, and show
         // the in-app now-playing card that carries the Close control.
         _videoPlayer.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
+
+#if EMBEDDED_DESKTOP_VIDEO
+        WireEmbeddedVideoHost();
+#endif
     }
+
+#if EMBEDDED_DESKTOP_VIDEO
+    private Controls.VideoHostView? _videoHost;
+
+    /// <summary>
+    /// Hosted-surface wiring for in-window playback: the service asks this
+    /// page (via <see cref="DesktopVideoPlayerService.EmbedSurfaceAsync"/>) to
+    /// assign the MediaPlayer to a hosted VideoHostView BEFORE Play, and tells
+    /// it when the surface may be safely detached (clean stop) or must never
+    /// be touched again (a wedged libvlc pair was abandoned).
+    /// </summary>
+    private void WireEmbeddedVideoHost()
+    {
+        if (_videoPlayer is not DesktopVideoPlayerService service)
+        {
+            return;
+        }
+
+        service.EmbedSurfaceAsync = EmbedSurfaceOnUiAsync;
+        service.DetachSurfaceRequested += OnDetachSurfaceRequested;
+        service.SurfacePoisoned += OnSurfacePoisoned;
+        service.EmbeddingStateChanged += OnEmbeddingStateChanged;
+    }
+
+    /// <summary>
+    /// UI-thread half of the embed handshake: make the video row host a
+    /// (fresh or reused) VideoHostView and assign the player so VideoView
+    /// attaches the drawable. The service polls the drawable and decides
+    /// embedded vs standalone-fallback; this method must never block its
+    /// caller (always dispatches) and never touches libvlc beyond the
+    /// non-blocking MediaPlayer property assignment.
+    /// </summary>
+    private Task EmbedSurfaceOnUiAsync(LibVLCSharp.Shared.MediaPlayer player)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.Dispatch(() =>
+        {
+            try
+            {
+                if (_videoHost == null)
+                {
+                    _videoHost = new Controls.VideoHostView();
+                    VideoHostContainer.Children.Add(_videoHost);
+                }
+
+                // The native child window only realizes while the host is in
+                // the visible tree — show the video row before assigning.
+                VideoHostContainer.IsVisible = true;
+                StandalonePlaybackPanel.IsVisible = false;
+                _videoHost.MediaPlayer = player;
+                tcs.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+        });
+        return tcs.Task;
+    }
+
+    /// <summary>Clean stop: the player is idle, clearing the binding is a safe no-op detach.</summary>
+    private void OnDetachSurfaceRequested() => Dispatcher.Dispatch(() =>
+    {
+        if (_videoHost != null)
+        {
+            _videoHost.MediaPlayer = null;
+        }
+    });
+
+    /// <summary>
+    /// A libvlc pair was abandoned as wedged: park the current host invisible
+    /// and forget it — removing it (or clearing its MediaPlayer) would run
+    /// VideoView's drawable-detach against the wedged player, which can hold
+    /// its object lock and stall the UI thread. The next session builds a
+    /// fresh host; the parked one leaks with its abandoned player by design.
+    /// </summary>
+    private void OnSurfacePoisoned() => Dispatcher.Dispatch(() =>
+    {
+        if (_videoHost is { } poisoned)
+        {
+            poisoned.IsVisible = false;
+            _videoHost = null;
+        }
+
+        VideoHostContainer.IsVisible = false;
+        StandalonePlaybackPanel.IsVisible = true;
+    });
+
+    private void OnEmbeddingStateChanged(object? sender, bool embedded) => Dispatcher.Dispatch(() =>
+    {
+        VideoHostContainer.IsVisible = embedded;
+        StandalonePlaybackPanel.IsVisible = !embedded;
+    });
+#endif
 
     protected override void OnAppearing()
     {
@@ -383,7 +481,65 @@ public partial class DesktopHomePage : ContentPage
 
     // --------------------------------------------------- stream resolution --
 
-    private void OnGamePicked(Game game) => _ = StartStreamResolutionAsync(game);
+    private void OnGamePicked(Game game)
+    {
+        if (TestMediaPath is { } testMedia)
+        {
+            _ = PlayTestMediaAsync(game, testMedia);
+            return;
+        }
+
+        _ = StartStreamResolutionAsync(game);
+    }
+
+    /// <summary>
+    /// TEST-ONLY hook (headless verification of the in-window playback path):
+    /// VARDYPARTY_DESKTOP_TEST_MEDIA=&lt;path-or-url&gt; makes a card pick play
+    /// that media directly through the real player service instead of
+    /// resolving streams. Never set in production; pairs with
+    /// VARDYPARTY_DESKTOP_SAMPLE_DATA=1 for the xvfb evidence runs.
+    /// </summary>
+    private static string? TestMediaPath
+    {
+        get
+        {
+            var value = Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_TEST_MEDIA");
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+    }
+
+    private async Task PlayTestMediaAsync(Game game, string testMedia)
+    {
+        // Local paths become file:// URIs; anything with a scheme (including
+        // a deliberately stalling http endpoint for the Close-responsiveness
+        // proof) passes through untouched.
+        var mediaUrl = testMedia.Contains("://", StringComparison.Ordinal)
+            ? testMedia
+            : new Uri(Path.GetFullPath(testMedia)).AbsoluteUri;
+        var title = $"{game.DisplayHome} v {game.DisplayAway}";
+        _logger.LogInformation(
+            "[DesktopHome] TEST MEDIA hook: playing {Url} for '{Title}' (stream resolution bypassed)",
+            mediaUrl, title);
+        Dispatcher.Dispatch(() => PlaybackTitleLabel.Text = title);
+
+        try
+        {
+            var result = await _videoPlayer.PlayVideoAsync(
+                mediaUrl, refererUrl: string.Empty, title,
+                league: game.League, homeTeam: game.DisplayHome, awayTeam: game.DisplayAway);
+            _logger.LogInformation(
+                "[DesktopHome] TEST MEDIA playback ended (success={Success}, message={Message})",
+                result.Success, result.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DesktopHome] TEST MEDIA playback failed");
+        }
+        finally
+        {
+            _viewModel.OnStreamResolutionEnded();
+        }
+    }
 
     private async Task StartStreamResolutionAsync(Game game)
     {

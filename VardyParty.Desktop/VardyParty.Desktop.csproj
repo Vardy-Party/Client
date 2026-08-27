@@ -28,6 +28,26 @@
 		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
 		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
 		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+
+		<!--
+			Build-time feature switch: in-window video playback (default ON).
+
+			  dotnet build ... -p:EmbeddedDesktopVideo=false
+
+			compiles the embedded-playback feature OUT entirely: no
+			LibVLCSharp.Avalonia package reference, no VideoHostView/handler,
+			no hosted-surface code in DesktopHomePage/DesktopVideoPlayerService
+			— playback opens libvlc's own native video window (the pre-feature
+			behaviour), with the in-app "Now Playing" card carrying Close.
+			Everything the switch controls is guarded by the
+			EMBEDDED_DESKTOP_VIDEO define derived below. Independent of the
+			switch, the embedded path also auto-falls back to the standalone
+			window at RUNTIME if the hosted surface cannot be attached (see
+			DesktopVideoPlayerService). Documented in
+			docs/architecture/homepage-maui-avalonia.md.
+		-->
+		<EmbeddedDesktopVideo Condition="'$(EmbeddedDesktopVideo)' == ''">true</EmbeddedDesktopVideo>
+		<DefineConstants Condition="'$(EmbeddedDesktopVideo)' == 'true'">$(DefineConstants);EMBEDDED_DESKTOP_VIDEO</DefineConstants>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -46,12 +66,18 @@
 		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
 		<PackageReference Include="SoundFlow" Version="1.4.1" />
 		<!--
-			LibVLC playback (system libvlc, initialised lazily). Deliberately NOT
-			LibVLCSharp.Avalonia: its VideoView is an Avalonia control and cannot be
-			hosted inside this head's MAUI XAML tree — playback opens libvlc's own
-			native video window instead (see DesktopVideoPlayerService).
+			LibVLC playback (system libvlc, initialised lazily). LibVLCSharp is
+			the core binding; LibVLCSharp.Avalonia adds the VideoView control
+			the in-window playback feature hosts through the MAUI-Avalonia
+			AvaloniaControlHandler bridge (Controls/VideoHostView*). 3.10.x is
+			the first LibVLCSharp.Avalonia line that supports Avalonia 12 (it
+			declares Avalonia >= 11.3.13 and detects 12 at runtime), matching
+			the Avalonia 12.1 the Avalonia.Controls.Maui.Desktop backend pulls
+			in transitively. The Avalonia package is only referenced when the
+			EmbeddedDesktopVideo switch is ON (see the PropertyGroup above).
 		-->
 		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
+		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.1" Condition="'$(EmbeddedDesktopVideo)' == 'true'" />
 		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
 		<PackageReference Include="QRCoder" Version="1.7.0" />
 	</ItemGroup>
