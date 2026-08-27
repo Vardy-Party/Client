@@ -785,6 +785,8 @@ jobs:
     name: Package Linux x64 Snap
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
