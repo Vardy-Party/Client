@@ -7,9 +7,9 @@ namespace VardyParty.HomeUi.Views;
 /// it is never focusable (D-pad/tab traversal skips it; the menu button
 /// beside it stays focusable).
 /// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/>)
-/// the crest spins on a 3D RotationY turntable; when rows render it eases
-/// to rest with a sheen sweep. Settling is delayed so it does not abort an
-/// animation on the same CoreMessaging tick as catalog materialization.
+/// the crest spins on a 3D RotationY turntable; when rows render it finishes
+/// the turn it is on and eases to rest with a sheen sweep. Catalog paint must
+/// not abort the spinner — that froze the crest mid-turn.
 /// </summary>
 public partial class BrandLogoView : ContentView
 {
@@ -19,15 +19,17 @@ public partial class BrandLogoView : ContentView
     private const string SettleAnimation = "BrandSpinSettle";
     private const uint FocusScaleMs = 130;
     private const double AmbientOpacity = 0.35;
-    private const uint SpinTurnMs = 1800;
     private const double RimMinScaleX = 0.06;
     private const double RimMaxScaleX = 0.34;
     private const double RimDriftPx = 7.0;
 
     private bool _ambientRunning;
     private bool _spinning;
+    private bool _settleRequested;
+    private bool _atRest;
+    private double _angle;
     private HomeViewModel? _observedViewModel;
-    private IDispatcherTimer? _settleDelay;
+    private IDispatcherTimer? _settleWatchdog;
 
     public BrandLogoView()
     {
@@ -74,18 +76,29 @@ public partial class BrandLogoView : ContentView
 
         if (ShouldSpin)
         {
-            CancelSettleDelay();
+            CancelSettleWatchdog();
+            _settleRequested = false;
+            _atRest = false;
             StartLoadingSpin();
             return;
         }
 
-        if (_spinning)
+        RequestSettle();
+    }
+
+    /// <summary>
+    /// HomeView calls this after a catalog apply so a spinner killed by
+    /// BindableLayout/CollectionView materialization can ease to rest from
+    /// the last applied angle instead of staying edge-on.
+    /// </summary>
+    public void OnCatalogApplied()
+    {
+        if (!IsLoaded || ShouldSpin)
         {
-            ScheduleSettle();
             return;
         }
 
-        RunSheenSweep(0.85);
+        RequestSettle();
     }
 
     private void OnLoaded(object? sender, EventArgs e)
@@ -97,9 +110,10 @@ public partial class BrandLogoView : ContentView
 
     private void OnUnloaded(object? sender, EventArgs e)
     {
-        CancelSettleDelay();
+        CancelSettleWatchdog();
         _ambientRunning = false;
         _spinning = false;
+        _settleRequested = false;
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(AmbientAnimation);
         this.AbortAnimation(SpinAnimation);
@@ -139,6 +153,8 @@ public partial class BrandLogoView : ContentView
     {
         if (_spinning) return;
         _spinning = true;
+        _settleRequested = false;
+        _atRest = false;
 
         _ambientRunning = false;
         this.AbortAnimation(AmbientAnimation);
@@ -146,58 +162,144 @@ public partial class BrandLogoView : ContentView
         this.AbortAnimation(SettleAnimation);
 
         var spin = new Animation(ApplySpinFrame, 0, 360);
-        spin.Commit(this, SpinAnimation, length: SpinTurnMs, easing: Easing.Linear, repeat: () => _spinning);
+        spin.Commit(
+            this,
+            SpinAnimation,
+            length: BrandCrestSpin.TurnMs,
+            easing: Easing.Linear,
+            finished: OnSpinCycleFinished,
+            repeat: () => BrandCrestSpin.ContinueSpinCycle(_spinning, _settleRequested));
     }
 
-    private void ScheduleSettle()
+    private void OnSpinCycleFinished(double _, bool cancelled)
     {
-        if (!_spinning) return;
-        if (_settleDelay != null) return;
-
-        _settleDelay = Dispatcher.CreateTimer();
-        _settleDelay.Interval = TimeSpan.FromMilliseconds(400);
-        _settleDelay.IsRepeating = false;
-        _settleDelay.Tick += OnSettleDelayTick;
-        _settleDelay.Start();
-    }
-
-    private void OnSettleDelayTick(object? sender, EventArgs e)
-    {
-        CancelSettleDelay();
-        SettleFromSpin();
-    }
-
-    private void CancelSettleDelay()
-    {
-        if (_settleDelay == null) return;
-        _settleDelay.Tick -= OnSettleDelayTick;
-        _settleDelay.Stop();
-        _settleDelay = null;
-    }
-
-    private void SettleFromSpin()
-    {
-        if (!_spinning) return;
-        _spinning = false;
-        this.AbortAnimation(SpinAnimation);
-
-        var current = LogoOuter.RotationY % 360;
-        if (current < 0) current += 360;
-        var target = current <= 180 ? 0.0 : 360.0;
-
-        var settle = new Animation(ApplySpinFrame, current, target, Easing.CubicOut);
-        settle.Commit(this, SettleAnimation, length: 500, finished: (_, _) =>
+        if (ShouldSpin && cancelled)
         {
-            ResetSpinVisuals();
+            // Layout aborted the spinner (catalog materializing). Do not
+            // Commit synchronously — that fights the same layout pass.
+            _spinning = false;
             if (IsLoaded)
             {
-                RunSheenSweep(0.85);
+                Dispatcher.Dispatch(() =>
+                {
+                    if (IsLoaded && ShouldSpin && !_spinning)
+                    {
+                        StartLoadingSpin();
+                    }
+                });
+            }
+
+            return;
+        }
+
+        if (_settleRequested || !ShouldSpin)
+        {
+            SettleFromAngle(_angle);
+        }
+    }
+
+    private void RequestSettle()
+    {
+        if (_atRest && BrandCrestSpin.IsFaceOnRest(_angle))
+        {
+            return;
+        }
+
+        _settleRequested = true;
+        if (BrandCrestSpin.SettleNowBecauseSpinDied(_settleRequested, this.AnimationIsRunning(SpinAnimation)))
+        {
+            SettleFromAngle(_angle);
+            return;
+        }
+
+        EnsureSettleWatchdog();
+    }
+
+    private void EnsureSettleWatchdog()
+    {
+        if (_settleWatchdog != null)
+        {
+            return;
+        }
+
+        _settleWatchdog = Dispatcher.CreateTimer();
+        _settleWatchdog.Interval = TimeSpan.FromMilliseconds(
+            BrandCrestSpin.TurnMs + BrandCrestSpin.SettleMs + 200);
+        _settleWatchdog.IsRepeating = false;
+        _settleWatchdog.Tick += OnSettleWatchdogTick;
+        _settleWatchdog.Start();
+    }
+
+    private void OnSettleWatchdogTick(object? sender, EventArgs e)
+    {
+        CancelSettleWatchdog();
+        if (_atRest || this.AnimationIsRunning(SettleAnimation))
+        {
+            return;
+        }
+
+        SettleFromAngle(_angle, snapIfIdle: true);
+    }
+
+    private void CancelSettleWatchdog()
+    {
+        if (_settleWatchdog == null) return;
+        _settleWatchdog.Tick -= OnSettleWatchdogTick;
+        _settleWatchdog.Stop();
+        _settleWatchdog = null;
+    }
+
+    private void SettleFromAngle(double current, bool snapIfIdle = false)
+    {
+        _spinning = false;
+        _settleRequested = true;
+
+        if (this.AnimationIsRunning(SpinAnimation))
+        {
+            // Finish the cycle via repeat=false; do not abort mid-turn.
+            if (!snapIfIdle)
+            {
+                return;
+            }
+
+            this.AbortAnimation(SpinAnimation);
+        }
+
+        this.AbortAnimation(SettleAnimation);
+
+        if (BrandCrestSpin.IsFaceOnRest(current))
+        {
+            CompleteRest();
+            return;
+        }
+
+        var from = BrandCrestSpin.NormalizeDegrees(current);
+        var target = BrandCrestSpin.RestTargetDegrees(from);
+        var settle = new Animation(ApplySpinFrame, from, target, Easing.CubicOut);
+        settle.Commit(this, SettleAnimation, length: BrandCrestSpin.SettleMs, finished: (_, cancelled) =>
+        {
+            if (!cancelled)
+            {
+                CompleteRest();
             }
         });
     }
 
+    private void CompleteRest()
+    {
+        CancelSettleWatchdog();
+        ResetSpinVisuals();
+        _atRest = true;
+        _settleRequested = false;
+        if (IsLoaded)
+        {
+            RunSheenSweep(0.85);
+        }
+    }
+
     private void ResetSpinVisuals()
     {
+        _angle = 0;
         LogoOuter.Opacity = 1;
         LogoOuter.RotationY = 0;
         EdgeRim.Opacity = 0;
@@ -207,6 +309,7 @@ public partial class BrandLogoView : ContentView
 
     private void ApplySpinFrame(double angleDegrees)
     {
+        _angle = angleDegrees;
         var radians = angleDegrees * Math.PI / 180.0;
         var sin = Math.Sin(radians);
         var absSin = Math.Abs(sin);
@@ -227,7 +330,7 @@ public partial class BrandLogoView : ContentView
 
     private void RunSheenSweep(double peakOpacity)
     {
-        if (_spinning) return;
+        if (_spinning || this.AnimationIsRunning(SettleAnimation)) return;
 
         _ambientRunning = false;
         this.AbortAnimation(AmbientAnimation);

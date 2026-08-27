@@ -190,14 +190,19 @@ would skip the cards entirely and MAUI focus events would never fire.
   `BindingContextChanged`), so handler-timing and RecyclerView recycling
   can never leave a card unfocusable, and it is torn down on `Unloaded`.
 - On focus gained the card scrolls itself fully on-screen: the row
-  `ScrollView` via `ScrollToAsync(..., MakeVisible)` and the outer rows
+  `ScrollView` via `ScrollToAsync(CardOuter, MakeVisible)` (posted on
+  Android so the 1.09 scale + ring are included) and the outer rows
   `CollectionView` via `ScrollTo`. Native focus scrolling alone often
   reveals a card only partially, clipping the ring.
-- **Column memory** (`TvDpadFocusRouter`): a native `KeyPress` listener on
-  the focused card routes DpadDown/Up to the card in the adjacent row whose
-  screen X is nearest the current card (Netflix behaviour) instead of
-  Android's clipped nearest-neighbour pick (which tends to reset to row
-  start), and clamps DpadLeft/Right at row edges so focus never leaps rows.
+- **Column memory** (`TvDpadFocusRouter` / `TvDpadStripWalk`): a native
+  `KeyPress` listener on the focused card routes DpadDown/Up to the card
+  in the adjacent row whose screen X is nearest the current card (Netflix
+  behaviour) instead of Android's clipped nearest-neighbour pick (which
+  tends to reset to row start), and clamps DpadLeft/Right at row edges so
+  focus never leaps rows. Column memory and edge clamps collect **shown
+  focusable leaves** under the row scroller (card roots use
+  BlockDescendants), so a one-card BindableLayout is not mistaken for
+  inner Grid chrome.
   Up from the first row and not-yet-laid-out rows fall through to the
   default search (header reachability, focus-search-failed scrolling).
 - One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
@@ -227,11 +232,17 @@ the subtitle beneath, on every adaptive layout
 - **3D treatment** (`BrandLogoView`): the badges' brushed-metal gradient
   ring, a dark inner plate, a glass gloss over the upper hemisphere, and a
   drop shadow.
-- **Animation**: a sheen sweep on load, a slow ambient shimmer loop (a
-  low-opacity sheen crosses the crest for a quarter of a 6 s loop), and a
-  subtle scale + glow + sheen response when TV focus enters the header
-  (the Menu button). Same performance discipline as the cards —
-  opacity/transform only, everything aborted on unload.
+- **Animation**: while `HomeViewModel.IsContentLoading` the crest spins on a
+  3D `RotationY` turntable (coin-edge rim + angle-driven glint). When the
+  first catalog lands, the spinner **finishes the turn it is on** and eases
+  to face-on rest with a sheen — catalog paint must not `AbortAnimation`
+  mid-rotation (that froze the crest edge-on). If layout kills the spinner,
+  `HomeView` tells the logo after apply and it settles from the last angle.
+  After rest, a slow ambient shimmer loop (a low-opacity sheen crosses the
+  crest for a quarter of a 6 s loop), and a subtle scale + glow + sheen
+  response when TV focus enters the header (the Menu button). Same
+  performance discipline as the cards — opacity/transform only, everything
+  aborted on unload.
 
 ### UI sound design
 
@@ -478,9 +489,8 @@ games update renders, and hardened the remaining path end to end:
   1.8 stowed-exception crash into logged, survivable failures — needs a
   launch check on the affected machine (use `VARDYPARTY_NO_CHROME=1` to
   bisect if anything still misbehaves).
-- **Crest settle / first catalog paint**: the board leaving loading can
-  freeze the header spin mid-turn; polish that handoff later. Inner
-  `BindableLayout` strips are not virtualized.
+- **Inner BindableLayout strips** are not virtualized (fine for a handful of
+  fixtures per league, not a 30-card row).
 
 ## Risk register
 
