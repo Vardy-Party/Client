@@ -34,6 +34,14 @@ namespace VardyParty
         /// </summary>
         private static long _lastOverlayBackMs;
 
+        /// <summary>
+        /// Called when an overlay handler has consumed Back (e.g. cancel
+        /// finding-streams). Arms exit grace so a repeat press against a
+        /// stale frame cannot <see cref="FinishAndRemoveTask"/>.
+        /// </summary>
+        public static void NoteOverlayBackConsumed() =>
+            _lastOverlayBackMs = System.Environment.TickCount64;
+
         public static void SetFlyoutMenuOpen(bool open)
         {
             _flyoutMenuOpen = open;
@@ -73,14 +81,24 @@ namespace VardyParty
                 return;
             }
 
+            // Ask the live page first — OnBackPressed's ExitApp path never
+            // reaches the OnBack multicast, and OverlaySuppression can lag
+            // behind the finding-streams modal by a frame.
+            if (TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return;
+            }
+
             switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
             {
                 case HomeBackDecision.BackAction.DelegateToOverlays:
-                    // Overlay is active and wants to consume Back. Dispatch to the remote handler so the
-                    // overlay can cancel resolution and close itself.
+                    // Tracker still set but page reported nothing open — still
+                    // do not exit (stale paint / race). Never Reset() here:
+                    // wiping suppression mid-session made the next Back exit.
                     Log.Info("MainActivity",
-                        $"[MAIN] Back pressed while overlay visible ({OverlaySuppression.DescribeActive()}) - delegating to overlay handler");
-                    _lastOverlayBackMs = System.Environment.TickCount64;
+                        $"[MAIN] Back pressed while overlay flag set ({OverlaySuppression.DescribeActive()}) - not exiting");
+                    NoteOverlayBackConsumed();
                     try
                     {
                         if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
@@ -90,15 +108,6 @@ namespace VardyParty
                     }
                     catch { }
 
-                    // Fallback: if no handler consumed the event, cancel any stream switching state but do not navigate.
-                    OverlaySuppression.Reset();
-                    try
-                    {
-                        var services = IPlatformApplication.Current?.Services;
-                        var switching = services?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
-                        switching?.Cleanup();
-                    }
-                    catch { }
                     return;
 
                 case HomeBackDecision.BackAction.IgnoreStaleExit:
@@ -162,18 +171,22 @@ namespace VardyParty
                 return;
             }
 
-            // This handler is subscribed in OnCreate, BEFORE HomeHostPage's
-            // overlay handler joins the multicast, so it always sees the
-            // suppression state as it was when the user pressed Back — the
-            // page handler closing the menu later in the same invocation
-            // cannot turn this press into an app exit.
+            // Consume via the live page before Decide/exit. This handler runs
+            // first in the OnBack multicast; HomeHostPage's handler is then a
+            // no-op if we already cancelled. Field: tracker-only Decide let
+            // FinishAndRemoveTask win while finding-streams was still up.
+            if (TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return;
+            }
+
             switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
             {
                 case HomeBackDecision.BackAction.DelegateToOverlays:
-                    // The overlay handler (later in this multicast) consumes it.
                     Log.Info("MainActivity",
                         $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
-                    _lastOverlayBackMs = System.Environment.TickCount64;
+                    NoteOverlayBackConsumed();
                     return;
 
                 case HomeBackDecision.BackAction.IgnoreStaleExit:
@@ -189,8 +202,47 @@ namespace VardyParty
             HandleNavigationBack();
         }
 
+        /// <summary>
+        /// Route Back to <see cref="HomeHostPage"/> overlays (menu, device
+        /// code, finding-streams) using live page state — not only the static
+        /// suppression tracker.
+        /// </summary>
+        private static bool TryConsumeHomeOverlayBack()
+        {
+            try
+            {
+                var page = Microsoft.Maui.Controls.Application.Current?.Windows?.FirstOrDefault()?.Page;
+                if (page is HomeHostPage home)
+                {
+                    return home.TryHandleHardwareBack();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("MainActivity", $"[MAIN] TryConsumeHomeOverlayBack failed: {ex.Message}");
+            }
+
+            return false;
+        }
+
         private void HandleNavigationBack()
         {
+            if (TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return;
+            }
+
+            // Last-chance guard against a stale Decide() that raced an overlay
+            // paint — never FinishAndRemoveTask while suppression is set.
+            if (OverlaySuppression.IsSuppressed)
+            {
+                Log.Info("MainActivity",
+                    $"[MAIN] Back exit aborted — overlay still active ({OverlaySuppression.DescribeActive()})");
+                NoteOverlayBackConsumed();
+                return;
+            }
+
             // The single-page XAML homepage has no route stack: overlays and
             // the menu consume Back via the suppression flags above, so an
             // unhandled Back at the homepage exits the app.

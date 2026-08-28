@@ -487,6 +487,8 @@ public partial class HomeHostPage : ContentPage
         _isResolvingStreams = true;
         _resolveOverlayOpen = true;
         _resolutionExhausted = false;
+        // Suppress Back before the overlay paints — finding-streams can take
+        // seconds and Back must cancel discovery, never FinishAndRemoveTask.
         UpdateBackSuppression();
         ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
 
@@ -559,10 +561,14 @@ public partial class HomeHostPage : ContentPage
                     _isResolvingStreams = false;
                     _resolveOverlayOpen = false;
                     _viewModel.OnStreamResolutionEnded();
-                    UpdateBackSuppression();
+                    // Hide + unsuppress together on the UI thread. Clearing
+                    // OverlaySuppression before ResolveOverlay.IsVisible=false
+                    // left a window where finding-streams was still on screen
+                    // but Back called FinishAndRemoveTask (Android TV field).
                     PostUi(() =>
                     {
                         ResolveOverlay.IsVisible = false;
+                        UpdateBackSuppression();
                         TryResumeAfterPlayer();
                     });
                 }
@@ -600,11 +606,26 @@ public partial class HomeHostPage : ContentPage
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
-        UpdateBackSuppression();
+#if ANDROID
+        // This Back already belonged to the overlay — arm exit grace before
+        // suppression drops, so a repeat press against a stale frame cannot
+        // FinishAndRemoveTask.
+        try
+        {
+            MainActivity.NoteOverlayBackConsumed();
+        }
+        catch
+        {
+        }
+#endif
         _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");
 
-        PostUi(() => ResolveOverlay.IsVisible = false);
+        PostUi(() =>
+        {
+            ResolveOverlay.IsVisible = false;
+            UpdateBackSuppression();
+        });
     }
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
@@ -659,6 +680,11 @@ public partial class HomeHostPage : ContentPage
         ResolveProgressBar.Progress = 0;
         ResolveCountLabel.Text = "0 tested • 0 healthy";
         ResolveOverlay.IsVisible = true;
+        // Re-assert suppression on the UI thread with the overlay actually
+        // visible — covers any race where a prior session's finally cleared
+        // flags before this paint.
+        _resolveOverlayOpen = true;
+        UpdateBackSuppression();
         ResolveCancelButton.Focus();
     });
 
@@ -683,6 +709,7 @@ public partial class HomeHostPage : ContentPage
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false while we still owe the user a cancelable overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
+        UpdateBackSuppression();
     });
 
     private void ShowStreamPlaybackError(string? message)
@@ -691,34 +718,51 @@ public partial class HomeHostPage : ContentPage
         PushErrorBanner();
         _isResolvingStreams = false;
         _resolveOverlayOpen = false;
-        UpdateBackSuppression();
-        PostUi(() => ResolveOverlay.IsVisible = false);
+        PostUi(() =>
+        {
+            ResolveOverlay.IsVisible = false;
+            UpdateBackSuppression();
+        });
     }
 
     // ------------------------------------------------------------- android --
 
 #if ANDROID
-    private void AndroidBackHandler(global::Android.Views.Keycode keyCode)
+    /// <summary>
+    /// Consume hardware Back for an open homepage overlay. MainActivity must
+    /// call this before <c>FinishAndRemoveTask</c> — the static suppression
+    /// tracker can lag a frame behind the finding-streams modal, and the
+    /// OnBackPressed ExitApp path never reaches the OnBack multicast.
+    /// </summary>
+    /// <returns>True when Back was handled (do not exit the app).</returns>
+    public bool TryHandleHardwareBack()
     {
         if (_viewModel.IsMenuOpen)
         {
+            _logger.LogInformation("[HomeHost] Hardware back — closing menu");
             PostUi(_viewModel.CloseMenu);
-            return;
+            return true;
         }
 
         if (!_isAuthenticated && _deviceCode != null)
         {
-            _logger.LogInformation("[HomeHost] Android back pressed during device sign-in — canceling");
+            _logger.LogInformation("[HomeHost] Hardware back during device sign-in — canceling");
             CancelSignIn();
-            return;
+            return true;
         }
 
-        if (_resolveOverlayOpen || _isResolvingStreams)
+        if (_resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible)
         {
-            _logger.LogInformation("[HomeHost] Android back pressed - canceling stream resolution");
+            _logger.LogInformation("[HomeHost] Hardware back — canceling stream resolution");
             CancelStreamDiscoveryFromUser();
+            return true;
         }
+
+        return false;
     }
+
+    private void AndroidBackHandler(global::Android.Views.Keycode keyCode) =>
+        TryHandleHardwareBack();
 
     private void AndroidMenuHandler(global::Android.Views.Keycode keyCode) =>
         PostUi(_viewModel.ToggleMenu);
@@ -736,7 +780,16 @@ public partial class HomeHostPage : ContentPage
         try
         {
             var tracker = MainActivity.OverlaySuppression;
-            tracker.Set("stream-resolve", _resolveOverlayOpen);
+            // Own the Back key for the whole resolution session, not only while
+            // progress.IsResolving is true — and while the modal is actually
+            // painted (IsVisible), even if a background finally already cleared
+            // the ownership flags.
+            var streamResolve =
+                _resolveOverlayOpen ||
+                _isResolvingStreams ||
+                _resolutionStartClaimed ||
+                ResolveOverlay.IsVisible;
+            tracker.Set("stream-resolve", streamResolve);
             tracker.Set("menu", _viewModel.IsMenuOpen);
             tracker.Set("device-code-sign-in", _deviceCode != null);
         }
