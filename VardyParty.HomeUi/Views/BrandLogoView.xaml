@@ -38,6 +38,11 @@
         </LinearGradientBrush>
     </ContentView.Resources>
 
+    <!-- CrestImage is a SIBLING of the RotationY ring, not a child: WinUI and
+         Android MAUI often paint the spinning ring chrome under RotationY but
+         leave a nested Image blank (empty dark circle). Avalonia (Linux) was
+         fine either way. The crest uses ScaleX = cos(angle) for the same
+         coin-flip silhouette. -->
     <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
           HeightRequest="{Binding Layout.BrandLogoSize}">
 
@@ -61,7 +66,7 @@
                 ScaleX="0.12"
                 InputTransparent="True" />
 
-        <!-- Metallic ring + shadow: the 3D backplate -->
+        <!-- Metallic ring + shadow: the 3D backplate (RotationY lives here) -->
         <Border x:Name="LogoOuter"
                 StrokeShape="Ellipse"
                 StrokeThickness="0"
@@ -70,30 +75,36 @@
             <Border.Shadow>
                 <Shadow Brush="Black" Opacity="0.5" Radius="12" Offset="0,4" />
             </Border.Shadow>
-            <Grid>
-                <!-- Dark inner plate holding the rasterised metallic crest -->
-                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" Padding="2">
-                    <Image x:Name="CrestImage" Aspect="AspectFit" />
-                </Border>
-
-                <!-- Gloss highlight -->
-                <Border StrokeShape="Ellipse" StrokeThickness="0"
-                        Background="{StaticResource LogoGlossBrush}"
-                        InputTransparent="True" />
-
-                <!-- Sheen band, clipped to the ellipse by the Border shape -->
-                <Border StrokeShape="Ellipse" StrokeThickness="0"
-                        BackgroundColor="Transparent"
-                        InputTransparent="True">
-                    <BoxView x:Name="LogoSheen"
-                             WidthRequest="26"
-                             HorizontalOptions="Start"
-                             VerticalOptions="Fill"
-                             Background="{StaticResource LogoSheenBrush}"
-                             Opacity="0"
-                             InputTransparent="True" />
-                </Border>
-            </Grid>
+            <!-- Dark inner plate only — crest is the sibling CrestFace below -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" />
         </Border>
+
+        <!-- Crest face: same inset as the old nested plate; ScaleX/Opacity from spin -->
+        <Grid x:Name="CrestFace"
+              Margin="5"
+              InputTransparent="True">
+            <Image x:Name="CrestImage"
+                   Aspect="AspectFit"
+                   HorizontalOptions="Fill"
+                   VerticalOptions="Fill" />
+
+            <!-- Gloss highlight -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0"
+                    Background="{StaticResource LogoGlossBrush}"
+                    InputTransparent="True" />
+
+            <!-- Sheen band -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0"
+                    BackgroundColor="Transparent"
+                    InputTransparent="True">
+                <BoxView x:Name="LogoSheen"
+                         WidthRequest="26"
+                         HorizontalOptions="Start"
+                         VerticalOptions="Fill"
+                         Background="{StaticResource LogoSheenBrush}"
+                         Opacity="0"
+                         InputTransparent="True" />
+            </Border>
+        </Grid>
     </Grid>
 </ContentView>

@@ -612,18 +612,75 @@ public partial class MatchCardView : ContentView
 
         var overhead = TvFocusScrollMath.FocusChromeOverhead(
             CardOuter.Width, ViewModel?.Layout.FocusRingThickness ?? 3);
+        var contentWidth = ResolveStripContentWidth(strip);
         var target = TvFocusScrollMath.ComputeStripTarget(
             cardLeft,
             CardOuter.Width,
             overhead,
             strip.Width,
-            strip.ContentSize.Width,
+            contentWidth,
             strip.ScrollX);
         if (target is { } scrollX)
         {
+#if ANDROID
+            // Prefer the platform HorizontalScrollView: MAUI ContentSize can
+            // lag BindableLayout on TV, leaving ScrollToAsync a no-op while
+            // cards still sit past the right edge (Windows measures correctly).
+            if (TryNativeStripScroll(strip, scrollX))
+            {
+                return;
+            }
+#endif
             ObserveVisual(strip.ScrollToAsync(scrollX, strip.ScrollY, true));
         }
     }
+
+    /// <summary>
+    /// Prefer the laid-out content width; fall back to summing card frames
+    /// when MAUI still reports ContentSize 0/viewport-sized on Android TV.
+    /// </summary>
+    private static double ResolveStripContentWidth(ScrollView strip)
+    {
+        if (strip.ContentSize.Width > strip.Width + 1)
+        {
+            return strip.ContentSize.Width;
+        }
+
+        if (strip.Content is VisualElement content && content.Width > strip.Width + 1)
+        {
+            return content.Width;
+        }
+
+        return Math.Max(strip.ContentSize.Width, strip.Content?.Width ?? 0);
+    }
+
+#if ANDROID
+    private static bool TryNativeStripScroll(ScrollView strip, double scrollX)
+    {
+        try
+        {
+            if (strip.Handler?.PlatformView is not global::Android.Views.View platform)
+            {
+                return false;
+            }
+
+            for (var walk = platform; walk != null; walk = walk.Parent as global::Android.Views.View)
+            {
+                if (walk is global::Android.Widget.HorizontalScrollView hsv)
+                {
+                    var x = (int)Math.Round(scrollX);
+                    hsv.Post(() => hsv.SmoothScrollTo(x, 0));
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+#endif
 
     private void OnUnloaded(object? sender, EventArgs e)
     {

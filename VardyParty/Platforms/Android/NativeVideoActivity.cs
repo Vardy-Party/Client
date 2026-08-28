@@ -512,8 +512,14 @@ namespace VardyParty.Platforms.Android
                 tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
                 ConfigureEmojiFriendlyTextView(tv);
                 tv.SetSingleLine(true);
-                // Do NOT call SetHorizontallyScrolling — that is for TextView's own marquee
-                // engine and interferes with the manual TranslationX scroll approach.
+                // Unbounded width measure: without this, a single-line TextView
+                // inside a MatchParent parent reports Width ≈ viewport, so
+                // TickerMarquee.ShouldLoop stays false and the panel never
+                // scrolls (Windows measures unconstrained and loops fine).
+                // Ellipsize stays none — we own TranslationX, not the system
+                // marquee engine.
+                tv.SetHorizontallyScrolling(true);
+                tv.Ellipsize = null;
                 tv.SetPadding(0, 0, (int)(64 * density), 0); // gap between copies
                 return tv;
             }
@@ -541,7 +547,7 @@ namespace VardyParty.Platforms.Android
             _tickerRunnable = new Java.Lang.Runnable(() =>
             {
                 if (_tickerInner == null || _tickerText1 == null || _scoresTickerContainer == null) return;
-                var text1Width = _tickerText1.Width;
+                var text1Width = MeasureTickerCopyWidth(_tickerText1);
                 if (text1Width <= 0)
                 {
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 32);
@@ -797,6 +803,41 @@ namespace VardyParty.Platforms.Android
             if (handler is null || runnable is null)
                 return;
             handler.RemoveCallbacks(runnable);
+        }
+
+        /// <summary>
+        /// Natural text width of one ticker copy. Prefer Paint measure over
+        /// the view's laid-out width — a constrained layout pass can report
+        /// viewport width even when the string is longer, which disables
+        /// <see cref="TickerMarquee.ShouldLoop"/>.
+        /// </summary>
+        private static int MeasureTickerCopyWidth(TextView textView)
+        {
+            try
+            {
+                var text = textView.Text;
+                if (!string.IsNullOrEmpty(text) && textView.Paint is { } paint)
+                {
+                    var measured = paint.MeasureText(text);
+                    if (measured > 0)
+                    {
+                        return (int)Math.Ceiling(measured) + textView.PaddingLeft + textView.PaddingRight;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            if (textView.Width > 0)
+            {
+                return textView.Width;
+            }
+
+            textView.Measure(
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified),
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified));
+            return textView.MeasuredWidth;
         }
 
         private static void PostDelayedCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable, long delayMs)

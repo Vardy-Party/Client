@@ -37,6 +37,18 @@ public partial class HomeView : ContentView
     partial void WireTvHeaderFocus();
 
     /// <summary>
+    /// Android TV only (HomeView.Tv.cs): put native focus back on the last
+    /// match card (e.g. after canceling finding-streams). No-op elsewhere.
+    /// </summary>
+    partial void RestoreTvCardFocus();
+
+    /// <summary>
+    /// After the finding-streams overlay closes, return D-pad focus to the
+    /// card that opened it (not the Menu button).
+    /// </summary>
+    public void RestoreFocusAfterOverlay() => RestoreTvCardFocus();
+
+    /// <summary>
     /// Android TV only (HomeView.Tv.cs): (re)subscribes the menu focus trap
     /// to the new view model's IsMenuOpen. No-op elsewhere.
     /// </summary>

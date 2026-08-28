@@ -625,6 +625,9 @@ public partial class HomeHostPage : ContentPage
         {
             ResolveOverlay.IsVisible = false;
             UpdateBackSuppression();
+            // Overlay Cancel held focus — without this, Android TV lands on
+            // the Menu button instead of the game that opened finding-streams.
+            HomeSurface.RestoreFocusAfterOverlay();
         });
     }
 

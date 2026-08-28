@@ -48,7 +48,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- Metallic brand crest, rasterised at runtime by BrandCrestImageLoader. -->
+		<!-- Metallic brand crest: PNG for reliable first paint; SVG kept as
+		     source + Svg.Skia fallback if the PNG embed is missing. -->
+		<EmbeddedResource Include="Resources\brand_crest.png" />
 		<EmbeddedResource Include="Resources\brand_crest.svg" />
 	</ItemGroup>
 

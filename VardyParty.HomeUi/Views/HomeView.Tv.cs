@@ -47,6 +47,41 @@ public partial class HomeView
         OnMenuButtonHandlerChanged(MenuButton, EventArgs.Empty);
     }
 
+    partial void RestoreTvCardFocus()
+    {
+        if (!IsTelevision())
+        {
+            return;
+        }
+
+        // Overlay Cancel held focus; when it hides, Android's default search
+        // lands on Menu. Prefer the card that opened finding-streams
+        // (NoteCardFocused while picking). Post so the overlay finishes
+        // tearing down before RequestFocus.
+        var card = TvDpadFocusRouter.LastFocusedCard();
+        if (card is { IsAttachedToWindow: true, IsShown: true })
+        {
+            card.Post(() =>
+            {
+                if (!card.RequestFocus())
+                {
+                    TryFocusHeaderTargetSafe();
+                }
+            });
+            return;
+        }
+
+        TryFocusHeaderTargetSafe();
+    }
+
+    private void TryFocusHeaderTargetSafe()
+    {
+        if (_wiredMenuButton is { IsAttachedToWindow: true, IsShown: true } menu)
+        {
+            menu.Post(() => menu.RequestFocus());
+        }
+    }
+
     partial void OnTvViewModelWired(HomeViewModel? vm)
     {
         if (ReferenceEquals(_tvTrapViewModel, vm))

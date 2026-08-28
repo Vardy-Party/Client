@@ -405,6 +405,8 @@ public partial class BrandLogoView : ContentView
         _angle = 0;
         LogoOuter.Opacity = 1;
         LogoOuter.RotationY = 0;
+        CrestFace.ScaleX = 1;
+        CrestFace.Opacity = 1;
         EdgeRim.Opacity = 0;
         LogoSheen.Opacity = 0;
         LogoSheen.TranslationX = -26;
@@ -415,10 +417,16 @@ public partial class BrandLogoView : ContentView
         _angle = angleDegrees;
         var radians = angleDegrees * Math.PI / 180.0;
         var sin = Math.Sin(radians);
+        var cos = Math.Cos(radians);
         var absSin = Math.Abs(sin);
-        var faceVisibility = Math.Abs(Math.Cos(radians));
+        var faceVisibility = Math.Abs(cos);
 
+        // Ring chrome still uses RotationY (works on every head). The crest
+        // face is a sibling driven by ScaleX so WinUI/Android actually paint
+        // the raster — nested Image under RotationY was the empty circle.
         LogoOuter.RotationY = angleDegrees;
+        CrestFace.ScaleX = cos;
+        CrestFace.Opacity = Math.Clamp(faceVisibility, 0.08, 1.0);
 
         EdgeRim.ScaleX = RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * absSin;
         EdgeRim.TranslationX = sin * RimDriftPx;
