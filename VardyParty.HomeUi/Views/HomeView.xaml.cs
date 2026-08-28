@@ -70,6 +70,7 @@ public partial class HomeView : ContentView
             SeedViewport(_wiredViewModel);
         }
 
+        WireRowsSource(_wiredViewModel);
         OnTvViewModelWired(_wiredViewModel);
     }
 
@@ -98,6 +99,27 @@ public partial class HomeView : ContentView
         }
 
         vm.Layout.Apply(HomeLayoutClassifier.ClassifyInitial(IsTelevision(), pixelWidth, pixelHeight, density));
+    }
+
+    /// <summary>
+    /// Bind exactly one rows host. CollectionView items on WinUI/Avalonia
+    /// stretch to the leftover cell (black band through the last card).
+    /// Android keeps CollectionView so the D-pad router still finds a
+    /// RecyclerView; wrap-content item height is enforced on Android.
+    /// </summary>
+    private void WireRowsSource(HomeViewModel? vm)
+    {
+#if ANDROID
+        RowsList.ItemsSource = vm?.Rows;
+        RowsList.IsVisible = true;
+        RowsScroll.IsVisible = false;
+        BindableLayout.SetItemsSource(RowsStack, null);
+#else
+        RowsList.ItemsSource = null;
+        RowsList.IsVisible = false;
+        RowsScroll.IsVisible = true;
+        BindableLayout.SetItemsSource(RowsStack, vm?.Rows);
+#endif
     }
 
     private void OnLoaded(object? sender, EventArgs e)
@@ -285,24 +307,6 @@ public partial class HomeView : ContentView
     {
         if (Width <= 0 || Height <= 0) return;
         ViewModel?.SetViewport(Width, Height, IsTelevision());
-        SyncRowsViewport();
-    }
-
-    /// <summary>
-    /// Pin the CollectionView's HeightRequest to the leftover cell so the
-    /// inner scroll viewport matches the arranged space (see
-    /// <see cref="RowsViewport"/>). Called from both the page SizeChanged
-    /// and the host cell's own SizeChanged — the cell can settle after the
-    /// header measures.
-    /// </summary>
-    private void OnRowsHostSizeChanged(object? sender, EventArgs e) => SyncRowsViewport();
-
-    private void SyncRowsViewport()
-    {
-        if (RowsViewport.HeightRequest(RowsHost.Height, RowsList.HeightRequest) is { } height)
-        {
-            RowsList.HeightRequest = height;
-        }
     }
 
     /// <summary>

@@ -531,13 +531,14 @@ public partial class MatchCardView : ContentView
                 return;
             }
 #endif
-            // TV parks the focused row at the viewport top (Netflix-style,
-            // same policy as the router's ComputeRowTopAlignDelta) — the
-            // minimal MakeVisible reveal let rows rest part-clipped whenever
-            // focus arrived without a router vertical move (initial
-            // autofocus, menu-trap restore). Pointer-driven classes keep
-            // MakeVisible: yanking the row to the top under a mouse hover
-            // would fight the user's own wheel scrolling.
+            if (!TvFocusScrollMath.ShouldScrollRowIntoView(
+                    ViewModel.Layout.IsTv, rows.ItemsSource as System.Collections.IList, row))
+            {
+                return;
+            }
+
+            // TV parks later rows at the viewport top (Netflix-style).
+            // Pointer-driven classes keep MakeVisible.
             var position = ViewModel.Layout.IsTv ? ScrollToPosition.Start : ScrollToPosition.MakeVisible;
             rows.ScrollTo(row, position: position, animate: true);
         }

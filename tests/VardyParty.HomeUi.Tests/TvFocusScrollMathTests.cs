@@ -260,4 +260,32 @@ public class TvFocusScrollMathTests
         // Assert
         Assert.Equal(0, delta);
     }
+
+    [Fact]
+    public void ShouldScrollRowIntoView_TvFirstRow_DoesNotScroll()
+    {
+        var first = new object();
+        var items = new System.Collections.Generic.List<object> { first, new() };
+
+        Assert.False(TvFocusScrollMath.ShouldScrollRowIntoView(isTv: true, items, first));
+    }
+
+    [Fact]
+    public void ShouldScrollRowIntoView_TvLaterRow_Scrolls()
+    {
+        var first = new object();
+        var second = new object();
+        var items = new System.Collections.Generic.List<object> { first, second };
+
+        Assert.True(TvFocusScrollMath.ShouldScrollRowIntoView(isTv: true, items, second));
+    }
+
+    [Fact]
+    public void ShouldScrollRowIntoView_PointerClasses_AlwaysScroll()
+    {
+        var first = new object();
+        var items = new System.Collections.Generic.List<object> { first };
+
+        Assert.True(TvFocusScrollMath.ShouldScrollRowIntoView(isTv: false, items, first));
+    }
 }

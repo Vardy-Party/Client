@@ -6,6 +6,62 @@
              x:Class="VardyParty.HomeUi.Views.HomeView"
              x:DataType="hu:HomeViewModel">
 
+    <ContentView.Resources>
+        <!-- Shared league-row template: CollectionView on Android (RecyclerView
+             + D-pad router), ScrollView + BindableLayout everywhere else.
+             Items must WRAP their content — a Fill/match_parent item is the
+             black band (header + card sliver, then empty cell) on every head. -->
+        <DataTemplate x:Key="LeagueRowTemplate" x:DataType="hu:LeagueRowViewModel">
+            <VerticalStackLayout VerticalOptions="Start"
+                                 Margin="{Binding Layout.RowMarginThickness}"
+                                 Spacing="10">
+                <HorizontalStackLayout Spacing="10">
+                    <Image Source="{Binding LeagueIcon}"
+                           WidthRequest="{Binding Layout.LeagueIconSize}"
+                           HeightRequest="{Binding Layout.LeagueIconSize}"
+                           Aspect="AspectFit"
+                           VerticalOptions="Center"
+                           IsVisible="{Binding HasLeagueIcon}" />
+                    <Label Text="{Binding League}"
+                           FontSize="{Binding Layout.LeagueTitleFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           VerticalOptions="Center" />
+                    <Border Padding="8,2"
+                            BackgroundColor="#8CBE1233"
+                            StrokeThickness="0"
+                            StrokeShape="RoundRectangle 999"
+                            VerticalOptions="Center"
+                            IsVisible="{Binding HasLiveGames}">
+                        <Label Text="LIVE"
+                               FontSize="11"
+                               FontAttributes="Bold"
+                               TextColor="#FECACA" />
+                    </Border>
+                    <Label Text="{Binding MatchCountText}"
+                           FontSize="{Binding Layout.PageSubtitleFontSize}"
+                           TextColor="#5B6478"
+                           VerticalOptions="Center" />
+                </HorizontalStackLayout>
+                <ScrollView HeightRequest="{Binding Layout.RowHeight}"
+                            Orientation="Horizontal"
+                            HorizontalScrollBarVisibility="Never"
+                            VerticalScrollBarVisibility="Never"
+                            Scrolled="OnStripScrolled">
+                    <HorizontalStackLayout Spacing="{Binding Layout.CardSpacing}"
+                                           Padding="{Binding Layout.StripPaddingThickness}"
+                                           BindableLayout.ItemsSource="{Binding Cards}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="hu:MatchCardViewModel">
+                                <views:MatchCardView />
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                </ScrollView>
+            </VerticalStackLayout>
+        </DataTemplate>
+    </ContentView.Resources>
+
     <Grid BackgroundColor="#0B0F1A">
         <Grid RowDefinitions="Auto,Auto,*" Padding="{Binding Layout.PagePaddingThickness}">
 
@@ -53,90 +109,28 @@
                        FontSize="{Binding Layout.PageSubtitleFontSize}" />
             </Border>
 
-            <!-- Netflix-style rows: one vertical CollectionView. The inner strip
-                 is a horizontal ScrollView + BindableLayout, not a nested
-                 CollectionView — nested WinUI ItemsRepeaters are 0x800710DD.
-                 Strips are not virtualized; that is fine for a handful of
-                 fixtures, not a 30-card row on TV. TvDpadFocusRouter walks
-                 this tree (outer RecyclerView + strip scroller). -->
-            <!-- RowsHost is the arranged leftover under the header. The
-                 CollectionView MUST take that height as HeightRequest: every
-                 backend fills the cell but sizes the INNER scroll viewport
-                 shorter, painting the leftover with the default black
-                 background (Windows/Linux/TV field: opaque bar clipping
-                 cards that scroll up into it). -->
-            <Grid Grid.Row="2" x:Name="RowsHost" SizeChanged="OnRowsHostSizeChanged">
-            <CollectionView x:Name="RowsList"
-                            ItemsSource="{Binding Rows}"
+            <!-- Android: CollectionView (RecyclerView + TvDpadFocusRouter).
+                 Desktop/Windows: ScrollView — WinUI/Avalonia CollectionView
+                 items stretch to the leftover cell (the black band). Only
+                 ONE host is bound (see WireRowsSource) so TV does not
+                 materialize both trees. -->
+            <Grid Grid.Row="2" x:Name="RowsHost">
+                <CollectionView x:Name="RowsList"
+                                ItemTemplate="{StaticResource LeagueRowTemplate}"
+                                BackgroundColor="#0B0F1A"
+                                VerticalOptions="Fill"
+                                VerticalScrollBarVisibility="Never"
+                                SelectionMode="None"
+                                IsVisible="False" />
+                <ScrollView x:Name="RowsScroll"
                             BackgroundColor="#0B0F1A"
                             VerticalOptions="Fill"
                             VerticalScrollBarVisibility="Never"
-                            SelectionMode="None">
-                <CollectionView.Footer>
-                    <BoxView HeightRequest="{Binding Layout.RowsEndPad}"
-                             Color="Transparent"
-                             InputTransparent="True" />
-                </CollectionView.Footer>
-                <CollectionView.ItemTemplate>
-                    <DataTemplate x:DataType="hu:LeagueRowViewModel">
-                        <VerticalStackLayout VerticalOptions="Start"
-                                             Margin="{Binding Layout.RowMarginThickness}"
-                                             Spacing="10">
-                            <HorizontalStackLayout Spacing="10">
-                                <Image Source="{Binding LeagueIcon}"
-                                       WidthRequest="{Binding Layout.LeagueIconSize}"
-                                       HeightRequest="{Binding Layout.LeagueIconSize}"
-                                       Aspect="AspectFit"
-                                       VerticalOptions="Center"
-                                       IsVisible="{Binding HasLeagueIcon}" />
-                                <Label Text="{Binding League}"
-                                       FontSize="{Binding Layout.LeagueTitleFontSize}"
-                                       FontAttributes="Bold"
-                                       TextColor="White"
-                                       VerticalOptions="Center" />
-                                <Border Padding="8,2"
-                                        BackgroundColor="#8CBE1233"
-                                        StrokeThickness="0"
-                                        StrokeShape="RoundRectangle 999"
-                                        VerticalOptions="Center"
-                                        IsVisible="{Binding HasLiveGames}">
-                                    <Label Text="LIVE"
-                                           FontSize="11"
-                                           FontAttributes="Bold"
-                                           TextColor="#FECACA" />
-                                </Border>
-                                <Label Text="{Binding MatchCountText}"
-                                       FontSize="{Binding Layout.PageSubtitleFontSize}"
-                                       TextColor="#5B6478"
-                                       VerticalOptions="Center" />
-                            </HorizontalStackLayout>
-                            <!-- Strip padding is chrome-derived (TvFocusScrollMath
-                                 .FocusChromePadding via Layout.StripPaddingThickness):
-                                 the focused card renders +9% scale plus the ring
-                                 beyond its layout slot, and on Android the wiring
-                                 pass un-clips the ancestor chain — this padding is
-                                 the physical room that chrome draws into at rest
-                                 (first/last cards horizontally, every card
-                                 vertically inside Layout.RowHeight). -->
-                            <ScrollView HeightRequest="{Binding Layout.RowHeight}"
-                                        Orientation="Horizontal"
-                                        HorizontalScrollBarVisibility="Never"
-                                        VerticalScrollBarVisibility="Never"
-                                        Scrolled="OnStripScrolled">
-                                <HorizontalStackLayout Spacing="{Binding Layout.CardSpacing}"
-                                                       Padding="{Binding Layout.StripPaddingThickness}"
-                                                       BindableLayout.ItemsSource="{Binding Cards}">
-                                    <BindableLayout.ItemTemplate>
-                                        <DataTemplate x:DataType="hu:MatchCardViewModel">
-                                            <views:MatchCardView />
-                                        </DataTemplate>
-                                    </BindableLayout.ItemTemplate>
-                                </HorizontalStackLayout>
-                            </ScrollView>
-                        </VerticalStackLayout>
-                    </DataTemplate>
-                </CollectionView.ItemTemplate>
-            </CollectionView>
+                            IsVisible="False">
+                    <VerticalStackLayout x:Name="RowsStack"
+                                         VerticalOptions="Start"
+                                         BindableLayout.ItemTemplate="{StaticResource LeagueRowTemplate}" />
+                </ScrollView>
             </Grid>
 
             <!-- Empty state -->

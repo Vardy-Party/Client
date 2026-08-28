@@ -69,7 +69,11 @@ public static class MauiProgram
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
-            .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
+            .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); })
+#if ANDROID
+            .ConfigureMauiHandlers(handlers => HomeUi.Views.HomeUiCollectionView.Register(handlers))
+#endif
+            ;
 
 #if WINDOWS
         // Every chrome hook is guarded: a chrome failure must never prevent the

@@ -81,13 +81,6 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public Thickness PagePaddingThickness => new(_metrics.PagePadding);
 
     /// <summary>
-    /// Transparent CollectionView footer so the last row can rest fully
-    /// above the viewport edge (focus chrome included) instead of parking
-    /// sheared against the inner scroll clip.
-    /// </summary>
-    public double RowsEndPad => 2 * StripChromePadVertical;
-
-    /// <summary>
     /// Inter-league gap ABOVE each row (not below): the space belongs between
     /// sections, so a league header binds visually to its own card strip
     /// instead of floating under the previous league's cards.
@@ -115,7 +108,7 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(CardWidth), nameof(CardHeight), nameof(CardCornerRadius), nameof(BadgeSize),
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
-        nameof(RowHeight), nameof(StripPaddingThickness), nameof(PagePaddingThickness), nameof(RowsEndPad), nameof(RowMarginThickness), nameof(CardMarginThickness),
+        nameof(RowHeight), nameof(StripPaddingThickness), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
         nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome), nameof(StagedStripCards),
         nameof(FocusRingThickness), nameof(FocusedCardLift),
     ];

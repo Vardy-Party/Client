@@ -126,4 +126,21 @@ public static class TvFocusScrollMath
     /// </summary>
     public static int ComputeRowTopAlignDelta(int rowTop, int viewportHeight) =>
         viewportHeight <= 0 ? 0 : rowTop;
+
+    /// <summary>
+    /// Whether a focus landing should ScrollTo the row. The first board row
+    /// on TV is already at document start — ScrollTo(Start) of a
+    /// viewport-tall item container shoved that row off the top (Serie A
+    /// field: opening view showed the bottom of the first cards + the
+    /// next league, nothing selected; Down then picked the second league).
+    /// </summary>
+    public static bool ShouldScrollRowIntoView(bool isTv, System.Collections.IList? items, object row)
+    {
+        if (!isTv || items is null || items.Count == 0)
+        {
+            return !isTv;
+        }
+
+        return !ReferenceEquals(items[0], row);
+    }
 }
