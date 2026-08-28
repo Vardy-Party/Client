@@ -117,51 +117,53 @@
             VideoHostView into VideoHostContainer and the service attaches
             the MediaPlayer drawable to it (see DesktopVideoPlayerService).
 
-            AIRSPACE: the embedded video is a NATIVE child window stacked
-            above the Avalonia-drawn scene, so any MAUI content overlapping
-            the video row would be covered by it. Every interactive/overlay
-            element — the title, the Close control and the in-playback
-            match-event toast — therefore lives in the reserved top chrome
-            strip and never overlaps the video row.
+            AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
+            stacked above the Avalonia-drawn scene. Any MAUI control that
+            overlaps the video row is covered by that child — invisible and
+            unclickable. Do NOT move Close (or any other interactive control)
+            on top of the video to "save a few pixels": it will look right
+            in the designer and fail in the field (the original WSL Close
+            wedge). The reserved strip is therefore a separate grid row
+            ABOVE the video, sized to a single Close chip — not a titled
+            "Now Playing" header. Match-event toasts live in the same
+            reserved row (they are input-transparent; they must stay off
+            the video row or the native surface would hide them). The Auto
+            row stays ~40px when idle and grows only while a toast is up.
 
             Standalone fallback (switch OFF, or the hosted surface failed at
             runtime): libvlc opens its own native video window, the video row
-            shows the "own window" card instead, and the same chrome strip
-            carries Close and the toast (toasts then show in the app window
-            next to the external video window — documented behaviour).
+            shows the "own window" card instead, and the same Close chip /
+            toast row stays in the app window.
         -->
-        <Grid x:Name="PlaybackOverlay" BackgroundColor="#0B0F1A" IsVisible="False" RowDefinitions="108,*">
-            <!-- Chrome strip: title | in-playback toast | Close. -->
-            <Grid Padding="20,10" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
-                <VerticalStackLayout Spacing="2" VerticalOptions="Start">
-                    <Label Text="Now Playing"
-                           FontSize="18"
-                           FontAttributes="Bold"
-                           TextColor="White" />
-                    <Label x:Name="PlaybackTitleLabel"
-                           FontSize="14"
-                           TextColor="#8A93A6" />
-                </VerticalStackLayout>
-
-                <!-- In-playback match-event toast (MatchEventBus consumer).
-                     The negative top margin compensates the toast card's own
-                     page-padding margin so it fits the 108px strip. -->
-                <Grid Grid.Column="1" Margin="0,-22,0,0">
-                    <hv:MatchEventToastView x:Name="PlaybackToast" InputTransparent="True" />
-                </Grid>
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="#0B0F1A" IsVisible="False" RowDefinitions="Auto,*">
+            <Grid MinimumHeightRequest="40" Padding="8,4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <hv:MatchEventToastView x:Name="PlaybackToast"
+                                        InputTransparent="True"
+                                        HorizontalOptions="Start"
+                                        VerticalOptions="Start" />
 
                 <!-- Close must stay clickable at every moment, including a
                      wedged libvlc: the handler never runs a libvlc call on
-                     the UI thread (see DesktopVideoPlayerService). -->
-                <Button Grid.Column="2"
+                     the UI thread (see DesktopVideoPlayerService). Escape
+                     is the same cancel path (KeyboardAccelerator). -->
+                <Button Grid.Column="1"
                         x:Name="ClosePlaybackButton"
-                        Text="✕  Close playback"
+                        Text="✕"
                         Clicked="OnClosePlaybackClicked"
                         VerticalOptions="Start"
-                        BackgroundColor="#1C2333"
+                        HorizontalOptions="End"
+                        WidthRequest="36"
+                        HeightRequest="36"
+                        Padding="0"
+                        BackgroundColor="#CC1C2333"
                         TextColor="#E5E7EB"
-                        CornerRadius="10"
-                        Padding="20,10" />
+                        CornerRadius="18"
+                        FontSize="16"
+                        SemanticProperties.Description="Close playback">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="Escape" />
+                    </Button.KeyboardAccelerators>
+                </Button>
             </Grid>
 
             <!-- In-window video surface (VideoHostView injected in code-behind

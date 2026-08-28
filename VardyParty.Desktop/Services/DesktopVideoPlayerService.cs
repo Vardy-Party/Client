@@ -36,7 +36,9 @@ namespace VardyParty.Desktop.Services;
 ///
 /// WSL hardening: under WSL (/proc/version contains "microsoft") — or with
 /// VARDYPARTY_DESKTOP_VLC_SAFE=1 — libvlc gets conservative options:
-/// software decode, plain X11 vout, no hardware probing. Safe under xvfb too.
+/// software decode, plain X11 vout, Pulse aout (WSLg), no hardware probing.
+/// Safe under xvfb too. Audio is never disabled (<c>--no-audio</c> is not
+/// an option); see <see cref="DesktopPlatformProbe.BuildLibVlcOptions"/>.
 ///
 /// LibVLC initialisation is lazy (first PlayVideoAsync), never in the startup
 /// path: machines without libvlc installed (or headless CI) get a logged
@@ -385,34 +387,55 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// wedged hardware/vout probe froze playback) and the
     /// VARDYPARTY_DESKTOP_VLC_SAFE=1 override; also safe under xvfb.
     /// </summary>
-    private static bool UseConservativeVlcOptions =>
-        DesktopPlatformProbe.IsWsl || DesktopPlatformProbe.ForceSafeVlcOptions;
+    private static bool UseConservativeVlcOptions => DesktopPlatformProbe.UseConservativeVlcOptions;
 
     private string[] BuildVlcOptions()
     {
-        var vlcOptions = new List<string>
-        {
-            "--quiet",                       // Reduce verbose output
-            "--no-video-title-show",         // Don't show video title on playback
-            "--network-caching=2000",        // 2 second network cache
-            "--http-reconnect",              // Auto-reconnect on network issues
-            "--no-spdif"                     // Avoid passthrough output issues
-        };
-
+        var options = DesktopPlatformProbe.BuildLibVlcOptions();
         if (UseConservativeVlcOptions)
         {
             _logger.LogInformation(
-                "[DesktopVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout",
-                DesktopPlatformProbe.IsWsl, DesktopPlatformProbe.ForceSafeVlcOptions);
-            vlcOptions.Add("--avcodec-hw=none"); // software decode, no VA-API/VDPAU probing
-            vlcOptions.Add("--vout=x11");        // plain X11 output, no GL/compositor probing
+                "[DesktopVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}",
+                DesktopPlatformProbe.IsWsl, DesktopPlatformProbe.ForceSafeVlcOptions,
+                DesktopPlatformProbe.ResolveAudioOutputModule());
         }
         else
         {
-            vlcOptions.Add("--avcodec-hw=any"); // Prefer hardware decode on native Linux
+            _logger.LogInformation(
+                "[DesktopVideoPlayerService] libvlc aout={Aout}",
+                DesktopPlatformProbe.ResolveAudioOutputModule());
         }
 
-        return vlcOptions.ToArray();
+        return options;
+    }
+
+    /// <summary>
+    /// Pin aout + unmute. Worker-thread only (libvlc). <c>any</c> is a CLI
+    /// probe, not a SetAudioOutput name — only pulse/alsa are pinned here.
+    /// </summary>
+    private static void ConfigureAudioOutput(MediaPlayer player)
+    {
+        var aout = DesktopPlatformProbe.ResolveAudioOutputModule();
+        if (DesktopPlatformProbe.IsPinnedAudioOutput(aout))
+        {
+            try
+            {
+                player.SetAudioOutput(aout);
+            }
+            catch
+            {
+                // Missing pulse/alsa plugin — leave VLC's --aout= probe.
+            }
+        }
+
+        try
+        {
+            player.Mute = false;
+            player.Volume = 100;
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>
@@ -454,6 +477,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 Core.Initialize();
                 var libVlc = new LibVLC(BuildVlcOptions());
                 var player = new MediaPlayer(libVlc);
+                ConfigureAudioOutput(player);
                 created = new VlcSession { Generation = generation, LibVlc = libVlc, Player = player };
             });
 
@@ -706,6 +730,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             _currentMedia = media;
             vlc.Player.Play(media);
+            ConfigureAudioOutput(vlc.Player);
         });
 
         if (!attached)
@@ -979,6 +1004,10 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                message.Contains("mesa", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("zink", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("vout", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("aout", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("pulse", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("alsa", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("audio", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("decoder", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("avcodec", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("drm", StringComparison.OrdinalIgnoreCase);

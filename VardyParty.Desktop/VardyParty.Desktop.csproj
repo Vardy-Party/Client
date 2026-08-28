@@ -38,7 +38,7 @@
 			LibVLCSharp.Avalonia package reference, no VideoHostView/handler,
 			no hosted-surface code in DesktopHomePage/DesktopVideoPlayerService
 			— playback opens libvlc's own native video window (the pre-feature
-			behaviour), with the in-app "Now Playing" card carrying Close.
+			behaviour), with the reserved-airspace Close chip still in-app.
 			Everything the switch controls is guarded by the
 			EMBEDDED_DESKTOP_VIDEO define derived below. Independent of the
 			switch, the embedded path also auto-falls back to the standalone

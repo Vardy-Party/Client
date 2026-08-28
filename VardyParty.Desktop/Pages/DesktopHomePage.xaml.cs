@@ -17,9 +17,9 @@ namespace VardyParty.Desktop.Pages;
 /// Desktop-head host for the shared XAML homepage: the same auth +
 /// stream-resolution glue as the MAUI head's HomeHostPage, with two
 /// desktop-specific twists — sign-in uses the Auth0 device-code flow with a QR
-/// code (ported from the retired VardyParty.Linux head), and playback runs in
-/// libvlc's own native window with an in-app "Now playing / Close" overlay
-/// (see <see cref="DesktopVideoPlayerService"/>).
+/// code (ported from the retired VardyParty.Linux head), and playback runs
+/// in-window (or libvlc's own window as fallback) with a reserved-airspace
+/// Close chip (see <see cref="DesktopVideoPlayerService"/>).
 /// Set VARDYPARTY_DESKTOP_SAMPLE_DATA=1 to skip auth and render a fabricated
 /// catalog (demos and the headless CI smoke test).
 /// </summary>
@@ -98,13 +98,10 @@ public partial class DesktopHomePage : ContentPage
         InitializeComponent();
         BindingContext = _viewModel;
 
-        // In-playback match-event toast: the chrome strip's MatchEventToastView
-        // runs the same queue/dismiss state machine as the homepage toast, fed
-        // from the delivered-event bus while the playback panel is up. Events
-        // on the bus already passed MatchEventNotificationPolicy.ShouldPresent
-        // (foreground + goal-notifications toggle); the playback filter here is
-        // just surface routing. Audio stays suppressed during playback via
-        // ShouldPlayAudio (the homepage sting never fires) — toast-yes/audio-no.
+        // In-playback match-event toast: lives in the reserved airspace row
+        // next to Close (never over the native video child — airspace). Same
+        // queue/dismiss machine as the homepage toast. Audio stays suppressed
+        // during playback via ShouldPlayAudio — toast-yes/audio-no.
         _playbackToast = new MatchEventToastViewModel(_viewModel.Layout);
         PlaybackToast.BindingContext = _playbackToast;
         _matchEvents.Published += OnMatchEventPublished;
@@ -112,8 +109,7 @@ public partial class DesktopHomePage : ContentPage
         _viewModel.GamePicked += OnGamePicked;
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
 
-        // Suppress all UI blips while the native VLC window is open, and show
-        // the in-app now-playing card that carries the Close control.
+        // Yield the UI-sound device while video is up; recover it on Close.
         _videoPlayer.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
 
 #if EMBEDDED_DESKTOP_VIDEO
@@ -535,8 +531,6 @@ public partial class DesktopHomePage : ContentPage
         _logger.LogInformation(
             "[DesktopHome] TEST MEDIA hook: playing {Url} for '{Title}' (stream resolution bypassed)",
             mediaUrl, title);
-        Dispatcher.Dispatch(() => PlaybackTitleLabel.Text = title);
-
         try
         {
             var result = await _videoPlayer.PlayVideoAsync(
@@ -582,7 +576,6 @@ public partial class DesktopHomePage : ContentPage
         _isResolvingStreams = true;
         _resolutionExhausted = false;
         ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
-        Dispatcher.Dispatch(() => PlaybackTitleLabel.Text = $"{game.DisplayHome} v {game.DisplayAway}");
 
         _progressSubscription ??= _orchestrator.ProgressUpdated.Subscribe(progress =>
         {
@@ -697,7 +690,22 @@ public partial class DesktopHomePage : ContentPage
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
 
-    /// <summary>Close control for the external VLC window (mirrors the old Linux head's Close button).</summary>
+    /// <summary>
+    /// Escape / Android-back while the playback overlay is up is the same
+    /// cancel path as the Close chip. Does not run libvlc on this thread.
+    /// </summary>
+    protected override bool OnBackButtonPressed()
+    {
+        if (PlaybackOverlay.IsVisible)
+        {
+            OnClosePlaybackClicked(this, EventArgs.Empty);
+            return true;
+        }
+
+        return base.OnBackButtonPressed();
+    }
+
+    /// <summary>Close chip for in-window / standalone libvlc playback.</summary>
     private void OnClosePlaybackClicked(object? sender, EventArgs e)
     {
         try
@@ -730,7 +738,9 @@ public partial class DesktopHomePage : ContentPage
 
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
-        _sounds.SuppressAll = visible;
+        // Suppress + yield the miniaudio device before libvlc Play; un-suppress
+        // + recover it after Close / a failed session (see DesktopAudioSession).
+        DesktopAudioSession.Apply(visible, _sounds, _soundPlayer);
 
         // Homepage stays visible next to the native VLC window, but it is no
         // longer the active surface: match events downgrade to toast-only.
