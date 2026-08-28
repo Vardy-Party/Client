@@ -11,17 +11,17 @@ namespace VardyParty.HomeUi.Tests;
 public class TvFocusScrollMathTests
 {
     [Fact]
-    public void FocusChromeOverhead_IsComfortPadOnly_WhenFocusScaleIsOne()
+    public void FocusChromeOverhead_IncludesHalfEdgeRingPlusComfortPad()
     {
-        // Arrange — TV card 300×5; inset ring + FocusScale 1.0 → no external chrome.
+        // Arrange — TV card 300×5; FocusScale 1.0, ring on the card edge.
         const double cardWidth = 300;
         const double ringThickness = 5;
 
         // Act
         var overhead = TvFocusScrollMath.FocusChromeOverhead(cardWidth, ringThickness);
 
-        // Assert
-        Assert.Equal(TvFocusScrollMath.ChromeComfortPad, overhead);
+        // Assert — half stroke (2.5) + comfort (4) = 6.5
+        Assert.Equal(2.5 + TvFocusScrollMath.ChromeComfortPad, overhead);
         Assert.Equal(1.0, TvFocusScrollMath.FocusScale);
     }
 
@@ -48,18 +48,17 @@ public class TvFocusScrollMathTests
     }
 
     [Fact]
-    public void FocusChromePadding_TvVerticalMetrics_IsComfortPad_NotLegacyScaleHeadroom()
+    public void FocusChromePadding_TvVerticalMetrics_CoversHalfRingAndComfort()
     {
-        // Arrange — TV card height 160dp. Legacy layout reserved 12–17dp/side
-        // for +9% scale + external ring; inset chrome only needs comfort pad.
+        // Arrange — TV card height 160dp, 5dp edge ring.
         const double cardHeight = 160;
         const double ringThickness = 5;
 
         // Act
         var padding = TvFocusScrollMath.FocusChromePadding(cardHeight, ringThickness);
 
-        // Assert
-        Assert.Equal(TvFocusScrollMath.ChromeComfortPad, padding);
+        // Assert — ceil(2.5 + 4) = 7
+        Assert.Equal(7, padding);
     }
 
     [Fact]

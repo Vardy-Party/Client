@@ -152,12 +152,8 @@ public partial class MatchCardView : ContentView
     {
         var radius = ViewModel?.Layout.CardCornerRadius ?? 14;
         CardOuter.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
-        // Ring is inset (see ApplyCardChrome); inner corner tracks the inset.
-        var inset = ViewModel?.Layout.FocusRingThickness ?? 3;
-        FocusRing.StrokeShape = new RoundRectangle
-        {
-            CornerRadius = new CornerRadius(Math.Max(0, radius - inset)),
-        };
+        // Ring sits on the card edge (Margin 0) — same corner as the outer chrome.
+        FocusRing.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
     }
 
     // XAML-declared shadows, captured once so the TV raster budget can strip
@@ -201,11 +197,11 @@ public partial class MatchCardView : ContentView
 
         // Bind-time only (never on the focus path): the 10-foot focus ring is
         // thicker on TV. Focus moves only fade the pre-built ring in and out.
-        // Margin insets the ring so its stroke stays inside CardOuter — the
-        // league row is height-pinned and any paint past the card was clipped.
-        var ring = ViewModel?.Layout.FocusRingThickness ?? 3;
-        FocusRing.StrokeThickness = ring;
-        FocusRing.Margin = new Thickness(ring);
+        // Margin 0 = ring on the card edge (top/bottom flush). Half the stroke
+        // paints into the strip's comfort pad; we no longer scale the card, so
+        // that pad is enough and the ring is not sheared by LeagueRowHeight.
+        FocusRing.StrokeThickness = ViewModel?.Layout.FocusRingThickness ?? 3;
+        FocusRing.Margin = new Thickness(0);
     }
 
     private static readonly SolidColorBrush DefaultCardStrokeBrush = new(Color.FromArgb("#26FFFFFF"));
@@ -757,7 +753,7 @@ public partial class MatchCardView : ContentView
     /// <summary>
     /// One place decides the card chrome, resolving > focused > rest: gold
     /// ring + pulsing veil while the picked card resolves streams, bright
-    /// inset ring + veil under focus, quiet chrome otherwise. No scale bump —
+    /// edge ring + veil under focus, quiet chrome otherwise. No scale bump —
     /// +9% overflow was sheared by the content-height league row. Transitions
     /// are opacity only on the ring/veil (Scale stays 1.0).
     /// </summary>

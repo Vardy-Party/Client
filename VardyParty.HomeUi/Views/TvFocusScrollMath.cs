@@ -11,31 +11,29 @@ namespace VardyParty.HomeUi.Views;
 public static class TvFocusScrollMath
 {
     /// <summary>
-    /// Focused-card scale. Kept at 1.0: a +9% scale drew outside the card's
-    /// layout box and was sheared by the content-height league row
-    /// (<c>LeagueRowHeight</c>). Selection chrome is an inset ring + veil
-    /// inside the card instead.
+    /// Focused-card scale. Kept at 1.0 so the focus ring can sit on the card
+    /// edge (half-stroke into the strip comfort pad) without a +9% transform
+    /// overflowing the content-height league row (<c>LeagueRowHeight</c>).
     /// </summary>
     public const double FocusScale = 1.0;
 
     /// <summary>
-    /// Breathing room beyond the card layout rect so a focused card never
-    /// sits flush against the strip viewport edge. The ring itself is inset
-    /// inside the card and does not consume this pad.
+    /// Breathing room beyond the card layout rect so a focused card's edge
+    /// ring (half the stroke paints outside) is not flush against / sheared
+    /// by the strip viewport. Must be >= half of the thickest focus ring
+    /// (TV uses 5dp → need ≥3; 4 covers it with a little air).
     /// </summary>
     public const double ChromeComfortPad = 4;
 
     /// <summary>
     /// How far focus chrome needs beyond ONE side of the card's layout rect.
-    /// With <see cref="FocusScale"/> at 1.0 and an inset ring, that is only
-    /// the comfort pad (no scale overflow, no external ring).
-    /// <paramref name="ringThickness"/> is retained so call sites stay stable;
-    /// inset chrome does not consume external room.
+    /// FocusScale is 1.0; the ring sits on the card edge so half its stroke
+    /// paints outside, plus <see cref="ChromeComfortPad"/>.
     /// </summary>
     public static double FocusChromeOverhead(double cardDimension, double ringThickness)
     {
-        _ = ringThickness;
-        return ((FocusScale - 1) / 2 * cardDimension) + ChromeComfortPad;
+        _ = cardDimension;
+        return (ringThickness * FocusScale / 2) + ChromeComfortPad;
     }
 
     /// <summary>

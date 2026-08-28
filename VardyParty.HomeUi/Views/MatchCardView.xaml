@@ -260,9 +260,9 @@
                 </Grid>
             </Grid>
 
-            <!-- Focus ring: inset inside the card (Margin = stroke) so it
-                 cannot paint past the height-pinned league row. Faded in/out
-                 on focus with opacity only. -->
+            <!-- Focus ring: on the card edge (not inset). Half-stroke may paint
+                 into the strip comfort pad; FocusScale is 1.0 so LeagueRowHeight
+                 no longer shears it. Faded in/out with opacity only. -->
             <Border x:Name="FocusRing"
                     Stroke="#AFCBFF"
                     StrokeThickness="3"

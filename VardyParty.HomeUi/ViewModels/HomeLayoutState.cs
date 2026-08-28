@@ -49,10 +49,9 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double FocusedCardLift => _metrics.FocusedCardLift;
 
     /// <summary>
-    /// Row height for the horizontal card strip: card + comfort pad on both
-    /// sides. Selection chrome is inset inside the card (no scale overflow),
-    /// so this headroom is only the strip edge breathing room from
-    /// <see cref="Views.TvFocusScrollMath"/> — not room for an external ring.
+    /// Row height for the horizontal card strip: card + room for the
+    /// edge-aligned focus ring (half-stroke outside) and comfort pad —
+    /// derived from <see cref="Views.TvFocusScrollMath"/>.
     /// </summary>
     public double RowHeight => _metrics.CardHeight + (2 * StripChromePadVertical);
 
@@ -69,10 +68,9 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         Math.Max(LeagueIconSize, LeagueTitleFontSize * 1.4) + 10 + RowHeight;
 
     /// <summary>
-    /// Padding of the strip's inner card layout: comfort pad so a focused
-    /// card is not flush against the strip edge. The selection ring is drawn
-    /// inset inside the card (see MatchCardView), so this is not reserving
-    /// room for external chrome. Uniform across layout classes.
+    /// Padding of the strip's inner card layout: half the edge-aligned focus
+    /// ring plus comfort pad so the ring is not sheared at the strip edge.
+    /// Uniform across layout classes.
     /// </summary>
     public Thickness StripPaddingThickness => new(
         Views.TvFocusScrollMath.FocusChromePadding(_metrics.CardWidth, _metrics.FocusRingThickness),

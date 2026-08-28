@@ -59,7 +59,7 @@ public class HomeLayoutStateStripPaddingTests
     }
 
     [Fact]
-    public void StripPadding_TvMetrics_IsComfortPadOnly_InsetRingNeedsNoExternalRoom()
+    public void StripPadding_TvMetrics_CoversEdgeRingHalfStroke()
     {
         // Arrange
         var state = new HomeLayoutState();
@@ -68,11 +68,10 @@ public class HomeLayoutStateStripPaddingTests
         // Act
         var padding = state.StripPaddingThickness;
 
-        // Assert — FocusScale 1.0 + inset ring → ceil(4) = 4 per side;
-        // RowHeight = 160 + 8 = 168.
-        Assert.Equal(4, padding.Top);
-        Assert.Equal(4, padding.Left);
-        Assert.Equal(168, state.RowHeight);
+        // Assert — ceil(2.5 + 4) = 7 per side; RowHeight = 160 + 14 = 174.
+        Assert.Equal(7, padding.Top);
+        Assert.Equal(7, padding.Left);
+        Assert.Equal(174, state.RowHeight);
         Assert.Equal(
             Math.Max(state.LeagueIconSize, state.LeagueTitleFontSize * 1.4) + 10 + state.RowHeight,
             state.LeagueRowHeight);

@@ -108,11 +108,11 @@ public class HomeLayoutTests
     {
         // Arrange: a 1080p TV panel; 34 is the chrome-derived headroom the
         // row strip adds at the TV metrics (HomeLayoutState.RowHeight =
-        // CardHeight + 2 x ceil(FocusChromeOverhead) = 160 + 2 x 4),
+        // CardHeight + 2 x ceil(FocusChromeOverhead) = 160 + 2 x 7),
         // ~150 covers the page header.
         const double panelWidth = 1920;
         const double panelHeight = 1080;
-        const double rowFocusHeadroom = 8;
+        const double rowFocusHeadroom = 14;
         const double pageHeaderAllowance = 150;
 
         // Act
