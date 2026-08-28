@@ -84,7 +84,10 @@ public class RefererHandlingTests
             Content = new StringContent(manifest, Encoding.UTF8, "application/vnd.apple.mpegurl")
         });
 
-        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0x47, 0x40, 0x00, 0x10, 0x00 })
+        });
 
         var streamHealthSettings = _fixture.Create<StreamHealthSettings>();
 
@@ -108,11 +111,11 @@ public class RefererHandlingTests
                 "Manifest request missing referer header");
         }
 
-        var headReq =
-            handler.Requests.FirstOrDefault(r => r.Method == HttpMethod.Head && r.RequestUri?.ToString() == segmentUrl);
-        Assert.NotNull(headReq);
-        Assert.True(headReq.Headers.Referrer != null && headReq.Headers.Referrer.ToString() == referer,
-            "Segment HEAD missing referer header");
+        var segmentReq =
+            handler.Requests.FirstOrDefault(r => r.Method == HttpMethod.Get && r.RequestUri?.ToString() == segmentUrl);
+        Assert.NotNull(segmentReq);
+        Assert.True(segmentReq.Headers.Referrer != null && segmentReq.Headers.Referrer.ToString() == referer,
+            "Segment GET missing referer header");
     }
 
     private class FakeHttpHandler : HttpMessageHandler

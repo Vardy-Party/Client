@@ -67,6 +67,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     private int _nextVlcGeneration;
     private Media? _currentMedia;
     private LibVlcRefererProxy? _refererProxy;
+    private long _demuxFailureGeneration = -1;
     private TaskCompletionSource<PlaybackResult>? _playbackTcs;
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
@@ -1000,6 +1001,11 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 if (IsLibVlcErrorLevel(level))
                 {
                     _logger.LogError("[DesktopVideoPlayerService] {Message}", renderedMessage);
+                    if (IsFatalAdaptiveDemuxFailure(module, message))
+                    {
+                        RaiseDemuxFailureOnce("LibVLC adaptive demux failed (segment not playable)");
+                    }
+
                     return;
                 }
 
@@ -1066,5 +1072,21 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                message.Contains("decoder", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("avcodec", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("drm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFatalAdaptiveDemuxFailure(string? module, string message) =>
+        (string.IsNullOrEmpty(module) || module.Contains("adaptive", StringComparison.OrdinalIgnoreCase)) &&
+        message.Contains("Failed to create demuxer", StringComparison.OrdinalIgnoreCase);
+
+    private void RaiseDemuxFailureOnce(string reason)
+    {
+        var generation = _session.Snapshot.AttachGeneration;
+        if (Interlocked.Exchange(ref _demuxFailureGeneration, generation) == generation)
+        {
+            return;
+        }
+
+        _logger.LogWarning("[DesktopVideoPlayerService] Treating demux failure as stream error: {Reason}", reason);
+        _engine.Raise(MediaEngineEvent.Error(generation, reason));
     }
 }
