@@ -29,7 +29,8 @@ public partial class MatchCardView : ContentView
     // 10 feet. Shared with the scroll math: EnsureFocusedCardVisible inflates
     // its targets by the overflow this scale actually renders.
     private const double FocusScale = TvFocusScrollMath.FocusScale;
-    private const double ResolvingScale = 1.06;
+    // Same as focus: no scale overflow past the pinned league-row height.
+    private const double ResolvingScale = 1.0;
 
     // Focus moves closer together than this (D-pad autorepeat) skip animation:
     // chrome snaps instantly so held-key runs stay fluid with no pile-up.
@@ -151,7 +152,12 @@ public partial class MatchCardView : ContentView
     {
         var radius = ViewModel?.Layout.CardCornerRadius ?? 14;
         CardOuter.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
-        FocusRing.StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(radius) };
+        // Ring is inset (see ApplyCardChrome); inner corner tracks the inset.
+        var inset = ViewModel?.Layout.FocusRingThickness ?? 3;
+        FocusRing.StrokeShape = new RoundRectangle
+        {
+            CornerRadius = new CornerRadius(Math.Max(0, radius - inset)),
+        };
     }
 
     // XAML-declared shadows, captured once so the TV raster budget can strip
@@ -195,7 +201,11 @@ public partial class MatchCardView : ContentView
 
         // Bind-time only (never on the focus path): the 10-foot focus ring is
         // thicker on TV. Focus moves only fade the pre-built ring in and out.
-        FocusRing.StrokeThickness = ViewModel?.Layout.FocusRingThickness ?? 3;
+        // Margin insets the ring so its stroke stays inside CardOuter — the
+        // league row is height-pinned and any paint past the card was clipped.
+        var ring = ViewModel?.Layout.FocusRingThickness ?? 3;
+        FocusRing.StrokeThickness = ring;
+        FocusRing.Margin = new Thickness(ring);
     }
 
     private static readonly SolidColorBrush DefaultCardStrokeBrush = new(Color.FromArgb("#26FFFFFF"));
@@ -546,16 +556,10 @@ public partial class MatchCardView : ContentView
 
     /// <summary>
     /// Field report: "scrolls into view but is sometimes still clipped by
-    /// edge". MakeVisible aligns the card's LAYOUT rect only, but the focused
-    /// card renders +9% scale plus the ring beyond it — a card revealed
-    /// "exactly" clipped its chrome at the viewport edge. Scroll to a target
-    /// computed from the card rect inflated by the real chrome overhead
-    /// (scale overflow at the current card size + scaled ring + comfort pad,
-    /// ~23dp/side on TV). The vertical axis is covered structurally: the row
-    /// item the rows list aligns wraps the strip's chrome-derived headroom
-    /// (RowHeight = CardHeight + 2 x TvFocusScrollMath.FocusChromePadding,
-    /// ~17dp/side on TV), which covers the full vertical chrome overhead —
-    /// scale overflow AND ring — at every metrics class.
+    /// edge". MakeVisible aligns the card's LAYOUT rect only. Scroll to a
+    /// target inflated by the comfort-pad overhead so the card is not flush
+    /// against the viewport edge. Selection chrome is inset inside the card,
+    /// so this is breathing room — not room for an external ring/scale.
     /// </summary>
     /// <summary>
     /// Frames the strip reveal keeps retrying while a just-materialized card
@@ -753,11 +757,9 @@ public partial class MatchCardView : ContentView
     /// <summary>
     /// One place decides the card chrome, resolving > focused > rest: gold
     /// ring + pulsing veil while the picked card resolves streams, bright
-    /// ring + strong scale under focus, quiet chrome otherwise. Transitions
-    /// are transform/opacity only (Scale + ring alpha) — no stroke, shadow or
-    /// layout property changes — so a focus move never re-measures the card
-    /// or re-renders a shadow blur. Starting a ScaleTo/FadeTo replaces any
-    /// in-flight one for the same property, so rapid moves cannot pile up.
+    /// inset ring + veil under focus, quiet chrome otherwise. No scale bump —
+    /// +9% overflow was sheared by the content-height league row. Transitions
+    /// are opacity only on the ring/veil (Scale stays 1.0).
     /// </summary>
     private void ApplyInteractionState(bool animate)
     {

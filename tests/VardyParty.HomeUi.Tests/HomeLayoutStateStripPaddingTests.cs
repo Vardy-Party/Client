@@ -6,10 +6,8 @@ using Xunit;
 namespace VardyParty.HomeUi.Tests;
 
 /// <summary>
-/// The strip's layout padding and row height must be DERIVED from the focus
-/// chrome the cards actually render (TvFocusScrollMath), never a separate
-/// magic number: the field clipping came from a flat 12dp vertical headroom
-/// that covered the scale overflow but not the ring on top of it.
+/// Strip padding / row height follow TvFocusScrollMath. Selection chrome is
+/// inset inside the card (FocusScale 1.0), so padding is comfort pad only.
 /// </summary>
 public class HomeLayoutStateStripPaddingTests
 {
@@ -28,10 +26,7 @@ public class HomeLayoutStateStripPaddingTests
         // Act
         var padding = state.StripPaddingThickness;
 
-        // Assert — each side reserves at least the chrome overhead its own
-        // axis renders (scale overflow scales with the dimension), and the
-        // padding is symmetric so first/last cards and top/bottom edges get
-        // identical room.
+        // Assert — comfort pad each side; symmetric.
         var horizontalOverhead = TvFocusScrollMath.FocusChromeOverhead(
             state.CardWidth, state.FocusRingThickness);
         var verticalOverhead = TvFocusScrollMath.FocusChromeOverhead(
@@ -57,16 +52,14 @@ public class HomeLayoutStateStripPaddingTests
         // Act
         var rowHeight = state.RowHeight;
 
-        // Assert — the strip viewport is exactly the card plus its own
-        // chrome padding: shorter would re-clip the ring inside the strip,
-        // taller would waste vertical board space.
+        // Assert
         Assert.Equal(
             state.CardHeight + state.StripPaddingThickness.Top + state.StripPaddingThickness.Bottom,
             rowHeight);
     }
 
     [Fact]
-    public void StripPadding_TvMetrics_ReservesTheRingTheOldHeadroomClipped()
+    public void StripPadding_TvMetrics_IsComfortPadOnly_InsetRingNeedsNoExternalRoom()
     {
         // Arrange
         var state = new HomeLayoutState();
@@ -75,13 +68,11 @@ public class HomeLayoutStateStripPaddingTests
         // Act
         var padding = state.StripPaddingThickness;
 
-        // Assert — 17dp/side vertical (7.2 scale + 5.45 ring + 4 comfort,
-        // ceiled) and 23dp/side horizontal at the TV metrics; RowHeight
-        // follows to 194.
-        Assert.Equal(17, padding.Top);
-        Assert.Equal(23, padding.Left);
-        Assert.Equal(194, state.RowHeight);
-        // Header (max icon 40, title line) + Spacing 10 + RowHeight 194.
+        // Assert — FocusScale 1.0 + inset ring → ceil(4) = 4 per side;
+        // RowHeight = 160 + 8 = 168.
+        Assert.Equal(4, padding.Top);
+        Assert.Equal(4, padding.Left);
+        Assert.Equal(168, state.RowHeight);
         Assert.Equal(
             Math.Max(state.LeagueIconSize, state.LeagueTitleFontSize * 1.4) + 10 + state.RowHeight,
             state.LeagueRowHeight);
@@ -97,8 +88,6 @@ public class HomeLayoutStateStripPaddingTests
         var state = new HomeLayoutState();
         state.Apply(layoutClass);
 
-        // Must be content-sized: far smaller than a 1080p leftover (~800+).
-        // A viewport-tall item is what painted the black slab.
         Assert.True(state.LeagueRowHeight < 400);
         Assert.True(state.LeagueRowHeight > state.RowHeight);
     }

@@ -11,41 +11,38 @@ namespace VardyParty.HomeUi.Views;
 public static class TvFocusScrollMath
 {
     /// <summary>
-    /// The focused card's scale bump. Single source of truth shared with the
-    /// card chrome animations: the scroll math must inflate by the SAME
-    /// overflow the chrome actually renders.
+    /// Focused-card scale. Kept at 1.0: a +9% scale drew outside the card's
+    /// layout box and was sheared by the content-height league row
+    /// (<c>LeagueRowHeight</c>). Selection chrome is an inset ring + veil
+    /// inside the card instead.
     /// </summary>
-    public const double FocusScale = 1.09;
+    public const double FocusScale = 1.0;
 
     /// <summary>
-    /// Breathing room beyond the exact chrome edge so the ring never sits
-    /// flush against the viewport boundary.
+    /// Breathing room beyond the card layout rect so a focused card never
+    /// sits flush against the strip viewport edge. The ring itself is inset
+    /// inside the card and does not consume this pad.
     /// </summary>
     public const double ChromeComfortPad = 4;
 
     /// <summary>
-    /// How far the focus chrome renders beyond ONE side of the card's layout
-    /// rect: the scale overflow at the current card size plus the focus ring
-    /// (which scales with the card), plus a small comfort pad. At the TV
-    /// metrics (300dp card, 5dp ring) this is ~23dp per side — the "~24px"
-    /// the field report estimated from the clipped ring.
+    /// How far focus chrome needs beyond ONE side of the card's layout rect.
+    /// With <see cref="FocusScale"/> at 1.0 and an inset ring, that is only
+    /// the comfort pad (no scale overflow, no external ring).
+    /// <paramref name="ringThickness"/> is retained so call sites stay stable;
+    /// inset chrome does not consume external room.
     /// </summary>
-    public static double FocusChromeOverhead(double cardDimension, double ringThickness) =>
-        ((FocusScale - 1) / 2 * cardDimension) + (ringThickness * FocusScale) + ChromeComfortPad;
+    public static double FocusChromeOverhead(double cardDimension, double ringThickness)
+    {
+        _ = ringThickness;
+        return ((FocusScale - 1) / 2 * cardDimension) + ChromeComfortPad;
+    }
 
     /// <summary>
-    /// Layout padding (whole dp, so layout slots stay crisp) a strip needs
-    /// on ONE side for the focused card's chrome to render un-clipped at
-    /// rest: the chrome overhead rounded up. Ancestor clipping is disabled
-    /// on Android (TvDpadFocusRouter.HardenContainers), but chrome can only
-    /// DRAW into space that exists — at the screen edge or against opaque
-    /// siblings the strip itself must reserve the room. Horizontally this is
-    /// the strip's start/end padding (ClipToPadding stays off natively so
-    /// cards still scroll edge-to-edge); vertically it is the headroom
-    /// HomeLayoutState.RowHeight adds around the card. Single source of
-    /// truth with the scroll-target math above: the padding is derived from
-    /// the SAME overhead the chrome actually renders, never a separate
-    /// magic number.
+    /// Layout padding (whole dp) a strip needs on ONE side so a focused card
+    /// is not flush against the viewport edge. Ancestor clipping is still
+    /// disabled on Android for safety, but the selection ring no longer
+    /// depends on drawing outside the card.
     /// </summary>
     public static double FocusChromePadding(double cardDimension, double ringThickness) =>
         Math.Ceiling(FocusChromeOverhead(cardDimension, ringThickness));
@@ -53,17 +50,8 @@ public static class TvFocusScrollMath
     /// <summary>
     /// Target ScrollX that keeps the card's layout rect PLUS its focus-chrome
     /// overhead fully inside the strip viewport, or null when no scroll is
-    /// needed. MakeVisible aligned the layout rect only, so a card revealed
-    /// "exactly" still clipped its +9% scale and ring at the viewport edge.
-    /// Clamped to the scrollable range [0, extent]: at the content ends the
-    /// strip's own chrome-derived end padding (<see cref="FocusChromePadding"/>)
-    /// is all the headroom that physically exists. A target within
-    /// <see cref="ChromeComfortPad"/> of an edge
-    /// snaps TO that edge: the end card sits inside the strip's end padding,
-    /// so the residual is the padding-minus-overhead sliver (sub-dp, the
-    /// ceiling remainder) — resting the strip exactly at its boundary shows strictly
-    /// MORE chrome headroom than the sliver-offset target and never leaves
-    /// the strip parked one pixel off its natural end state.
+    /// needed. Clamped to the scrollable range [0, extent]. A target within
+    /// <see cref="ChromeComfortPad"/> of an edge snaps TO that edge.
     /// </summary>
     public static double? ComputeStripTarget(
         double cardLeft,
@@ -114,25 +102,15 @@ public static class TvFocusScrollMath
     /// <summary>
     /// Vertical scroll delta (native px) that parks the focused row's TOP —
     /// league header first — at the top of the rows viewport, Netflix-style.
-    /// The earlier minimal reveal (bottom-edge alignment on downward moves)
-    /// left rows resting part-clipped in every focus path that was not a
-    /// router vertical move; the field report was focused cards "not fully on
-    /// screen". Top alignment is deterministic: the focused row always rests
-    /// at the same place, its header and the strip's chrome headroom fully
-    /// visible, rows above completely scrolled off. Positive scrolls down,
-    /// negative up, matching RecyclerView.smoothScrollBy — which clamps at
-    /// the content edges, so the last rows simply rest against the bottom
-    /// (fully visible; a row can never park clipped).
+    /// Positive scrolls down, negative up, matching RecyclerView.smoothScrollBy.
     /// </summary>
     public static int ComputeRowTopAlignDelta(int rowTop, int viewportHeight) =>
         viewportHeight <= 0 ? 0 : rowTop;
 
     /// <summary>
     /// Whether a focus landing should ScrollTo the row. The first board row
-    /// on TV is already at document start — ScrollTo(Start) of a
-    /// viewport-tall item container shoved that row off the top (Serie A
-    /// field: opening view showed the bottom of the first cards + the
-    /// next league, nothing selected; Down then picked the second league).
+    /// on TV is already at document start — ScrollTo(Start) of that row
+    /// shoved it off the top (Serie A field report).
     /// </summary>
     public static bool ShouldScrollRowIntoView(bool isTv, System.Collections.IList? items, object row)
     {

@@ -49,14 +49,10 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double FocusedCardLift => _metrics.FocusedCardLift;
 
     /// <summary>
-    /// Row height for the horizontal card strip: card + chrome headroom on
-    /// both sides. The headroom is DERIVED from the focus-chrome overhead
-    /// (scale overflow + scaled ring + comfort pad — the same
-    /// <see cref="Views.TvFocusScrollMath"/> constants the scroll targets
-    /// use), not a magic number: the previous flat 12dp/side covered the
-    /// 7-8dp scale overflow but NOT the ring on top of it (~17dp/side at the
-    /// TV metrics), which clipped the focused ring top/bottom even on rails
-    /// that never scroll.
+    /// Row height for the horizontal card strip: card + comfort pad on both
+    /// sides. Selection chrome is inset inside the card (no scale overflow),
+    /// so this headroom is only the strip edge breathing room from
+    /// <see cref="Views.TvFocusScrollMath"/> — not room for an external ring.
     /// </summary>
     public double RowHeight => _metrics.CardHeight + (2 * StripChromePadVertical);
 
@@ -73,15 +69,10 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         Math.Max(LeagueIconSize, LeagueTitleFontSize * 1.4) + 10 + RowHeight;
 
     /// <summary>
-    /// Padding of the strip's inner card layout, sized so the focused card's
-    /// chrome (+9% scale, ring, comfort pad) has room to render at rest:
-    /// horizontal start/end room for the first/last card, vertical headroom
-    /// inside <see cref="RowHeight"/>. Android additionally disables
-    /// ancestor clipping (TvDpadFocusRouter.HardenContainers) and keeps
-    /// ClipToPadding off so cards scroll edge-to-edge while the chrome keeps
-    /// this room at rest. Uniform across layout classes: every class uses
-    /// the same 1.09 focus/hover scale, so the derivation stays proportionate
-    /// (each class's own card size and ring thickness feed it).
+    /// Padding of the strip's inner card layout: comfort pad so a focused
+    /// card is not flush against the strip edge. The selection ring is drawn
+    /// inset inside the card (see MatchCardView), so this is not reserving
+    /// room for external chrome. Uniform across layout classes.
     /// </summary>
     public Thickness StripPaddingThickness => new(
         Views.TvFocusScrollMath.FocusChromePadding(_metrics.CardWidth, _metrics.FocusRingThickness),

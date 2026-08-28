@@ -11,18 +11,18 @@ namespace VardyParty.HomeUi.Tests;
 public class TvFocusScrollMathTests
 {
     [Fact]
-    public void FocusChromeOverhead_TvMetrics_MatchesFieldEstimate()
+    public void FocusChromeOverhead_IsComfortPadOnly_WhenFocusScaleIsOne()
     {
-        // Arrange — TV card width 300dp, TV focus ring 5dp.
+        // Arrange — TV card 300×5; inset ring + FocusScale 1.0 → no external chrome.
         const double cardWidth = 300;
         const double ringThickness = 5;
 
         // Act
         var overhead = TvFocusScrollMath.FocusChromeOverhead(cardWidth, ringThickness);
 
-        // Assert — 13.5 scale overflow + 5.45 scaled ring + 4 comfort ≈ 23
-        // per side, the "~24px" clipped-ring estimate from the field report.
-        Assert.Equal(22.95, overhead, precision: 2);
+        // Assert
+        Assert.Equal(TvFocusScrollMath.ChromeComfortPad, overhead);
+        Assert.Equal(1.0, TvFocusScrollMath.FocusScale);
     }
 
     [Theory]
@@ -41,31 +41,25 @@ public class TvFocusScrollMathTests
         // Act
         var padding = TvFocusScrollMath.FocusChromePadding(cardDimension, ringThickness);
 
-        // Assert — the strip padding must fully contain the rendered chrome
-        // (>= overhead) while staying a crisp whole-dp layout value that
-        // never over-reserves more than the ceiling remainder.
+        // Assert
         Assert.True(padding >= overhead);
         Assert.True(padding - overhead < 1);
         Assert.Equal(Math.Floor(padding), padding);
     }
 
     [Fact]
-    public void FocusChromePadding_TvVerticalMetrics_ExceedsTheOldFlatHeadroom()
+    public void FocusChromePadding_TvVerticalMetrics_IsComfortPad_NotLegacyScaleHeadroom()
     {
-        // Arrange — TV card height 160dp, TV focus ring 5dp; the pre-fix
-        // strip reserved a flat 12dp/side (RowHeight = CardHeight + 24).
+        // Arrange — TV card height 160dp. Legacy layout reserved 12–17dp/side
+        // for +9% scale + external ring; inset chrome only needs comfort pad.
         const double cardHeight = 160;
         const double ringThickness = 5;
-        const double oldFlatHeadroomPerSide = 12;
 
         // Act
         var padding = TvFocusScrollMath.FocusChromePadding(cardHeight, ringThickness);
 
-        // Assert — 7.2 scale overflow + 5.45 scaled ring + 4 comfort = 16.65
-        // → 17dp/side: the old 12dp covered the scale but NOT the ring, which
-        // is exactly the top/bottom ring clipping seen on short rails.
-        Assert.Equal(17, padding);
-        Assert.True(padding > oldFlatHeadroomPerSide);
+        // Assert
+        Assert.Equal(TvFocusScrollMath.ChromeComfortPad, padding);
     }
 
     [Fact]
