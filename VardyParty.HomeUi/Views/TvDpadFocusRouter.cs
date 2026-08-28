@@ -330,8 +330,8 @@ public static class TvDpadFocusRouter
             view.Focusable = false;
             if (view is AViewGroup group)
             {
-                group.ClipChildren = false;
-                group.ClipToPadding = false;
+                group.SetClipChildren(false);
+                group.SetClipToPadding(false);
             }
 
             if (view is RecyclerView)
