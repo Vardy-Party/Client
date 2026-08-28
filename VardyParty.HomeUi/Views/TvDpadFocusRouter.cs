@@ -209,17 +209,17 @@ public static class TvDpadFocusRouter
             return true;
         }
 
+        // Always SnapToStart the target row (league header at viewport top).
+        // A one-shot SmoothScrollBy(ItemView.Top) raced RequestFocus: the
+        // framework then requestChildOnScreen'd the CARD and clipped the
+        // league header on upward moves (field: "scroll up, don't see the
+        // league of the selected game"). Same path for attached and
+        // not-yet-attached rows.
+        SmoothScrollRowToTop(outer, targetPosition);
+
         var targetRow = outer.FindViewHolderForAdapterPosition(targetPosition)?.ItemView;
         if (targetRow is null)
         {
-            // The adjacent row is not attached yet. Previously this fell
-            // through to Android's focus-search-failed path, which scrolled
-            // the row in with an abrupt layout-time jump (and played the
-            // system navigation click, see OnNativeKeyPress). Own it
-            // instead: one animated recycler scroll — top-snapped, so the
-            // row parks at the viewport top like every other vertical move —
-            // then land focus with column memory once the row attaches.
-            SmoothScrollRowToTop(outer, targetPosition);
             FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
             return true;
         }
@@ -227,37 +227,88 @@ public static class TvDpadFocusRouter
         var scroller = TvDpadStripWalk.FindDescendantScroller(Wrap(targetRow));
         if (scroller is null)
         {
-            return false;
+            FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
+            return true;
         }
 
         var target = TvDpadStripWalk.FindNearestFocusableByCenterX(scroller, CenterXOnScreen(card));
         if (target is not AndroidNode node)
         {
-            return false;
-        }
-
-        // Reveal the row OURSELVES before moving focus: with a smooth scroll
-        // in flight, RecyclerView.LayoutManager.onRequestChildFocus reports
-        // isSmoothScrolling() and the framework skips its own
-        // requestChildOnScreen (which ignores revealOnFocusHint and reveals
-        // only the card rect, leaving the league header clipped on upward
-        // moves). One scroll owner per axis, same rule as the strips. The
-        // target is Netflix-style top alignment (header at the viewport
-        // top), not a minimal reveal — see ComputeRowTopAlignDelta.
-        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(targetRow.Top, outer.Height);
-        if (delta != 0)
-        {
-            outer.SmoothScrollBy(0, delta);
+            FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
+            return true;
         }
 
         _ownsRowReveal = true;
         if (node.View.RequestFocus())
         {
+            // After focus settles, re-assert top align — RequestFocus can
+            // still nudge the recycler toward the card rect mid-scroll.
+            PostTopAlignRow(outer, targetPosition);
             return true;
         }
 
         _ownsRowReveal = false;
-        return delta != 0;
+        FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
+        return true;
+    }
+
+    /// <summary>
+    /// Re-snap the focused card's league row to the viewport top (header
+    /// visible). Used after focus lands when the router did not own the
+    /// reveal, and as a post-focus correction after SnapToStart.
+    /// </summary>
+    internal static void PostTopAlignContaining(AView card)
+    {
+        var outer = FindParentRecycler(card);
+        if (outer is null)
+        {
+            return;
+        }
+
+        var rowItem = FindDirectChild(outer, card);
+        if (rowItem is null)
+        {
+            return;
+        }
+
+        var position = outer.GetChildAdapterPosition(rowItem);
+        if (position == RecyclerView.NoPosition)
+        {
+            return;
+        }
+
+        PostTopAlignRow(outer, position);
+    }
+
+    private static void PostTopAlignRow(RecyclerView outer, int position)
+    {
+        // Two frames: one for RequestFocus layout, one for smooth-scroll settle.
+        outer.Post(() =>
+        {
+            AlignRowToTop(outer, position);
+            outer.Post(() => AlignRowToTop(outer, position));
+        });
+    }
+
+    private static void AlignRowToTop(RecyclerView outer, int position)
+    {
+        if (!outer.IsAttachedToWindow || outer.Height <= 0)
+        {
+            return;
+        }
+
+        var item = outer.FindViewHolderForAdapterPosition(position)?.ItemView;
+        if (item is null)
+        {
+            // Still attaching — SnapToStart scroll already in flight from the move.
+            return;
+        }
+
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(item.Top, outer.Height);
+        if (delta != 0)
+        {
+            outer.SmoothScrollBy(0, delta);
+        }
     }
 
     /// <summary>
@@ -315,6 +366,10 @@ public static class TvDpadFocusRouter
             if (!node.View.RequestFocus())
             {
                 _ownsRowReveal = false;
+            }
+            else
+            {
+                PostTopAlignRow(outer, targetPosition);
             }
         }
     }

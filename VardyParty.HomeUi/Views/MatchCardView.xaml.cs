@@ -525,15 +525,27 @@ public partial class MatchCardView : ContentView
         if (rows != null && row != null)
         {
 #if ANDROID
-            // The D-pad router reveals the target row itself (it smooth-
-            // scrolls the recycler BEFORE moving focus so the framework's
-            // requestChildOnScreen stays out of the way); issuing the MAUI
-            // item scroll on top would cancel that animation mid-move and
-            // retarget it — the vertical flavour of two scroll owners.
-            // Non-router focus paths (initial autofocus, focus restore)
-            // still get the item scroll below.
+            // The D-pad router SnapToStarts the target row before focus.
+            // Skip MAUI CollectionView.ScrollTo — a second item scroll
+            // cancels the router's animation. Still re-assert native
+            // top-align so RequestFocus cannot leave the league header
+            // clipped (upward-move field report).
             if (TvDpadFocusRouter.TryConsumeOwnedRowReveal())
             {
+                if (_wiredNative is not null)
+                {
+                    TvDpadFocusRouter.PostTopAlignContaining(_wiredNative);
+                }
+
+                return;
+            }
+
+            // Non-router TV focus (autofocus, restore): native top-align
+            // keeps the league header visible; MAUI ScrollTo(Start) does
+            // not reliably top-align on CollectionView/RecyclerView.
+            if (ViewModel.Layout.IsTv && _wiredNative is not null)
+            {
+                TvDpadFocusRouter.PostTopAlignContaining(_wiredNative);
                 return;
             }
 #endif
