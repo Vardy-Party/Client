@@ -40,6 +40,17 @@ if (-not $sdkVersion.StartsWith('11.')) {
     throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 preview SDK (11.0.100-preview.7 or later). Make sure no global.json pins an older SDK."
 }
 
+# A desktop-only TFM pin leaked into the environment (e.g. an `export
+# HomeUiTargetFrameworks=net11.0` left over from a Linux desktop build) would
+# silently drop HomeUi's android target from Linux/WSL builds and fail restore
+# with cryptic NETSDK1005/1147 errors. It only affects Linux-side evaluation
+# (the csproj condition is Linux-only), but neutralise it here regardless —
+# this clears the SCRIPT's process copy only, never the caller's shell.
+if ($env:HomeUiTargetFrameworks) {
+    Write-Host "NOTE: ignoring HomeUiTargetFrameworks='$($env:HomeUiTargetFrameworks)' from the environment for this Android build."
+    Remove-Item Env:HomeUiTargetFrameworks
+}
+
 if (Test-Path 'VardyParty.Core/VardyParty.Core.csproj') {
     Write-Host 'VardyParty.Core was removed. Delete the leftover project before packaging:'
     Write-Host '  Remove-Item -Recurse -Force VardyParty.Core'

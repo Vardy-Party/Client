@@ -68,10 +68,16 @@ target never enters the desktop build graph.
 
 ```bash
 dotnet workload install maui-tizen
-export HomeUiTargetFrameworks=net11.0
-dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj
-dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
+dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj -p:HomeUiTargetFrameworks=net11.0
+dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0
 ```
+
+> Pass the pin as `-p:` per command — do NOT `export HomeUiTargetFrameworks`
+> into your shell. A lingering export silently drops HomeUi's android target
+> from every later Android build in that shell (Linux/WSL evaluation only)
+> and fails restore with cryptic NETSDK1005/1147 errors. `package-android.ps1`
+> neutralises the variable defensively, but plain `dotnet build` commands
+> won't.
 
 For video playback:
 

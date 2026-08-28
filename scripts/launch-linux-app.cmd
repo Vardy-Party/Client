@@ -29,7 +29,7 @@ REM
 REM If the build still fails with NETSDK1147 (e.g. a stale obj/ restored
 REM without the pin), the fallback remedy is printed below.
 echo Launching Vardy Party Desktop from: %REPO_WSL%
-wsl.exe --cd "%REPO_WSL%" bash -lc "set -o pipefail; export DISPLAY=${DISPLAY:-:0}; export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}; export HomeUiTargetFrameworks=net11.0; LOG=$(mktemp /tmp/vardyparty-desktop-launch.XXXXXX.log); { $HOME/.dotnet/dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources && $HOME/.dotnet/dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore; } 2>&1 | tee $LOG; RC=$?; if [ $RC -ne 0 ] && grep -q NETSDK1147 $LOG; then echo; echo 'NETSDK1147: the android workload leaked into the desktop build graph.'; echo 'Remedy: dotnet workload install android'; fi; rm -f $LOG; exit $RC"
+wsl.exe --cd "%REPO_WSL%" bash -lc "set -o pipefail; export DISPLAY=${DISPLAY:-:0}; export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}; LOG=$(mktemp /tmp/vardyparty-desktop-launch.XXXXXX.log); { $HOME/.dotnet/dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources -p:HomeUiTargetFrameworks=net11.0 && $HOME/.dotnet/dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0; } 2>&1 | tee $LOG; RC=$?; if [ $RC -ne 0 ] && grep -q NETSDK1147 $LOG; then echo; echo 'NETSDK1147: the android workload leaked into the desktop build graph.'; echo 'Remedy: dotnet workload install android'; fi; rm -f $LOG; exit $RC"
 set "EXITCODE=%ERRORLEVEL%"
 
 if not "%EXITCODE%"=="0" (
