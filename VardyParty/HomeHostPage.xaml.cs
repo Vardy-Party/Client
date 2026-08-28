@@ -172,8 +172,19 @@ public partial class HomeHostPage : ContentPage
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            // TV: SoundPool decode contended with cold-start BBC parse / GC —
+            // wait past first paint + enrichment burst before bringing up the
+            // pool (field: 10s all-at-once load timed out → silent UI).
+            var delay = MauiProgram.IsTv ? TimeSpan.FromSeconds(18) : TimeSpan.FromSeconds(5);
+            await Task.Delay(delay);
             await _soundPlayer.InitializeAsync();
+
+            // One retry if the first attempt lost the race to Yield/timeout.
+            if (MauiProgram.IsTv)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                await _soundPlayer.InitializeAsync();
+            }
         }
         catch
         {

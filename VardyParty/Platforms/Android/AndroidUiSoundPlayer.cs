@@ -1,4 +1,5 @@
 #if ANDROID
+using Android.Content.Res;
 using Android.Media;
 using Microsoft.Extensions.Logging;
 using VardyParty.Ports;
@@ -6,18 +7,28 @@ using VardyParty.Ports;
 namespace VardyParty.Platforms.Android;
 
 /// <summary>
-/// SoundPool-backed player: all six WAVs are loaded from the APK assets in
+/// SoundPool-backed player: WAVs load from APK assets in
 /// <see cref="InitializeAsync"/> (awaiting SoundPool's LoadComplete), so
-/// <see cref="Play"/> is a non-blocking native trigger. AudioAttributes use
-/// AssistanceSonification and deliberately request NO audio focus — a 30ms
-/// tick must never pause the user's podcast in another app.
+/// <see cref="Play"/> is a non-blocking native trigger. Phones/tablets use
+/// AssistanceSonification with no audio focus so a 30ms tick never ducks
+/// another app's podcast. Android TV uses USAGE_MEDIA — sonification pools
+/// stall LoadComplete for 10s+ on BRAVIA ATV3 (field: silent UI + leaked
+/// pool → FinalizerWatchdog crash on stream start).
 ///
 /// ExoPlayer in NativeVideoActivity takes the mixer. A live SoundPool then
 /// stays silent after the activity finishes until it is released and
-/// reloaded — field: ticks dead until Settings → UI sounds was toggled
-/// (that Play(Select) on enable happened to land after a lucky resume).
+/// reloaded — field: ticks dead until Settings → UI sounds was toggled.
 /// <see cref="YieldDevice"/> releases the pool before playback;
 /// <see cref="RecoverDevice"/> rebuilds it when the homepage reappears.
+///
+/// Critical: every SoundPool we construct must be Release()'d on this
+/// thread. Leaving one for GC after a LoadComplete timeout lets
+/// FinalizerWatchdogDaemon kill the process when native_release blocks
+/// behind ExoPlayer (field: crash on stream start on 32-bit TV).
+///
+/// TV decode is slow and flaky under cold-start load: AssetFileDescriptors
+/// stay open until LoadComplete, samples load one-at-a-time, and a partial
+/// set is adopted rather than abandoning all sounds on timeout.
 /// </summary>
 public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
 {
@@ -30,6 +41,9 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
         (UiSound.Error, "Sounds/error.wav"),
         (UiSound.Goal, "Sounds/goal.wav"),
     ];
+
+    /// <summary>Per-sample LoadComplete budget on a saturated 32-bit TV.</summary>
+    private static readonly TimeSpan PerSampleBudget = TimeSpan.FromSeconds(20);
 
     private readonly ILogger<AndroidUiSoundPlayer> _logger;
     private readonly Dictionary<UiSound, int> _soundIds = new();
@@ -126,57 +140,89 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
             epoch = _epoch;
         }
 
+        SoundPool? pool = null;
+        EventHandler<SoundPool.LoadCompleteEventArgs>? loadHandler = null;
+        var openDescriptors = new List<AssetFileDescriptor>();
         try
         {
+            // TV firmwares often stall ASSISTANCE_SONIFICATION SoundPool loads.
+            // USAGE_MEDIA loads reliably on Android TV; phones keep sonification
+            // so UI ticks stay out of the media ducking path.
+            var onTelevision = MauiProgram.IsTv;
             var attributes = new AudioAttributes.Builder()
-                .SetUsage(AudioUsageKind.AssistanceSonification)!
-                .SetContentType(AudioContentType.Sonification)!
+                .SetUsage(onTelevision ? AudioUsageKind.Media : AudioUsageKind.AssistanceSonification)!
+                .SetContentType(onTelevision ? AudioContentType.Music : AudioContentType.Sonification)!
                 .Build()!;
 
-            var pool = new SoundPool.Builder()
+            pool = new SoundPool.Builder()
                 .SetMaxStreams(3)!
                 .SetAudioAttributes(attributes)!
                 .Build()!;
 
             var pending = new Dictionary<int, TaskCompletionSource<bool>>();
-            pool.LoadComplete += (_, e) =>
+            loadHandler = (_, e) =>
             {
                 if (pending.TryGetValue(e.SampleId, out var tcs))
                 {
                     tcs.TrySetResult(e.Status == 0);
                 }
             };
+            pool.LoadComplete += loadHandler;
 
             var assets = global::Android.App.Application.Context.Assets
                 ?? throw new InvalidOperationException("No asset manager");
 
             var loaded = new Dictionary<UiSound, int>();
+
+            // One sample at a time, AFD held open until LoadComplete — parallel
+            // Load() + disposing OpenFd early left samples undecoded on TV
+            // (10s WhenAll timeout → silent UI + leaked pool → crash on yield).
             foreach (var (sound, asset) in Assets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                using var descriptor = assets.OpenFd(asset);
-                var id = pool.Load(descriptor, priority: 1);
-                pending[id] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                loaded[sound] = id;
-            }
+                lock (_gate)
+                {
+                    if (_yielded || epoch != _epoch)
+                    {
+                        return;
+                    }
+                }
 
-            // SoundPool decodes asynchronously; Play() before LoadComplete is a no-op.
-            await Task.WhenAll(pending.Values.Select(t => t.Task)).WaitAsync(
-                TimeSpan.FromSeconds(10), cancellationToken);
+                var descriptor = assets.OpenFd(asset);
+                openDescriptors.Add(descriptor);
+                var id = pool.Load(descriptor, priority: 1);
+                var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                pending[id] = tcs;
+
+                bool ok;
+                try
+                {
+                    ok = await tcs.Task.WaitAsync(PerSampleBudget, cancellationToken);
+                }
+                catch (TimeoutException)
+                {
+                    _logger.LogWarning(
+                        "UI sound load timed out for {Sound} after {Budget}s — keeping samples loaded so far",
+                        sound, PerSampleBudget.TotalSeconds);
+                    break;
+                }
+
+                if (ok)
+                {
+                    loaded[sound] = id;
+                }
+                else
+                {
+                    _logger.LogWarning("UI sound LoadComplete status failed for {Sound}", sound);
+                }
+            }
 
             lock (_gate)
             {
-                if (_yielded || epoch != _epoch)
+                if (_yielded || epoch != _epoch || loaded.Count == 0)
                 {
-                    try
-                    {
-                        pool.Release();
-                        pool.Dispose();
-                    }
-                    catch
-                    {
-                    }
-
+                    ReleasePool(pool, loadHandler);
+                    pool = null;
                     return;
                 }
 
@@ -187,11 +233,26 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
                 }
 
                 _pool = pool;
+                if (loadHandler != null)
+                {
+                    try
+                    {
+                        pool.LoadComplete -= loadHandler;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                pool = null;
+                loadHandler = null;
                 _ready = true;
                 _playFailureLogged = 0;
             }
 
-            _logger.LogInformation("UI sounds initialised ({Count} sounds)", loaded.Count);
+            _logger.LogInformation(
+                "UI sounds initialised ({Count}/{Total} sounds, tv={IsTv})",
+                loaded.Count, Assets.Length, MauiProgram.IsTv);
         }
         catch (OperationCanceledException)
         {
@@ -200,22 +261,74 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
         {
             _logger.LogWarning(ex, "UI sound init failed; sounds disabled");
         }
+        finally
+        {
+            foreach (var descriptor in openDescriptors)
+            {
+                try
+                {
+                    descriptor.Close();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    descriptor.Dispose();
+                }
+                catch
+                {
+                }
+            }
+
+            if (pool != null)
+            {
+                ReleasePool(pool, loadHandler);
+            }
+        }
     }
 
     private void TearDownUnlocked()
     {
         _ready = false;
+        var pool = _pool;
+        _pool = null;
+        _soundIds.Clear();
+        if (pool != null)
+        {
+            ReleasePool(pool, loadHandler: null);
+        }
+    }
+
+    private static void ReleasePool(SoundPool pool, EventHandler<SoundPool.LoadCompleteEventArgs>? loadHandler)
+    {
         try
         {
-            _pool?.Release();
-            _pool?.Dispose();
+            if (loadHandler != null)
+            {
+                pool.LoadComplete -= loadHandler;
+            }
         }
         catch
         {
         }
 
-        _pool = null;
-        _soundIds.Clear();
+        try
+        {
+            pool.Release();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            pool.Dispose();
+        }
+        catch
+        {
+        }
     }
 }
 #endif
