@@ -414,7 +414,9 @@ public partial class HomeHostPage : ContentPage
 
         if (_resolutionStartClaimed || _resolutionTask is { IsCompleted: false })
         {
-            if (_homeShell.SelectedGame != null && HomePlaybackIntent.SameGame(_homeShell.SelectedGame, game))
+            var sameGame = _homeShell.SelectedGame != null
+                && HomePlaybackIntent.SameGame(_homeShell.SelectedGame, game);
+            if (HomePlaybackIntent.ShouldIgnoreRepick(sameGame, _resolutionExhausted))
             {
                 _logger.LogInformation("[HomeHost] Stream resolution already running for this game");
                 return;
@@ -464,20 +466,16 @@ public partial class HomeHostPage : ContentPage
 
                 _resolutionExhausted = true;
 
-                if (outcome.UserClosed)
+                var plan = StreamResolutionOutcomeUx.Plan(outcome);
+                if (plan.ClearSelection)
                 {
                     _selection.CurrentGame = null;
                     _homeShell.ClearSelection();
-                    return;
                 }
 
-                if (outcome.NoWorkingStreams)
+                if (plan.ErrorMessage != null)
                 {
-                    ShowStreamPlaybackError("No working streams found");
-                }
-                else if (outcome.PlaybackResult is { Success: false } && !outcome.UserClosed)
-                {
-                    ShowStreamPlaybackError(outcome.PlaybackResult.Message);
+                    ShowStreamPlaybackError(plan.ErrorMessage);
                 }
             }
             catch (OperationCanceledException)
@@ -495,7 +493,7 @@ public partial class HomeHostPage : ContentPage
                 _resolutionExhausted = true;
                 _selection.CurrentGame = null;
                 _homeShell.ClearSelection();
-                ShowStreamPlaybackError(ex.Message);
+                ShowStreamPlaybackError(StreamResolutionOutcomeUx.PlanException(ex.Message).ErrorMessage);
             }
             finally
             {
