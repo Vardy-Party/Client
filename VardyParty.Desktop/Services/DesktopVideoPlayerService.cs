@@ -728,9 +728,21 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             media.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             media.AddOption(UseConservativeVlcOptions ? ":avcodec-hw=none" : ":avcodec-hw=any");
 
+            // Never SetAudioOutput after Play — on WSL/Linux that tears down
+            // pulse mid-start ("removing module pulse") and cancels the HTTP
+            // demux (adaptive: Failed to create demuxer / Cancellation 0x8).
+            // aout was pinned once in CreateMediaPlayerSession.
+            try
+            {
+                vlc.Player.Mute = false;
+                vlc.Player.Volume = 100;
+            }
+            catch
+            {
+            }
+
             _currentMedia = media;
             vlc.Player.Play(media);
-            ConfigureAudioOutput(vlc.Player);
         });
 
         if (!attached)

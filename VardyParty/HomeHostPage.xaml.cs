@@ -47,6 +47,15 @@ public partial class HomeHostPage : ContentPage
 
     // Stream resolution state (mirrors the old Blazor Home page's fields).
     private bool _isResolvingStreams;
+    /// <summary>
+    /// True from overlay show until we explicitly hide it. Must NOT track
+    /// <see cref="StreamResolutionProgress.IsResolving"/>: the orchestrator's
+    /// BehaviorSubject emits an initial IsResolving=false on first subscribe
+    /// (and Reset can emit the same), which cleared Back suppression while
+    /// the finding-streams modal was still on screen — Back then exited the
+    /// app on Android TV instead of canceling discovery.
+    /// </summary>
+    private bool _resolveOverlayOpen;
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
     private int _resolutionGeneration;
@@ -476,6 +485,7 @@ public partial class HomeHostPage : ContentPage
         _homeShell.OnUserPicked(game);
         _selection.CurrentGame = game;
         _isResolvingStreams = true;
+        _resolveOverlayOpen = true;
         _resolutionExhausted = false;
         UpdateBackSuppression();
         ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
@@ -487,8 +497,9 @@ public partial class HomeHostPage : ContentPage
                 _homeShell.MarkPlayerSessionStarted();
             }
 
-            _isResolvingStreams = progress.IsResolving;
-            UpdateBackSuppression();
+            // Drive chrome/title from progress, but never clear
+            // _resolveOverlayOpen here — see field comment.
+            _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
             UpdateResolveOverlay(progress);
         });
 
@@ -546,6 +557,7 @@ public partial class HomeHostPage : ContentPage
                 {
                     _resolutionStartClaimed = false;
                     _isResolvingStreams = false;
+                    _resolveOverlayOpen = false;
                     _viewModel.OnStreamResolutionEnded();
                     UpdateBackSuppression();
                     PostUi(() =>
@@ -584,6 +596,7 @@ public partial class HomeHostPage : ContentPage
         _resolutionStartClaimed = false;
         _resolutionExhausted = true;
         _isResolvingStreams = false;
+        _resolveOverlayOpen = false;
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
@@ -667,7 +680,9 @@ public partial class HomeHostPage : ContentPage
         ResolveCountLabel.Text = progress.TotalStreams > 0
             ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
             : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
-        ResolveOverlay.IsVisible = _isResolvingStreams;
+        // Keep the modal up for the whole owned session — progress.IsResolving
+        // alone can go false while we still owe the user a cancelable overlay.
+        ResolveOverlay.IsVisible = _resolveOverlayOpen;
     });
 
     private void ShowStreamPlaybackError(string? message)
@@ -675,6 +690,7 @@ public partial class HomeHostPage : ContentPage
         _serviceError = message ?? "Stream unavailable";
         PushErrorBanner();
         _isResolvingStreams = false;
+        _resolveOverlayOpen = false;
         UpdateBackSuppression();
         PostUi(() => ResolveOverlay.IsVisible = false);
     }
@@ -697,7 +713,7 @@ public partial class HomeHostPage : ContentPage
             return;
         }
 
-        if (_isResolvingStreams)
+        if (_resolveOverlayOpen || _isResolvingStreams)
         {
             _logger.LogInformation("[HomeHost] Android back pressed - canceling stream resolution");
             CancelStreamDiscoveryFromUser();
@@ -720,7 +736,7 @@ public partial class HomeHostPage : ContentPage
         try
         {
             var tracker = MainActivity.OverlaySuppression;
-            tracker.Set("stream-resolve", _isResolvingStreams);
+            tracker.Set("stream-resolve", _resolveOverlayOpen);
             tracker.Set("menu", _viewModel.IsMenuOpen);
             tracker.Set("device-code-sign-in", _deviceCode != null);
         }
