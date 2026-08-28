@@ -112,24 +112,18 @@ public static class TvFocusScrollMath
     }
 
     /// <summary>
-    /// Vertical scroll delta (native px) that reveals the whole row item —
-    /// league header, strip and the strip's built-in chrome headroom — in the
-    /// rows viewport. 0 means already fully visible; a row taller than the
-    /// viewport aligns its top. Positive scrolls down, negative up, matching
-    /// RecyclerView.smoothScrollBy.
+    /// Vertical scroll delta (native px) that parks the focused row's TOP —
+    /// league header first — at the top of the rows viewport, Netflix-style.
+    /// The earlier minimal reveal (bottom-edge alignment on downward moves)
+    /// left rows resting part-clipped in every focus path that was not a
+    /// router vertical move; the field report was focused cards "not fully on
+    /// screen". Top alignment is deterministic: the focused row always rests
+    /// at the same place, its header and the strip's chrome headroom fully
+    /// visible, rows above completely scrolled off. Positive scrolls down,
+    /// negative up, matching RecyclerView.smoothScrollBy — which clamps at
+    /// the content edges, so the last rows simply rest against the bottom
+    /// (fully visible; a row can never park clipped).
     /// </summary>
-    public static int ComputeVerticalRevealDelta(int rowTop, int rowBottom, int viewportHeight)
-    {
-        if (viewportHeight <= 0)
-        {
-            return 0;
-        }
-
-        if (rowBottom - rowTop >= viewportHeight || rowTop < 0)
-        {
-            return rowTop;
-        }
-
-        return rowBottom > viewportHeight ? rowBottom - viewportHeight : 0;
-    }
+    public static int ComputeRowTopAlignDelta(int rowTop, int viewportHeight) =>
+        viewportHeight <= 0 ? 0 : rowTop;
 }

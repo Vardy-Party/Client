@@ -204,75 +204,58 @@ public class TvFocusScrollMathTests
     }
 
     [Fact]
-    public void VerticalRevealDelta_RowFullyVisible_NoScroll()
+    public void RowTopAlignDelta_RowAlreadyAtTop_NoScroll()
     {
         // Arrange
-        const int rowTop = 100;
-        const int rowBottom = 400;
+        const int rowTop = 0;
         const int viewport = 900;
 
         // Act
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(rowTop, rowBottom, viewport);
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(rowTop, viewport);
 
         // Assert
         Assert.Equal(0, delta);
     }
 
     [Fact]
-    public void VerticalRevealDelta_RowBelowViewport_ScrollsDownByOverflow()
+    public void RowTopAlignDelta_RowLowerInViewport_ScrollsItToTheTop()
     {
-        // Arrange
-        const int rowTop = 700;
-        const int rowBottom = 1050;
+        // Netflix-style: a fully visible row parked mid-viewport still
+        // scrolls to the top on a vertical move — deterministic resting
+        // position, rows above completely off-screen.
+        const int rowTop = 420;
         const int viewport = 900;
 
         // Act
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(rowTop, rowBottom, viewport);
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(rowTop, viewport);
 
         // Assert
-        Assert.Equal(150, delta);
+        Assert.Equal(420, delta);
     }
 
     [Fact]
-    public void VerticalRevealDelta_RowAboveViewport_ScrollsUpToRowTop()
+    public void RowTopAlignDelta_RowAboveViewport_ScrollsUpToRowTop()
     {
         // Arrange
         const int rowTop = -180;
-        const int rowBottom = 170;
         const int viewport = 900;
 
         // Act
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(rowTop, rowBottom, viewport);
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(rowTop, viewport);
 
         // Assert
         Assert.Equal(-180, delta);
     }
 
     [Fact]
-    public void VerticalRevealDelta_RowTallerThanViewport_AlignsRowTop()
-    {
-        // Arrange
-        const int rowTop = 300;
-        const int rowBottom = 1400;
-        const int viewport = 900;
-
-        // Act
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(rowTop, rowBottom, viewport);
-
-        // Assert
-        Assert.Equal(300, delta);
-    }
-
-    [Fact]
-    public void VerticalRevealDelta_UnmeasuredViewport_NoScroll()
+    public void RowTopAlignDelta_UnmeasuredViewport_NoScroll()
     {
         // Arrange
         const int rowTop = 700;
-        const int rowBottom = 1050;
         const int viewport = 0;
 
         // Act
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(rowTop, rowBottom, viewport);
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(rowTop, viewport);
 
         // Assert
         Assert.Equal(0, delta);

@@ -216,9 +216,10 @@ public static class TvDpadFocusRouter
             // through to Android's focus-search-failed path, which scrolled
             // the row in with an abrupt layout-time jump (and played the
             // system navigation click, see OnNativeKeyPress). Own it
-            // instead: one animated recycler scroll, then land focus with
-            // column memory once the row attaches.
-            outer.SmoothScrollToPosition(targetPosition);
+            // instead: one animated recycler scroll — top-snapped, so the
+            // row parks at the viewport top like every other vertical move —
+            // then land focus with column memory once the row attaches.
+            SmoothScrollRowToTop(outer, targetPosition);
             FocusRowWhenAttached(outer, targetPosition, CenterXOnScreen(card), RowAttachRetryFrames);
             return true;
         }
@@ -240,9 +241,10 @@ public static class TvDpadFocusRouter
         // isSmoothScrolling() and the framework skips its own
         // requestChildOnScreen (which ignores revealOnFocusHint and reveals
         // only the card rect, leaving the league header clipped on upward
-        // moves). One scroll owner per axis, same rule as the strips.
-        var delta = TvFocusScrollMath.ComputeVerticalRevealDelta(
-            targetRow.Top, targetRow.Bottom, outer.Height);
+        // moves). One scroll owner per axis, same rule as the strips. The
+        // target is Netflix-style top alignment (header at the viewport
+        // top), not a minimal reveal — see ComputeRowTopAlignDelta.
+        var delta = TvFocusScrollMath.ComputeRowTopAlignDelta(targetRow.Top, outer.Height);
         if (delta != 0)
         {
             outer.SmoothScrollBy(0, delta);
@@ -256,6 +258,33 @@ public static class TvDpadFocusRouter
 
         _ownsRowReveal = false;
         return delta != 0;
+    }
+
+    /// <summary>
+    /// Animated recycler scroll that parks the target row's top at the
+    /// viewport top. RecyclerView.SmoothScrollToPosition stops as soon as
+    /// the item is minimally visible (bottom-aligned on downward moves),
+    /// which is exactly the part-clipped resting state the top-alignment
+    /// policy removes — a snap-to-start LinearSmoothScroller matches
+    /// <see cref="TvFocusScrollMath.ComputeRowTopAlignDelta"/> for rows that
+    /// are not attached yet.
+    /// </summary>
+    private static void SmoothScrollRowToTop(RecyclerView outer, int targetPosition)
+    {
+        if (outer.GetLayoutManager() is not { } layoutManager || outer.Context is null)
+        {
+            outer.SmoothScrollToPosition(targetPosition);
+            return;
+        }
+
+        var scroller = new TopSnappedSmoothScroller(outer.Context) { TargetPosition = targetPosition };
+        layoutManager.StartSmoothScroll(scroller);
+    }
+
+    private sealed class TopSnappedSmoothScroller(global::Android.Content.Context context)
+        : LinearSmoothScroller(context)
+    {
+        protected override int VerticalSnapPreference => SnapToStart;
     }
 
     /// <summary>

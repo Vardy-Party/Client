@@ -525,13 +525,21 @@ public partial class MatchCardView : ContentView
             // item scroll on top would cancel that animation mid-move and
             // retarget it — the vertical flavour of two scroll owners.
             // Non-router focus paths (initial autofocus, focus restore)
-            // still get the MakeVisible below.
+            // still get the item scroll below.
             if (TvDpadFocusRouter.TryConsumeOwnedRowReveal())
             {
                 return;
             }
 #endif
-            rows.ScrollTo(row, position: ScrollToPosition.MakeVisible, animate: true);
+            // TV parks the focused row at the viewport top (Netflix-style,
+            // same policy as the router's ComputeRowTopAlignDelta) — the
+            // minimal MakeVisible reveal let rows rest part-clipped whenever
+            // focus arrived without a router vertical move (initial
+            // autofocus, menu-trap restore). Pointer-driven classes keep
+            // MakeVisible: yanking the row to the top under a mouse hover
+            // would fight the user's own wheel scrolling.
+            var position = ViewModel.Layout.IsTv ? ScrollToPosition.Start : ScrollToPosition.MakeVisible;
+            rows.ScrollTo(row, position: position, animate: true);
         }
     }
 
