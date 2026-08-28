@@ -129,6 +129,22 @@ namespace VardyParty
             // Wire Stop to logical navigation (return to Streams/Games depending on current)
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             RemoteKeyHandler.OnStop += RemoteStopHandler;
+
+            // Tell the system the cold-start path has produced a frame. Without
+            // this, multi-second first-layout Daveys on the 32-bit TV look like
+            // an ANR and Leanback kicks back to the Android home.
+            Window?.DecorView?.Post(() =>
+            {
+                try
+                {
+                    ReportFullyDrawn();
+                    Log.Info("MainActivity", "[MAIN] ReportFullyDrawn");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("MainActivity", $"[MAIN] ReportFullyDrawn failed: {ex.Message}");
+                }
+            });
         }
 
         protected override void OnDestroy()

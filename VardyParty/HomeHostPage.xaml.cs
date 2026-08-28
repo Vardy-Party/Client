@@ -127,9 +127,11 @@ public partial class HomeHostPage : ContentPage
 
         _initialized = true;
 
-        // Preload UI sounds on a background task after first render — never in
-        // the startup path (this app has startup-perf scar tissue).
-        _ = Task.Run(() => _soundPlayer.InitializeAsync());
+        // SoundPool brings up MediaCodec decoders; doing that during the first
+        // paint on the 32-bit TV raced the homepage layout and ANR'd (Signal
+        // Catcher / kick to Android home). Wait until the shell has had time
+        // to draw, then load on a background thread.
+        _ = DelayThenInitSoundsAsync();
 
 #if ANDROID
         try
@@ -151,13 +153,48 @@ public partial class HomeHostPage : ContentPage
             PushErrorBanner();
         }));
 
-        _ = InitializeAuthAsync();
+        // Yield past the first layout pass before Keystore + catalog start —
+        // SecureStorage on Android can stall while the main thread is jammed,
+        // and auth+feed kickoff must not compete with first paint.
+        _ = InitializeAuthAfterFirstFrameAsync();
+    }
+
+    private async Task DelayThenInitSoundsAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            await _soundPlayer.InitializeAsync();
+        }
+        catch
+        {
+            // Sounds stay silent; RecoverDevice / Settings toggle can retry.
+        }
+    }
+
+    private async Task InitializeAuthAfterFirstFrameAsync()
+    {
+        try
+        {
+            // Two dispatcher turns + a short delay: let MAUI attach handlers and
+            // paint the loading shell (spinning crest) before Keystore work.
+            await MainThread.InvokeOnMainThreadAsync(static () => { });
+            await Task.Delay(250);
+            await InitializeAuthAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[HomeHost] Deferred initialize failed");
+        }
     }
 
     private async Task InitializeAuthAsync()
     {
         _logger.LogInformation("[HomeHost] Initialize start");
-        _isAuthenticated = await _authTokens.IsAuthenticatedAsync();
+        // SecureStorage/Keystore must not ride the UI sync context during cold
+        // start — on the TV it waited behind multi-second layout Daveys and
+        // helped the system decide the app was ANR.
+        _isAuthenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
         _viewModel.CanSignOut = _isAuthenticated;
 
         if (_isAuthenticated)

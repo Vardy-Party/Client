@@ -8,6 +8,8 @@ namespace VardyParty.HomeUi;
 /// rasterises it once through the same Svg.Skia path the badge loader uses.
 /// The PNG bytes are cached for the process lifetime; failures return null so
 /// <c>BrandLogoView</c> can simply hide the image layer.
+/// Rasterisation is intentionally off the UI thread — doing Svg.Skia on the
+/// Android TV main thread during first paint contributed to cold-start ANRs.
 /// </summary>
 public static class BrandCrestImageLoader
 {
@@ -21,6 +23,14 @@ public static class BrandCrestImageLoader
         var png = CrestPng.Value;
         return png == null ? null : ImageSource.FromStream(() => new MemoryStream(png));
     }
+
+    /// <summary>Same as <see cref="GetCrest"/> but never runs Svg.Skia on the caller thread.</summary>
+    public static Task<ImageSource?> GetCrestAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return GetCrest();
+        }, cancellationToken);
 
     private static byte[]? Render()
     {

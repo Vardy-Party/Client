@@ -144,9 +144,39 @@ public partial class BrandLogoView : ContentView
 
     private void OnLoaded(object? sender, EventArgs e)
     {
-        CrestImage.Source ??= BrandCrestImageLoader.GetCrest();
+        // Crest SVG→PNG is expensive; never block first paint (TV ANR).
+        _ = EnsureCrestAsync();
         DisableFocusTraversal();
         ApplyLoadState();
+    }
+
+    private async Task EnsureCrestAsync()
+    {
+        if (CrestImage.Source != null)
+        {
+            return;
+        }
+
+        try
+        {
+            var source = await BrandCrestImageLoader.GetCrestAsync().ConfigureAwait(false);
+            if (source is null)
+            {
+                return;
+            }
+
+            await MainThread.InvokeOnMainThreadAsync(() =>
+            {
+                if (IsLoaded)
+                {
+                    CrestImage.Source ??= source;
+                }
+            });
+        }
+        catch
+        {
+            // Crest is decorative; leave the spin chrome without an image.
+        }
     }
 
     private void OnUnloaded(object? sender, EventArgs e)
