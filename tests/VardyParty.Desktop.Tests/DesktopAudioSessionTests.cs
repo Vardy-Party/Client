@@ -41,7 +41,7 @@ public class DesktopAudioSessionTests
     {
         // Arrange
         var player = new RecordingUiSoundPlayer();
-        var sounds = new UiSoundService(player, new AlwaysOnPreferences());
+        var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
 
         // Act
         DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
@@ -57,7 +57,7 @@ public class DesktopAudioSessionTests
     {
         // Arrange
         var player = new RecordingUiSoundPlayer();
-        var sounds = new UiSoundService(player, new AlwaysOnPreferences());
+        var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
         DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
 
         // Act
@@ -74,7 +74,7 @@ public class DesktopAudioSessionTests
     {
         // Arrange: visibility went true (stream attempt) then false (no streams / error).
         var player = new RecordingUiSoundPlayer();
-        var sounds = new UiSoundService(player, new AlwaysOnPreferences());
+        var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
 
         // Act
         DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
@@ -83,15 +83,6 @@ public class DesktopAudioSessionTests
         // Assert
         Assert.False(sounds.SuppressAll);
         Assert.Equal(new[] { "Yield", "Recover" }, player.Calls);
-    }
-
-    private sealed class AlwaysOnPreferences : ISoundPreferencesStore
-    {
-        public bool LoadUiSoundsEnabled() => true;
-
-        public void SaveUiSoundsEnabled(bool enabled)
-        {
-        }
     }
 
     private sealed class RecordingUiSoundPlayer : IUiSoundPlayer
