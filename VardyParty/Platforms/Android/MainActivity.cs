@@ -165,19 +165,18 @@ namespace VardyParty
 
         private void RemoteBackHandler(Keycode keyCode)
         {
-            if (_flyoutMenuOpen)
-            {
-                Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to flyout menu");
-                return;
-            }
-
-            // Consume via the live page before Decide/exit. This handler runs
-            // first in the OnBack multicast; HomeHostPage's handler is then a
-            // no-op if we already cancelled. Field: tracker-only Decide let
-            // FinishAndRemoveTask win while finding-streams was still up.
+            // Prefer live page overlays (menu close) over exit. Same gate as
+            // OnKeyDown / OnBackPressed — RemoteKeyHandler invokes this first
+            // in the OnBack multicast.
             if (TryConsumeHomeOverlayBack())
             {
                 NoteOverlayBackConsumed();
+                return;
+            }
+
+            if (_flyoutMenuOpen)
+            {
+                Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to flyout menu");
                 return;
             }
 
@@ -186,6 +185,9 @@ namespace VardyParty
                 case HomeBackDecision.BackAction.DelegateToOverlays:
                     Log.Info("MainActivity",
                         $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
+                    // Tracker said something is open but the page did not consume —
+                    // try once more, then never exit.
+                    TryConsumeHomeOverlayBack();
                     NoteOverlayBackConsumed();
                     return;
 
@@ -267,6 +269,23 @@ namespace VardyParty
         /// </summary>
         public override bool DispatchKeyEvent(KeyEvent? e)
         {
+            // Own Back at dispatch so focused cards / Leanback cannot finish the
+            // activity before OnKeyDown — open homepage menu must close first.
+            if (e is { Action: KeyEventActions.Down, KeyCode: Keycode.Back, RepeatCount: 0 })
+            {
+                if (TryConsumeHomeOverlayBack())
+                {
+                    NoteOverlayBackConsumed();
+                    return true;
+                }
+
+                if (_flyoutMenuOpen)
+                {
+                    SetFlyoutMenuOpen(false);
+                    return true;
+                }
+            }
+
             if (e?.Action == KeyEventActions.Down
                 && VardyParty.HomeUi.Views.TvDpadFocusRouter.TryHandleActivityKey(CurrentFocus, e.KeyCode))
             {
@@ -278,6 +297,16 @@ namespace VardyParty
 
         public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
         {
+            // Homepage menu / finding-streams must win before RemoteKeyHandler's
+            // OnBack multicast (MainActivity.RemoteBackHandler can FinishAndRemoveTask).
+            // Field: TV Back with the menu open exited the app when the key path
+            // skipped OnBackPressed and the exit subscriber ran first.
+            if (keyCode == Keycode.Back && TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return true;
+            }
+
             if (_remoteKeyHandler != null && _remoteKeyHandler.HandleKeyDown(keyCode, e))
             {
                 return true;

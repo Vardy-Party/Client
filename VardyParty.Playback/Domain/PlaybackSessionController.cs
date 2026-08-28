@@ -262,6 +262,11 @@ public sealed class PlaybackSessionController
         if (!PlaybackPolicy.CanUserNavigate(Snapshot, _healthyStreamCount))
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Navigate not allowed")];
 
+        // Abandon a stuck/in-flight prepare so BeginAttach for the next URL is allowed.
+        // Without this, CanAttach(isPreparing: true) rejects the index-driven switch
+        // after AdvanceToNext (Android TV: toast only, player never changes).
+        _isPreparing = false;
+
         return
         [
             new PlaybackEffect(

@@ -658,18 +658,38 @@ public class PlaybackSessionControllerTests
     }
 
     [Fact]
-    public void UserNext_WhilePreparing_IsBlocked()
+    public void UserNext_WhilePreparing_AbandonsPrepareAndAdvances()
     {
-        // Arrange
+        // Arrange — ExoPlayer can stick in BUFFERING without Ready; user must escape.
         var session = new PlaybackSessionController();
         session.SetHealthyStreamCount(3);
         session.BeginAttach("http://a.m3u8");
+        Assert.True(session.Snapshot.IsPreparing);
 
         // Act
         var effects = session.Handle(MediaEngineEvent.UserNext());
+
         // Assert
-        Assert.All(effects, e => Assert.Equal(PlaybackEffectKind.None, e.Kind));
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.False(session.Snapshot.IsPreparing);
+    }
+
+    [Fact]
+    public void UserNext_WhilePreparing_ThenBeginAttach_AcceptsNextUrl()
+    {
+        // Arrange
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(2);
+        session.BeginAttach("http://stuck.m3u8");
+
+        // Act
+        session.Handle(MediaEngineEvent.UserNext());
+        var attachEffects = session.BeginAttach("http://next.m3u8", usedCachedUrl: true);
+
+        // Assert
+        Assert.Contains(attachEffects, e => e.Kind == PlaybackEffectKind.Attach && e.Url == "http://next.m3u8");
         Assert.True(session.Snapshot.IsPreparing);
+        Assert.Equal("http://next.m3u8", session.Snapshot.CurrentUrl);
     }
 
     [Fact]
