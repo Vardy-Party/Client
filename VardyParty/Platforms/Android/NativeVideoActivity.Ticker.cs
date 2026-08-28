@@ -252,7 +252,10 @@ namespace VardyParty.Platforms.Android
                 if (_tickerText1 != null) _tickerText1.Text = fullText;
                 if (_tickerText2 != null) _tickerText2.Text = fullText;
                 _tickerScrollX = 0f;
-                if (_tickerInner != null) _tickerInner.TranslationX = 0f;
+                _tickerCopyWidth = 0;
+                ApplyTickerCopyLayout();
+                if (_tickerText1 != null) _tickerText1.TranslationX = 0f;
+                if (_tickerText2 != null) _tickerText2.TranslationX = 0f;
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 if (_isScoresTickerVisible)
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);

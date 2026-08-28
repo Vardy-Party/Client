@@ -181,13 +181,14 @@ namespace VardyParty.Platforms.Android
         private TextView? _reportStatusView;
         private global::Android.Widget.Button? _reportButton;
         private global::Android.Widget.Button? _videoInfoButton;
-        private LinearLayout? _scoresTickerContainer;
-        private LinearLayout? _tickerInner;
+        private FrameLayout? _scoresTickerContainer;
         private TextView? _tickerText1;
         private TextView? _tickerText2;
         private global::Android.OS.Handler? _tickerHandler;
         private Java.Lang.Runnable? _tickerRunnable;
         private float _tickerScrollX;
+        private int _tickerCopyWidth;
+        private int _tickerGapPx;
         private float _tickerPixelsPerFrame = 2f; // scroll speed
         private bool _isScoresTickerVisible;
         private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
@@ -492,18 +493,21 @@ namespace VardyParty.Platforms.Android
             };
             root.AddView(_menuPanel, menuPanelParams);
 
-            _scoresTickerContainer = new LinearLayout(this)
+            // Seamless infinite ticker: two identical TextViews in a clipped
+            // FrameLayout, each sized to the full string width and translated
+            // independently. A LinearLayout+WrapContent parent previously
+            // capped each copy to the viewport — Paint measure made us scroll,
+            // but glyphs outside the layout box were clipped, so nothing
+            // followed the moving head (Windows builds an unconstrained track).
+            _scoresTickerContainer = new FrameLayout(this)
             {
-                Orientation = Orientation.Horizontal,
                 Visibility = global::Android.Views.ViewStates.Gone
             };
             _scoresTickerContainer.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010"));
             _scoresTickerContainer.SetPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
-
-            // Seamless infinite ticker: two identical TextViews side-by-side inside a
-            // clipped inner LinearLayout, translated continuously by a Runnable loop.
-            // When the first copy scrolls fully off the left, reset to 0 — seamless wrap.
-            _tickerInner = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+            _scoresTickerContainer.SetClipChildren(true);
+            _scoresTickerContainer.SetClipToPadding(true);
+            _tickerGapPx = (int)(64 * density);
 
             TextView MakeTickerTextView()
             {
@@ -512,50 +516,42 @@ namespace VardyParty.Platforms.Android
                 tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
                 ConfigureEmojiFriendlyTextView(tv);
                 tv.SetSingleLine(true);
-                // Unbounded width measure: without this, a single-line TextView
-                // inside a MatchParent parent reports Width ≈ viewport, so
-                // TickerMarquee.ShouldLoop stays false and the panel never
-                // scrolls (Windows measures unconstrained and loops fine).
-                // Ellipsize stays none — we own TranslationX, not the system
-                // marquee engine.
                 tv.SetHorizontallyScrolling(true);
                 tv.Ellipsize = null;
-                tv.SetPadding(0, 0, (int)(64 * density), 0); // gap between copies
+                tv.SetPadding(0, 0, 0, 0);
                 return tv;
             }
 
             _tickerText1 = MakeTickerTextView();
             _tickerText2 = MakeTickerTextView();
-            // WrapContent so each TextView measures at its natural text width, not screen width.
-            _tickerInner.AddView(_tickerText1, new LinearLayout.LayoutParams(
+            // Exact widths are applied in ApplyTickerCopyLayout once text is known.
+            _scoresTickerContainer.AddView(_tickerText1, new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
-            _tickerInner.AddView(_tickerText2, new LinearLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
-
-            // _tickerInner must be WrapContent so it expands to hold both copies side-by-side.
-            // Clipping to the visible viewport is handled by _scoresTickerContainer (MatchParent).
-            _scoresTickerContainer.SetClipChildren(true);
-            _scoresTickerContainer.SetClipToPadding(true);
-            _scoresTickerContainer.AddView(_tickerInner, new LinearLayout.LayoutParams(
+                global::Android.Views.GravityFlags.CenterVertical));
+            _scoresTickerContainer.AddView(_tickerText2, new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.GravityFlags.CenterVertical));
 
             // Runnable-based scroll loop: runs every ~16ms (~60fps)
             _tickerHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _tickerRunnable = new Java.Lang.Runnable(() =>
             {
-                if (_tickerInner == null || _tickerText1 == null || _scoresTickerContainer == null) return;
-                var text1Width = MeasureTickerCopyWidth(_tickerText1);
-                if (text1Width <= 0)
+                if (_tickerText1 == null || _scoresTickerContainer == null) return;
+
+                if (_tickerCopyWidth <= 0)
+                {
+                    ApplyTickerCopyLayout();
+                }
+
+                if (_tickerCopyWidth <= 0)
                 {
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 32);
                     return;
                 }
 
-                var gap = _tickerText1.PaddingRight;
-                var contentWidth = Math.Max(0, text1Width - gap);
+                var contentWidth = Math.Max(0, _tickerCopyWidth);
                 var viewportWidth = Math.Max(_scoresTickerContainer.Width, _scoresTickerContainer.MeasuredWidth)
                     - _scoresTickerContainer.PaddingLeft
                     - _scoresTickerContainer.PaddingRight;
@@ -563,10 +559,11 @@ namespace VardyParty.Platforms.Android
                 if (!TickerMarquee.ShouldLoop(contentWidth, viewportWidth))
                 {
                     _tickerScrollX = 0f;
-                    _tickerInner.TranslationX = 0f;
+                    _tickerText1.TranslationX = 0f;
                     if (_tickerText2 != null)
                     {
                         _tickerText2.Visibility = global::Android.Views.ViewStates.Gone;
+                        _tickerText2.TranslationX = 0f;
                     }
 
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
@@ -578,9 +575,16 @@ namespace VardyParty.Platforms.Android
                     _tickerText2.Visibility = global::Android.Views.ViewStates.Visible;
                 }
 
-                var period = TickerMarquee.LoopPeriod(contentWidth, gap);
+                var period = TickerMarquee.LoopPeriod(contentWidth, _tickerGapPx);
                 _tickerScrollX = (float)TickerMarquee.WrapPositive(_tickerScrollX + _tickerPixelsPerFrame, period);
-                _tickerInner.TranslationX = -_tickerScrollX;
+                _tickerText1.TranslationX = -_tickerScrollX;
+                if (_tickerText2 != null)
+                {
+                    // Second copy sits one period behind so it fills the right
+                    // as the first exits left — seamless wrap.
+                    _tickerText2.TranslationX = -_tickerScrollX + (float)period;
+                }
+
                 PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             });
 
@@ -806,10 +810,8 @@ namespace VardyParty.Platforms.Android
         }
 
         /// <summary>
-        /// Natural text width of one ticker copy. Prefer Paint measure over
-        /// the view's laid-out width — a constrained layout pass can report
-        /// viewport width even when the string is longer, which disables
-        /// <see cref="TickerMarquee.ShouldLoop"/>.
+        /// Natural text width of one ticker copy (glyphs + padding). Used to
+        /// size each TextView exactly so the second copy can trail the first.
         /// </summary>
         private static int MeasureTickerCopyWidth(TextView textView)
         {
@@ -829,15 +831,54 @@ namespace VardyParty.Platforms.Android
             {
             }
 
-            if (textView.Width > 0)
-            {
-                return textView.Width;
-            }
-
             textView.Measure(
                 global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified),
                 global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified));
             return textView.MeasuredWidth;
+        }
+
+        /// <summary>
+        /// Pin both copies to the full string width. Without an exact width,
+        /// MatchParent parents AT_MOST-measure WrapContent TextViews to the
+        /// viewport — scrolling moves a clipped box and the trailing copy
+        /// never appears.
+        /// </summary>
+        private void ApplyTickerCopyLayout()
+        {
+            if (_tickerText1 == null)
+            {
+                return;
+            }
+
+            var width = MeasureTickerCopyWidth(_tickerText1);
+            if (width <= 0)
+            {
+                _tickerCopyWidth = 0;
+                return;
+            }
+
+            _tickerCopyWidth = width;
+            SetTickerCopyWidth(_tickerText1, width);
+            if (_tickerText2 != null)
+            {
+                SetTickerCopyWidth(_tickerText2, width);
+            }
+        }
+
+        private static void SetTickerCopyWidth(TextView textView, int widthPx)
+        {
+            var lp = textView.LayoutParameters;
+            if (lp == null)
+            {
+                lp = new FrameLayout.LayoutParams(widthPx, global::Android.Views.ViewGroup.LayoutParams.WrapContent);
+            }
+            else
+            {
+                lp.Width = widthPx;
+            }
+
+            textView.LayoutParameters = lp;
+            textView.RequestLayout();
         }
 
         private static void PostDelayedCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable, long delayMs)
