@@ -24,6 +24,49 @@ public class TvFocusScrollMathTests
         Assert.Equal(22.95, overhead, precision: 2);
     }
 
+    [Theory]
+    [InlineData(300, 5)]  // TV card width, TV ring
+    [InlineData(160, 5)]  // TV card height, TV ring
+    [InlineData(350, 3)]  // Desktop card width
+    [InlineData(192, 3)]  // Desktop card height
+    [InlineData(272, 3)]  // Phone landscape card width
+    [InlineData(140, 3)]  // Phone portrait card height
+    public void FocusChromePadding_CoversOverheadWithinOneWholeDp(
+        double cardDimension, double ringThickness)
+    {
+        // Arrange
+        var overhead = TvFocusScrollMath.FocusChromeOverhead(cardDimension, ringThickness);
+
+        // Act
+        var padding = TvFocusScrollMath.FocusChromePadding(cardDimension, ringThickness);
+
+        // Assert — the strip padding must fully contain the rendered chrome
+        // (>= overhead) while staying a crisp whole-dp layout value that
+        // never over-reserves more than the ceiling remainder.
+        Assert.True(padding >= overhead);
+        Assert.True(padding - overhead < 1);
+        Assert.Equal(Math.Floor(padding), padding);
+    }
+
+    [Fact]
+    public void FocusChromePadding_TvVerticalMetrics_ExceedsTheOldFlatHeadroom()
+    {
+        // Arrange — TV card height 160dp, TV focus ring 5dp; the pre-fix
+        // strip reserved a flat 12dp/side (RowHeight = CardHeight + 24).
+        const double cardHeight = 160;
+        const double ringThickness = 5;
+        const double oldFlatHeadroomPerSide = 12;
+
+        // Act
+        var padding = TvFocusScrollMath.FocusChromePadding(cardHeight, ringThickness);
+
+        // Assert — 7.2 scale overflow + 5.45 scaled ring + 4 comfort = 16.65
+        // → 17dp/side: the old 12dp covered the scale but NOT the ring, which
+        // is exactly the top/bottom ring clipping seen on short rails.
+        Assert.Equal(17, padding);
+        Assert.True(padding > oldFlatHeadroomPerSide);
+    }
+
     [Fact]
     public void StripTarget_CardChromeAlreadyInsideViewport_NoScroll()
     {

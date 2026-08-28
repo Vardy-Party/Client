@@ -106,11 +106,13 @@ public class HomeLayoutTests
     [Fact]
     public void Metrics_TvCardsFitAGridOnA1080pPanel()
     {
-        // Arrange: a 1080p TV panel; 24 is the focus-scale headroom the row
-        // strip adds (HomeLayoutState.RowHeight), ~150 covers the page header.
+        // Arrange: a 1080p TV panel; 34 is the chrome-derived headroom the
+        // row strip adds at the TV metrics (HomeLayoutState.RowHeight =
+        // CardHeight + 2 x ceil(FocusChromeOverhead(160, 5)) = 160 + 2 x 17),
+        // ~150 covers the page header.
         const double panelWidth = 1920;
         const double panelHeight = 1080;
-        const double rowFocusHeadroom = 24;
+        const double rowFocusHeadroom = 34;
         const double pageHeaderAllowance = 150;
 
         // Act

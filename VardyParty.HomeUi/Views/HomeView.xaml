@@ -94,13 +94,21 @@
                                        TextColor="#5B6478"
                                        VerticalOptions="Center" />
                             </HorizontalStackLayout>
+                            <!-- Strip padding is chrome-derived (TvFocusScrollMath
+                                 .FocusChromePadding via Layout.StripPaddingThickness):
+                                 the focused card renders +9% scale plus the ring
+                                 beyond its layout slot, and on Android the wiring
+                                 pass un-clips the ancestor chain — this padding is
+                                 the physical room that chrome draws into at rest
+                                 (first/last cards horizontally, every card
+                                 vertically inside Layout.RowHeight). -->
                             <ScrollView HeightRequest="{Binding Layout.RowHeight}"
                                         Orientation="Horizontal"
                                         HorizontalScrollBarVisibility="Never"
                                         VerticalScrollBarVisibility="Never"
                                         Scrolled="OnStripScrolled">
                                 <HorizontalStackLayout Spacing="{Binding Layout.CardSpacing}"
-                                                       Padding="24,12"
+                                                       Padding="{Binding Layout.StripPaddingThickness}"
                                                        BindableLayout.ItemsSource="{Binding Cards}">
                                     <BindableLayout.ItemTemplate>
                                         <DataTemplate x:DataType="hu:MatchCardViewModel">

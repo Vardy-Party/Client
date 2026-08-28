@@ -34,16 +34,34 @@ public static class TvFocusScrollMath
         ((FocusScale - 1) / 2 * cardDimension) + (ringThickness * FocusScale) + ChromeComfortPad;
 
     /// <summary>
+    /// Layout padding (whole dp, so layout slots stay crisp) a strip needs
+    /// on ONE side for the focused card's chrome to render un-clipped at
+    /// rest: the chrome overhead rounded up. Ancestor clipping is disabled
+    /// on Android (TvDpadFocusRouter.HardenContainers), but chrome can only
+    /// DRAW into space that exists — at the screen edge or against opaque
+    /// siblings the strip itself must reserve the room. Horizontally this is
+    /// the strip's start/end padding (ClipToPadding stays off natively so
+    /// cards still scroll edge-to-edge); vertically it is the headroom
+    /// HomeLayoutState.RowHeight adds around the card. Single source of
+    /// truth with the scroll-target math above: the padding is derived from
+    /// the SAME overhead the chrome actually renders, never a separate
+    /// magic number.
+    /// </summary>
+    public static double FocusChromePadding(double cardDimension, double ringThickness) =>
+        Math.Ceiling(FocusChromeOverhead(cardDimension, ringThickness));
+
+    /// <summary>
     /// Target ScrollX that keeps the card's layout rect PLUS its focus-chrome
     /// overhead fully inside the strip viewport, or null when no scroll is
     /// needed. MakeVisible aligned the layout rect only, so a card revealed
     /// "exactly" still clipped its +9% scale and ring at the viewport edge.
     /// Clamped to the scrollable range [0, extent]: at the content ends the
-    /// strip's own 24dp end padding is all the headroom that physically
-    /// exists. A target within <see cref="ChromeComfortPad"/> of an edge
+    /// strip's own chrome-derived end padding (<see cref="FocusChromePadding"/>)
+    /// is all the headroom that physically exists. A target within
+    /// <see cref="ChromeComfortPad"/> of an edge
     /// snaps TO that edge: the end card sits inside the strip's end padding,
-    /// so the residual is the padding-minus-overhead sliver (1dp at the TV
-    /// metrics) — resting the strip exactly at its boundary shows strictly
+    /// so the residual is the padding-minus-overhead sliver (sub-dp, the
+    /// ceiling remainder) — resting the strip exactly at its boundary shows strictly
     /// MORE chrome headroom than the sliver-offset target and never leaves
     /// the strip parked one pixel off its natural end state.
     /// </summary>

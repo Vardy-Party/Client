@@ -305,6 +305,57 @@ Defense in depth that stays but is no longer load-bearing:
 instant `requestChildFocus` reveal for any focus change the router did not
 initiate).
 
+#### Focus chrome vs. ancestor clipping
+
+Field evidence (real box): focused rings still clipped on **short rails
+with no scrolling at all** — so the residual clipping was not scroll-target
+math (that only runs when a scroll is needed) but **bounds clipping**: the
+focus chrome (+9% scale over ~130 ms, 5 px `#E2ECFF` ring) renders outside
+the card's layout slot, and Android ViewGroups default to
+`clipChildren=true` (scroll views additionally clip to their padding), so
+the chrome was sheared wherever the card touched a container edge. Two-part
+fix:
+
+1. **Un-clip the ancestor chain.** `TvDpadFocusRouter.HardenContainers`
+   (the same per-card-wiring-pass ancestor walk — initial batch, staged
+   appends and recycled rows are all covered the moment any card wires)
+   now also sets `ClipChildren=false` + `ClipToPadding=false` on every
+   container from the card's parent up to and including the rows
+   RecyclerView. The chain, by inspection of the platform tree:
+
+   | Container (bottom → top)                     | Platform view              | What its default clip sheared                      |
+   |----------------------------------------------|----------------------------|----------------------------------------------------|
+   | card wrapper (`MatchCardView` ContentView)   | `ContentViewGroup`         | scale/ring immediately beyond the card's slot      |
+   | strip inner layout (`HorizontalStackLayout`) | `LayoutViewGroup`          | chrome past the strip content box                  |
+   | strip scroller (row `ScrollView`)            | `MauiHorizontalScrollView` | clipChildren **and** clipToPadding (viewport edge) |
+   | row container (`VerticalStackLayout`)        | `LayoutViewGroup`          | chrome at the strip's top/bottom edge              |
+   | rows item wrapper (CollectionView item)      | `ItemContentView`          | chrome at the row item bounds                      |
+   | rows list (`CollectionView`)                 | `RecyclerView`             | chrome at the recycler bounds (walk stops here, inclusive) |
+
+2. **Reserve real room.** Clipping off cannot conjure space at the screen
+   edge or against opaque siblings, so the strip reserves the chrome's room
+   in layout: `HomeLayoutState.StripPaddingThickness` (start/end room for
+   first/last cards; `ClipToPadding` stays off natively so cards still
+   scroll edge-to-edge) and `RowHeight` (vertical headroom) are **derived**
+   from `TvFocusScrollMath.FocusChromePadding` =
+   `ceil(FocusChromeOverhead)` — the same constants the scroll targets use,
+   never a separate magic number. The previous flat 12 dp vertical headroom
+   covered the 7–8 dp scale overflow but **not the ring on top of it**
+   (16.65 dp at the TV metrics → 17 dp/side now; horizontal 23 dp/side).
+   Uniform across layout classes: every class renders the same 1.09
+   focus/hover scale, and each class's own card size and ring thickness
+   feed the derivation, so Desktop/phone stay proportionate.
+
+Checked, no change needed: no MAUI-level `IsClippedToBounds` exists on the
+strip/row templates (nothing re-clips what Android now allows), and nothing
+on the focus path uses elevation — the TV card is `FlatCardChrome` (no drop
+shadow), the focus lift is a veil *opacity* and the ring is a plain stroke
+— so there is no elevation-based outline clipping of the ring either.
+
+Acceptance (device): focus any card on a short rail — the ring must be
+fully visible on all four sides, including the first/last card of the rail
+and cards in the top row.
+
 - One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
   first card of the first row on the empty→non-empty edge; the view consumes
   it once and calls `RequestFocus()` on the native view, so the app opens

@@ -305,6 +305,19 @@ public static class TvDpadFocusRouter
     ///     could park on a scroller (no chrome, no key ownership), and the
     ///     strip walk's leaf collection used to stop at them. Cards are the
     ///     only D-pad stops inside the board.
+    /// (3) ClipChildren=false + ClipToPadding=false — Android ViewGroups
+    ///     default to clipChildren=true (scroll views additionally clip to
+    ///     their padding), so the focused card's chrome (+9% scale, 5px
+    ///     ring) was sheared wherever the card touched a container edge.
+    ///     Field evidence: rings clipped on SHORT rails with no scrolling at
+    ///     all — bounds clipping, not scroll-target math. The whole chain
+    ///     (card wrapper, strip inner layout, strip scroller, row container,
+    ///     recycler item, the rows recycler itself) lets the chrome draw
+    ///     outside the card's layout slot; the room it draws INTO is the
+    ///     strip's chrome-derived padding (HomeLayoutState
+    ///     .StripPaddingThickness — same TvFocusScrollMath constants as the
+    ///     scroll targets), because clipping off cannot help at the screen
+    ///     edge or against opaque siblings.
     /// Idempotent and called from every card wiring pass, so containers
     /// materialized late (staged chunk appends, recycled rows) are covered
     /// the moment any of their cards wires.
@@ -315,6 +328,12 @@ public static class TvDpadFocusRouter
         {
             view.SoundEffectsEnabled = false;
             view.Focusable = false;
+            if (view is AViewGroup group)
+            {
+                group.ClipChildren = false;
+                group.ClipToPadding = false;
+            }
+
             if (view is RecyclerView)
             {
                 break;

@@ -48,8 +48,35 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     /// <summary>Opacity of the white focus veil lifting the focused card (TV only; 0 = off).</summary>
     public double FocusedCardLift => _metrics.FocusedCardLift;
 
-    /// <summary>Row height for the horizontal card strip: card + focus-scale headroom.</summary>
-    public double RowHeight => _metrics.CardHeight + 24;
+    /// <summary>
+    /// Row height for the horizontal card strip: card + chrome headroom on
+    /// both sides. The headroom is DERIVED from the focus-chrome overhead
+    /// (scale overflow + scaled ring + comfort pad — the same
+    /// <see cref="Views.TvFocusScrollMath"/> constants the scroll targets
+    /// use), not a magic number: the previous flat 12dp/side covered the
+    /// 7-8dp scale overflow but NOT the ring on top of it (~17dp/side at the
+    /// TV metrics), which clipped the focused ring top/bottom even on rails
+    /// that never scroll.
+    /// </summary>
+    public double RowHeight => _metrics.CardHeight + (2 * StripChromePadVertical);
+
+    /// <summary>
+    /// Padding of the strip's inner card layout, sized so the focused card's
+    /// chrome (+9% scale, ring, comfort pad) has room to render at rest:
+    /// horizontal start/end room for the first/last card, vertical headroom
+    /// inside <see cref="RowHeight"/>. Android additionally disables
+    /// ancestor clipping (TvDpadFocusRouter.HardenContainers) and keeps
+    /// ClipToPadding off so cards scroll edge-to-edge while the chrome keeps
+    /// this room at rest. Uniform across layout classes: every class uses
+    /// the same 1.09 focus/hover scale, so the derivation stays proportionate
+    /// (each class's own card size and ring thickness feed it).
+    /// </summary>
+    public Thickness StripPaddingThickness => new(
+        Views.TvFocusScrollMath.FocusChromePadding(_metrics.CardWidth, _metrics.FocusRingThickness),
+        StripChromePadVertical);
+
+    private double StripChromePadVertical =>
+        Views.TvFocusScrollMath.FocusChromePadding(_metrics.CardHeight, _metrics.FocusRingThickness);
 
     public Thickness PagePaddingThickness => new(_metrics.PagePadding);
 
@@ -81,7 +108,7 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(CardWidth), nameof(CardHeight), nameof(CardCornerRadius), nameof(BadgeSize),
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
-        nameof(RowHeight), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
+        nameof(RowHeight), nameof(StripPaddingThickness), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
         nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome), nameof(StagedStripCards),
         nameof(FocusRingThickness), nameof(FocusedCardLift),
     ];

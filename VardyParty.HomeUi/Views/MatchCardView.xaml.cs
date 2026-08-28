@@ -543,9 +543,10 @@ public partial class MatchCardView : ContentView
     /// computed from the card rect inflated by the real chrome overhead
     /// (scale overflow at the current card size + scaled ring + comfort pad,
     /// ~23dp/side on TV). The vertical axis is covered structurally: the row
-    /// item the rows list aligns already wraps the strip's 12dp chrome
-    /// headroom (RowHeight = CardHeight + 24), which exceeds the 7-8dp
-    /// vertical scale overflow at every metrics class.
+    /// item the rows list aligns wraps the strip's chrome-derived headroom
+    /// (RowHeight = CardHeight + 2 x TvFocusScrollMath.FocusChromePadding,
+    /// ~17dp/side on TV), which covers the full vertical chrome overhead —
+    /// scale overflow AND ring — at every metrics class.
     /// </summary>
     /// <summary>
     /// Frames the strip reveal keeps retrying while a just-materialized card
