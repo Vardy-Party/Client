@@ -1,3 +1,5 @@
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using QRCoder;
@@ -60,6 +62,8 @@ public partial class DesktopHomePage : ContentPage
     private int _resolutionGeneration;
     private CancellationTokenSource? _resolutionCts;
     private Task? _resolutionTask;
+
+    private bool _escapeWired;
 
     private static bool UseSampleData =>
         Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_SAMPLE_DATA") == "1";
@@ -211,9 +215,62 @@ public partial class DesktopHomePage : ContentPage
     });
 #endif
 
+    protected override void OnHandlerChanged()
+    {
+        base.OnHandlerChanged();
+        TryWireEscapeClose();
+    }
+
+    /// <summary>
+    /// Escape is the same cancel path as the Close chip. Wired on the
+    /// Avalonia TopLevel (tunnel) so it still fires when focus is in the
+    /// homepage under the overlay. MAUI Button.KeyboardAccelerators is not
+    /// mapped on this Avalonia backend (MAUIX2002).
+    /// </summary>
+    private void TryWireEscapeClose()
+    {
+        if (_escapeWired)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Handler?.PlatformView is not Avalonia.Visual visual)
+            {
+                return;
+            }
+
+            var top = Avalonia.Controls.TopLevel.GetTopLevel(visual);
+            if (top is null)
+            {
+                return;
+            }
+
+            top.AddHandler(InputElement.KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+            _escapeWired = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DesktopHome] Escape-to-close wiring skipped");
+        }
+    }
+
+    private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || !PlaybackOverlay.IsVisible)
+        {
+            return;
+        }
+
+        OnClosePlaybackClicked(this, EventArgs.Empty);
+        e.Handled = true;
+    }
+
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        TryWireEscapeClose();
         if (_initialized) return;
         _initialized = true;
 

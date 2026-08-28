@@ -145,7 +145,7 @@
                 <!-- Close must stay clickable at every moment, including a
                      wedged libvlc: the handler never runs a libvlc call on
                      the UI thread (see DesktopVideoPlayerService). Escape
-                     is the same cancel path (KeyboardAccelerator). -->
+                     is the same cancel path (Avalonia TopLevel KeyDown). -->
                 <Button Grid.Column="1"
                         x:Name="ClosePlaybackButton"
                         Text="✕"
@@ -159,11 +159,7 @@
                         TextColor="#E5E7EB"
                         CornerRadius="18"
                         FontSize="16"
-                        SemanticProperties.Description="Close playback">
-                    <Button.KeyboardAccelerators>
-                        <KeyboardAccelerator Key="Escape" />
-                    </Button.KeyboardAccelerators>
-                </Button>
+                        SemanticProperties.Description="Close playback" />
             </Grid>
 
             <!-- In-window video surface (VideoHostView injected in code-behind
