@@ -182,12 +182,47 @@ namespace VardyParty
             FinishAndRemoveTask();
         }
 
+        /// <summary>
+        /// Single owner for TV D-pad card/header navigation, deliberately at
+        /// the DISPATCH stage — before the view tree sees the key. It cannot
+        /// live in <see cref="OnKeyDown"/>: the card strips are
+        /// HorizontalScrollViews whose own dispatchKeyEvent runs
+        /// executeKeyEvent → arrowScroll for LEFT/RIGHT whenever the focused
+        /// card declines the key, and below them
+        /// ViewRootImpl.performFocusNavigation plays the system navigation
+        /// click and instant-reveals targets. Owning the key here keeps both
+        /// out of card navigation on every rail, regardless of how a card
+        /// was materialized — the activity cannot be detached or recycled
+        /// the way per-card platform views can. Non-direction keys (Back,
+        /// DPAD_CENTER, media keys) and the open menu trap's per-item moves
+        /// pass through untouched.
+        /// </summary>
+        public override bool DispatchKeyEvent(KeyEvent? e)
+        {
+            if (e?.Action == KeyEventActions.Down
+                && VardyParty.HomeUi.Views.TvDpadFocusRouter.TryHandleActivityKey(CurrentFocus, e.KeyCode))
+            {
+                return true;
+            }
+
+            return base.DispatchKeyEvent(e);
+        }
+
         public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
         {
             if (_remoteKeyHandler != null && _remoteKeyHandler.HandleKeyDown(keyCode, e))
             {
                 return true;
             }
+
+            // Menu-trap backstop: a direction key the open panel's items did
+            // not consume must never reach the default focus search (it
+            // could carry focus behind the scrim).
+            if (VardyParty.HomeUi.Views.TvDpadFocusRouter.SealsMenuTrapKey(keyCode))
+            {
+                return true;
+            }
+
             return base.OnKeyDown(keyCode, e);
         }
 

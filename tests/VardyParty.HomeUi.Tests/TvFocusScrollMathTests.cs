@@ -108,6 +108,43 @@ public class TvFocusScrollMathTests
     }
 
     [Fact]
+    public void StripTarget_CardPartiallyVisibleAtFarRightEdge_RevealsChromeFully()
+    {
+        // Arrange — viewport [200, 1400]; the card straddles the right edge
+        // (visible 1300..1400 of 1300..1600): the framework's layout-rect
+        // reveal parked exactly this state clipped.
+        const double cardLeft = 1300;
+        const double cardWidth = 300;
+        const double overhead = 23;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft, cardWidth, overhead,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 200);
+
+        // Assert — right edge + chrome inside: 1300 + 300 + 23 - 1200 = 423.
+        Assert.Equal(423, target);
+    }
+
+    [Fact]
+    public void StripTarget_CardPartiallyVisibleAtFarLeftEdge_RevealsChromeFully()
+    {
+        // Arrange — viewport [200, 1400]; the card straddles the left edge
+        // (150..450, so 150..200 is clipped off-screen).
+        const double cardLeft = 150;
+        const double cardWidth = 300;
+        const double overhead = 23;
+
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft, cardWidth, overhead,
+            viewportWidth: 1200, contentWidth: 4000, currentScrollX: 200);
+
+        // Assert — left edge minus chrome: 150 - 23 = 127.
+        Assert.Equal(127, target);
+    }
+
+    [Fact]
     public void StripTarget_UnmeasuredGeometry_NoScroll()
     {
         // Arrange

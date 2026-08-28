@@ -230,44 +230,92 @@ would skip the cards entirely and MAUI focus events would never fire.
   view converts DPAD_CENTER/Enter into a click itself.
 - The wiring follows the platform view (`HandlerChanged` + `Loaded` +
   `BindingContextChanged`), so handler-timing and RecyclerView recycling
-  can never leave a card unfocusable, and it is torn down on `Unloaded`.
+  can never leave a card unfocusable. It is **never torn down on
+  `Unloaded`** — see the materialization-path table below.
 - On focus gained the card scrolls itself fully on-screen: the row
-  `ScrollView` via `ScrollToAsync(CardOuter, MakeVisible)` (posted on
-  Android so the 1.09 scale + ring are included) and the outer rows
-  `CollectionView` via `ScrollTo`. Native focus scrolling alone often
-  reveals a card only partially, clipping the ring. **Scroll-into-view has
-  exactly one owner per platform**: on Android the native `FocusChange`
-  handler owns it (posted after the next frame — the reliable path once
-  the scale/ring have applied) and the MAUI `Focused` handler scrolls only
-  when the native TV bridge is not wired; previously both fired, issuing
-  two `ScrollToAsync` calls per D-pad move.
-- **Column memory** (`TvDpadFocusRouter` / `TvDpadStripWalk`): a native
-  `KeyPress` listener on the focused card routes DpadDown/Up to the card
-  in the adjacent row whose screen X is nearest the current card (Netflix
-  behaviour) instead of Android's clipped nearest-neighbour pick (which
-  tends to reset to row start), and clamps DpadLeft/Right at row edges so
-  focus never leaps rows. Column memory and edge clamps collect **shown
-  focusable leaves** under the row scroller (card roots use
-  BlockDescendants), so a one-card BindableLayout is not mistaken for
-  inner Grid chrome. `TvDpadStripWalk` carries only that surface
-  (leaf collection + nearest-X + edge detection); its unit tests are pure
-  geometry over simplified fakes — traversal against the real
-  MAUI/Android handler tree is device-only coverage.
-  Up from the first row and not-yet-laid-out rows fall through to the
-  default search (header reachability, focus-search-failed scrolling).
+  `ScrollView` via a chrome-padded `ScrollToAsync` target
+  (`TvFocusScrollMath.ComputeStripTarget`, posted on Android so the 1.09
+  scale + ring are included; a just-materialized staged card with no
+  post-layout bounds defers per frame until laid out) and the outer rows
+  `CollectionView` via router-owned `SmoothScrollBy`. **Scroll-into-view
+  has exactly one owner per axis**: on Android the native `FocusChange`
+  handler owns the strip axis and the router owns the rows axis; the MAUI
+  `Focused` handler scrolls only when the native TV bridge is not wired.
+
+#### One D-pad owner: the activity, not the cards
+
+D-pad direction keys are owned by `MainActivity.DispatchKeyEvent` →
+`TvDpadFocusRouter.TryHandleActivityKey` — **before the view tree sees the
+key**. `TvDpadFocusRouter`/`TvDpadStripWalk` implement the moves: down/up
+land on the card in the adjacent row whose screen X is nearest the current
+card (Netflix column memory), left/right walk to the adjacent card in the
+strip with row-edge clamping, up from the first row targets the registered
+header Menu button, and every move is a router `RequestFocus` followed by
+our single animated chrome-padded scroll. For a card- or header-focused
+direction key the activity consumes **unconditionally** (a clamped edge is
+"no move", never "let Android try") — so Android's default focus search
+never runs for card navigation, which eliminates the system navigation
+click (`ViewRootImpl.performFocusNavigation` plays it unconditionally on
+any default-search move) and the instant auto-reveal double-jump by
+construction, on every rail, however a card was materialized.
+
+Two dispatch-order facts make this the only safe design:
+
+1. **`Activity.OnKeyDown` is too late.** The strips are
+   HorizontalScrollViews, and their `dispatchKeyEvent` runs
+   `executeKeyEvent → arrowScroll` for LEFT/RIGHT whenever the focused
+   descendant declines the key — a hidden extra scroll owner that scrolls
+   layout-rect-only (chrome clipped) and races the animated chrome-padded
+   scroll. Only `DispatchKeyEvent` runs before it.
+2. **Per-card key listeners are structurally losable.** The
+   materialization-path table (documented on `MatchCardView.EnableTvFocus`):
+   initial batch, staged chunk appends and row REBINDS all fire
+   `HandlerChanged`/`Loaded`/`BindingContextChanged` and re-wire — but a
+   RecyclerView-CACHED row re-attaches firing **none of them** (same
+   platform view, same BindingContext, and MAUI's `Loaded` re-fire on
+   Android re-attach is unreliable — `HomeView.OnUnloaded` documents the
+   same field-verified gap). Any per-card teardown on `Unloaded` is
+   therefore permanent for exactly those cards. This produced three rounds
+   of field bugs; the key path no longer lives on cards at all, and the
+   remaining per-card listeners (`Click`, `FocusChange`) are wired per
+   platform view and never unwired on `Unloaded`.
+
+The walk itself (`TvDpadStripWalk`) collects **shown focusable leaves**
+under the row scroller (card roots use BlockDescendants), **descending
+through scrollers and recyclers instead of collecting them**: platform
+scrollers are natively focusable (AOSP `initScrollView()` calls
+`setFocusable(true)`), and treating the walk root as an ordinary node made
+the leaf collection return `[the scroller]` — the focused card was never
+found, left/right silently fell through to `arrowScroll`/default search
+(the third-round field bug). Container hardening
+(`TvDpadFocusRouter.HardenContainers`, applied on every card wiring pass)
+also sets `Focusable=false` + `SoundEffectsEnabled=false` on every
+container up to the rows RecyclerView, so a scroller can never be a
+phantom focus stop. `TvDpadStripWalk`'s unit tests model scrollers as
+focusable, matching the real tree; full traversal against the real
+MAUI/Android handler tree remains device-only coverage.
+`TvDpadActivityRouting` is the pure, unit-tested decision table for the
+activity stages (dispatch: card/header ownership + trap seal for focus
+stranded outside the open panel; OnKeyDown fallback: trap seal for keys the
+panel items did not consume).
+
+Defense in depth that stays but is no longer load-bearing:
+`SoundEffectsEnabled=false` on cards and containers, and
+`RevealOnFocusHint=false` on cards (suppresses the platform scroller's
+instant `requestChildFocus` reveal for any focus change the router did not
+initiate).
+
 - One-shot autofocus: `HomeViewModel` arms `RequestsInitialFocus` on the
   first card of the first row on the empty→non-empty edge; the view consumes
   it once and calls `RequestFocus()` on the native view, so the app opens
   with a visibly focused card. Later refreshes never steal the highlight.
 
-Key routing: `RemoteKeyHandler` (activity level) deliberately has **no
-D-pad direction cases** — it only consumes media keys, Menu, Back and
-(conditionally) Enter. Note that `Activity.OnKeyDown` logging every
-`DpadUp/Down/...` press is *expected even when traversal works*: the
-activity sees a key when the focused view declines it, and `ViewRootImpl`
-performs D-pad focus navigation only after the whole dispatch chain
-declines. Activity-level D-pad logs are therefore not evidence that focus
-is broken.
+Key routing: `RemoteKeyHandler` (activity level) still has **no D-pad
+direction cases** — direction keys are owned by the dispatch-stage router
+above; `RemoteKeyHandler` only consumes media keys, Menu, Back and
+(conditionally) Enter. `Activity.OnKeyDown` logging a `DpadUp/Down/...`
+press now means the dispatch-stage router declined it (non-TV, non-board
+focus, or the open menu panel's items own it).
 
 ### The brand logo (3D, metallic, animated)
 

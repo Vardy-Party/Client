@@ -128,11 +128,39 @@ public class TvDpadStripWalkTests
         Assert.Null(neighbour);
     }
 
+    [Fact]
+    public void CollectShownFocusables_FocusableScrollerRoot_StillCollectsTheCards()
+    {
+        // Arrange — a scroller that is itself focusable, which is the REAL
+        // Android shape: HorizontalScrollView.initScrollView() calls
+        // setFocusable(true). The old walk collected the scroller as the
+        // first "focusable leaf" and returned [scroller]: the focused card
+        // was never found, FindAdjacentInRow returned null, IsAtRowEdge
+        // returned false, and the unconsumed key fell through to the strip
+        // scroller's arrowScroll / Android's default focus search (the
+        // field's system-sound + double-motion bug on card rails).
+        var (scroller, _, firstCard) = BuildRow(cardCount: 3, firstCardScreenX: 0);
+        var collected = new List<TvDpadStripWalk.INode>();
+
+        // Act
+        TvDpadStripWalk.CollectShownFocusables(scroller, collected);
+        var next = TvDpadStripWalk.FindAdjacentInRow(firstCard, forward: true);
+        var atLeftEdge = TvDpadStripWalk.IsAtRowEdge(firstCard, lastCard: false);
+
+        // Assert
+        Assert.Equal(3, collected.Count);
+        Assert.DoesNotContain(collected, node => node.RepresentsSame(scroller));
+        Assert.True(collected[1].RepresentsSame(next));
+        Assert.True(atLeftEdge);
+    }
+
     private static (FakeNode Scroller, FakeNode Stack, FakeNode FirstCardOuter) BuildRow(
         int cardCount,
         int firstCardScreenX)
     {
-        var scroller = new FakeNode { IsScroller = true };
+        // Focusable=true models the real platform scroller: AOSP
+        // ScrollView/HorizontalScrollView constructors call setFocusable(true).
+        var scroller = new FakeNode { IsScroller = true, Focusable = true };
         var padding = new FakeNode();
         var stack = new FakeNode();
         scroller.Add(padding);

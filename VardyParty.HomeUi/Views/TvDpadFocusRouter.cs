@@ -16,10 +16,91 @@ namespace VardyParty.HomeUi.Views;
 /// Down/up land on the card in the adjacent row whose screen X is nearest
 /// the focused card. Left/right at a row edge are consumed so focus cannot
 /// leap to another row. UI-thread only; one scratch array for coordinates.
+///
+/// ENTRY POINT: the router is driven from MainActivity.DispatchKeyEvent via
+/// <see cref="TryHandleActivityKey"/> — BEFORE the view tree sees the key,
+/// from the one dispatch point no materialization path (initial batch,
+/// staged chunk append, RecyclerView row recycle/re-attach) can lose,
+/// because it does not live on any card's platform view. See
+/// <see cref="TvDpadActivityRouting"/> for why it must be the dispatch
+/// stage (HorizontalScrollView.executeKeyEvent) and the full decision table.
 /// </summary>
-internal static class TvDpadFocusRouter
+public static class TvDpadFocusRouter
 {
     private static readonly int[] ScreenLocation = new int[2];
+
+    /// <summary>
+    /// True while HomeView's menu focus trap is open (set by HomeView.Tv).
+    /// The activity-level key path seals the trap: a direction key that
+    /// reaches the activity while the panel is open is consumed so the
+    /// default focus search can never move focus behind the scrim.
+    /// </summary>
+    internal static bool MenuTrapOpen { get; set; }
+
+    /// <summary>
+    /// Dispatch-stage D-pad ownership, called from
+    /// MainActivity.DispatchKeyEvent BEFORE the view tree sees the key (see
+    /// <see cref="TvDpadActivityRouting"/> for the decision table and why
+    /// the stage matters). Returns true when the key is consumed. Card moves
+    /// are consumed EVEN IF no move happened (row edge, target not found):
+    /// letting the key continue would hand it to the strip scroller's
+    /// arrowScroll and then ViewRootImpl.performFocusNavigation (system
+    /// navigation click + instant reveal) — the exact field bugs this owner
+    /// exists to make impossible.
+    /// </summary>
+    public static bool TryHandleActivityKey(AView? currentFocus, global::Android.Views.Keycode keyCode)
+    {
+        var decision = TvDpadActivityRouting.Decide(
+            isTelevision: HomeView.IsTelevision(),
+            isDirectionKey: IsDirectionKey(keyCode),
+            menuTrapOpen: MenuTrapOpen,
+            focusIsHeader: IsHeaderTarget(currentFocus),
+            focusInsideRows: currentFocus is not null && FindParentRecycler(currentFocus) is not null);
+
+        switch (decision)
+        {
+            case TvDpadActivityRouting.Decision.SealMenuTrap:
+                return true;
+
+            case TvDpadActivityRouting.Decision.HeaderMove:
+                // Down returns to the last focused card (column memory across
+                // the header round trip); with no card focused yet it falls
+                // through to the default search — the cold-start reachability
+                // path. Up/left/right: the header is a single focus stop and
+                // the crest stays skipped.
+                return keyCode != global::Android.Views.Keycode.DpadDown || TryFocusLastCard();
+
+            case TvDpadActivityRouting.Decision.RouteCard:
+                TryHandle(currentFocus!, keyCode);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Fallback-stage trap seal, called from MainActivity.OnKeyDown (after
+    /// the whole view tree declined the key): consumes direction keys while
+    /// the menu trap is open so a bypassed trap item can never hand the move
+    /// to the default focus search (which could carry focus behind the
+    /// scrim). The trap items themselves see the key first — this fires only
+    /// when none of them consumed it.
+    /// </summary>
+    public static bool SealsMenuTrapKey(global::Android.Views.Keycode keyCode) =>
+        TvDpadActivityRouting.SealsTrapFallback(
+            HomeView.IsTelevision(), IsDirectionKey(keyCode), MenuTrapOpen);
+
+    private static bool IsDirectionKey(global::Android.Views.Keycode keyCode) => keyCode
+        is global::Android.Views.Keycode.DpadDown
+        or global::Android.Views.Keycode.DpadUp
+        or global::Android.Views.Keycode.DpadLeft
+        or global::Android.Views.Keycode.DpadRight;
+
+    private static bool IsHeaderTarget(AView? view) =>
+        view is not null
+        && _headerTarget?.TryGetTarget(out var header) == true
+        && ReferenceEquals(header, view);
 
     /// <summary>
     /// Frames the deferred focus of a not-yet-attached row keeps retrying
@@ -45,12 +126,13 @@ internal static class TvDpadFocusRouter
     }
 
     /// <summary>
-    /// Returns true when the key was fully handled (focus moved, or the move
-    /// was clamped); false lets Android's default focus search run — the
-    /// last-resort fallback when the router has nothing registered to move
-    /// to (e.g. up from the first row before the header wired).
+    /// Returns true when the key produced a router move (focus moved, or the
+    /// move was clamped). NOTE: for card navigation the activity entry point
+    /// (<see cref="TryHandleActivityKey"/>) consumes the key regardless of
+    /// this return value — a false here means "no move", never "let the
+    /// default focus search do it instead".
     /// </summary>
-    public static bool TryHandle(AView card, global::Android.Views.Keycode keyCode) => keyCode switch
+    internal static bool TryHandle(AView card, global::Android.Views.Keycode keyCode) => keyCode switch
     {
         global::Android.Views.Keycode.DpadDown => TryMoveVertical(card, down: true),
         global::Android.Views.Keycode.DpadUp => TryMoveVertical(card, down: false),
@@ -82,9 +164,9 @@ internal static class TvDpadFocusRouter
             return true;
         }
 
-        // Null neighbour is either the row edge (clamp: consume) or a card
-        // that is not inside a strip (fall through to the default search,
-        // same as before the router owned this axis).
+        // Null neighbour is the row edge (clamp) or a card that is not
+        // inside a strip. Either way the activity entry point consumes the
+        // key — "no move" is a valid outcome; the default focus search is not.
         return TvDpadStripWalk.IsAtRowEdge(node, lastCard: forward);
     }
 
@@ -209,22 +291,30 @@ internal static class TvDpadFocusRouter
     }
 
     /// <summary>
-    /// Uniform system-sound opt-out for the containers above a card: every
-    /// ancestor up to and including the rows RecyclerView (strip scroller,
-    /// row item, recycler itself) gets SoundEffectsEnabled=false, so no
-    /// container-initiated View.playSoundEffect (click/scroll effects) can
-    /// double-sound our UI ticks. Idempotent and called from every card
-    /// wiring pass, so containers materialized late (staged chunk appends,
-    /// recycled rows) are covered the moment any of their cards wires.
-    /// NOTE: the framework's focus-navigation click ignores these flags
-    /// entirely (see <see cref="TryMoveHorizontal"/>) — that one is silenced
-    /// by the router owning the move, not by any flag.
+    /// Uniform container hardening above a card, every ancestor up to and
+    /// including the rows RecyclerView (strip scroller, row item, recycler
+    /// itself):
+    /// (1) SoundEffectsEnabled=false — no container-initiated
+    ///     View.playSoundEffect (click/scroll effects) can double-sound our
+    ///     UI ticks. NOTE: the framework's focus-navigation click ignores
+    ///     these flags entirely — that one is silenced by the router owning
+    ///     every move (see <see cref="TryHandleActivityKey"/>).
+    /// (2) Focusable=false — the platform scrollers are natively focusable
+    ///     (AOSP ScrollView/HorizontalScrollView initScrollView() calls
+    ///     setFocusable(true)), which made them phantom D-pad stops: focus
+    ///     could park on a scroller (no chrome, no key ownership), and the
+    ///     strip walk's leaf collection used to stop at them. Cards are the
+    ///     only D-pad stops inside the board.
+    /// Idempotent and called from every card wiring pass, so containers
+    /// materialized late (staged chunk appends, recycled rows) are covered
+    /// the moment any of their cards wires.
     /// </summary>
-    internal static void DisableSystemSoundsOnContainers(AView card)
+    internal static void HardenContainers(AView card)
     {
         for (var parent = card.Parent; parent is AView view; parent = view.Parent)
         {
             view.SoundEffectsEnabled = false;
+            view.Focusable = false;
             if (view is RecyclerView)
             {
                 break;

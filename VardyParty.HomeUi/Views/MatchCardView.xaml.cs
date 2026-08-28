@@ -253,8 +253,33 @@ public partial class MatchCardView : ContentView
     /// Wired only on TV idiom so phone taps don't double-fire alongside the
     /// TapGestureRecognizer. Also delivers the one-shot initial autofocus the
     /// view model arms on the first card when the grid first appears.
+    ///
+    /// MATERIALIZATION-PATH TABLE (what actually fires per path — verified
+    /// against MAUI's CollectionView/BindableLayout implementations; this is
+    /// why the wiring policy below is what it is):
+    ///
+    ///   Path                                  | BindingContext | HandlerChanged | Loaded | Unloaded
+    ///   initial batch (row bind creates cards)| yes            | yes            | yes    | -
+    ///   staged chunk append (Cards.Add)       | yes            | yes            | yes    | -
+    ///   row REBIND (recycled holder, new VM)  | yes (new cards)| yes            | yes    | -
+    ///   row detach (scrolled out / cached)    | -              | -              | -      | YES
+    ///   row RE-ATTACH from recycler cache     | -              | -              | NOT GUARANTEED | -
+    ///   handler reconnect                     | -              | yes (new view) | NOT GUARANTEED | YES first
+    ///
+    /// The two re-attach rows are the trap: they fire NO re-wiring event
+    /// (same platform view, same BindingContext; MAUI's Loaded re-fire on
+    /// Android re-attach is unreliable — this codebase's HomeView.OnUnloaded
+    /// documents the same field-verified gap). Any teardown done on Unloaded
+    /// is therefore permanent for a cached row. Consequences:
+    ///   - native listeners (Click/FocusChange) are wired per PLATFORM VIEW
+    ///     and NEVER unwired on Unloaded — only when HandlerChanged swaps in
+    ///     a different platform view (the old view and its subscriptions die
+    ///     together; both are owned by this card).
+    ///   - D-pad KEY handling does not live on the card at all: the activity
+    ///     owns it (TvDpadFocusRouter.TryHandleActivityKey), which no
+    ///     materialization path can lose by construction.
     /// Idempotent and called from Loaded, HandlerChanged and BindingContext
-    /// changes so no timing/recycling path can leave a card unfocusable.
+    /// changes so every path that CAN re-wire, does.
     /// </summary>
     private void EnableTvFocus()
     {
@@ -277,14 +302,17 @@ public partial class MatchCardView : ContentView
         // silences the sounds views play THEMSELVES (DPAD_CENTER's
         // performClick → playSoundEffect(CLICK)); it must land on EVERY
         // card, which is why it lives here — this method runs on all three
-        // materialization paths (Loaded, HandlerChanged, BindingContext
-        // rebinds), so the initial batch AND staged chunk appends get
-        // identical wiring. The containers get the same opt-out below; the
-        // framework's own navigation click is handled by the router OWNING
-        // every D-pad move instead (see TvDpadFocusRouter.TryMoveHorizontal —
-        // ViewRootImpl plays that click without consulting any view flag).
+        // creation paths (Loaded, HandlerChanged, BindingContext rebinds),
+        // so the initial batch AND staged chunk appends get identical
+        // wiring. The containers are hardened below (sound opt-out plus
+        // Focusable=false — platform scrollers are natively focusable and
+        // must never be D-pad stops); the framework's own navigation click
+        // is eliminated by the ACTIVITY owning every D-pad move (see
+        // TvDpadFocusRouter.TryHandleActivityKey — ViewRootImpl plays that
+        // click without consulting any view flag, so only never letting its
+        // focus search run silences it).
         native.SoundEffectsEnabled = false;
-        TvDpadFocusRouter.DisableSystemSoundsOnContainers(native);
+        TvDpadFocusRouter.HardenContainers(native);
 
         // TV field report: "click right at the right-most card → it shifts
         // immediately, jumps back, then scrolls on". Android's focus system
@@ -320,7 +348,6 @@ public partial class MatchCardView : ContentView
             _wiredNative = native;
             native.Click += OnNativeCardClick;
             native.FocusChange += OnNativeFocusChange;
-            native.KeyPress += OnNativeKeyPress;
         }
 
         if (ViewModel?.TryConsumeInitialFocus() == true)
@@ -369,6 +396,17 @@ public partial class MatchCardView : ContentView
 
     private global::Android.Views.View? _wiredNative;
 
+    /// <summary>
+    /// Called ONLY when HandlerChanged delivers a different platform view —
+    /// never from Unloaded. A RecyclerView-cached row re-attaches without
+    /// firing Loaded/HandlerChanged/BindingContext changes (see the
+    /// materialization-path table on <see cref="EnableTvFocus"/>), so an
+    /// Unloaded-time unwire would be permanent for exactly those cards: they
+    /// stayed natively focusable (flags persist on the platform view) but
+    /// had no listeners — the recurring per-card-wiring gap. The old view
+    /// and its subscriptions share this card's lifetime, so keeping them
+    /// wired across detach leaks nothing.
+    /// </summary>
     private void UnwireNativeTvFocus()
     {
         if (_wiredNative is null)
@@ -378,24 +416,10 @@ public partial class MatchCardView : ContentView
 
         _wiredNative.Click -= OnNativeCardClick;
         _wiredNative.FocusChange -= OnNativeFocusChange;
-        _wiredNative.KeyPress -= OnNativeKeyPress;
         _wiredNative = null;
     }
 
     private void OnNativeCardClick(object? sender, EventArgs e) => ViewModel?.Pick();
-
-    /// <summary>
-    /// The focused view sees D-pad keys before Android's default focus search:
-    /// <see cref="TvDpadFocusRouter"/> gives down/up Netflix-style column
-    /// memory and clamps left/right at row edges so focus never leaps rows.
-    /// Unhandled keys fall through to the default traversal.
-    /// </summary>
-    private void OnNativeKeyPress(object? sender, global::Android.Views.View.KeyEventArgs e)
-    {
-        e.Handled = e.Event?.Action == global::Android.Views.KeyEventActions.Down
-            && sender is global::Android.Views.View view
-            && TvDpadFocusRouter.TryHandle(view, e.KeyCode);
-    }
 
     private void OnNativeFocusChange(object? sender, global::Android.Views.View.FocusChangeEventArgs e)
     {
@@ -523,7 +547,19 @@ public partial class MatchCardView : ContentView
     /// headroom (RowHeight = CardHeight + 24), which exceeds the 7-8dp
     /// vertical scale overflow at every metrics class.
     /// </summary>
-    private void ScrollStripToFocusedCard(ScrollView strip)
+    /// <summary>
+    /// Frames the strip reveal keeps retrying while a just-materialized card
+    /// (staged chunk append) waits for its first layout pass. Scrolling from
+    /// zero/stale bounds targeted garbage — the field's "card parked clipped
+    /// at the viewport edge". Half a second at 60fps; each retry is one
+    /// dispatcher post and stops as soon as focus moves on.
+    /// </summary>
+    private const int StripGeometryRetryFrames = 30;
+
+    private void ScrollStripToFocusedCard(ScrollView strip) =>
+        ScrollStripToFocusedCard(strip, StripGeometryRetryFrames);
+
+    private void ScrollStripToFocusedCard(ScrollView strip, int attemptsLeft)
     {
         // Card left edge in strip-content coordinates: sum frame offsets from
         // the focusable chrome up to (excluding) the strip's content element.
@@ -535,11 +571,20 @@ public partial class MatchCardView : ContentView
             element = element.Parent as VisualElement;
         }
 
-        if (element is null || CardOuter.Width <= 0 || strip.Width <= 0)
+        if (element is null || CardOuter.Width <= 0 || strip.Width <= 0
+            || strip.ContentSize.Width <= 0)
         {
-            // Geometry not settled yet (first-frame focus / detached walk):
-            // the un-inflated reveal beats none at all.
-            ObserveVisual(strip.ScrollToAsync(CardOuter, ScrollToPosition.MakeVisible, true));
+            // Geometry not settled yet: a just-materialized staged card has
+            // no post-layout bounds on the focus frame (and a strip whose
+            // content is still measuring reports ContentSize 0, which would
+            // clamp every target to 0). Defer to the next layout pass rather
+            // than scroll to a garbage target; give up quietly if focus has
+            // already moved elsewhere.
+            if (attemptsLeft > 0 && _isFocused)
+            {
+                Dispatcher.Dispatch(() => ScrollStripToFocusedCard(strip, attemptsLeft - 1));
+            }
+
             return;
         }
 
@@ -583,9 +628,10 @@ public partial class MatchCardView : ContentView
         DetachWindowsPointerHover();
 #endif
 
-#if ANDROID
-        UnwireNativeTvFocus();
-#endif
+        // Deliberately NOT unwiring the native TV focus listeners here: a
+        // RecyclerView-cached row fires Unloaded on detach but no re-wiring
+        // event on re-attach (see UnwireNativeTvFocus). The wiring follows
+        // the platform view's lifetime instead.
     }
 
     /// <summary>

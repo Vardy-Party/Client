@@ -86,9 +86,12 @@ public partial class HomeView
         native.Focusable = true;
         native.FocusableInTouchMode = false;
         // Same uniform opt-out as the cards: DPAD_CENTER's performClick must
-        // not play the system click alongside our UI tick.
+        // not play the system click alongside our UI tick. Direction keys
+        // from the header are owned at the ACTIVITY level
+        // (TvDpadFocusRouter.TryHandleActivityKey, HeaderMove) — same single
+        // owner as card navigation, so there is no per-view key listener to
+        // lose. DPAD_CENTER/Enter falls through to the native click.
         native.SoundEffectsEnabled = false;
-        native.KeyPress += OnMenuButtonKeyPress;
         native.FocusChange += OnTvItemFocusChange;
         TvDpadFocusRouter.RegisterHeaderTarget(native);
     }
@@ -100,42 +103,8 @@ public partial class HomeView
             return;
         }
 
-        _wiredMenuButton.KeyPress -= OnMenuButtonKeyPress;
         _wiredMenuButton.FocusChange -= OnTvItemFocusChange;
         _wiredMenuButton = null;
-    }
-
-    private void OnMenuButtonKeyPress(object? sender, AView.KeyEventArgs e)
-    {
-        if (e.Event?.Action != global::Android.Views.KeyEventActions.Down)
-        {
-            e.Handled = false;
-            return;
-        }
-
-        switch (e.KeyCode)
-        {
-            case Keycode.DpadDown:
-                // Back to the card focused before the header round trip
-                // (router-owned: silent). Fall through to the default search
-                // only when no card has held focus yet.
-                e.Handled = TvDpadFocusRouter.TryFocusLastCard();
-                break;
-
-            case Keycode.DpadUp:
-            case Keycode.DpadLeft:
-            case Keycode.DpadRight:
-                // The header is a single focus stop: nothing above it, and
-                // the crest (left) stays skipped. Consume so the default
-                // search cannot wander (or play its navigation click).
-                e.Handled = true;
-                break;
-
-            default:
-                // DPAD_CENTER/Enter falls through to the native click.
-                e.Handled = false;
-                break;
-        }
     }
 
     // ---------------------------------------------------- menu focus trap --
@@ -159,6 +128,10 @@ public partial class HomeView
 
     private void OpenMenuTrap()
     {
+        // The activity-level key owner seals the trap while this is set: a
+        // direction key that no trap item consumed is swallowed there, so
+        // the default focus search can never move focus behind the scrim.
+        TvDpadFocusRouter.MenuTrapOpen = true;
         _menuFocusMemory.OnTrapOpened(TvDpadFocusRouter.LastFocusedCard());
         FocusFirstMenuItemWhenShown(MenuTrapFocusRetryFrames);
     }
@@ -187,6 +160,7 @@ public partial class HomeView
 
     private void CloseMenuTrap()
     {
+        TvDpadFocusRouter.MenuTrapOpen = false;
         foreach (var item in _wiredTrapItems)
         {
             item.KeyPress -= OnMenuItemKeyPress;

@@ -70,10 +70,21 @@ public static class TvDpadStripWalk
     /// Shown focusable leaves under a strip scroller. Card roots use
     /// BlockDescendants, so we stop at the first focusable and never treat
     /// inner chrome as sibling cards — including a one-card BindableLayout.
+    /// Scrollers and recyclers are DESCENDED, never collected: they are
+    /// natively focusable themselves (AOSP HorizontalScrollView/ScrollView
+    /// initScrollView() calls setFocusable(true), and MAUI's strip is a
+    /// MauiScrollView wrapping a MauiHorizontalScrollView — both match).
+    /// Treating the walk root as an ordinary node made the very first check
+    /// collect THE SCROLLER and return: the "cards" list was [scroller], the
+    /// focused card was never found, FindAdjacentInRow returned null,
+    /// IsAtRowEdge returned false — and the unconsumed key fell through to
+    /// Android's default focus search (system navigation click + framework
+    /// reveal; the field's non-first-rail left/right bug). The unit-test
+    /// fakes modelled scrollers as non-focusable, which hid this.
     /// </summary>
     public static void CollectShownFocusables(INode root, IList<INode> dest)
     {
-        if (root.Focusable && root.IsShown)
+        if (!root.IsScroller && !root.IsRecycler && root.Focusable && root.IsShown)
         {
             dest.Add(root);
             return;
