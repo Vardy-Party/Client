@@ -120,46 +120,60 @@
             AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
             stacked above the Avalonia-drawn scene. Any MAUI control that
             overlaps the video row is covered by that child — invisible and
-            unclickable. Do NOT move Close (or any other interactive control)
-            on top of the video to "save a few pixels": it will look right
-            in the designer and fail in the field (the original WSL Close
-            wedge). The reserved strip is therefore a separate grid row
-            ABOVE the video, sized to a single Close chip — not a titled
-            "Now Playing" header. Match-event toasts live in the same
-            reserved row (they are input-transparent; they must stay off
-            the video row or the native surface would hide them). The Auto
-            row stays ~40px when idle and grows only while a toast is up.
+            unclickable. Do NOT move Close on top of the video to "save a
+            few pixels": it will look right in the designer and fail in the
+            field (the original WSL Close wedge).
+
+            The Close chip is HIDDEN during playback. Collapsing the chrome
+            entirely would put the hit target on the native child, so a thin
+            invisible top reserve stays (black, not a banner; see
+            DesktopCloseChipReveal). Hover near the top-right / a tap on
+            Avalonia-owned playback chrome reveals the chip and expands that
+            row just enough for the 36px control. Escape still closes
+            without the chip. Match-event toasts use the same reserved row
+            when they appear. No "Now Playing" title.
 
             Standalone fallback (switch OFF, or the hosted surface failed at
-            runtime): libvlc opens its own native video window, the video row
-            shows the "own window" card instead, and the same Close chip /
-            toast row stays in the app window.
+            runtime): libvlc opens its own native video window; the same
+            reveal/hide Close chip lives in the app window.
         -->
-        <Grid x:Name="PlaybackOverlay" BackgroundColor="#0B0F1A" IsVisible="False" RowDefinitions="Auto,*">
-            <Grid MinimumHeightRequest="40" Padding="8,4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False" RowDefinitions="Auto,*">
+            <Grid x:Name="PlaybackChromeRow"
+                  BackgroundColor="Black"
+                  HeightRequest="24"
+                  ColumnDefinitions="*,Auto">
                 <hv:MatchEventToastView x:Name="PlaybackToast"
                                         InputTransparent="True"
                                         HorizontalOptions="Start"
                                         VerticalOptions="Start" />
 
-                <!-- Close must stay clickable at every moment, including a
-                     wedged libvlc: the handler never runs a libvlc call on
-                     the UI thread (see DesktopVideoPlayerService). Escape
-                     is the same cancel path (Avalonia TopLevel KeyDown). -->
-                <Button Grid.Column="1"
-                        x:Name="ClosePlaybackButton"
-                        Text="✕"
-                        Clicked="OnClosePlaybackClicked"
-                        VerticalOptions="Start"
-                        HorizontalOptions="End"
-                        WidthRequest="36"
-                        HeightRequest="36"
-                        Padding="0"
-                        BackgroundColor="#CC1C2333"
-                        TextColor="#E5E7EB"
-                        CornerRadius="18"
-                        FontSize="16"
-                        SemanticProperties.Description="Close playback" />
+                <!-- Generous top-right hit-zone (wider than the chip). The
+                     button itself is shown only after reveal; the zone stays
+                     so hover works while the chip is hidden. -->
+                <Grid x:Name="CloseHitZone"
+                      Grid.Column="1"
+                      WidthRequest="168"
+                      HeightRequest="24"
+                      VerticalOptions="Start"
+                      HorizontalOptions="End"
+                      BackgroundColor="Transparent">
+                    <Button x:Name="ClosePlaybackButton"
+                            Text="✕"
+                            Clicked="OnClosePlaybackClicked"
+                            VerticalOptions="Start"
+                            HorizontalOptions="End"
+                            Margin="0,4,8,0"
+                            WidthRequest="36"
+                            HeightRequest="36"
+                            Padding="0"
+                            Opacity="0"
+                            InputTransparent="True"
+                            BackgroundColor="#CC1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="18"
+                            FontSize="16"
+                            SemanticProperties.Description="Close playback" />
+                </Grid>
             </Grid>
 
             <!-- In-window video surface (VideoHostView injected in code-behind

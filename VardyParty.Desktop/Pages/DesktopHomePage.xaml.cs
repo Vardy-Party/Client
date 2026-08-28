@@ -64,6 +64,9 @@ public partial class DesktopHomePage : ContentPage
     private Task? _resolutionTask;
 
     private bool _escapeWired;
+    private Avalonia.Controls.TopLevel? _playbackTopLevel;
+    private readonly DesktopCloseChipReveal _closeChip = new();
+    private IDispatcherTimer? _closeChipHideTimer;
 
     private static bool UseSampleData =>
         Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_SAMPLE_DATA") == "1";
@@ -108,7 +111,9 @@ public partial class DesktopHomePage : ContentPage
         // during playback via ShouldPlayAudio — toast-yes/audio-no.
         _playbackToast = new MatchEventToastViewModel(_viewModel.Layout);
         PlaybackToast.BindingContext = _playbackToast;
+        _playbackToast.PropertyChanged += OnPlaybackToastPropertyChanged;
         _matchEvents.Published += OnMatchEventPublished;
+        WireCloseChipGestures();
 
         _viewModel.GamePicked += OnGamePicked;
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
@@ -247,7 +252,10 @@ public partial class DesktopHomePage : ContentPage
                 return;
             }
 
+            _playbackTopLevel = top;
             top.AddHandler(InputElement.KeyDownEvent, OnTopLevelKeyDown, RoutingStrategies.Tunnel);
+            top.AddHandler(InputElement.PointerMovedEvent, OnTopLevelPointerMoved, RoutingStrategies.Tunnel);
+            top.AddHandler(InputElement.PointerPressedEvent, OnTopLevelPointerPressed, RoutingStrategies.Tunnel);
             _escapeWired = true;
         }
         catch (Exception ex)
@@ -265,6 +273,126 @@ public partial class DesktopHomePage : ContentPage
 
         OnClosePlaybackClicked(this, EventArgs.Empty);
         e.Handled = true;
+    }
+
+    private void OnTopLevelPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
+    {
+        if (!PlaybackOverlay.IsVisible || _playbackTopLevel is not { } top)
+        {
+            return;
+        }
+
+        var pos = e.GetPosition(top);
+        if (DesktopCloseChipReveal.IsNearRestingPlace(pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed))
+        {
+            ApplyCloseChip(_closeChip.OnHoverEnter());
+        }
+        else if (_closeChip.Hovering)
+        {
+            ApplyCloseChip(_closeChip.OnHoverLeave());
+        }
+    }
+
+    private void OnTopLevelPointerPressed(object? sender, Avalonia.Input.PointerEventArgs e)
+    {
+        if (!PlaybackOverlay.IsVisible)
+        {
+            return;
+        }
+
+        // A press we can see (reserved chrome / standalone card). Presses on
+        // the native video child never reach Avalonia — the thin hit-zone
+        // is the in-window path. Does not close; the chip click does.
+        ApplyCloseChip(_closeChip.OnTouched());
+    }
+
+    private void WireCloseChipGestures()
+    {
+        var hover = new PointerGestureRecognizer();
+        hover.PointerEntered += (_, _) => ApplyCloseChip(_closeChip.OnHoverEnter());
+        hover.PointerExited += (_, _) => ApplyCloseChip(_closeChip.OnHoverLeave());
+        CloseHitZone.GestureRecognizers.Add(hover);
+
+        var stripTap = new TapGestureRecognizer();
+        stripTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
+        PlaybackChromeRow.GestureRecognizers.Add(stripTap);
+
+        var standaloneTap = new TapGestureRecognizer();
+        standaloneTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
+        StandalonePlaybackPanel.GestureRecognizers.Add(standaloneTap);
+    }
+
+    private void OnPlaybackToastPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is null or nameof(MatchEventToastViewModel.IsToastVisible))
+        {
+            ApplyCloseChipVisuals();
+        }
+    }
+
+    private void ApplyCloseChip(DesktopCloseChipAction action)
+    {
+        ApplyCloseChipVisuals();
+        switch (action)
+        {
+            case DesktopCloseChipAction.StartAutoHide:
+                ArmCloseChipHideTimer();
+                break;
+            case DesktopCloseChipAction.CancelAutoHide:
+                _closeChipHideTimer?.Stop();
+                break;
+        }
+    }
+
+    private void ApplyCloseChipVisuals()
+    {
+        var revealed = _closeChip.ChipVisible;
+        ClosePlaybackButton.Opacity = revealed ? 1 : 0;
+        ClosePlaybackButton.InputTransparent = !revealed;
+        ClosePlaybackButton.IsEnabled = revealed;
+
+        var height = _closeChip.ReserveHeight(_playbackToast.IsToastVisible);
+        if (double.IsNaN(height))
+        {
+            PlaybackChromeRow.HeightRequest = -1;
+            PlaybackChromeRow.MinimumHeightRequest = revealed
+                ? DesktopCloseChipReveal.RevealedReserveHeight
+                : 0;
+        }
+        else
+        {
+            PlaybackChromeRow.HeightRequest = height;
+            PlaybackChromeRow.MinimumHeightRequest = height;
+        }
+
+        CloseHitZone.HeightRequest = _closeChip.HitZoneHeight;
+        CloseHitZone.WidthRequest = DesktopCloseChipReveal.HitZoneWidth;
+    }
+
+    private void ArmCloseChipHideTimer()
+    {
+        _closeChipHideTimer ??= CreateCloseChipHideTimer();
+        _closeChipHideTimer.Stop();
+        _closeChipHideTimer.Start();
+    }
+
+    private IDispatcherTimer CreateCloseChipHideTimer()
+    {
+        var timer = Dispatcher.CreateTimer();
+        timer.Interval = DesktopCloseChipReveal.AutoHideDelay;
+        timer.Tick += (_, _) =>
+        {
+            _closeChipHideTimer?.Stop();
+            ApplyCloseChip(_closeChip.OnAutoHideElapsed());
+        };
+        return timer;
+    }
+
+    private void ResetCloseChip()
+    {
+        _closeChipHideTimer?.Stop();
+        _closeChip.Reset();
+        ApplyCloseChipVisuals();
     }
 
     protected override void OnAppearing()
@@ -775,7 +903,11 @@ public partial class DesktopHomePage : ContentPage
             _logger.LogWarning(ex, "[DesktopHome] Failed to close playback");
         }
 
-        Dispatcher.Dispatch(() => PlaybackOverlay.IsVisible = false);
+        Dispatcher.Dispatch(() =>
+        {
+            ResetCloseChip();
+            PlaybackOverlay.IsVisible = false;
+        });
     }
 
     /// <summary>
@@ -805,8 +937,13 @@ public partial class DesktopHomePage : ContentPage
         Dispatcher.Dispatch(() =>
         {
             PlaybackOverlay.IsVisible = visible;
-            if (!visible)
+            if (visible)
             {
+                ResetCloseChip();
+            }
+            else
+            {
+                ResetCloseChip();
                 TryResumeAfterPlayer();
             }
         });
