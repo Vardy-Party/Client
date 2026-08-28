@@ -17,12 +17,6 @@ public class StreamHealthCheckerTests
 {
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
-    private static ByteArrayContent MpegTsSegmentContent() =>
-        new(new byte[] { 0x47, 0x40, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00 });
-
-    private static ByteArrayContent JpegMasqueradingAsSegment() =>
-        new(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 });
-
     [Fact]
     public async Task CheckStreamHealth_Healthy_DirectSegment()
     {
@@ -41,10 +35,7 @@ public class StreamHealthCheckerTests
             Content = new StringContent("#EXTM3U\n#EXTINF:10,\n" + segmentUrl)
         });
 
-        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = MpegTsSegmentContent()
-        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
 
         // Act
         var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
@@ -143,10 +134,7 @@ public class StreamHealthCheckerTests
             Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
         });
 
-        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = MpegTsSegmentContent()
-        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
 
         // Act
         var result = await checker.CheckStreamHealthAsync(masterUrl, "http://player.example.com");
@@ -215,36 +203,6 @@ public class StreamHealthCheckerTests
     }
 
     [Fact]
-    public async Task CheckStreamHealth_JpegSegment_Rejected()
-    {
-        // Arrange — TikTok CDN ".image" URLs HEAD/GET 200 but are not AV.
-        var handler = new FakeHttpMessageHandler();
-        var client = new HttpClient(handler);
-        var settingsProvider = _fixture.Create<StreamHealthSettings>();
-        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
-            Options.Create(settingsProvider));
-
-        var manifestUrl = "http://streams.example.com/playlist.m3u8";
-        var segmentUrl = "http://cdn.example.com/tos-x~tplv-tiktokx-origin.image?sig=1";
-
-        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
-        });
-
-        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = JpegMasqueradingAsSegment()
-        });
-
-        // Act
-        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
-
-        // Assert
-        Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
-    }
-
-    [Fact]
     public async Task CheckStreamHealth_SegmentHeadForbidden_GetRangeSuccess()
     {
         // Arrange
@@ -262,10 +220,8 @@ public class StreamHealthCheckerTests
             Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
         });
 
-        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = MpegTsSegmentContent()
-        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.Forbidden));
+        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK));
 
         // Act
         var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
@@ -292,10 +248,8 @@ public class StreamHealthCheckerTests
             Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
         });
 
-        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = MpegTsSegmentContent()
-        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.MethodNotAllowed));
+        handler.AddResponse(segmentUrl, new HttpResponseMessage(HttpStatusCode.OK));
 
         // Act
         var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");

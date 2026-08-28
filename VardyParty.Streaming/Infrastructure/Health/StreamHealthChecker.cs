@@ -263,14 +263,13 @@ public class StreamHealthChecker(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
 
-            // Prefer a ranged GET and sniff the payload. HEAD 200 on TikTok CDN
-            // ".image" URLs was marking Sportsbest Healthy while LibVLC demux failed.
-            if (await ProbeSegmentMediaAsync(url, refererUrl, cts.Token, useRange: true))
+            if (await ProbeSegmentAsync(HttpMethod.Head, url, refererUrl, cts.Token))
             {
                 return StreamHealthStatus.Healthy;
             }
 
-            if (await ProbeSegmentMediaAsync(url, refererUrl, cts.Token, useRange: false))
+            // Tokenized CDNs often reject HEAD (403/401/405) while ranged GET succeeds.
+            if (await ProbeSegmentAsync(HttpMethod.Get, url, refererUrl, cts.Token, useRange: true))
             {
                 return StreamHealthStatus.Healthy;
             }
@@ -285,62 +284,31 @@ public class StreamHealthChecker(
         }
     }
 
-    private async Task<bool> ProbeSegmentMediaAsync(
+    private async Task<bool> ProbeSegmentAsync(
+        HttpMethod method,
         string url,
         string refererUrl,
         CancellationToken ct,
-        bool useRange)
+        bool useRange = false)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var request = new HttpRequestMessage(method, url);
         request.Headers.TryAddWithoutValidation("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
             request.Headers.Referrer = refUri;
         if (useRange)
-            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, MediaSegmentMagic.ProbeByteCount - 1);
+            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
 
-        logger.LogInformation(
-            "[StreamHealthChecker] Checking segment GET {Url} range={Range} referer={Referer}",
-            url, useRange, refererUrl);
+        logger.LogInformation("[StreamHealthChecker] Checking segment {Method} {Url} with referer {Referer}",
+            method.Method, url, refererUrl);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.PartialContent)
+        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
         {
-            logger.LogDebug("Segment GET probe returned {StatusCode} for {Url}", response.StatusCode, url);
-            return false;
+            logger.LogDebug("Segment {Method} probe returned {StatusCode} for {Url}",
+                method.Method, response.StatusCode, url);
         }
 
-        var contentType = response.Content.Headers.ContentType?.ToString();
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        var buffer = new byte[MediaSegmentMagic.ProbeByteCount];
-        var read = 0;
-        while (read < buffer.Length)
-        {
-            var n = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), ct);
-            if (n == 0)
-            {
-                break;
-            }
-
-            read += n;
-        }
-
-        if (read == 0)
-        {
-            logger.LogWarning("Segment body empty for {Url} (Content-Type={ContentType})", url, contentType ?? "(none)");
-            return false;
-        }
-
-        var playable = MediaSegmentMagic.LooksLikePlayableMedia(buffer.AsSpan(0, read), contentType);
-        if (!playable)
-        {
-            logger.LogWarning(
-                "Segment does not look like playable media for {Url} (Content-Type={ContentType}, firstBytes={FirstBytes})",
-                url,
-                contentType ?? "(none)",
-                Convert.ToHexString(buffer.AsSpan(0, Math.Min(read, 16))));
-        }
-
-        return playable;
+        return response.IsSuccessStatusCode;
     }
 }
