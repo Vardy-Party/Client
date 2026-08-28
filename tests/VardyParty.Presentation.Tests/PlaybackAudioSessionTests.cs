@@ -1,23 +1,19 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using VardyParty.Desktop.Services;
 using VardyParty.Ports;
 using VardyParty.Presentation;
 using Xunit;
 
-namespace VardyParty.Desktop.Tests;
+namespace VardyParty.Presentation.Tests;
 
-public class DesktopAudioSessionTests
+public class PlaybackAudioSessionTests
 {
     [Fact]
     public void Plan_WhenPlaybackVisible_SuppressesAndYields()
     {
-        // Arrange
-        // Act
-        var plan = DesktopAudioSession.Plan(playbackVisible: true);
+        var plan = PlaybackAudioSession.Plan(playbackVisible: true);
 
-        // Assert
         Assert.True(plan.SuppressAll);
         Assert.True(plan.YieldDevice);
         Assert.False(plan.RecoverDevice);
@@ -26,11 +22,8 @@ public class DesktopAudioSessionTests
     [Fact]
     public void Plan_WhenPlaybackHidden_UnsuppressesAndRecovers()
     {
-        // Arrange
-        // Act
-        var plan = DesktopAudioSession.Plan(playbackVisible: false);
+        var plan = PlaybackAudioSession.Plan(playbackVisible: false);
 
-        // Assert
         Assert.False(plan.SuppressAll);
         Assert.False(plan.YieldDevice);
         Assert.True(plan.RecoverDevice);
@@ -39,15 +32,12 @@ public class DesktopAudioSessionTests
     [Fact]
     public void Apply_WhenVisible_SuppressesUiSoundsAndYieldsDevice()
     {
-        // Arrange
         var player = new RecordingUiSoundPlayer();
         var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
 
-        // Act
-        DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
+        PlaybackAudioSession.Apply(playbackVisible: true, sounds, player);
         sounds.Play(UiSound.Select);
 
-        // Assert
         Assert.True(sounds.SuppressAll);
         Assert.Equal(new[] { "Yield" }, player.Calls);
     }
@@ -55,16 +45,13 @@ public class DesktopAudioSessionTests
     [Fact]
     public void Apply_WhenHidden_RestoresUiSoundsAndRecoversDevice()
     {
-        // Arrange
         var player = new RecordingUiSoundPlayer();
         var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
-        DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
+        PlaybackAudioSession.Apply(playbackVisible: true, sounds, player);
 
-        // Act
-        DesktopAudioSession.Apply(playbackVisible: false, sounds, player);
+        PlaybackAudioSession.Apply(playbackVisible: false, sounds, player);
         sounds.Play(UiSound.Select);
 
-        // Assert
         Assert.False(sounds.SuppressAll);
         Assert.Equal(new[] { "Yield", "Recover", "Play:Select" }, player.Calls);
     }
@@ -72,15 +59,12 @@ public class DesktopAudioSessionTests
     [Fact]
     public void Apply_AfterFailedSession_SameRestorePathAsClose()
     {
-        // Arrange: visibility went true (stream attempt) then false (no streams / error).
         var player = new RecordingUiSoundPlayer();
         var sounds = new UiSoundService(player, new InMemorySoundPreferencesStore());
 
-        // Act
-        DesktopAudioSession.Apply(playbackVisible: true, sounds, player);
-        DesktopAudioSession.Apply(playbackVisible: false, sounds, player);
+        PlaybackAudioSession.Apply(playbackVisible: true, sounds, player);
+        PlaybackAudioSession.Apply(playbackVisible: false, sounds, player);
 
-        // Assert
         Assert.False(sounds.SuppressAll);
         Assert.Equal(new[] { "Yield", "Recover" }, player.Calls);
     }

@@ -59,13 +59,29 @@
                  Strips are not virtualized; that is fine for a handful of
                  fixtures, not a 30-card row on TV. TvDpadFocusRouter walks
                  this tree (outer RecyclerView + strip scroller). -->
-            <CollectionView Grid.Row="2"
+            <!-- RowsHost is the arranged leftover under the header. The
+                 CollectionView MUST take that height as HeightRequest: every
+                 backend fills the cell but sizes the INNER scroll viewport
+                 shorter, painting the leftover with the default black
+                 background (Windows/Linux/TV field: opaque bar clipping
+                 cards that scroll up into it). -->
+            <Grid Grid.Row="2" x:Name="RowsHost" SizeChanged="OnRowsHostSizeChanged">
+            <CollectionView x:Name="RowsList"
                             ItemsSource="{Binding Rows}"
+                            BackgroundColor="#0B0F1A"
+                            VerticalOptions="Fill"
                             VerticalScrollBarVisibility="Never"
                             SelectionMode="None">
+                <CollectionView.Footer>
+                    <BoxView HeightRequest="{Binding Layout.RowsEndPad}"
+                             Color="Transparent"
+                             InputTransparent="True" />
+                </CollectionView.Footer>
                 <CollectionView.ItemTemplate>
                     <DataTemplate x:DataType="hu:LeagueRowViewModel">
-                        <VerticalStackLayout Margin="{Binding Layout.RowMarginThickness}" Spacing="10">
+                        <VerticalStackLayout VerticalOptions="Start"
+                                             Margin="{Binding Layout.RowMarginThickness}"
+                                             Spacing="10">
                             <HorizontalStackLayout Spacing="10">
                                 <Image Source="{Binding LeagueIcon}"
                                        WidthRequest="{Binding Layout.LeagueIconSize}"
@@ -121,6 +137,7 @@
                     </DataTemplate>
                 </CollectionView.ItemTemplate>
             </CollectionView>
+            </Grid>
 
             <!-- Empty state -->
             <VerticalStackLayout Grid.Row="2"

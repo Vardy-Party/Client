@@ -20,7 +20,7 @@ namespace VardyParty.Desktop.Services;
 /// miniaudio device across a stream session leaves video silent and poisons
 /// this engine (Play then fails forever). <see cref="YieldDevice"/> tears the
 /// native device down before Play; <see cref="RecoverDevice"/> rebuilds it
-/// after Close. See <see cref="DesktopAudioSession"/>.
+/// after Close. See <see cref="VardyParty.Presentation.PlaybackAudioSession"/>.
 /// </summary>
 public sealed class SoundFlowUiSoundPlayer : IUiSoundPlayer, IDisposable
 {

@@ -285,6 +285,24 @@ public partial class HomeView : ContentView
     {
         if (Width <= 0 || Height <= 0) return;
         ViewModel?.SetViewport(Width, Height, IsTelevision());
+        SyncRowsViewport();
+    }
+
+    /// <summary>
+    /// Pin the CollectionView's HeightRequest to the leftover cell so the
+    /// inner scroll viewport matches the arranged space (see
+    /// <see cref="RowsViewport"/>). Called from both the page SizeChanged
+    /// and the host cell's own SizeChanged — the cell can settle after the
+    /// header measures.
+    /// </summary>
+    private void OnRowsHostSizeChanged(object? sender, EventArgs e) => SyncRowsViewport();
+
+    private void SyncRowsViewport()
+    {
+        if (RowsViewport.HeightRequest(RowsHost.Height, RowsList.HeightRequest) is { } height)
+        {
+            RowsList.HeightRequest = height;
+        }
     }
 
     /// <summary>

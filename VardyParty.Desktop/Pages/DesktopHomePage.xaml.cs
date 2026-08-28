@@ -928,8 +928,8 @@ public partial class DesktopHomePage : ContentPage
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         // Suppress + yield the miniaudio device before libvlc Play; un-suppress
-        // + recover it after Close / a failed session (see DesktopAudioSession).
-        DesktopAudioSession.Apply(visible, _sounds, _soundPlayer);
+        // + recover it after Close / a failed session (see PlaybackAudioSession).
+        PlaybackAudioSession.Apply(visible, _sounds, _soundPlayer);
 
         // Homepage stays visible next to the native VLC window, but it is no
         // longer the active surface: match events downgrade to toast-only.

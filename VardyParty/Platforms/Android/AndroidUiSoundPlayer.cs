@@ -11,6 +11,13 @@ namespace VardyParty.Platforms.Android;
 /// <see cref="Play"/> is a non-blocking native trigger. AudioAttributes use
 /// AssistanceSonification and deliberately request NO audio focus — a 30ms
 /// tick must never pause the user's podcast in another app.
+///
+/// ExoPlayer in NativeVideoActivity takes the mixer. A live SoundPool then
+/// stays silent after the activity finishes until it is released and
+/// reloaded — field: ticks dead until Settings → UI sounds was toggled
+/// (that Play(Select) on enable happened to land after a lucky resume).
+/// <see cref="YieldDevice"/> releases the pool before playback;
+/// <see cref="RecoverDevice"/> rebuilds it when the homepage reappears.
 /// </summary>
 public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
 {
@@ -26,62 +33,53 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
 
     private readonly ILogger<AndroidUiSoundPlayer> _logger;
     private readonly Dictionary<UiSound, int> _soundIds = new();
+    private readonly object _gate = new();
     private SoundPool? _pool;
     private volatile bool _ready;
+    private volatile bool _yielded;
+    private int _epoch;
     private int _playFailureLogged;
 
     public AndroidUiSoundPlayer(ILogger<AndroidUiSoundPlayer> logger) => _logger = logger;
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        BringUpAsync(cancellationToken);
+
+    /// <inheritdoc />
+    public void YieldDevice()
     {
-        try
+        lock (_gate)
         {
-            var attributes = new AudioAttributes.Builder()
-                .SetUsage(AudioUsageKind.AssistanceSonification)!
-                .SetContentType(AudioContentType.Sonification)!
-                .Build()!;
+            _yielded = true;
+            _epoch++;
+            TearDownUnlocked();
+        }
 
-            var pool = new SoundPool.Builder()
-                .SetMaxStreams(3)!
-                .SetAudioAttributes(attributes)!
-                .Build()!;
+        _logger.LogInformation("UI sound pool yielded for video playback");
+    }
 
-            var pending = new Dictionary<int, TaskCompletionSource<bool>>();
-            pool.LoadComplete += (_, e) =>
+    /// <inheritdoc />
+    public void RecoverDevice()
+    {
+        lock (_gate)
+        {
+            _yielded = false;
+            _epoch++;
+            TearDownUnlocked();
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
             {
-                if (pending.TryGetValue(e.SampleId, out var tcs))
-                {
-                    tcs.TrySetResult(e.Status == 0);
-                }
-            };
-
-            var assets = global::Android.App.Application.Context.Assets
-                ?? throw new InvalidOperationException("No asset manager");
-
-            foreach (var (sound, asset) in Assets)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                using var descriptor = assets.OpenFd(asset);
-                var id = pool.Load(descriptor, priority: 1);
-                pending[id] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _soundIds[sound] = id;
+                BringUpAsync(CancellationToken.None).GetAwaiter().GetResult();
+                _logger.LogInformation("UI sound pool recovered after video playback");
             }
-
-            // SoundPool decodes asynchronously; Play() before LoadComplete is a no-op.
-            await Task.WhenAll(pending.Values.Select(t => t.Task)).WaitAsync(
-                TimeSpan.FromSeconds(10), cancellationToken);
-
-            _pool = pool;
-            _ready = true;
-            _logger.LogInformation("UI sounds initialised ({Count} sounds)", _soundIds.Count);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "UI sound init failed; sounds disabled");
-        }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "UI sound pool recovery failed; sounds stay silent");
+            }
+        });
     }
 
     public void Play(UiSound sound)
@@ -107,6 +105,105 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
 
     public void Dispose()
     {
+        lock (_gate)
+        {
+            _epoch++;
+            _yielded = true;
+            TearDownUnlocked();
+        }
+    }
+
+    private async Task BringUpAsync(CancellationToken cancellationToken)
+    {
+        int epoch;
+        lock (_gate)
+        {
+            if (_yielded || _ready)
+            {
+                return;
+            }
+
+            epoch = _epoch;
+        }
+
+        try
+        {
+            var attributes = new AudioAttributes.Builder()
+                .SetUsage(AudioUsageKind.AssistanceSonification)!
+                .SetContentType(AudioContentType.Sonification)!
+                .Build()!;
+
+            var pool = new SoundPool.Builder()
+                .SetMaxStreams(3)!
+                .SetAudioAttributes(attributes)!
+                .Build()!;
+
+            var pending = new Dictionary<int, TaskCompletionSource<bool>>();
+            pool.LoadComplete += (_, e) =>
+            {
+                if (pending.TryGetValue(e.SampleId, out var tcs))
+                {
+                    tcs.TrySetResult(e.Status == 0);
+                }
+            };
+
+            var assets = global::Android.App.Application.Context.Assets
+                ?? throw new InvalidOperationException("No asset manager");
+
+            var loaded = new Dictionary<UiSound, int>();
+            foreach (var (sound, asset) in Assets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var descriptor = assets.OpenFd(asset);
+                var id = pool.Load(descriptor, priority: 1);
+                pending[id] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                loaded[sound] = id;
+            }
+
+            // SoundPool decodes asynchronously; Play() before LoadComplete is a no-op.
+            await Task.WhenAll(pending.Values.Select(t => t.Task)).WaitAsync(
+                TimeSpan.FromSeconds(10), cancellationToken);
+
+            lock (_gate)
+            {
+                if (_yielded || epoch != _epoch)
+                {
+                    try
+                    {
+                        pool.Release();
+                        pool.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    return;
+                }
+
+                _soundIds.Clear();
+                foreach (var pair in loaded)
+                {
+                    _soundIds[pair.Key] = pair.Value;
+                }
+
+                _pool = pool;
+                _ready = true;
+                _playFailureLogged = 0;
+            }
+
+            _logger.LogInformation("UI sounds initialised ({Count} sounds)", loaded.Count);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "UI sound init failed; sounds disabled");
+        }
+    }
+
+    private void TearDownUnlocked()
+    {
         _ready = false;
         try
         {
@@ -118,6 +215,7 @@ public sealed class AndroidUiSoundPlayer : IUiSoundPlayer, IDisposable
         }
 
         _pool = null;
+        _soundIds.Clear();
     }
 }
 #endif

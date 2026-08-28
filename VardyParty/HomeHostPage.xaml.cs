@@ -116,7 +116,15 @@ public partial class HomeHostPage : ContentPage
         // never outlive the overlays that set them.
         UpdateBackSuppression();
 
-        if (_initialized) return;
+        if (_initialized)
+        {
+            // Returning from NativeVideoActivity (or any pause): ExoPlayer
+            // takes the mixer and SoundPool stays silent until rebuilt.
+            // Field: ticks dead until Settings → UI sounds was toggled.
+            PlaybackAudioSession.Apply(playbackVisible: false, _sounds, _soundPlayer);
+            return;
+        }
+
         _initialized = true;
 
         // Preload UI sounds on a background task after first render — never in
@@ -553,7 +561,7 @@ public partial class HomeHostPage : ContentPage
 
     private void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
-        _sounds.SuppressAll = visible;
+        PlaybackAudioSession.Apply(visible, _sounds, _soundPlayer);
 
         // The homepage stops being the active surface while a stream plays:
         // match events downgrade to toast-only (no sting) per the

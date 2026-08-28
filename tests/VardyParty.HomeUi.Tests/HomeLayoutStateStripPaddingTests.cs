@@ -80,5 +80,6 @@ public class HomeLayoutStateStripPaddingTests
         Assert.Equal(17, padding.Top);
         Assert.Equal(23, padding.Left);
         Assert.Equal(194, state.RowHeight);
+        Assert.Equal(34, state.RowsEndPad);
     }
 }
