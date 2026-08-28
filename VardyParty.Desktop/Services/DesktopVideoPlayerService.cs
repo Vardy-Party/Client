@@ -1,5 +1,6 @@
 using LibVLCSharp.Shared;
 using Microsoft.Extensions.Logging;
+using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
@@ -39,6 +40,9 @@ namespace VardyParty.Desktop.Services;
 /// software decode, plain X11 vout, Pulse aout (WSLg), no hardware probing.
 /// Safe under xvfb too. Audio is never disabled (<c>--no-audio</c> is not
 /// an option); see <see cref="DesktopPlatformProbe.BuildLibVlcOptions"/>.
+/// HLS is fetched through a local DualStack+Referer bridge
+/// (<see cref="LibVlcRefererProxy"/>): LibVLC's native HTTP demuxer has
+/// cancelled on WSL for CDNs that HttpClient health-checks successfully.
 ///
 /// LibVLC initialisation is lazy (first PlayVideoAsync), never in the startup
 /// path: machines without libvlc installed (or headless CI) get a logged
@@ -54,6 +58,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly ILogger<DesktopVideoPlayerService> _logger;
     private readonly IStreamSwitchingService _switching;
     private readonly IStreamHealthReporter _healthReporter;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly PlaybackSessionController _session = new();
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
@@ -61,6 +66,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     private VlcSession? _current;
     private int _nextVlcGeneration;
     private Media? _currentMedia;
+    private LibVlcRefererProxy? _refererProxy;
     private TaskCompletionSource<PlaybackResult>? _playbackTcs;
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
@@ -93,11 +99,13 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         ILogger<DesktopVideoPlayerService> logger,
         IStreamSwitchingService switching,
         ResolveFreshPlaybackUrlAsync resolveFresh,
-        IStreamHealthReporter healthReporter)
+        IStreamHealthReporter healthReporter,
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _switching = switching;
         _healthReporter = healthReporter;
+        _httpClientFactory = httpClientFactory;
         _pool = new PlaybackPoolCommandActions(
             _session,
             _switching,
@@ -243,6 +251,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         _logger.LogInformation("[DesktopVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
         StopMetricsLoop();
+        DisposeRefererProxy();
         PlaybackVisibilityChanged?.Invoke(this, false);
         _playbackTcs?.TrySetResult(new PlaybackResult
         {
@@ -410,24 +419,14 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     }
 
     /// <summary>
-    /// Pin aout + unmute. Worker-thread only (libvlc). <c>any</c> is a CLI
-    /// probe, not a SetAudioOutput name — only pulse/alsa are pinned here.
+    /// Unmute + volume only. Do NOT call <c>SetAudioOutput</c> here: aout is
+    /// already pinned via <c>--aout=</c> in <see cref="BuildVlcOptions"/>.
+    /// Calling SetAudioOutput before Play loads pulse early; the mandatory
+    /// Stop() before a new Media then logs "removing module pulse" and has
+    /// cancelled the adaptive demuxer on WSL (Cancellation 0x8).
     /// </summary>
     private static void ConfigureAudioOutput(MediaPlayer player)
     {
-        var aout = DesktopPlatformProbe.ResolveAudioOutputModule();
-        if (DesktopPlatformProbe.IsPinnedAudioOutput(aout))
-        {
-            try
-            {
-                player.SetAudioOutput(aout);
-            }
-            catch
-            {
-                // Missing pulse/alsa plugin — leave VLC's --aout= probe.
-            }
-        }
-
         try
         {
             player.Mute = false;
@@ -714,33 +713,46 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 #endif
 
         var referer = _refererUrl;
+        string playUrl;
+        try
+        {
+            playUrl = await EnsureRefererBridgeAsync(m3u8Url, referer, requestHeaders, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[DesktopVideoPlayerService] Referer bridge failed; LibVLC will open the CDN URL directly");
+            playUrl = m3u8Url;
+        }
+
+        var bridged = !string.Equals(playUrl, m3u8Url, StringComparison.Ordinal);
         var attached = await RunVlcOpAsync(vlc, "attach-play", AttachTimeout, () =>
         {
             var previousMedia = _currentMedia;
             _currentMedia = null;
-            vlc.Player.Stop();
+
+            // Stop only when something is actually loaded — Stop() on a fresh
+            // MediaPlayer tears down aout ("removing module pulse") and has
+            // raced the next Play's adaptive demux on WSL.
+            if (previousMedia != null || vlc.Player.IsPlaying || vlc.Player.Media != null)
+            {
+                vlc.Player.Stop();
+            }
+
             previousMedia?.Dispose();
 
-            var media = new Media(vlc.LibVlc, new Uri(m3u8Url));
-            if (!string.IsNullOrWhiteSpace(referer))
+            var media = new Media(vlc.LibVlc, new Uri(playUrl));
+            // Direct CDN play still needs Referer; the local bridge injects it
+            // itself and LibVLC only talks to 127.0.0.1.
+            if (!bridged && !string.IsNullOrWhiteSpace(referer))
                 media.AddOption($":http-referrer={referer}");
 
             media.AddOption(":http-user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             media.AddOption(UseConservativeVlcOptions ? ":avcodec-hw=none" : ":avcodec-hw=any");
+            media.AddOption(":network-caching=3000");
 
-            // Never SetAudioOutput after Play — on WSL/Linux that tears down
-            // pulse mid-start ("removing module pulse") and cancels the HTTP
-            // demux (adaptive: Failed to create demuxer / Cancellation 0x8).
-            // aout was pinned once in CreateMediaPlayerSession.
-            try
-            {
-                vlc.Player.Mute = false;
-                vlc.Player.Volume = 100;
-            }
-            catch
-            {
-            }
-
+            ConfigureAudioOutput(vlc.Player);
             _currentMedia = media;
             vlc.Player.Play(media);
         });
@@ -751,7 +763,37 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogInformation("[DesktopVideoPlayerService] Requested LibVLC attach for {Url}", m3u8Url);
+        _logger.LogInformation(
+            "[DesktopVideoPlayerService] Requested LibVLC attach for {Url} (bridged={Bridged})",
+            playUrl, bridged);
+    }
+
+    private async Task<string> EnsureRefererBridgeAsync(
+        string m3u8Url,
+        string? referer,
+        IReadOnlyDictionary<string, string>? requestHeaders,
+        CancellationToken cancellationToken)
+    {
+        _refererProxy ??= new LibVlcRefererProxy(
+            _httpClientFactory.CreateClient(PlaybackHttpClients.LibVlcBridge),
+            _logger);
+
+        return await _refererProxy.BindAsync(m3u8Url, referer, requestHeaders, cancellationToken);
+    }
+
+    private void DisposeRefererProxy()
+    {
+        var proxy = Interlocked.Exchange(ref _refererProxy, null);
+        if (proxy == null)
+        {
+            return;
+        }
+
+        _ = proxy.DisposeAsync().AsTask().ContinueWith(
+            t => _logger.LogDebug(t.Exception, "[DesktopVideoPlayerService] Referer proxy dispose faulted"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
     }
 
     /// <summary>Player events fire on libvlc threads; ignore anything from a superseded/abandoned player.</summary>
@@ -894,6 +936,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         _logger.LogInformation("[DesktopVideoPlayerService] Disposing");
         StopMetricsLoop();
+        DisposeRefererProxy();
 
         var vlc = _current;
         _current = null;

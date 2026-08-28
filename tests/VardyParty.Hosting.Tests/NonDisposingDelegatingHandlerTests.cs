@@ -58,10 +58,12 @@ public class NonDisposingDelegatingHandlerTests
 
         // Act
         using var probe = factory.CreateClient(PlaybackHttpClients.Probe);
+        using var bridge = factory.CreateClient(PlaybackHttpClients.LibVlcBridge);
         using var auth0 = factory.CreateClient(Auth0HttpClients.Name);
 
         // Assert
         Assert.Equal(PlaybackHttpClients.ProbeTimeout, probe.Timeout);
+        Assert.Equal(PlaybackHttpClients.LibVlcBridgeTimeout, bridge.Timeout);
         Assert.NotNull(auth0);
     }
 

@@ -26,6 +26,10 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
             .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
 
+        services.AddHttpClient(PlaybackHttpClients.LibVlcBridge)
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
+            .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.LibVlcBridgeTimeout);
+
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()
