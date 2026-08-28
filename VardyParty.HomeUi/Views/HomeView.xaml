@@ -8,11 +8,13 @@
 
     <ContentView.Resources>
         <!-- Shared league-row template: CollectionView on Android (RecyclerView
-             + D-pad router), ScrollView + BindableLayout everywhere else.
-             Items must WRAP their content — a Fill/match_parent item is the
-             black band (header + card sliver, then empty cell) on every head. -->
+             + D-pad router), ScrollView + BindableLayout elsewhere.
+             HeightRequest is the CONTENT height (header + strip) — without
+             it CollectionView stretches each item to the leftover viewport
+             (black slab under the cards). Margin (RowSpacing) sits outside. -->
         <DataTemplate x:Key="LeagueRowTemplate" x:DataType="hu:LeagueRowViewModel">
             <VerticalStackLayout VerticalOptions="Start"
+                                 HeightRequest="{Binding Layout.LeagueRowHeight}"
                                  Margin="{Binding Layout.RowMarginThickness}"
                                  Spacing="10">
                 <HorizontalStackLayout Spacing="10">
@@ -111,9 +113,9 @@
 
             <!-- Android: CollectionView (RecyclerView + TvDpadFocusRouter).
                  Desktop/Windows: ScrollView — WinUI/Avalonia CollectionView
-                 items stretch to the leftover cell (the black band). Only
-                 ONE host is bound (see WireRowsSource) so TV does not
-                 materialize both trees. -->
+                 stretched items even with VerticalOptions=Start; those heads
+                 use BindableLayout. Android keeps CollectionView for D-pad;
+                 LeagueRowHeight pins each item so the black slab is zero. -->
             <Grid Grid.Row="2" x:Name="RowsHost">
                 <CollectionView x:Name="RowsList"
                                 ItemTemplate="{StaticResource LeagueRowTemplate}"

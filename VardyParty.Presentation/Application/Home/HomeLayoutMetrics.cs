@@ -66,7 +66,7 @@ public sealed record HomeLayoutMetrics(
             CardWidth: 300, CardHeight: 160, CardCornerRadius: 16, BadgeSize: 50,
             TeamFontSize: 18, ScoreFontSize: 30, StatusFontSize: 15, AggregateFontSize: 13,
             LeagueTitleFontSize: 24, LeagueIconSize: 40, PageTitleFontSize: 32, PageSubtitleFontSize: 17,
-            PagePadding: 44, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
+            PagePadding: 20, RowSpacing: 32, CardSpacing: 16, BrandLogoSize: 68,
             FlatCardChrome: true, StagedStripCards: 8,
             FocusRingThickness: 5, FocusedCardLift: 0.10),
 

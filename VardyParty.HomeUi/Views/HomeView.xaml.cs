@@ -102,10 +102,10 @@ public partial class HomeView : ContentView
     }
 
     /// <summary>
-    /// Bind exactly one rows host. CollectionView items on WinUI/Avalonia
-    /// stretch to the leftover cell (black band through the last card).
-    /// Android keeps CollectionView so the D-pad router still finds a
-    /// RecyclerView; wrap-content item height is enforced on Android.
+    /// Bind exactly one rows host. Desktop/Windows use ScrollView (WinUI /
+    /// Avalonia CollectionView still stretches items). Android keeps
+    /// CollectionView for the D-pad router; <see cref="HomeLayoutState.LeagueRowHeight"/>
+    /// pins each item so the empty black region is zero height.
     /// </summary>
     private void WireRowsSource(HomeViewModel? vm)
     {

@@ -126,60 +126,60 @@
                     </Border>
                 </Grid>
 
-                <!-- Teams and score -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*" VerticalOptions="Center">
-                    <VerticalStackLayout Spacing="7" HorizontalOptions="Center" VerticalOptions="Center">
-                        <Grid WidthRequest="{Binding Layout.BadgeSize}"
-                              HeightRequest="{Binding Layout.BadgeSize}"
-                              HorizontalOptions="Center">
-                            <!-- Treated badge: metallic ring, inner plate, gloss -->
-                            <Border x:Name="HomeBadgeChrome"
-                                    StrokeShape="Ellipse"
-                                    StrokeThickness="0"
-                                    Background="{StaticResource MetallicRingBrush}"
-                                    Padding="3"
-                                    IsVisible="{Binding HasHomeBadge}">
-                                <Border.Shadow>
-                                    <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
-                                </Border.Shadow>
-                                <Grid>
-                                    <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
-                                        <Image Source="{Binding HomeBadge}" Aspect="AspectFit" />
-                                    </Border>
-                                    <Border StrokeShape="Ellipse" StrokeThickness="0"
-                                            Background="{StaticResource BadgeGlossBrush}"
-                                            InputTransparent="True" />
-                                </Grid>
-                            </Border>
-                            <!-- Monogram fallback in team colour -->
-                            <Border x:Name="HomeMonogramChrome"
-                                    StrokeShape="Ellipse"
-                                    Stroke="#40FFFFFF"
-                                    StrokeThickness="1"
-                                    Background="{Binding HomeAccent}"
-                                    IsVisible="{Binding NoHomeBadge}">
-                                <Border.Shadow>
-                                    <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
-                                </Border.Shadow>
-                                <Label Text="{Binding HomeInitial}"
-                                       FontSize="{Binding Layout.TeamFontSize}"
-                                       FontAttributes="Bold"
-                                       TextColor="White"
-                                       HorizontalOptions="Center"
-                                       VerticalOptions="Center" />
-                            </Border>
-                        </Grid>
-                        <Label Text="{Binding HomeTeam}"
-                               FontSize="{Binding Layout.TeamFontSize}"
-                               FontAttributes="Bold"
-                               TextColor="White"
-                               HorizontalTextAlignment="Center"
-                               LineBreakMode="TailTruncation"
-                               MaxLines="2"
-                               HorizontalOptions="Center" />
-                    </VerticalStackLayout>
+                <!-- Teams and score. Badges share row 0 so a two-line home
+                     name ("Racing de Santander") cannot push its crest below
+                     the away crest — VerticalStackLayouts used to pack
+                     badge+name independently and the shorter side's badge
+                     sat higher. -->
+                <Grid Grid.Row="1"
+                      ColumnDefinitions="*,Auto,*"
+                      RowDefinitions="Auto,Auto"
+                      RowSpacing="7"
+                      VerticalOptions="Center">
+                    <Grid Grid.Row="0" Grid.Column="0"
+                          WidthRequest="{Binding Layout.BadgeSize}"
+                          HeightRequest="{Binding Layout.BadgeSize}"
+                          HorizontalOptions="Center"
+                          VerticalOptions="Center">
+                        <!-- Treated badge: metallic ring, inner plate, gloss -->
+                        <Border x:Name="HomeBadgeChrome"
+                                StrokeShape="Ellipse"
+                                StrokeThickness="0"
+                                Background="{StaticResource MetallicRingBrush}"
+                                Padding="3"
+                                IsVisible="{Binding HasHomeBadge}">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
+                            </Border.Shadow>
+                            <Grid>
+                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
+                                    <Image Source="{Binding HomeBadge}" Aspect="AspectFit" />
+                                </Border>
+                                <Border StrokeShape="Ellipse" StrokeThickness="0"
+                                        Background="{StaticResource BadgeGlossBrush}"
+                                        InputTransparent="True" />
+                            </Grid>
+                        </Border>
+                        <!-- Monogram fallback in team colour -->
+                        <Border x:Name="HomeMonogramChrome"
+                                StrokeShape="Ellipse"
+                                Stroke="#40FFFFFF"
+                                StrokeThickness="1"
+                                Background="{Binding HomeAccent}"
+                                IsVisible="{Binding NoHomeBadge}">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
+                            </Border.Shadow>
+                            <Label Text="{Binding HomeInitial}"
+                                   FontSize="{Binding Layout.TeamFontSize}"
+                                   FontAttributes="Bold"
+                                   TextColor="White"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Border>
+                    </Grid>
 
-                    <Label Grid.Column="1"
+                    <Label Grid.Row="0" Grid.Column="1" Grid.RowSpan="2"
                            x:Name="ScoreLabel"
                            Text="{Binding ScoreText}"
                            Margin="12,0"
@@ -195,54 +195,68 @@
                         </Label.Triggers>
                     </Label>
 
-                    <VerticalStackLayout Grid.Column="2" Spacing="7" HorizontalOptions="Center" VerticalOptions="Center">
-                        <Grid WidthRequest="{Binding Layout.BadgeSize}"
-                              HeightRequest="{Binding Layout.BadgeSize}"
-                              HorizontalOptions="Center">
-                            <Border x:Name="AwayBadgeChrome"
-                                    StrokeShape="Ellipse"
-                                    StrokeThickness="0"
-                                    Background="{StaticResource MetallicRingBrush}"
-                                    Padding="3"
-                                    IsVisible="{Binding HasAwayBadge}">
-                                <Border.Shadow>
-                                    <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
-                                </Border.Shadow>
-                                <Grid>
-                                    <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
-                                        <Image Source="{Binding AwayBadge}" Aspect="AspectFit" />
-                                    </Border>
-                                    <Border StrokeShape="Ellipse" StrokeThickness="0"
-                                            Background="{StaticResource BadgeGlossBrush}"
-                                            InputTransparent="True" />
-                                </Grid>
-                            </Border>
-                            <Border x:Name="AwayMonogramChrome"
-                                    StrokeShape="Ellipse"
-                                    Stroke="#40FFFFFF"
-                                    StrokeThickness="1"
-                                    Background="{Binding AwayAccent}"
-                                    IsVisible="{Binding NoAwayBadge}">
-                                <Border.Shadow>
-                                    <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
-                                </Border.Shadow>
-                                <Label Text="{Binding AwayInitial}"
-                                       FontSize="{Binding Layout.TeamFontSize}"
-                                       FontAttributes="Bold"
-                                       TextColor="White"
-                                       HorizontalOptions="Center"
-                                       VerticalOptions="Center" />
-                            </Border>
-                        </Grid>
-                        <Label Text="{Binding AwayTeam}"
-                               FontSize="{Binding Layout.TeamFontSize}"
-                               FontAttributes="Bold"
-                               TextColor="White"
-                               HorizontalTextAlignment="Center"
-                               LineBreakMode="TailTruncation"
-                               MaxLines="2"
-                               HorizontalOptions="Center" />
-                    </VerticalStackLayout>
+                    <Grid Grid.Row="0" Grid.Column="2"
+                          WidthRequest="{Binding Layout.BadgeSize}"
+                          HeightRequest="{Binding Layout.BadgeSize}"
+                          HorizontalOptions="Center"
+                          VerticalOptions="Center">
+                        <Border x:Name="AwayBadgeChrome"
+                                StrokeShape="Ellipse"
+                                StrokeThickness="0"
+                                Background="{StaticResource MetallicRingBrush}"
+                                Padding="3"
+                                IsVisible="{Binding HasAwayBadge}">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
+                            </Border.Shadow>
+                            <Grid>
+                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
+                                    <Image Source="{Binding AwayBadge}" Aspect="AspectFit" />
+                                </Border>
+                                <Border StrokeShape="Ellipse" StrokeThickness="0"
+                                        Background="{StaticResource BadgeGlossBrush}"
+                                        InputTransparent="True" />
+                            </Grid>
+                        </Border>
+                        <Border x:Name="AwayMonogramChrome"
+                                StrokeShape="Ellipse"
+                                Stroke="#40FFFFFF"
+                                StrokeThickness="1"
+                                Background="{Binding AwayAccent}"
+                                IsVisible="{Binding NoAwayBadge}">
+                            <Border.Shadow>
+                                <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
+                            </Border.Shadow>
+                            <Label Text="{Binding AwayInitial}"
+                                   FontSize="{Binding Layout.TeamFontSize}"
+                                   FontAttributes="Bold"
+                                   TextColor="White"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Border>
+                    </Grid>
+
+                    <Label Grid.Row="1" Grid.Column="0"
+                           Text="{Binding HomeTeam}"
+                           FontSize="{Binding Layout.TeamFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center"
+                           LineBreakMode="TailTruncation"
+                           MaxLines="2"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Start" />
+
+                    <Label Grid.Row="1" Grid.Column="2"
+                           Text="{Binding AwayTeam}"
+                           FontSize="{Binding Layout.TeamFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center"
+                           LineBreakMode="TailTruncation"
+                           MaxLines="2"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Start" />
                 </Grid>
             </Grid>
 

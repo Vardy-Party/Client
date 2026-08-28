@@ -61,6 +61,18 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
     public double RowHeight => _metrics.CardHeight + (2 * StripChromePadVertical);
 
     /// <summary>
+    /// Explicit height of one league-row item (header + strip), NOT including
+    /// <see cref="RowMarginThickness"/>. CollectionView on every MAUI backend
+    /// otherwise stretches items to the leftover viewport — header and cards
+    /// at the top of a tall cell, empty black below (the field slab). Pinning
+    /// HeightRequest to this value makes that empty region zero height.
+    /// Header line is the taller of the league icon and the title's line box;
+    /// 10 is the Spacing between header and strip in LeagueRowTemplate.
+    /// </summary>
+    public double LeagueRowHeight =>
+        Math.Max(LeagueIconSize, LeagueTitleFontSize * 1.4) + 10 + RowHeight;
+
+    /// <summary>
     /// Padding of the strip's inner card layout, sized so the focused card's
     /// chrome (+9% scale, ring, comfort pad) has room to render at rest:
     /// horizontal start/end room for the first/last card, vertical headroom
@@ -108,7 +120,7 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
         nameof(CardWidth), nameof(CardHeight), nameof(CardCornerRadius), nameof(BadgeSize),
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),
-        nameof(RowHeight), nameof(StripPaddingThickness), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
+        nameof(RowHeight), nameof(LeagueRowHeight), nameof(StripPaddingThickness), nameof(PagePaddingThickness), nameof(RowMarginThickness), nameof(CardMarginThickness),
         nameof(CardSpacing), nameof(BrandLogoSize), nameof(FlatCardChrome), nameof(StagedStripCards),
         nameof(FocusRingThickness), nameof(FocusedCardLift),
     ];

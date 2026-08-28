@@ -1,3 +1,4 @@
+using System;
 using VardyParty.HomeUi.Views;
 using VardyParty.Presentation;
 using Xunit;
@@ -80,5 +81,25 @@ public class HomeLayoutStateStripPaddingTests
         Assert.Equal(17, padding.Top);
         Assert.Equal(23, padding.Left);
         Assert.Equal(194, state.RowHeight);
+        // Header (max icon 40, title line) + Spacing 10 + RowHeight 194.
+        Assert.Equal(
+            Math.Max(state.LeagueIconSize, state.LeagueTitleFontSize * 1.4) + 10 + state.RowHeight,
+            state.LeagueRowHeight);
+    }
+
+    [Theory]
+    [InlineData(HomeLayoutClass.Tv)]
+    [InlineData(HomeLayoutClass.Desktop)]
+    [InlineData(HomeLayoutClass.PhoneLandscape)]
+    [InlineData(HomeLayoutClass.PhonePortrait)]
+    public void LeagueRowHeight_IsHeaderPlusStrip_NotViewportTall(HomeLayoutClass layoutClass)
+    {
+        var state = new HomeLayoutState();
+        state.Apply(layoutClass);
+
+        // Must be content-sized: far smaller than a 1080p leftover (~800+).
+        // A viewport-tall item is what painted the black slab.
+        Assert.True(state.LeagueRowHeight < 400);
+        Assert.True(state.LeagueRowHeight > state.RowHeight);
     }
 }
