@@ -37,7 +37,7 @@ namespace VardyParty
         /// <summary>
         /// Called when an overlay handler has consumed Back (e.g. cancel
         /// finding-streams). Arms exit grace so a repeat press against a
-        /// stale frame cannot <see cref="FinishAndRemoveTask"/>.
+        /// stale frame cannot exit the app.
         /// </summary>
         public static void NoteOverlayBackConsumed() =>
             _lastOverlayBackMs = System.Environment.TickCount64;
