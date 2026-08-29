@@ -1,6 +1,5 @@
 #if ANDROID
 using Android.Widget;
-using AndroidX.Core.Widget;
 using AndroidX.RecyclerView.Widget;
 using AView = Android.Views.View;
 using AViewGroup = Android.Views.ViewGroup;
