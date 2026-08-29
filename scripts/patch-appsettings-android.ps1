@@ -1,1 +1,8 @@
-param([string]$AppSettingsPath,[string]$UserSecretsId); $ErrorActionPreference="Stop"; try{ Write-Host "[BUILD] Patching..." -ForegroundColor Cyan; $sp=Join-Path $env:APPDATA "Microsoft\UserSecrets\$UserSecretsId\secrets.json"; if(-not(Test-Path $sp)){throw "Secrets not found"}; $a=Get-Content $AppSettingsPath -Raw|ConvertFrom-Json; $s=Get-Content $sp -Raw|ConvertFrom-Json; if(-not $a.PSObject.Properties["Auth0"]){$a|Add-Member -NotePropertyName "Auth0" -NotePropertyValue ([PSCustomObject]@{})}; if(-not $a.PSObject.Properties["Api"]){$a|Add-Member -NotePropertyName "Api" -NotePropertyValue ([PSCustomObject]@{})}; foreach($p in $s.PSObject.Properties){ if($p.Name -match "^Auth0:(.+)"){$a.Auth0|Add-Member -NotePropertyName $matches[1] -NotePropertyValue $p.Value -Force} elseif($p.Name -match "^Api:(.+)"){$a.Api|Add-Member -NotePropertyName $matches[1] -NotePropertyValue $p.Value -Force} }; if($a.Auth0.PSObject.Properties["TokenLeewaySeconds"]){$a.Auth0.TokenLeewaySeconds=[int]$a.Auth0.TokenLeewaySeconds}; if($a.PSObject.Properties["AllowUserSecrets"]){$a.PSObject.Properties.Remove("AllowUserSecrets")}; [System.IO.File]::WriteAllText($AppSettingsPath,($a|ConvertTo-Json -Depth 10),[System.Text.Encoding]::UTF8); Write-Host "[BUILD] SUCCESS" -ForegroundColor Green }catch{ Write-Host "[BUILD] ERROR: $_" -ForegroundColor Red; [Console]::Error.WriteLine($_); exit 1 }
+# Back-compat wrapper — Android MSBuild target still calls this name.
+param(
+    [Parameter(Mandatory = $true)][string]$AppSettingsPath,
+    [Parameter(Mandatory = $true)][string]$UserSecretsId
+)
+
+& "$PSScriptRoot/patch-appsettings.ps1" -AppSettingsPath $AppSettingsPath -UserSecretsId $UserSecretsId
+exit $LASTEXITCODE

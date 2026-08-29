@@ -96,3 +96,33 @@ so step 1 is enough even if `which dotnet` is still 10. It pins
 `HomeUiTargetFrameworks=net11.0` itself (no android workload needed) and, if
 NETSDK1147 still surfaces, prints the fallback remedy
 (`dotnet workload install android`).
+
+## Secrets (Auth0 / API)
+
+Committed `VardyParty.Desktop/appsettings.json` is a **template** (empty Auth0
+Domain/ClientId/Audience and production API URLs). Builds must enrich it:
+
+| Path | How secrets are injected |
+|------|--------------------------|
+| **CD snap jobs** | `.github/workflows/cd.yml` → `Generate appsettings.json for Linux` |
+| **release.yml Linux** | `scripts/merge-appsettings-secrets.sh` from Actions secrets |
+| **Local `launch-linux-app.cmd`** | Merges .NET user-secrets (same `UserSecretsId` as MAUI), then `git restore`s the template on exit |
+| **Local `dotnet` with patch** | `-p:PatchAppSettings=true` on `VardyParty.Desktop` (pwsh or bash merge) |
+
+One-time local setup (same store as Android):
+
+```bash
+dotnet user-secrets set "Auth0:Domain" "your-tenant.auth0.com" --project VardyParty.Desktop/VardyParty.Desktop.csproj
+dotnet user-secrets set "Auth0:ClientId" "your-client-id" --project VardyParty.Desktop/VardyParty.Desktop.csproj
+dotnet user-secrets set "Auth0:Audience" "your-audience" --project VardyParty.Desktop/VardyParty.Desktop.csproj
+# … Scope, CallbackScheme, RedirectUri, PostLogoutRedirectUri, TokenLeewaySeconds,
+#   RequiredRoleClaimType, RequiredRole, Api:HeadlessBaseUrl — see docs/LOCAL_ANDROID_BUILD.md
+```
+
+Or pass `-p:PatchAppSettings=true` on restore/run after the secrets exist:
+
+```bash
+dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release \
+  -p:HomeUiTargetFrameworks=net11.0 -p:PatchAppSettings=true
+git restore VardyParty.Desktop/appsettings.json
+```

@@ -814,50 +814,26 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
+        env:
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENTID: ${{ secrets.AUTH0_CLIENTID }}
+          AUTH0_AUDIENCE: ${{ secrets.AUTH0_AUDIENCE }}
+          AUTH0_SCOPE: ${{ secrets.AUTH0_SCOPE }}
+          AUTH0_CALLBACKSCHEME: ${{ secrets.AUTH0_CALLBACKSCHEME }}
+          AUTH0_REDIRECTURI: ${{ secrets.AUTH0_REDIRECTURI }}
+          AUTH0_POSTLOGOUTREDIRECTURI: ${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}
+          AUTH0_TOKENLEEAWAYSECONDS: ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}
+          AUTH0_REQUIREDROLECLAIMTYPE: ${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}
+          AUTH0_REQUIREDROLE: ${{ secrets.AUTH0_REQUIREDROLE }}
+          API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
-          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
-          if [ -f "$APPSETTINGS_PATH" ]; then
-            BASE_JSON=$(cat "$APPSETTINGS_PATH")
-          else
-            BASE_JSON="{}"
-          fi
-          echo "$BASE_JSON" | jq \
-            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
-            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
-            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
-            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
-            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
-            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
-            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
-            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
-            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
-            '(.Auth0 //= {})
-             | (.Api //= {})
-             | .Auth0.Domain = $domain
-             | .Auth0.ClientId = $clientId
-             | .Auth0.Audience = $audience
-             | .Auth0.Scope = $scope
-             | .Auth0.CallbackScheme = $callbackScheme
-             | .Auth0.RedirectUri = $redirectUri
-             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
-             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
-             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
-             | .Auth0.RequiredRole = $requiredRole
-             | .Api.HeadlessBaseUrl = $headlessBaseUrl
-             | del(.AllowUserSecrets)' \
-            > "$APPSETTINGS_PATH"
-          echo "appsettings.json merged and AllowUserSecrets removed for Linux x64"
-        shell: bash
-      - name: Verify AllowUserSecrets is not in Linux appsettings.json
-        run: |
-          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
-          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+          chmod +x scripts/merge-appsettings-secrets.sh
+          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
-          echo "OK: AllowUserSecrets not found in Linux appsettings.json"
+          echo "OK: Linux appsettings enriched from Actions secrets"
         shell: bash
       - name: Publish Linux x64 application
         run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
@@ -1064,50 +1040,26 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
+        env:
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENTID: ${{ secrets.AUTH0_CLIENTID }}
+          AUTH0_AUDIENCE: ${{ secrets.AUTH0_AUDIENCE }}
+          AUTH0_SCOPE: ${{ secrets.AUTH0_SCOPE }}
+          AUTH0_CALLBACKSCHEME: ${{ secrets.AUTH0_CALLBACKSCHEME }}
+          AUTH0_REDIRECTURI: ${{ secrets.AUTH0_REDIRECTURI }}
+          AUTH0_POSTLOGOUTREDIRECTURI: ${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}
+          AUTH0_TOKENLEEAWAYSECONDS: ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}
+          AUTH0_REQUIREDROLECLAIMTYPE: ${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}
+          AUTH0_REQUIREDROLE: ${{ secrets.AUTH0_REQUIREDROLE }}
+          API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
-          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
-          if [ -f "$APPSETTINGS_PATH" ]; then
-            BASE_JSON=$(cat "$APPSETTINGS_PATH")
-          else
-            BASE_JSON="{}"
-          fi
-          echo "$BASE_JSON" | jq \
-            --arg domain "${{ secrets.AUTH0_DOMAIN }}" \
-            --arg clientId "${{ secrets.AUTH0_CLIENTID }}" \
-            --arg audience "${{ secrets.AUTH0_AUDIENCE }}" \
-            --arg scope "${{ secrets.AUTH0_SCOPE }}" \
-            --arg callbackScheme "${{ secrets.AUTH0_CALLBACKSCHEME }}" \
-            --arg redirectUri "${{ secrets.AUTH0_REDIRECTURI }}" \
-            --arg postLogoutRedirectUri "${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}" \
-            --argjson tokenLeewaySeconds "${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}" \
-            --arg requiredRoleClaimType "${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}" \
-            --arg requiredRole "${{ secrets.AUTH0_REQUIREDROLE }}" \
-            --arg headlessBaseUrl "${{ secrets.API_HEADLESSBASEURL }}" \
-            '(.Auth0 //= {})
-             | (.Api //= {})
-             | .Auth0.Domain = $domain
-             | .Auth0.ClientId = $clientId
-             | .Auth0.Audience = $audience
-             | .Auth0.Scope = $scope
-             | .Auth0.CallbackScheme = $callbackScheme
-             | .Auth0.RedirectUri = $redirectUri
-             | .Auth0.PostLogoutRedirectUri = $postLogoutRedirectUri
-             | .Auth0.TokenLeewaySeconds = $tokenLeewaySeconds
-             | .Auth0.RequiredRoleClaimType = $requiredRoleClaimType
-             | .Auth0.RequiredRole = $requiredRole
-             | .Api.HeadlessBaseUrl = $headlessBaseUrl
-             | del(.AllowUserSecrets)' \
-            > "$APPSETTINGS_PATH"
-          echo "appsettings.json merged and AllowUserSecrets removed for Linux ARM64"
-        shell: bash
-      - name: Verify AllowUserSecrets is not in Linux appsettings.json
-        run: |
-          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
-          if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
+          chmod +x scripts/merge-appsettings-secrets.sh
+          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
-          echo "OK: AllowUserSecrets not found in Linux appsettings.json"
+          echo "OK: Linux appsettings enriched from Actions secrets"
         shell: bash
       - name: Publish Linux ARM64 application
         run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false

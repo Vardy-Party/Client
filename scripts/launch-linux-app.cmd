@@ -26,10 +26,14 @@ REM android/iOS re-restore dance in package-android.ps1 / ci.yml guards
 REM against). The pin is process-scoped: the next android packaging run
 REM re-restores with its own TFMs as before.
 REM
+REM Secrets: committed VardyParty.Desktop/appsettings.json is a template.
+REM Before build we merge Auth0/API values from .NET user-secrets (same
+REM UserSecretsId as the MAUI head), then git-restore the template on exit.
+REM
 REM If the build still fails with NETSDK1147 (e.g. a stale obj/ restored
 REM without the pin), the fallback remedy is printed below.
 echo Launching Vardy Party Desktop from: %REPO_WSL%
-wsl.exe --cd "%REPO_WSL%" bash -lc "set -o pipefail; export DISPLAY=${DISPLAY:-:0}; export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}; LOG=$(mktemp /tmp/vardyparty-desktop-launch.XXXXXX.log); { $HOME/.dotnet/dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources -p:HomeUiTargetFrameworks=net11.0 && $HOME/.dotnet/dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0; } 2>&1 | tee $LOG; RC=$?; if [ $RC -ne 0 ] && grep -q NETSDK1147 $LOG; then echo; echo 'NETSDK1147: the android workload leaked into the desktop build graph.'; echo 'Remedy: dotnet workload install android'; fi; rm -f $LOG; exit $RC"
+wsl.exe --cd "%REPO_WSL%" bash -lc "set -euo pipefail; export DISPLAY=${DISPLAY:-:0}; export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}; export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}; export USER_SECRETS_ID=543d9e88-b60c-4397-bc9d-c4614b8b1dcb; APPSETTINGS=VardyParty.Desktop/appsettings.json; LOG=$(mktemp /tmp/vardyparty-desktop-launch.XXXXXX.log); restore_appsettings() { git restore -- \"$APPSETTINGS\" 2>/dev/null || true; }; trap restore_appsettings EXIT; chmod +x scripts/merge-appsettings-secrets.sh; scripts/merge-appsettings-secrets.sh \"$APPSETTINGS\"; { $HOME/.dotnet/dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources -p:HomeUiTargetFrameworks=net11.0 && $HOME/.dotnet/dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0; } 2>&1 | tee $LOG; RC=${PIPESTATUS[0]}; if [ $RC -ne 0 ] && grep -q NETSDK1147 $LOG; then echo; echo 'NETSDK1147: the android workload leaked into the desktop build graph.'; echo 'Remedy: dotnet workload install android'; fi; rm -f $LOG; exit $RC"
 set "EXITCODE=%ERRORLEVEL%"
 
 if not "%EXITCODE%"=="0" (
