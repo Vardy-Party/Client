@@ -182,8 +182,10 @@ namespace VardyParty.Platforms.Android
         private global::Android.Widget.Button? _reportButton;
         private global::Android.Widget.Button? _videoInfoButton;
         private FrameLayout? _scoresTickerContainer;
+        private LinearLayout? _tickerTrack;
         private TextView? _tickerText1;
         private TextView? _tickerText2;
+        private global::Android.Views.View? _tickerGap;
         private global::Android.OS.Handler? _tickerHandler;
         private Java.Lang.Runnable? _tickerRunnable;
         private float _tickerScrollX;
@@ -493,12 +495,13 @@ namespace VardyParty.Platforms.Android
             };
             root.AddView(_menuPanel, menuPanelParams);
 
-            // Seamless infinite ticker: two identical TextViews in a clipped
-            // FrameLayout, each sized to the full string width and translated
-            // independently. A LinearLayout+WrapContent parent previously
-            // capped each copy to the viewport — Paint measure made us scroll,
-            // but glyphs outside the layout box were clipped, so nothing
-            // followed the moving head (Windows builds an unconstrained track).
+            // Seamless infinite ticker (Windows-style): one horizontal track
+            // with copy A + gap + copy B, translated as a unit inside a clipped
+            // viewport. Dual TranslationX on stacked TextViews still failed on
+            // BRAVIA when Measure/Layout lagged RequestLayout — the second
+            // copy stayed viewport-capped and never entered from the right.
+            // Exact EXACTLY widths + sync Measure/Layout make the track wider
+            // than the screen so the trailing copy is real laid-out glyphs.
             _scoresTickerContainer = new FrameLayout(this)
             {
                 Visibility = global::Android.Views.ViewStates.Gone
@@ -516,29 +519,40 @@ namespace VardyParty.Platforms.Android
                 tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
                 ConfigureEmojiFriendlyTextView(tv);
                 tv.SetSingleLine(true);
-                tv.SetHorizontallyScrolling(true);
+                // Do not SetHorizontallyScrolling — that arms TextView's own
+                // marquee engine and interferes with TranslationX (see 9239408).
                 tv.Ellipsize = null;
                 tv.SetPadding(0, 0, 0, 0);
                 return tv;
             }
 
+            _tickerTrack = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal
+            };
             _tickerText1 = MakeTickerTextView();
             _tickerText2 = MakeTickerTextView();
+            _tickerGap = new global::Android.Views.View(this);
             // Exact widths are applied in ApplyTickerCopyLayout once text is known.
-            _scoresTickerContainer.AddView(_tickerText1, new FrameLayout.LayoutParams(
+            _tickerTrack.AddView(_tickerText1, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+            _tickerTrack.AddView(_tickerGap, new LinearLayout.LayoutParams(
+                _tickerGapPx,
+                1));
+            _tickerTrack.AddView(_tickerText2, new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+            _scoresTickerContainer.AddView(_tickerTrack, new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.GravityFlags.CenterVertical));
-            _scoresTickerContainer.AddView(_tickerText2, new FrameLayout.LayoutParams(
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.GravityFlags.CenterVertical));
+                global::Android.Views.GravityFlags.CenterVertical | global::Android.Views.GravityFlags.Left));
 
             // Runnable-based scroll loop: runs every ~16ms (~60fps)
             _tickerHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _tickerRunnable = new Java.Lang.Runnable(() =>
             {
-                if (_tickerText1 == null || _scoresTickerContainer == null) return;
+                if (_tickerTrack == null || _tickerText1 == null || _scoresTickerContainer == null) return;
 
                 if (_tickerCopyWidth <= 0)
                 {
@@ -559,11 +573,15 @@ namespace VardyParty.Platforms.Android
                 if (!TickerMarquee.ShouldLoop(contentWidth, viewportWidth))
                 {
                     _tickerScrollX = 0f;
-                    _tickerText1.TranslationX = 0f;
+                    _tickerTrack.TranslationX = 0f;
                     if (_tickerText2 != null)
                     {
                         _tickerText2.Visibility = global::Android.Views.ViewStates.Gone;
-                        _tickerText2.TranslationX = 0f;
+                    }
+
+                    if (_tickerGap != null)
+                    {
+                        _tickerGap.Visibility = global::Android.Views.ViewStates.Gone;
                     }
 
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
@@ -575,15 +593,16 @@ namespace VardyParty.Platforms.Android
                     _tickerText2.Visibility = global::Android.Views.ViewStates.Visible;
                 }
 
+                if (_tickerGap != null)
+                {
+                    _tickerGap.Visibility = global::Android.Views.ViewStates.Visible;
+                }
+
                 var period = TickerMarquee.LoopPeriod(contentWidth, _tickerGapPx);
                 _tickerScrollX = (float)TickerMarquee.WrapPositive(_tickerScrollX + _tickerPixelsPerFrame, period);
-                _tickerText1.TranslationX = -_tickerScrollX;
-                if (_tickerText2 != null)
-                {
-                    // Second copy sits one period behind so it fills the right
-                    // as the first exits left — seamless wrap.
-                    _tickerText2.TranslationX = -_tickerScrollX + (float)period;
-                }
+                // One transform on the whole track — copy B is laid out to the
+                // right of the gap, so it fills the viewport as A exits left.
+                _tickerTrack.TranslationX = -_tickerScrollX;
 
                 PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             });
@@ -838,14 +857,14 @@ namespace VardyParty.Platforms.Android
         }
 
         /// <summary>
-        /// Pin both copies to the full string width. Without an exact width,
-        /// MatchParent parents AT_MOST-measure WrapContent TextViews to the
-        /// viewport — scrolling moves a clipped box and the trailing copy
-        /// never appears.
+        /// Pin both copies and the track to exact pixel widths, then measure/
+        /// layout synchronously. MatchParent parents AT_MOST-measure WrapContent
+        /// children to the viewport — without EXACTLY widths the trailing copy
+        /// never lays out past the screen edge (Windows measures unconstrained).
         /// </summary>
         private void ApplyTickerCopyLayout()
         {
-            if (_tickerText1 == null)
+            if (_tickerText1 == null || _tickerTrack == null)
             {
                 return;
             }
@@ -858,27 +877,58 @@ namespace VardyParty.Platforms.Android
             }
 
             _tickerCopyWidth = width;
-            SetTickerCopyWidth(_tickerText1, width);
+            SetExactChildWidth(_tickerText1, width);
             if (_tickerText2 != null)
             {
-                SetTickerCopyWidth(_tickerText2, width);
+                SetExactChildWidth(_tickerText2, width);
             }
+
+            if (_tickerGap != null)
+            {
+                SetExactChildWidth(_tickerGap, _tickerGapPx);
+            }
+
+            var trackWidth = width + _tickerGapPx + width;
+            var trackLp = _tickerTrack.LayoutParameters;
+            if (trackLp == null)
+            {
+                trackLp = new FrameLayout.LayoutParams(
+                    trackWidth,
+                    global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                    global::Android.Views.GravityFlags.CenterVertical | global::Android.Views.GravityFlags.Left);
+            }
+            else
+            {
+                trackLp.Width = trackWidth;
+            }
+
+            _tickerTrack.LayoutParameters = trackLp;
+
+            // Sync layout so the first scroll frame already has real glyphs past
+            // the viewport — RequestLayout alone left BRAVIA drawing a clipped box.
+            var heightSpec = global::Android.Views.View.MeasureSpec.MakeMeasureSpec(
+                0,
+                global::Android.Views.MeasureSpecMode.Unspecified);
+            _tickerTrack.Measure(
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(trackWidth, global::Android.Views.MeasureSpecMode.Exactly),
+                heightSpec);
+            var trackHeight = Math.Max(_tickerTrack.MeasuredHeight, 1);
+            _tickerTrack.Layout(0, 0, trackWidth, trackHeight);
         }
 
-        private static void SetTickerCopyWidth(TextView textView, int widthPx)
+        private static void SetExactChildWidth(global::Android.Views.View view, int widthPx)
         {
-            var lp = textView.LayoutParameters;
+            var lp = view.LayoutParameters;
             if (lp == null)
             {
-                lp = new FrameLayout.LayoutParams(widthPx, global::Android.Views.ViewGroup.LayoutParams.WrapContent);
+                lp = new LinearLayout.LayoutParams(widthPx, global::Android.Views.ViewGroup.LayoutParams.WrapContent);
             }
             else
             {
                 lp.Width = widthPx;
             }
 
-            textView.LayoutParameters = lp;
-            textView.RequestLayout();
+            view.LayoutParameters = lp;
         }
 
         private static void PostDelayedCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable, long delayMs)
