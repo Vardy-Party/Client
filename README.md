@@ -35,10 +35,10 @@ when a feed dies.
 ## Supported Platforms
 
 - ✅ **Android** phones + **32-bit Android TV** (`armeabi-v7a` + `arm64-v8a`)
-- ✅ **iOS**
-- ✅ **macOS** (Mac Catalyst)
 - ✅ **Windows** 10/11
 - ✅ **Linux** (x64 and ARM64), including **WSL**, via `VardyParty.Desktop`
+- ⏳ **iOS** — CI builds; **untested** pending Apple Developer Account
+- ⏳ **macOS (Mac Catalyst)** — CI builds; **untested** pending Apple Developer Account
 
 ## Key Features
 
