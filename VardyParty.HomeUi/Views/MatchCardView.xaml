@@ -15,6 +15,12 @@
             <GradientStop Color="#F4F6F8" Offset="1" />
         </LinearGradientBrush>
 
+        <!-- Inner plate behind the crest. Dark so pure-white BBC SVGs
+             (Juventus etc.) stay visible; colourful crests still read fine.
+             Light-dominant SVGs also get a matching circular backing in
+             SkiaBadgeImageLoader / BadgeCrestContrast. -->
+        <Color x:Key="BadgePlateColor">#1A2233</Color>
+
         <!-- Glass highlight over the top half of the badge -->
         <LinearGradientBrush x:Key="BadgeGlossBrush" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="#59FFFFFF" Offset="0" />
@@ -152,7 +158,7 @@
                                 <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
                             </Border.Shadow>
                             <Grid>
-                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
+                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="{StaticResource BadgePlateColor}" Padding="5">
                                     <Image Source="{Binding HomeBadge}" Aspect="AspectFit" />
                                 </Border>
                                 <Border StrokeShape="Ellipse" StrokeThickness="0"
@@ -210,7 +216,7 @@
                                 <Shadow Brush="Black" Opacity="0.45" Radius="9" Offset="0,3" />
                             </Border.Shadow>
                             <Grid>
-                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#F3F5F8" Padding="5">
+                                <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="{StaticResource BadgePlateColor}" Padding="5">
                                     <Image Source="{Binding AwayBadge}" Aspect="AspectFit" />
                                 </Border>
                                 <Border StrokeShape="Ellipse" StrokeThickness="0"

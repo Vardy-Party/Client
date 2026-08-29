@@ -129,7 +129,11 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
 
             using var snapshot = surface.Snapshot();
             using var bitmap = SKBitmap.FromImage(snapshot);
+            // Dark brandlogos (league wordmarks) → off-white for the dark homepage.
+            // White BBC crests (Juventus etc.) → dark circular backing so they
+            // still read on the match-card light plate (#F3F5F8).
             LightenDarkMonochrome(bitmap);
+            BadgeCrestContrast.ApplyDarkBackingIfLightDominant(bitmap);
             using var image = SKImage.FromBitmap(bitmap);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
             return data.ToArray();
