@@ -872,6 +872,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task LoadImagesAsync(IReadOnlyList<RowImagePlan> plan, int epoch)
     {
+        try
+        {
+            await LoadImagesCoreAsync(plan, epoch).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Homepage image load failed");
+        }
+    }
+
+    private async Task LoadImagesCoreAsync(IReadOnlyList<RowImagePlan> plan, int epoch)
+    {
         foreach (var rowPlan in plan)
         {
             if (Volatile.Read(ref _imageEpoch) != epoch)
