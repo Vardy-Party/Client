@@ -3,11 +3,18 @@
 **Repo:** `github.com/Vardy-Party/Client`  
 **Local:** `C:\Users\jonbr\source\repos\VardyParty-Client`
 
-Paste for a local agent:
+## Prompt for local agent (paste this)
 
 ```text
-Read and execute docs/agent-playbook-scrub-appsettings-secrets.md in this repo.
-Report progress after each phase. Do not print secret values.
+In C:\Users\jonbr\source\repos\VardyParty-Client:
+
+git fetch origin cursor/secrets-remediation-playbook-1e7d
+git checkout cursor/secrets-remediation-playbook-1e7d
+git reset --hard origin/cursor/secrets-remediation-playbook-1e7d
+
+Read and execute docs/agent-playbook-scrub-appsettings-secrets.md end-to-end.
+Report after each phase. Never print secret values.
+Force-push history only after I type: rewrite history now
 ```
 
 ---
@@ -21,7 +28,7 @@ Live Auth0 + API values were committed in:
 
 They must be **templates only** in git. CD / local scripts inject secrets at build time.
 
-Open tip scrub: **PR #79** (`cursor/scrub-appsettings-secrets-1e7d`). Tip scrub ≠ history scrub.
+Open tip scrub: **PR #79** (`cursor/scrub-appsettings-secrets-1e7d`) — also has Linux enrichment (`f7435aa`). Tip scrub ≠ history scrub.
 
 ## Rules
 
