@@ -191,7 +191,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish macOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst -r maccatalyst-arm64 /p:ArchiveOnBuild=true -o ./output/macos
       
       - name: Package macOS
         run: |

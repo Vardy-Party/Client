@@ -693,7 +693,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.CI_RUN_ID }}
       - name: Restore dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }}
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-maccatalyst -r maccatalyst-arm64
       - name: Extract app version metadata
         id: app_version
         run: |
@@ -756,7 +756,7 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-maccatalyst -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-maccatalyst -c Release -r maccatalyst-arm64
       - name: Create macOS package
         run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
