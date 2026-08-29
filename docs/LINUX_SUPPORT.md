@@ -1,13 +1,18 @@
 # Linux Support
 
-> **Superseded.** The Avalonia 11 `VardyParty.Linux` app this document
-> described has been deleted. Linux is now served by **`VardyParty.Desktop`**:
-> the shared .NET MAUI XAML homepage (`VardyParty.HomeUi`) drawn by the
-> Avalonia 12 preview backend, with the Auth0 device-code/QR sign-in and
-> LibVLC playback ported over from the old head.
->
-> See [architecture/homepage-maui-avalonia.md](architecture/homepage-maui-avalonia.md)
-> for the full stack description, build instructions and CI shape.
+Linux is served by **`VardyParty.Desktop`**: the shared .NET MAUI XAML homepage
+(`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
+device-code/QR sign-in and **LibVLC playback in a native window** (not hosted
+inside Avalonia controls).
+
+```mermaid
+flowchart LR
+  XAML["HomeUi XAML"] --> Avalonia["Avalonia MAUI backend"]
+  XAML -.->|"not in tree"| VLC["LibVLC video window"]
+  Avalonia --> Skia["Skia on Linux / WSL"]
+```
+
+Deep dive: [architecture/homepage-maui-avalonia.md](architecture/homepage-maui-avalonia.md).
 
 The Desktop head targets **net11.0**. A .NET 10 SDK (Ubuntu apt or an old
 `~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 preview SDK**, same

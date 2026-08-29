@@ -17,6 +17,32 @@ target; native players own video. Built for **v2.0.0**.
 VardyParty aggregates live streams, health-checks them, and plays with automatic failover
 when a feed dies.
 
+```mermaid
+flowchart LR
+  HomeUi["HomeUi<br/>shared MAUI XAML"]
+  HomeUi --> Android["Android / TV<br/>ExoPlayer"]
+  HomeUi --> Windows["Windows<br/>MediaPlayerElement"]
+  HomeUi --> Desktop["Linux / WSL<br/>Avalonia draw + LibVLC"]
+  HomeUi --> Apple["iOS / Mac Catalyst<br/>AVPlayer - untested"]
+```
+
+## Documentation
+
+Full index: **[docs/INDEX.md](docs/INDEX.md)**
+
+| Doc | Why open it |
+|-----|-------------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Assemblies, heads, pick→play diagrams |
+| [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md) | Shared homepage + Avalonia Linux backend |
+| [docs/STREAM_PLAYBACK_RULES.md](docs/STREAM_PLAYBACK_RULES.md) | Playback session / engine contract |
+| [docs/STREAM_HEALTH_PROTOCOL.md](docs/STREAM_HEALTH_PROTOCOL.md) | Health-check protocol |
+| [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 preview + run Desktop / WSL |
+| [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1`) |
+| [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md) | Windows install / sideload |
+| [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) | Semver + build counter (`Version.props`) |
+| [docs/agent-playbook-merge-client-pr-v2.md](docs/agent-playbook-merge-client-pr-v2.md) | Land a PR so main releases **v2.0.0** |
+| [.github/CI-CD-SETUP.md](.github/CI-CD-SETUP.md) | CI / CD / Release workflows |
+
 ## Tech Stack
 
 - **.NET 11** (preview) — shared libraries + MAUI hosts + Linux desktop
@@ -78,10 +104,20 @@ VardyParty.Presentation/     # Shared HomeShell/Menu view-models
 VardyParty.Hosting/          # AddVardyParty() composition
 ```
 
-## Architecture
+## Architecture (short)
 
-- Service-oriented architecture with dependency injection
-- Reactive programming (`IObservable` / `IObserver`) for tournament updates and progress
-- Platform abstraction via `INativeVideoPlayerService`
-- Orchestrator pattern for stream resolution workflow
-- One homepage XAML (`HomeUi`); Linux paints it through the Avalonia MAUI backend; each OS keeps its own native player
+Heads depend inward on pure policy assemblies; UI does not own playback recovery.
+
+```mermaid
+flowchart TB
+  Heads["VardyParty + Desktop + HomeUi"]
+  Presentation["Presentation - pure net11.0 policy"]
+  Domains["Auth / Catalog / Streaming / Playback"]
+  Kernel["Kernel + Ports"]
+  Heads --> Presentation
+  Heads --> Domains
+  Presentation --> Kernel
+  Domains --> Kernel
+```
+
+Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

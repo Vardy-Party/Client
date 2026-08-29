@@ -2,6 +2,16 @@
 
 This guide explains how to build the Android app locally with proper configuration secrets, matching the CI/CD pipeline behavior.
 
+**Preferred (device APK):** from the repo root on Windows/pwsh:
+
+```powershell
+pwsh ./package-android.ps1
+```
+
+That script restores, patches secrets into `appsettings.json` for the build, and
+produces `armeabi-v7a` (TV) + `arm64-v8a` (phones) outputs. See script help for
+`-Mode`. The rest of this doc is the manual user-secrets / MSBuild path.
+
 ## Problem
 
 The CI/CD pipeline merges secrets (Auth0, API endpoints) into `appsettings.json` during builds. When building locally, these secrets are missing, causing configuration errors.
