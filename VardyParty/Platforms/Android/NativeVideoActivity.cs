@@ -21,7 +21,7 @@ using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {
-    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
+    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme.NoActionBar", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
     public partial class NativeVideoActivity : Activity
     {
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
@@ -959,6 +959,17 @@ namespace VardyParty.Platforms.Android
                 var window = Window;
                 if (window == null) return;
 
+                // Phone: Maui.MainTheme used to paint a blue ActionBar (colorPrimary)
+                // above the player. NoActionBar removes that; also paint status/nav
+                // bars black/transparent so a swipe-back transient strip is not blue.
+                window.AddFlags(global::Android.Views.WindowManagerFlags.Fullscreen);
+                window.ClearFlags(global::Android.Views.WindowManagerFlags.ForceNotFullscreen);
+                if (OperatingSystem.IsAndroidVersionAtLeast(21))
+                {
+                    window.SetStatusBarColor(global::Android.Graphics.Color.Transparent);
+                    window.SetNavigationBarColor(global::Android.Graphics.Color.Black);
+                }
+
                 // Hide status bar and navigation bar for immersive full-screen video
                 if (OperatingSystem.IsAndroidVersionAtLeast(30))
                 {
@@ -980,7 +991,10 @@ namespace VardyParty.Platforms.Android
                         global::Android.Views.SystemUiFlags.Fullscreen |
                         global::Android.Views.SystemUiFlags.HideNavigation |
                         global::Android.Views.SystemUiFlags.Immersive |
-                        global::Android.Views.SystemUiFlags.ImmersiveSticky);
+                        global::Android.Views.SystemUiFlags.ImmersiveSticky |
+                        global::Android.Views.SystemUiFlags.LayoutStable |
+                        global::Android.Views.SystemUiFlags.LayoutFullscreen |
+                        global::Android.Views.SystemUiFlags.LayoutHideNavigation);
 #pragma warning restore CS0618
                 }
 
@@ -990,6 +1004,23 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to hide system UI");
             }
+        }
+
+        public override void OnWindowFocusChanged(bool hasFocus)
+        {
+            base.OnWindowFocusChanged(hasFocus);
+            if (hasFocus)
+            {
+                // Phone status/nav bars reappear after dialogs or notification shade;
+                // re-assert immersive so the blue/system chrome stays gone.
+                HideSystemUI();
+            }
+        }
+
+        protected override void OnResume()
+        {
+            base.OnResume();
+            HideSystemUI();
         }
 
         private PlaybackMetrics BuildPlaybackMetrics(bool isBuffering = false)
