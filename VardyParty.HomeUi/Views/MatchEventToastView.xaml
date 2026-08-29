@@ -54,9 +54,10 @@
                       ColumnSpacing="10"
                       InputTransparent="True">
                     <Grid WidthRequest="26" HeightRequest="26" VerticalOptions="Center">
+                        <!-- Dark plate: white BBC crests (Juventus etc.) vanish on #F3F5F8. -->
                         <Border StrokeShape="Ellipse"
                                 StrokeThickness="0"
-                                BackgroundColor="#F3F5F8"
+                                BackgroundColor="#1A2233"
                                 Padding="3"
                                 IsVisible="{Binding Current.HasHomeBadge}">
                             <Image Source="{Binding Current.HomeBadge}" Aspect="AspectFit" />
@@ -87,7 +88,7 @@
                     <Grid Grid.Column="2" WidthRequest="26" HeightRequest="26" VerticalOptions="Center">
                         <Border StrokeShape="Ellipse"
                                 StrokeThickness="0"
-                                BackgroundColor="#F3F5F8"
+                                BackgroundColor="#1A2233"
                                 Padding="3"
                                 IsVisible="{Binding Current.HasAwayBadge}">
                             <Image Source="{Binding Current.AwayBadge}" Aspect="AspectFit" />
