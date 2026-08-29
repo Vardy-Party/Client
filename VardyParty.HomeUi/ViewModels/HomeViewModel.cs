@@ -194,6 +194,15 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowEmptyState => !_hasGames && !_isContentLoading;
 
     /// <summary>
+    /// Keep the rows host hidden until the enriched-first service publishes
+    /// (BBC done or valve). Painting cards while <see cref="IsContentLoading"/>
+    /// is true showed scoreless games that then reshuffled, and left the TV
+    /// scroller mid-board. Desktop/Windows bind the same property — rows stay
+    /// empty until the first board anyway, so the gate is effectively a no-op.
+    /// </summary>
+    public bool ShowGameRows => !_isContentLoading;
+
+    /// <summary>
     /// True until a games dictionary WITH API data lands (and again after a
     /// sign-out clears the feed). This is the crest's spin signal: it reflects
     /// actual catalog readiness, never a timer — only null applies (pre-API
@@ -209,6 +218,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             _isContentLoading = value;
             Raise(nameof(IsContentLoading));
             Raise(nameof(ShowEmptyState));
+            Raise(nameof(ShowGameRows));
         }
     }
 
@@ -503,6 +513,16 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         var epoch = Interlocked.Increment(ref _imageEpoch);
 
+        // Flip loading before materializing rows so ShowGameRows opens on the
+        // same apply as the first enriched (or valve) board — never paint
+        // cards under a still-true IsContentLoading (TV scroller / autofocus
+        // then sit on a board that is about to reshuffle).
+        var hasApiData = dict != null;
+        IsContentLoading = !hasApiData;
+        HasGames = gameCount > 0;
+        var liveCount = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
+        Subtitle = hasApiData ? FormatSubtitle(gameCount, liveCount) : LoadingSubtitle;
+
         ApplyRowsDiff(rowModels);
 
         if (!hadGames && Rows.Count > 0 && Rows[0].Cards.Count > 0)
@@ -511,19 +531,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
 
         GameCount = gameCount;
-
-        // "Ready" means the API DELIVERED a board. The enriched service never
-        // publishes before its first API fetch completes, so ANY non-null dict
-        // is a real delivery — including a legitimately empty one (late night,
-        // all matches finished: the API answers 404 and the client must render
-        // the "no matches" empty state, not an eternal spinner). Only the
-        // BehaviorSubject null seed / sign-out keep the crest spinning and the
-        // subtitle on Loading….
-        var hasApiData = dict != null;
-        IsContentLoading = !hasApiData;
-        HasGames = gameCount > 0;
-        var liveCount = rowModels.Sum(r => r.Games.Count(g => g.IsLiveForOrdering));
-        Subtitle = hasApiData ? FormatSubtitle(gameCount, liveCount) : LoadingSubtitle;
 
         GamesUpdated?.Invoke(gameCount);
 

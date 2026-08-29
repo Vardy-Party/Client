@@ -1,5 +1,6 @@
 #if ANDROID
 using Android.Widget;
+using AndroidX.Core.Widget;
 using AndroidX.RecyclerView.Widget;
 using AView = Android.Views.View;
 using AViewGroup = Android.Views.ViewGroup;
@@ -493,9 +494,12 @@ public static class TvDpadFocusRouter
     }
 
     /// <summary>
-    /// Park the rows RecyclerView on the first league row, then top-align —
-    /// used by the one-shot autofocus so cold start never leaves focus on a
-    /// card whose rail is scrolled off-screen.
+    /// Park the rows RecyclerView on the first league row at offset 0, then
+    /// top-align — used by the one-shot autofocus so cold start never leaves
+    /// focus on a card whose rail is scrolled off-screen. Prefer
+    /// ScrollToPositionWithOffset over SmoothScrollToPosition: the smooth
+    /// path can stop as soon as the row is barely visible and leave the
+    /// viewport mid-board after enrichment reshuffles.
     /// </summary>
     internal static void ScrollRowsToFirstRail(AView card)
     {
@@ -505,8 +509,36 @@ public static class TvDpadFocusRouter
             return;
         }
 
-        outer.ScrollToPosition(0);
-        PostTopAlignContaining(card);
+        if (outer.GetLayoutManager() is LinearLayoutManager linear)
+        {
+            linear.ScrollToPositionWithOffset(0, 0);
+        }
+        else
+        {
+            outer.ScrollToPosition(0);
+        }
+
+        // Also reset the horizontal strip under this card so the first card
+        // of the first rail is the left edge, not a mid-strip leftover.
+        ResetHorizontalStrip(card);
+
+        outer.Post(() =>
+        {
+            AlignRowToTop(outer, 0);
+            outer.Post(() => AlignRowToTop(outer, 0));
+        });
+    }
+
+    private static void ResetHorizontalStrip(AView card)
+    {
+        for (var parent = card.Parent; parent != null; parent = parent.Parent)
+        {
+            if (parent is HorizontalScrollView hsv)
+            {
+                hsv.ScrollTo(0, 0);
+                return;
+            }
+        }
     }
 
     /// <summary>

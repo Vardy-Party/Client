@@ -116,7 +116,7 @@
                  stretched items even with VerticalOptions=Start; those heads
                  use BindableLayout. Android keeps CollectionView for D-pad;
                  LeagueRowHeight pins each item so the black slab is zero. -->
-            <Grid Grid.Row="2" x:Name="RowsHost">
+            <Grid Grid.Row="2" x:Name="RowsHost" IsVisible="{Binding ShowGameRows}">
                 <CollectionView x:Name="RowsList"
                                 ItemTemplate="{StaticResource LeagueRowTemplate}"
                                 BackgroundColor="#0B0F1A"

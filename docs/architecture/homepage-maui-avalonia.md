@@ -683,13 +683,13 @@ games update renders, and hardened the remaining path end to end:
   apart at startup. A private publish lock now serializes the whole match+publish
   body, and the startup contract is **enriched-first**: every API publish is
   held until the initial BBC completion (success or failure) delivers the
-  one enriched board; a 10s valve from polling start
+  one enriched board; a 30s valve from polling start
   (`EnrichedGameService.InitialEnrichmentValve`) releases the freshest
-  API-only board if BBC hangs (the field TV's BBC parse blew the old 3s
-  grace, so users saw "0 games" → scoreless games → a reorder). A null or
-  empty pre-API board is never delivered as a settled state. Steady-state
-  live-score publishes are never delayed (no debounce; the hold is spent
-  once the first board is out).
+  API-only board if BBC hangs (TV multi-day parse routinely exceeded the
+  old 10s valve and leaked scoreless games that then reshuffled). BBC
+  failure releases immediately. A null or empty pre-API board is never
+  delivered as a settled state. Steady-state live-score publishes are never
+  delayed (no debounce; the hold is spent once the first board is out).
 - **Queued UI apply** (`HomeViewModel` / `HomeView`): catalog, errors, and
   badge assigns are queued off the Rx/HTTP thread. Windows drains that
   queue from a UI-thread `IDispatcherTimer` (must not `Dispatcher.Dispatch`

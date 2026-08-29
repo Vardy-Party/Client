@@ -25,10 +25,13 @@ public class EnrichedGameService(
     /// valve — measured FROM POLLING START — releases the un-enriched board
     /// as a fallback if BBC hangs (a dead fixtures endpoint must never hold
     /// the homepage hostage). An initial BBC FAILURE releases immediately.
-    /// Steady state is unaffected: once the initial BBC fetch has completed,
-    /// every publish goes out immediately.
+    /// sized at 30s: long enough to cover a typical TV BBC multi-day parse
+    /// burst without the old 10s leak of scoreless games that then reshuffled,
+    /// short enough that a hung fixtures endpoint does not strand the board.
+    /// Per-page HTTP still fails via CallTimeout and releases on exception;
+    /// this only covers a stuck-without-throwing fetch.
     /// </summary>
-    public static readonly TimeSpan InitialEnrichmentValve = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan InitialEnrichmentValve = TimeSpan.FromSeconds(30);
 
     private readonly TimeSpan _initialValve = initialEnrichmentValve ?? InitialEnrichmentValve;
     private readonly int _apiTtl = gamesApiSettings.Value?.RefreshSchedule ?? 300;

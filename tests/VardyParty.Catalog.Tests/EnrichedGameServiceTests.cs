@@ -334,15 +334,16 @@ public class EnrichedGameServiceTests
     }
 
     [Fact]
-    public void InitialEnrichmentValve_IsTenSecondsFromPollingStart()
+    public void InitialEnrichmentValve_CoversSlowTvBbcParse()
     {
-        // Arrange: the spec'd fallback for a hung BBC endpoint.
+        // Arrange: hung-BBC fallback must outlast a typical TV parse burst
+        // without the old 10s leak of scoreless games that then reshuffled.
 
         // Act
         var valve = EnrichedGameService.InitialEnrichmentValve;
 
         // Assert
-        Assert.Equal(TimeSpan.FromSeconds(10), valve);
+        Assert.Equal(TimeSpan.FromSeconds(30), valve);
     }
 
     private EnrichedGameService CreateService(

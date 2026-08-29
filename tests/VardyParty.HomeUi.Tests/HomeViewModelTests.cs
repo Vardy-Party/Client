@@ -109,6 +109,7 @@ public sealed class HomeViewModelTests : IDisposable
         _sut.FlushPendingApply();
 
         Assert.False(_sut.IsContentLoading);
+        Assert.True(_sut.ShowGameRows);
         Assert.True(_sut.HasGames);
         Assert.False(_sut.ShowEmptyState);
         Assert.False(_sut.HasPendingWork);
