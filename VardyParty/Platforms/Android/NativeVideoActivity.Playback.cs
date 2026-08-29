@@ -22,15 +22,24 @@ namespace VardyParty.Platforms.Android
             _session.SetHealthyStreamCount(_switching?.GetHealthyStreams().Count ?? 0);
         }
 
-        private void DispatchEngine(MediaEngineEvent engineEvent)
+        /// <returns>True when the session accepted a user next/previous advance.</returns>
+        private bool DispatchEngine(MediaEngineEvent engineEvent)
         {
             try
             {
-                ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
+                // Pool can grow while ExoPlayer is still preparing the first stream —
+                // refresh count before UserNext/Prev eligibility checks.
+                if (engineEvent.Kind is MediaEngineEventKind.UserNext or MediaEngineEventKind.UserPrevious)
+                    SyncHealthyStreamCount();
+
+                var cmd = PlaybackCommand.FromEffects(_session.Handle(engineEvent));
+                ApplyPlaybackCommand(cmd);
+                return cmd.SwitchPoolToNext || cmd.SwitchPoolToPrevious;
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] DispatchEngine failed ({Kind})", engineEvent.Kind);
+                return false;
             }
         }
 

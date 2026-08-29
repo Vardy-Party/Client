@@ -1,12 +1,11 @@
 using System.Reflection;
-using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using VardyParty;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Components.Pages;
+using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Hosting;
 using VardyParty.Playback;
@@ -50,9 +49,6 @@ public static class MauiProgram
 #endif
     }
 
-    // Set by Android startup to indicate whether a usable WebView implementation is present
-    public static bool IsWebViewAvailable { get; set; } = false;
-
     private static bool AllowIgnoreSslCertificateErrors(APISettings apiSettings)
     {
 #if !DEBUG
@@ -73,38 +69,86 @@ public static class MauiProgram
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
-            .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); });
+            .ConfigureFonts(fonts => { fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular"); })
+#if ANDROID
+            .ConfigureMauiHandlers(handlers => HomeUi.Views.HomeUiCollectionView.Register(handlers))
+#endif
+            ;
 
 #if WINDOWS
+        // Every chrome hook is guarded: a chrome failure must never prevent the
+        // window from showing (WinAppSDK 1.8 turns unhandled XAML-thread failures
+        // into 0xc000027b stowed-exception crashes with no managed stack).
         builder.ConfigureLifecycleEvents(events =>
         {
             events.AddWindows(windows =>
             {
-                windows.OnWindowCreated(window => WindowsWindowChrome.ApplyMainWindowChrome(window));
-                windows.OnActivated((window, _) => WindowsWindowChrome.ApplyMainWindowChrome(window));
+                windows.OnWindowCreated(window =>
+                {
+                    try
+                    {
+                        WindowsWindowChrome.ApplyMainWindowChrome(window);
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("MauiProgram", "OnWindowCreated chrome failed; using default chrome", ex);
+                    }
+                });
+                windows.OnActivated((window, _) =>
+                {
+                    try
+                    {
+                        WindowsWindowChrome.ApplyMainWindowChrome(window);
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowsEventLogger.Error("MauiProgram", "OnActivated chrome failed; using default chrome", ex);
+                    }
+                });
             });
         });
 
         WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Content), (handler, view, action) =>
         {
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.PrepareBeforeMauiConnect(nativeWindow);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.PrepareBeforeMauiConnect(nativeWindow);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Pre-connect chrome failed; using default chrome", ex);
             }
 
             action?.Invoke(handler, view);
 
-            if (handler.PlatformView is WinUiWindow connectedWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(connectedWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow connectedWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(connectedWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Post-connect chrome failed; using default chrome", ex);
             }
         });
 
         WindowHandler.Mapper.ModifyMapping(nameof(IWindow.Title), (handler, view, action) =>
         {
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "Title-mapping chrome failed; using default chrome", ex);
             }
         });
 
@@ -112,9 +156,16 @@ public static class MauiProgram
         {
             action?.Invoke(handler, view);
 
-            if (handler.PlatformView is WinUiWindow nativeWindow)
+            try
             {
-                WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                if (handler.PlatformView is WinUiWindow nativeWindow)
+                {
+                    WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow, handler.MauiContext);
+                }
+            }
+            catch (Exception ex)
+            {
+                WindowsEventLogger.Error("MauiProgram", "TitleBar-mapping chrome failed; using default chrome", ex);
             }
         });
 #endif
@@ -161,37 +212,6 @@ public static class MauiProgram
         var apiSettings = builder.Configuration.GetSection(APISettings.SectionName).Get<APISettings>()
                           ?? throw new InvalidOperationException("Missing Api configuration section.");
 
-        // Only add BlazorWebView when the platform actually has a working WebView implementation.
-        // For Android TV, runtime checks set IsWebViewAvailable; for other platforms assume available.
-#if ANDROID
-        if (IsWebViewAvailable)
-        {
-            Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
-            builder.Services.AddMauiBlazorWebView();
-        }
-        else
-        {
-            Console.WriteLine("[MauiProgram] Android WebView unavailable or disabled - registering stub/fallback");
-            try
-            {
-                builder.ConfigureMauiHandlers(handlers =>
-                {
-                    handlers.AddHandler(typeof(BlazorWebView),
-                        typeof(StubBlazorWebViewHandler));
-                });
-                Console.WriteLine("[MauiProgram] Registered fallback handler for BlazorWebView");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[MauiProgram] Failed to register fallback handler: {ex.Message}");
-            }
-        }
-#else
-        // Non-Android platforms always have BlazorWebView available
-        Console.WriteLine("[MauiProgram] WebView available - registering BlazorWebView");
-        builder.Services.AddMauiBlazorWebView();
-#endif
-
 #if ANDROID
         builder.Services.AddSingleton<INativeVideoPlayerService, AndroidVideoPlayerService>();
 #elif WINDOWS
@@ -213,20 +233,45 @@ public static class MauiProgram
 
         builder.Services.AddSingleton<ILeagueFilterPreferencesStore, MauiLeagueFilterPreferencesStore>();
         builder.Services.AddVardyParty();
-        builder.Services
-            .AddSingleton<ICastService, CastService>()
-            .AddSingleton<IBuildInfoService, BuildInfoService>()
-            .AddSingleton(DeviceInfo.Current)
-            .AddTransient<Home>()
-            .AddTransient<VideoPlayer>();
+
+        // UI sounds: registered per composition root (never in AddVardyParty).
+        // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
+        // fallbacks defer to these. Initialised on a background task after
+        // first render (HomeHostPage.OnAppearing), never in the startup path.
+        // VARDYPARTY_NO_SOUND=1 (or the no-sound flag file, which also reaches
+        // packaged MSIX launches) swaps in the null player for crash bisecting.
+#if ANDROID || WINDOWS
+        builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
+        {
+            Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
+#if WINDOWS
+            WindowsEventLogger.Info("MauiProgram", $"UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
+#endif
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, VardyParty.Ports.NullUiSoundPlayer>();
+        }
+        else
+        {
+#if ANDROID
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, AndroidUiSoundPlayer>();
+#elif WINDOWS
+            builder.Services.AddSingleton<VardyParty.Ports.IUiSoundPlayer, WindowsUiSoundPlayer>();
+#endif
+        }
+#endif
+
+        // Shared XAML homepage (the Blazor UI was removed on this branch; every
+        // platform boots HomeHostPage).
+        builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
+        builder.Services.AddVardyPartyHomeUi();
+        builder.Services.AddSingleton<HomeHostPage>();
+        builder.Services.AddSingleton(DeviceInfo.Current);
 
         builder.Services.AddSingleton<Auth0AuthService>();
         builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<Auth0AuthService>());
         builder.Services.AddVardyPartyHttpClients(AllowIgnoreSslCertificateErrors(apiSettings));
-#if DEBUG
-        builder.Services.AddBlazorWebViewDeveloperTools();
-#endif
+
         // Configure logging for all builds to diagnose startup issues
         builder.Logging
             .ClearProviders()

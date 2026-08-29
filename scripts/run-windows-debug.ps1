@@ -1,5 +1,5 @@
 # Deploy and launch VardyParty on Windows the same way Visual Studio F5 does:
-#  - MSBuild with BuildingInsideVisualStudio=true (Windows-only, refreshes AppX layout + wwwroot)
+#  - MSBuild with BuildingInsideVisualStudio=true (Windows-only, refreshes AppX layout)
 #  - Register the loose MSIX layout from vs.appxrecipe
 #  - Launch the registered debug package
 #
@@ -23,7 +23,13 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $project = Join-Path $repoRoot 'VardyParty\VardyParty.csproj'
-$winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net10.0-windows10.0.19041.0\win-x64"
+$winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net11.0-windows10.0.19041.0\win-x64"
+
+# The MAUI head targets net11.0-*: fail fast when dotnet resolves to an older SDK.
+$sdkVersion = (& dotnet --version)
+if (-not $sdkVersion.StartsWith('11.')) {
+    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 preview SDK (11.0.100-preview.7 or later)."
+}
 
 if (-not (Test-Path $project)) {
     throw "Project not found: $project"
@@ -39,7 +45,7 @@ Write-Host "[$buildTarget] $project (Visual Studio-style Windows deploy)..."
 & dotnet msbuild $project `
     -t:$buildTarget `
     -p:Configuration=$Configuration `
-    -p:TargetFramework=net10.0-windows10.0.19041.0 `
+    -p:TargetFramework=net11.0-windows10.0.19041.0 `
     -p:CI=true `
     -p:GenerateTestArtifacts=true `
     -p:RunGenerateBuildInfo=true
@@ -89,44 +95,57 @@ function Sync-AppXLayoutFromBuildOutput {
 
     Write-Host 'Syncing fresh build output into AppX (loose-register runs from here)...'
 
-    Get-ChildItem -Path $OutputRoot -File |
-        Where-Object { $_.Extension -in '.dll', '.exe', '.json', '.pri' } |
+    # Copy EVERYTHING the build refreshed, not a fixed extension list: any file
+    # under the output root (recursively) that is newer than — or missing from,
+    # or a different size than — its AppX copy. Three identical stale-bits crash
+    # signatures traced back to the old .dll/.exe/.json/.pri allowlist silently
+    # skipping changed satellite files.
+    # The AppX folder itself is excluded (it is the destination), and the MSIX
+    # layout's own manifest/recipe are never overwritten by root-level copies.
+    $outputRootFull = (Get-Item -Path $OutputRoot).FullName
+    $appXFull = (Get-Item -Path $appX).FullName
+    $neverOverwrite = @('AppxManifest.xml', 'vs.appxrecipe')
+    $synced = 0
+
+    Get-ChildItem -Path $OutputRoot -File -Recurse |
+        Where-Object { -not $_.FullName.StartsWith($appXFull + [IO.Path]::DirectorySeparatorChar) } |
         ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination (Join-Path $appX $_.Name) -Force
+            $relative = $_.FullName.Substring($outputRootFull.Length).TrimStart('\', '/')
+            if ($neverOverwrite -contains (Split-Path -Leaf $relative)) { return }
+
+            $dest = Join-Path $appXFull $relative
+            $destItem = Get-Item -Path $dest -ErrorAction SilentlyContinue
+            if (-not $destItem -or
+                $_.LastWriteTimeUtc -gt $destItem.LastWriteTimeUtc -or
+                $_.Length -ne $destItem.Length) {
+                $destDir = Split-Path -Parent $dest
+                if (-not (Test-Path $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                }
+                Copy-Item -Path $_.FullName -Destination $dest -Force
+                $synced++
+            }
         }
 
-    $sourceWwwroot = Join-Path $ProjectRoot 'wwwroot'
-    if (Test-Path $sourceWwwroot) {
-        Write-Host "Syncing project wwwroot from $sourceWwwroot"
-        Copy-Item -Path (Join-Path $sourceWwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
+    Write-Host "Synced $synced changed file(s) from build output into AppX."
+
+    # UI sound WAVs: MauiAsset packing does not put them on disk for loose MSIX.
+    $soundSource = Join-Path $ProjectRoot 'Resources\Raw\Sounds'
+    if (Test-Path $soundSource) {
+        foreach ($root in @($OutputRoot, $appX)) {
+            $soundDest = Join-Path $root 'Sounds'
+            New-Item -ItemType Directory -Path $soundDest -Force | Out-Null
+            Copy-Item -Path (Join-Path $soundSource '*.wav') -Destination $soundDest -Force
+        }
     }
 
-    $scopedCssBundle = Join-Path $ProjectRoot "obj\$BuildConfiguration\net10.0-windows10.0.19041.0\win-x64\scopedcss\bundle\VardyParty.styles.css"
-    if (Test-Path $scopedCssBundle) {
-        Write-Host "Syncing scoped CSS bundle from $scopedCssBundle"
-        Copy-Item -Path $scopedCssBundle -Destination (Join-Path $appX 'wwwroot\VardyParty.styles.css') -Force
-    }
-
-    $wwwroot = Join-Path $OutputRoot 'wwwroot'
-    if (Test-Path $wwwroot) {
-        Copy-Item -Path (Join-Path $wwwroot '*') -Destination (Join-Path $appX 'wwwroot') -Recurse -Force
-    }
-
-    # Loose-register install location is OutputRoot (win-x64), not AppX. Blazor static assets live in AppX\wwwroot\_framework after MSIX layout.
-    $appxFramework = Join-Path $appX 'wwwroot\_framework'
-    $outputFramework = Join-Path $wwwroot '_framework'
-    if (Test-Path $appxFramework) {
-        Write-Host "Mirroring AppX Blazor _framework into output wwwroot for loose-register"
-        New-Item -ItemType Directory -Path $outputFramework -Force | Out-Null
-        Copy-Item -Path (Join-Path $appxFramework '*') -Destination $outputFramework -Recurse -Force
-    }
-
-    foreach ($leaf in @('index.html', 'VardyParty.styles.css')) {
-        $appxFile = Join-Path $appX "wwwroot\$leaf"
-        $outputFile = Join-Path $wwwroot $leaf
-        if (Test-Path $appxFile) {
-            New-Item -ItemType Directory -Path (Split-Path $outputFile) -Force | Out-Null
-            Copy-Item -Path $appxFile -Destination $outputFile -Force
+    # League logo MauiAssets: AppX is not always refreshed on incremental builds.
+    $leagueSource = Join-Path $ProjectRoot 'Resources\Images\Leagues'
+    if (Test-Path $leagueSource) {
+        foreach ($root in @($OutputRoot, $appX)) {
+            $leagueDest = Join-Path $root 'images\leagues'
+            New-Item -ItemType Directory -Path $leagueDest -Force | Out-Null
+            Copy-Item -Path (Join-Path $leagueSource '*') -Destination $leagueDest -Recurse -Force
         }
     }
 
@@ -154,66 +173,47 @@ function Sync-AppXLayoutFromBuildOutput {
     }
 }
 
-function Test-BlazorWebViewAssets {
-    param([string]$OutputRoot)
-
-    $blazorJs = Join-Path $OutputRoot 'wwwroot\_framework\blazor.webview.js'
-    if (-not (Test-Path $blazorJs)) {
-        throw "Missing $blazorJs. Rebuild with -Rebuild so MSIX layout generates _framework, then re-run this script."
-    }
-
-    Write-Host "Blazor WebView asset OK: $blazorJs"
-}
-
-function Test-AppXWwwrootFresh {
-    param(
-        [string]$OutputRoot,
-        [string]$ProjectRoot
-    )
-
-    $srcCss = Join-Path $ProjectRoot 'wwwroot\css\app.css'
-    $appxCss = Join-Path $OutputRoot 'AppX\wwwroot\css\app.css'
-    if (-not ((Test-Path $srcCss) -and (Test-Path $appxCss))) {
-        return
-    }
-
-    $marker = Select-String -Path $srcCss -Pattern 'platform-windows \.header-auth-button' -Quiet
-    if (-not $marker) {
-        return
-    }
-
-    $appxHasMarker = Select-String -Path $appxCss -Pattern 'platform-windows \.header-auth-button' -Quiet
-    if (-not $appxHasMarker) {
-        throw 'AppX\wwwroot\css\app.css is stale (missing current layout rules). wwwroot sync failed.'
-    }
-}
-
 function Test-AppXBinaryFresh {
     param([string]$OutputRoot)
 
-    $rootDll = Join-Path $OutputRoot 'VardyParty.dll'
-    $appxDll = Join-Path $OutputRoot 'AppX\VardyParty.dll'
-    if (-not ((Test-Path $rootDll) -and (Test-Path $appxDll))) {
-        return
-    }
+    # Hash-compare the app binaries between build output and the AppX layout.
+    # Timestamps/sizes proved insufficient (three identical crash signatures
+    # against stale registered bits): only identical content is acceptable —
+    # the loose-registered package runs from AppX, so a mismatch means the app
+    # about to launch is NOT the code that was just built. Fail loudly.
+    foreach ($name in @('VardyParty.exe', 'VardyParty.dll')) {
+        $rootFile = Join-Path $OutputRoot $name
+        $appxFile = Join-Path $OutputRoot (Join-Path 'AppX' $name)
 
-    $rootInfo = Get-Item $rootDll
-    $appxInfo = Get-Item $appxDll
-    Write-Host "Build output: $($rootInfo.LastWriteTime) $($rootInfo.Length) bytes"
-    Write-Host "AppX package: $($appxInfo.LastWriteTime) $($appxInfo.Length) bytes"
+        if (-not (Test-Path $rootFile)) {
+            if ($name -eq 'VardyParty.exe') {
+                Write-Warning "Build output has no $name — cannot verify AppX freshness for it."
+            }
+            continue
+        }
 
-    if ($appxInfo.LastWriteTime -lt $rootInfo.LastWriteTime -or $appxInfo.Length -ne $rootInfo.Length) {
-        throw "AppX\VardyParty.dll is stale. Expected the same timestamp/size as win-x64\VardyParty.dll before register."
+        if (-not (Test-Path $appxFile)) {
+            throw "AppX\$name is missing while the build output has one. The AppX layout is incomplete — rerun with -Rebuild."
+        }
+
+        $rootInfo = Get-Item $rootFile
+        $appxInfo = Get-Item $appxFile
+        $rootHash = (Get-FileHash -Path $rootFile -Algorithm SHA256).Hash
+        $appxHash = (Get-FileHash -Path $appxFile -Algorithm SHA256).Hash
+        Write-Host "$name build output: $($rootInfo.LastWriteTime) $($rootInfo.Length) bytes sha256=$($rootHash.Substring(0,12))..."
+        Write-Host "$name AppX package: $($appxInfo.LastWriteTime) $($appxInfo.Length) bytes sha256=$($appxHash.Substring(0,12))..."
+
+        if ($rootHash -ne $appxHash) {
+            throw "AppX\$name is STALE: content hash differs from the freshly built win-x64\$name. The registered package would run old bits. Rerun with -Rebuild (and check nothing holds the AppX files locked)."
+        }
     }
 }
 
 $projectRoot = Join-Path $repoRoot 'VardyParty'
 Sync-AppXLayoutFromBuildOutput -OutputRoot $winOut -ProjectRoot $projectRoot -BuildConfiguration $Configuration
 Test-AppXBinaryFresh -OutputRoot $winOut
-Test-AppXWwwrootFresh -OutputRoot $winOut -ProjectRoot $projectRoot
-Test-BlazorWebViewAssets -OutputRoot $winOut
 
-$leagueDir = Join-Path $layoutDir 'wwwroot\images\leagues'
+$leagueDir = Join-Path $layoutDir 'images\leagues'
 if (-not (Test-Path (Join-Path $leagueDir 'lebanese-premier-league.png'))) {
   Write-Warning "League logos look stale in $leagueDir. Try -Rebuild."
 }

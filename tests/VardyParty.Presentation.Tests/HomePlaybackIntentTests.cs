@@ -51,6 +51,17 @@ public class HomePlaybackIntentTests
         Assert.False(same);
     }
 
+    [Theory]
+    [InlineData(true, false, true)]   // genuinely in-flight for the same game: swallow
+    [InlineData(true, true, false)]   // same game but outcome delivered: re-click restarts
+    [InlineData(false, false, false)] // different game: never swallowed
+    [InlineData(false, true, false)]
+    public void ShouldIgnoreRepick_OnlySwallowsInFlightSameGame(
+        bool sameGame, bool resolutionExhausted, bool expected)
+    {
+        Assert.Equal(expected, HomePlaybackIntent.ShouldIgnoreRepick(sameGame, resolutionExhausted));
+    }
+
     [Fact]
     public void RebindSelection_EmptyList_ClearsSelection()
     {

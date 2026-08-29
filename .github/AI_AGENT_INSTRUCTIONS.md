@@ -1,76 +1,52 @@
 # VardyParty - AI Agent Instructions
 
-Welcome, AI Agent! This document provides instructions for working on the VardyParty project. Follow these guidelines to understand the project structure, conventions, and development practices.
+Welcome, AI Agent! Follow these guidelines for the VardyParty Client repo.
 
-## 📍 Project Context
+## Project Context
 
-**Project Name:** VardyParty
-**Tech Stack:** .NET 10, MAUI (Windows), Avalonia (Linux), ASP.NET Core
-**Repository:** https://github.com/Vardy-Party/Client
-**Purpose:** Multi-platform football streaming application with score aggregation
+**Project Name:** VardyParty  
+**Tech Stack:** .NET 11 (preview), MAUI (Android/iOS/Mac Catalyst/Windows), Avalonia MAUI backend on Linux (`VardyParty.Desktop`), native players (Exo / WinUI / AVPlayer / LibVLC)  
+**Repository:** https://github.com/Vardy-Party/Client  
+**Purpose:** Multi-platform live football streaming with score aggregation  
 
-## 🎯 Your Primary Objectives
+**Docs entry point:** [docs/INDEX.md](../docs/INDEX.md)  
+**Architecture:** [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) · [homepage-maui-avalonia.md](../docs/architecture/homepage-maui-avalonia.md)  
+**Versioning:** [docs/VERSION_MANAGEMENT.md](../docs/VERSION_MANAGEMENT.md) — do not hand-edit display semver on feature branches  
+**PR #74 review:** [docs/reviews/PR-74-flagship-review.md](../docs/reviews/PR-74-flagship-review.md)
 
-1. **Understand the architecture** - This is a multi-platform application (MAUI for Windows/Android/iOS + Avalonia for Linux)
-2. **Follow coding standards** - See `.github/copilot-instructions.md` for team conventions
-3. **Respect versioning automation** - Version.props is auto-managed; don't edit manually during development
-4. **Document your changes** - Update relevant docs in `/docs` folder
+## Primary objectives
 
-## 📂 Repository Structure
+1. Understand the architecture — one shared `HomeUi` XAML; Linux draws it via Avalonia; each OS keeps its own native player
+2. Follow coding standards — see `.github/copilot-instructions.md`
+3. Respect versioning automation — `Version.props` is workflow-managed for display bumps
+4. Keep `/docs` living — prefer INDEX-linked docs; do not resurrect deleted ceremony files
+
+## Repository structure
 
 ```
-VardyParty-Client/
-├─ docs/                          ← ALL DOCUMENTATION HERE
-│  ├─ INDEX.md                    (← START HERE)
-│  ├─ VERSION_MANAGEMENT.md       (Version system reference)
-│  ├─ VERSION_MANAGEMENT_QUICK_REFERENCE.md
-│  ├─ CI_CD_INTEGRATION.md        (CI/CD system details)
-│  ├─ BEFORE_AFTER.md             (What changed)
-│  ├─ IMPLEMENTATION_COMPLETE.md  (Status)
-│  └─ ARCHITECTURE.md             (System design)
-│
-├─ .github/
-│  ├─ copilot-instructions.md     ← Team coding standards
-│  ├─ workflows/
-│  │  ├─ ci.yml                   (Build & Test)
-│  │  ├─ cd.yml                   (Package & Release)
-│  │  ├─ release.yml              (GitHub Release)
-│  │  ├─ auto-increment-build-version.yml
-│  │  ├─ bump-display-version.yml
-│  │  └─ build.yml
-│  └─ issue_template/
-│
-├─ VardyParty/                    ← MAUI App (Windows/Android/iOS)
-│  ├─ VardyParty.csproj           (imports Version.props)
-│  ├─ App.xaml(.cs)
-│  ├─ MainWindow.xaml(.cs)
-│  ├─ Components/                 (Blazor components)
-│  ├─ Pages/                      (MAUI pages)
-│  ├─ ViewModels/
-│  ├─ Resources/
-│  └─ Platforms/                  (Platform-specific code)
-│
-├─ VardyParty.Linux/              ← Avalonia App (Linux)
-│  ├─ VardyParty.Linux.csproj     (imports Version.props)
-│  ├─ App.axaml(.cs)
-│  ├─ MainWindow.axaml(.cs)
-│  ├─ ViewModels/
-│  └─ ...
-│
-├─ VardyParty.Core/               ← Shared Library
-│  ├─ VardyParty.Core.csproj
-│  ├─ Services/
-│  ├─ Models/
-│  └─ ...
-│
-├─ tests/
-│  ├─ VardyParty.TestSupport/
-│  └─ VardyParty.*.Tests/
-│
-├─ Version.props                  ← VERSION SOURCE OF TRUTH (DO NOT EDIT MANUALLY)
-├─ VardyParty.sln
-└─ README.md
+docs/
+├─ INDEX.md
+├─ ARCHITECTURE.md
+├─ architecture/homepage-maui-avalonia.md
+├─ STREAM_PLAYBACK_RULES.md / STREAM_HEALTH_PROTOCOL.md
+├─ LINUX_SUPPORT.md / LOCAL_ANDROID_BUILD.md / WINDOWS_INSTALL.md
+├─ VERSION_MANAGEMENT.md
+├─ agent-playbook-merge-client-pr-v2.md
+└─ reviews/PR-74-flagship-review.md
+
+.github/
+├─ copilot-instructions.md
+├─ CI-CD-SETUP.md
+└─ workflows/ (ci.yml, cd.yml, release.yml, bump-display-version.yml, …)
+
+VardyParty/           ← MAUI head (Android/iOS/Mac Catalyst/Windows)
+VardyParty.HomeUi/    ← shared XAML homepage
+VardyParty.Desktop/   ← Linux/WSL head (Avalonia draw + LibVLC)
+VardyParty.*/         ← Kernel, Ports, Auth, Catalog, Streaming, Playback, Presentation, Hosting
+tests/
+Version.props         ← single version source
 ```
+
 
 ## 🔑 Key Files You Need to Know
 
@@ -78,21 +54,21 @@ VardyParty-Client/
 - **`Version.props`** - Single source of truth for versions (ApplicationVersion, ApplicationDisplayVersion)
   - ⚠️ **DO NOT EDIT MANUALLY** during development
   - GitHub Actions workflows manage it automatically
-  - Both VardyParty and VardyParty.Linux import this file
+  - VardyParty, VardyParty.HomeUi and VardyParty.Desktop import this file
 
 ### Project Files
-- **`VardyParty/VardyParty.csproj`** - MAUI app (Windows/Android/iOS)
+- **`VardyParty/VardyParty.csproj`** - MAUI app (Windows/Android/iOS/macOS)
   - Contains: `<Import Project="..\Version.props" />`
-  - Targets: net10.0-android, net10.0-ios, net10.0-maccatalyst, net10.0-windows
+  - Targets: net11.0-android, net11.0-ios, net11.0-maccatalyst, net11.0-windows
 
-- **`VardyParty.Linux/VardyParty.Linux.csproj`** - Avalonia/Linux app
+- **`VardyParty.Desktop/VardyParty.Desktop.csproj`** - Linux desktop head (MAUI-Avalonia)
   - Contains: `<Import Project="..\Version.props" />`
-  - Target: net10.0 with linux-x64, linux-arm64 runtimes
+  - Target: net11.0 with linux-x64, linux-arm64 runtimes
 
 ### Documentation
 - **`docs/INDEX.md`** - Documentation index and quick start
 - **`docs/VERSION_MANAGEMENT.md`** - Complete version management reference
-- **`docs/CI_CD_INTEGRATION.md`** - How versions integrate with CI/CD
+- **`.github/CI-CD-SETUP.md`** - How versions integrate with CI/CD
 - **`docs/ARCHITECTURE.md`** - System architecture and data flows
 
 ### CI/CD Workflows
@@ -120,10 +96,10 @@ dotnet build
 dotnet test
 
 # Build MAUI app
-dotnet build VardyParty/VardyParty.csproj -c Release -f net10.0-android
+dotnet build VardyParty/VardyParty.csproj -c Release -f net11.0-android
 
-# Build Linux app
-dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
+# Build Linux desktop head
+dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
 ```
 
 ### Version Management (Automated)
@@ -253,10 +229,10 @@ Tag created (v1.8.0) → release.yml starts
 **All documentation is in `/docs` folder.** Start with:
 
 1. **`docs/INDEX.md`** - Overview and navigation (5 min)
-2. **`docs/BEFORE_AFTER.md`** - What changed (10 min)
-3. **`docs/VERSION_MANAGEMENT_QUICK_REFERENCE.md`** - Quick answers (5 min)
+2. **`docs/ARCHITECTURE.md`** - What changed (10 min)
+3. **`docs/VERSION_MANAGEMENT.md`** - Quick answers (5 min)
 4. **`docs/ARCHITECTURE.md`** - System design (20 min)
-5. **`docs/CI_CD_INTEGRATION.md`** - CI/CD details (15 min)
+5. **`.github/CI-CD-SETUP.md`** - CI/CD details (15 min)
 6. **`docs/VERSION_MANAGEMENT.md`** - Complete reference (30 min)
 
 ## 🐛 Common Tasks
@@ -264,7 +240,7 @@ Tag created (v1.8.0) → release.yml starts
 ### Task: Add a new feature
 ```
 1. Create feature branch: git checkout -b feature/my-feature
-2. Make changes in appropriate project (VardyParty, VardyParty.Linux, or VardyParty.Core)
+2. Make changes in appropriate project (VardyParty, VardyParty.HomeUi, VardyParty.Desktop, or the domain libraries)
 3. Add/update tests
 4. Commit: git commit -m "feat: add my feature"
 5. Push: git push origin feature/my-feature
@@ -303,7 +279,7 @@ $asm.Version  # Should show: 1.7.2.0
 ```bash
 # Build and check
 dotnet build VardyParty/VardyParty.csproj -c Release
-dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
+dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
 # Right-click DLL > Properties > Details tab to see version
 ```
 
@@ -332,9 +308,9 @@ dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
 
 ## 📞 Getting Help
 
-1. **Quick answers:** Check `docs/VERSION_MANAGEMENT_QUICK_REFERENCE.md`
+1. **Quick answers:** Check `docs/VERSION_MANAGEMENT.md`
 2. **Version questions:** Read `docs/VERSION_MANAGEMENT.md`
-3. **CI/CD questions:** Read `docs/CI_CD_INTEGRATION.md`
+3. **CI/CD questions:** Read `.github/CI-CD-SETUP.md`
 4. **Architecture questions:** Read `docs/ARCHITECTURE.md`
 5. **Code standards:** Read `.github/copilot-instructions.md`
 6. **GitHub Issues:** Search existing issues or create new one
@@ -343,7 +319,7 @@ dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
 
 1. **Clone repo** and read `docs/INDEX.md`
 2. **Understand structure:** Review `/docs` and `.github/`
-3. **Check project type:** Multi-platform (.NET 10)
+3. **Check project type:** Multi-platform (.NET 11)
 4. **Know version system:** Single `Version.props` file (don't edit manually)
 5. **Follow CI/CD:** Understand 3-tier pipeline (ci.yml → cd.yml → release.yml)
 6. **Code standards:** Read `.github/copilot-instructions.md`
@@ -370,7 +346,7 @@ dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
 | Where are workflows? | `.github/workflows/` |
 | How to run tests? | `dotnet test` |
 | How to build MAUI? | `dotnet build VardyParty/VardyParty.csproj` |
-| How to build Linux? | `dotnet build VardyParty.Linux/VardyParty.Linux.csproj` |
+| How to build Linux? | `dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj` |
 | Who manages versions? | GitHub Actions (don't edit manually) |
 
 ---

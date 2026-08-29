@@ -32,6 +32,36 @@ public class RemoteKeyHandler
     /// </summary>
     public Func<bool>? ShouldConsumeEnter { get; set; }
 
+    /// <summary>
+    /// Handlers run on the Activity's key-input path: an exception here is an
+    /// UNHANDLED app crash (OnKeyDown has no catch, unlike OnBackPressed).
+    /// Field report "Back with the menu open closed/crashed the app" — a
+    /// throwing subscriber must never take the process down, and the key must
+    /// still count as consumed so a failed close can't fall through to exit.
+    /// Subscribers are isolated individually: MainActivity's navigation
+    /// handler throwing must not starve HomeHostPage's menu-close handler
+    /// later in the multicast (and vice versa).
+    /// </summary>
+    private static void SafeInvoke(KeyEventHandler? handler, Keycode keyCode, string name)
+    {
+        if (handler == null)
+        {
+            return;
+        }
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((KeyEventHandler)subscriber).Invoke(keyCode);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("RemoteKeyHandler", $"{name} handler threw: {ex}");
+            }
+        }
+    }
+
     public bool HandleKeyDown(Keycode keyCode, KeyEvent? keyEvent)
     {
         Log.Info("RemoteKeyHandler", $"KeyDown - {keyCode}");
@@ -41,51 +71,51 @@ public class RemoteKeyHandler
             case Keycode.MediaPlayPause:
             case Keycode.MediaPlay:
             case Keycode.MediaPause:
-                OnPlayPause?.Invoke(keyCode);
+                SafeInvoke(OnPlayPause, keyCode, nameof(OnPlayPause));
                 return true;
 
             case Keycode.MediaStop:
-                OnStop?.Invoke(keyCode);
+                SafeInvoke(OnStop, keyCode, nameof(OnStop));
                 return true;
 
             case Keycode.MediaFastForward:
-                OnFastForward?.Invoke(keyCode);
+                SafeInvoke(OnFastForward, keyCode, nameof(OnFastForward));
                 return true;
 
             case Keycode.MediaRewind:
-                OnRewind?.Invoke(keyCode);
+                SafeInvoke(OnRewind, keyCode, nameof(OnRewind));
                 return true;
 
             case Keycode.MediaNext:
-                OnNext?.Invoke(keyCode);
+                SafeInvoke(OnNext, keyCode, nameof(OnNext));
                 return true;
 
             case Keycode.MediaPrevious:
-                OnPrevious?.Invoke(keyCode);
+                SafeInvoke(OnPrevious, keyCode, nameof(OnPrevious));
                 return true;
 
             case Keycode.ChannelUp:
-                OnChannelUp?.Invoke(keyCode);
+                SafeInvoke(OnChannelUp, keyCode, nameof(OnChannelUp));
                 return true;
 
             case Keycode.ChannelDown:
-                OnChannelDown?.Invoke(keyCode);
+                SafeInvoke(OnChannelDown, keyCode, nameof(OnChannelDown));
                 return true;
 
             case Keycode.VolumeUp:
-                OnVolumeUp?.Invoke(keyCode);
+                SafeInvoke(OnVolumeUp, keyCode, nameof(OnVolumeUp));
                 return false; // Let system handle volume
 
             case Keycode.VolumeDown:
-                OnVolumeDown?.Invoke(keyCode);
+                SafeInvoke(OnVolumeDown, keyCode, nameof(OnVolumeDown));
                 return false; // Let system handle volume
 
             case Keycode.VolumeMute:
-                OnMute?.Invoke(keyCode);
+                SafeInvoke(OnMute, keyCode, nameof(OnMute));
                 return false; // Let system handle mute
 
             case Keycode.Menu:
-                OnMenu?.Invoke(keyCode);
+                SafeInvoke(OnMenu, keyCode, nameof(OnMenu));
                 return true;
 
             case Keycode.Back:
@@ -93,39 +123,32 @@ public class RemoteKeyHandler
                 if (OnBack != null)
                 {
                     Log.Info("RemoteKeyHandler", "Invoking OnBack handler");
-                    OnBack.Invoke(keyCode);
+                    SafeInvoke(OnBack, keyCode, nameof(OnBack));
                     return true;
                 }
                 Log.Info("RemoteKeyHandler", "No OnBack handler attached");
                 return false;
 
             case Keycode.Home:
-                OnHome?.Invoke(keyCode);
+                SafeInvoke(OnHome, keyCode, nameof(OnHome));
                 return false; // Let system handle home
 
             case Keycode.Button1:
             case Keycode.ProgYellow:
-                OnYellow?.Invoke(keyCode);
+                SafeInvoke(OnYellow, keyCode, nameof(OnYellow));
                 return true;
 
             case Keycode.DpadCenter:
             case Keycode.Enter:
             case Keycode.NumpadEnter:
-                OnEnter?.Invoke(keyCode);
+                SafeInvoke(OnEnter, keyCode, nameof(OnEnter));
                 if (ShouldConsumeEnter?.Invoke() == true)
                 {
                     return true;
                 }
 
-                // Assist TV WebView click (DPAD_CENTER often never reaches the page as Enter).
-                // TryClick is fire-and-forget (must not block UI thread). Consume when scheduled
-                // so the key isn't also handled elsewhere; Blazor debounce guards double-toggle.
-                if (global::VardyParty.MauiProgram.IsTv
-                    && global::VardyParty.MainPage.Instance?.TryClickFocusedWebElement() == true)
-                {
-                    return true;
-                }
-
+                // Let the focused native view handle the click (MatchCardView
+                // wires Click on its platform view for TV D-pad selection).
                 return false;
 
             default:

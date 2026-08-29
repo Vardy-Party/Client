@@ -4,9 +4,12 @@ namespace VardyParty.Kernel;
 
 /// <summary>
 /// Catalog stream reputation. Integer values are the dedup rank (higher wins).
-/// Wire names match the games API: "Very Good", "Good", "OK", "Poor", "Bad".
+/// Wire names match the games API: "Very Good", "Good", "OK", "Poor", "Bad" —
+/// but the API's casing is not stable (real payloads carry "Very good"), so
+/// deserialization goes through the tolerant <see cref="StreamReputationJsonConverter"/>
+/// instead of the strict throwing enum converter.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<StreamReputation>))]
+[JsonConverter(typeof(StreamReputationJsonConverter))]
 public enum StreamReputation
 {
     [JsonStringEnumMemberName("")]

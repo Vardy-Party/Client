@@ -42,6 +42,8 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
     public event EventHandler<bool>? BufferingStateChanged;
 
+    public event EventHandler<bool>? PlaybackVisibilityChanged;
+
     protected AppleVideoPlayerServiceBase(
         ILogger logger,
         IStreamSwitchingService switching,
@@ -89,6 +91,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
         try
         {
+            PlaybackVisibilityChanged?.Invoke(this, true);
             _session.Reset();
             AttachViaSession(m3u8Url);
             return await _playbackTcs.Task;
@@ -97,6 +100,16 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         {
             _logger.LogError(ex, "[AppleVideoPlayer] Error during playback");
             return PlaybackResult.Completed($"Playback error: {ex.Message}", true);
+        }
+        finally
+        {
+            try
+            {
+                PlaybackVisibilityChanged?.Invoke(this, false);
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -302,7 +315,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         try
         {
             var metrics = new PlaybackMetrics();
-            var videoTracks = playerItem.Asset.TracksWithMediaType(AVMediaTypes.Video.GetConstant()!);
+            var videoTracks = GetAssetTracks(playerItem, AVMediaTypes.Video.GetConstant()!);
             if (videoTracks is { Length: > 0 })
             {
                 var videoTrack = videoTracks[0];
@@ -319,7 +332,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
                     metrics.VideoCodec = CodecFourccToFriendlyName(formatDesc.MediaSubType);
             }
 
-            var audioTracks = playerItem.Asset.TracksWithMediaType(AVMediaTypes.Audio.GetConstant()!);
+            var audioTracks = GetAssetTracks(playerItem, AVMediaTypes.Audio.GetConstant()!);
             if (audioTracks is { Length: > 0 })
             {
                 var formatDescriptions = audioTracks[0].FormatDescriptions;
@@ -333,6 +346,29 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         {
             _logger.LogDebug(ex, "[AppleVideoPlayer] Failed to extract video metadata");
         }
+    }
+
+    /// <summary>
+    /// <c>AVAsset.TracksWithMediaType(string)</c> is obsoleted on iOS/macCatalyst
+    /// 18+ (CA1422: "Use 'NaturalSize/PreferredTransform' as appropriate on the
+    /// video track instead"). On 18+ the tracks come from the already-loaded
+    /// player item (<see cref="AVPlayerItem.Tracks"/> → <c>AssetTrack</c> —
+    /// populated by ReadyToPlay, where this is called) so the same
+    /// NaturalSize/NominalFrameRate/FormatDescriptions reads work without the
+    /// deprecated asset query; older OS versions keep the legacy call.
+    /// </summary>
+    private static AVAssetTrack[] GetAssetTracks(AVPlayerItem playerItem, string mediaType)
+    {
+        if (OperatingSystem.IsIOSVersionAtLeast(18) || OperatingSystem.IsMacCatalystVersionAtLeast(18))
+        {
+            return playerItem.Tracks
+                .Select(t => t.AssetTrack)
+                .OfType<AVAssetTrack>()
+                .Where(t => t.MediaType == mediaType)
+                .ToArray();
+        }
+
+        return playerItem.Asset?.TracksWithMediaType(mediaType) ?? [];
     }
 
     private static string? CodecFourccToFriendlyName(uint fourcc)

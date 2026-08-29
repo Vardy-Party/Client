@@ -1,7 +1,7 @@
 # Stream Playback Rules
 
 **STATUS:** Android, Windows, Linux, and Apple hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
-**AUDIENCE:** Developers and AI assistants working on MAUI/Linux stream handling (Android, Android TV, Windows, Linux)  
+**AUDIENCE:** Developers and AI assistants working on MAUI/Desktop stream handling (Android, Android TV, Windows, Linux/WSL)  
 **RELATED:** [STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)
 
 ### Implementation
@@ -18,7 +18,7 @@
 | `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
 | Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
-| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop |
+| Linux host | `VardyParty.Desktop/Services/DesktopVideoPlayerService.cs` | LibVLC facts → same loop (native window, not Avalonia `VideoView`) |
 | iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
 | MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
@@ -41,25 +41,25 @@ ExoPlayer / WinUI / FakeMediaEngine  →  IMediaEngine (facts only)
 
 `FakeMediaEnginePlaybackTests` is the OS-shaped business test: a fake engine implements `IMediaEngine`, a tiny host interprets `PlaybackCommand` the same way Android, Windows, Linux, and Apple do.
 
-**Do not share one fat player interface** (`INativeVideoPlayerService` stays a MAUI/Linux launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
+**Do not share one fat player interface** (`INativeVideoPlayerService` stays a launch/chrome contract: `PlayVideoAsync`, overlay, referer). Collapse OS recovery into `IMediaEngine` + session, not into a second policy class per platform.
 
-Remaining Core test gaps (not OS): Home vs `/player` dual path (`VideoPlayer.razor` is still a single-URL launch without the orchestrator pool). Health reports now key on the catalog/page URL via `StreamHealthIdentity.ResolveReportUrl`. Cache→fresh retry is covered by `StreamResolutionOrchestratorTests`.
+Health reports key on the catalog/page URL via `StreamHealthIdentity.ResolveReportUrl` (ephemeral `.m3u8`/`.mpd` URLs are not the crowd identity). Cache→fresh retry is covered by `StreamResolutionOrchestratorTests`. The old Blazor `/player` single-URL path (`VideoPlayer.razor`) was deleted with the WebView UI.
 
 ---
 
 ## Goal
 
 One set of business rules for stream **selection → start → survive → switch → recover**.  
-OS code should only attach/detach media and surface metrics/errors. Shared Core owns decisions.
+OS code should only attach/detach media and surface metrics/errors. Shared domain owns decisions.
 
-Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux, and Apple. Hosts only attach/stop and raise engine facts.
+Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux/Desktop, and Apple. Hosts only attach/stop and raise engine facts.
 
 ---
 
 ## As-is architecture
 
 ```
-Home.razor
+HomeHostPage / DesktopHomePage
   └─ StreamResolutionOrchestrator          ← shared select / start / post-PlayVideoAsync failure
        ├─ StreamSelectionCoordinator
        ├─ StreamResolver + StreamHealthChecker
@@ -67,14 +67,12 @@ Home.razor
             └─ INativeVideoPlayerService.PlayVideoAsync(...)
                  ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
                  ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
-                 ├─ Linux: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC)
+                 ├─ Linux/WSL: DesktopVideoPlayerService + DelegatingMediaEngine (LibVLC window)
                  ├─ iOS: Platforms/iOS + AppleVideoPlayerServiceBase (AVPlayer)
                  └─ MacCatalyst: Platforms/MacCatalyst + AppleVideoPlayerServiceBase (AVPlayer)
                       all: engine facts → PlaybackSessionController → PlaybackCommandExecutor
                            pool/retry: PlaybackPoolCommandActions in VardyParty.Playback
 ```
-
-**Alternate path (weaker):** `VideoPlayer.razor` (`/player/...`) — single URL, no orchestrator failover pool.
 
 Android phone and Android TV share the same ExoPlayer activity; TV differs mainly in remote/overlay focus (`MauiProgram.IsTv`, `RemoteKeyHandler`).
 
@@ -274,7 +272,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | Failed switch revert vs advance | Unified in session (locked by `PlaybackUnificationRulesTests`) |
 | Soft decline / download-failure threshold | Session; Windows/Linux now raise Metrics |
 | Health URL key (page vs M3U8) | Reporter prefers page via `ResolveReportUrl` |
-| Dual entry Home vs `/player` | `VideoPlayer.razor` still skips the orchestrator pool |
+| Dual entry Home vs `/player` | Removed with Blazor UI — single host path uses orchestrator pool |
 | God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy` |
 
 ---
@@ -286,7 +284,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 3. ~~Windows/Linux call same controller; delete duplicated Recover* locals.~~
 4. ~~Health reporter prefers catalog/page URL over M3U8.~~
 5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys).
-6. Align or retire `VideoPlayer.razor` failover behavior.
+6. ~~Align or retire `VideoPlayer.razor` failover behavior.~~ (deleted with Blazor)
 7. Optional: dump session event JSON next to logcat for agent observation.
 
 ---

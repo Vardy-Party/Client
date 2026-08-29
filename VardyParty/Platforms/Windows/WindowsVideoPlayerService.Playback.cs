@@ -100,7 +100,6 @@ namespace VardyParty.Platforms.Windows
                 {
                     StopTickerScroll();
                     try { scoresTickerTrack.Children.Clear(); } catch { }
-                    MainPage.SetNativePlayerActive(false);
                     CleanupMediaPlayer();
                     HidePlayerOverlay();
                     WindowsWindowChrome.ApplyMainWindowChrome(nativeWindow);

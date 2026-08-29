@@ -19,6 +19,14 @@ public class StreamResolutionOrchestrator(
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// How long a new StartAsync will wait for the previous resolution session
+    /// to release the gate (hosts cancel the old session just before calling).
+    /// When this runs out the outcome is StartRefused — surfaced to the user —
+    /// never a silent empty outcome.
+    /// </summary>
+    private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
+
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
     private readonly SemaphoreSlim _startGate = new(1, 1);
@@ -38,11 +46,11 @@ public class StreamResolutionOrchestrator(
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken = default)
     {
-        if (!await _startGate.WaitAsync(TimeSpan.Zero, CancellationToken.None))
+        if (!await _startGate.WaitAsync(StartGateWait, cancellationToken))
         {
-            logger.LogWarning("[StreamResolution] Ignoring overlapping StartAsync for {Home} vs {Away}",
+            logger.LogWarning("[StreamResolution] Refusing StartAsync for {Home} vs {Away} - previous session still active",
                 game.DisplayHome, game.DisplayAway);
-            return new StreamResolutionOutcome();
+            return new StreamResolutionOutcome { StartRefused = true };
         }
 
         try

@@ -347,6 +347,35 @@ public class BbcJsonParser : IBbcJsonParser
         }
     }
 
+    /// <summary>
+    /// BBC kickoff strings without timezone information are London wall-clock
+    /// time (Europe/London), never device-local: an offset-less August kickoff
+    /// is BST (UTC+1), a January one is GMT (UTC+0). Resolved once; the IANA id
+    /// works everywhere on .NET, with the Windows id as a defensive fallback.
+    /// </summary>
+    private static readonly TimeZoneInfo LondonZone = ResolveLondonZone();
+
+    private static TimeZoneInfo ResolveLondonZone()
+    {
+        foreach (var id in new[] { "Europe/London", "GMT Standard Time" })
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(id);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+            catch (InvalidTimeZoneException)
+            {
+            }
+        }
+
+        // No tz database at all: UTC is the least-wrong assumption (never
+        // device-local, which is what this rule exists to prevent).
+        return TimeZoneInfo.Utc;
+    }
+
     internal static bool TryParseKickoffUtc(string? value, out DateTime kickoffUtc)
     {
         kickoffUtc = DateTime.MinValue;
@@ -357,8 +386,31 @@ public class BbcJsonParser : IBbcJsonParser
             return false;
         }
 
-        kickoffUtc = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        kickoffUtc = parsed.Kind switch
+        {
+            // "...Z" — already the UTC instant.
+            DateTimeKind.Utc => parsed,
+            // "...+01:00" — RoundtripKind yields the machine-local instant; the
+            // conversion back to UTC is offset-exact regardless of machine zone.
+            DateTimeKind.Local => parsed.ToUniversalTime(),
+            // No timezone info — London wall clock by user directive.
+            _ => ConvertLondonWallClockToUtc(parsed),
+        };
         return true;
+    }
+
+    private static DateTime ConvertLondonWallClockToUtc(DateTime londonWallClock)
+    {
+        try
+        {
+            return TimeZoneInfo.ConvertTimeToUtc(londonWallClock, LondonZone);
+        }
+        catch (ArgumentException)
+        {
+            // Spring-forward gap times do not exist in London; keep the fixture
+            // (as UTC) rather than dropping its kickoff entirely.
+            return DateTime.SpecifyKind(londonWallClock, DateTimeKind.Utc);
+        }
     }
 
     private static int FindJsonObjectEnd(string html, int objStart)

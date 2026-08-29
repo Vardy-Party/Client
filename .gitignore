@@ -368,3 +368,6 @@ FodyWeavers.xsd
 /nuget.config
 .nuget-local/
 /certs
+
+# Build-generated (GenerateBuildInfo now writes to obj/, but older branches still write here)
+VardyParty/Resources/Raw/buildinfo.txt

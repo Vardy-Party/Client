@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Vardy Party brand crest: the app-icon soccer ball (appiconfg.svg geometry)
+  upgraded with metallic chrome/navy gradients. Rasterised at runtime through
+  Svg.Skia (BrandCrestImageLoader) and layered with a metallic ring, gloss and
+  animated sheen in BrandLogoView.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <defs>
+    <!-- Sphere base: chrome lit from the upper left -->
+    <radialGradient id="sphere" cx="0.35" cy="0.28" r="0.95">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#DDE3EA"/>
+      <stop offset="0.75" stop-color="#AAB3C0"/>
+      <stop offset="1" stop-color="#6E7887"/>
+    </radialGradient>
+    <!-- Deep metallic navy for the pentagons -->
+    <linearGradient id="pent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2C63D4"/>
+      <stop offset="0.5" stop-color="#0A2C6E"/>
+      <stop offset="1" stop-color="#061F4E"/>
+    </linearGradient>
+    <!-- Brushed silver panels, angled with the light -->
+    <linearGradient id="panelR" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6F8FA"/>
+      <stop offset="1" stop-color="#AEB7C3"/>
+    </linearGradient>
+    <linearGradient id="panelL" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F1F4F7"/>
+      <stop offset="1" stop-color="#A5AEBA"/>
+    </linearGradient>
+    <linearGradient id="panelB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E9EDF2"/>
+      <stop offset="1" stop-color="#8F98A6"/>
+    </linearGradient>
+    <linearGradient id="panelC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#D9DEE5"/>
+      <stop offset="1" stop-color="#9AA3B1"/>
+    </linearGradient>
+    <!-- Polished rim -->
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FDFDFD"/>
+      <stop offset="0.30" stop-color="#C2C8D0"/>
+      <stop offset="0.50" stop-color="#848B96"/>
+      <stop offset="0.72" stop-color="#D9DDE2"/>
+      <stop offset="1" stop-color="#F4F6F8"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(180, 180)">
+    <circle cx="0" cy="0" r="168" fill="url(#sphere)" stroke="url(#rim)" stroke-width="10"/>
+    <path d="M 0,-143 L 47,-59 L 0,-14 L -47,-59 Z" fill="url(#pent)"/>
+    <path d="M 47,-59 L 118,-76 L 131,0 L 59,30 L 0,-14 Z" fill="url(#panelR)"/>
+    <path d="M -47,-59 L -118,-76 L -131,0 L -59,30 L 0,-14 Z" fill="url(#panelL)"/>
+    <path d="M 59,30 L 87,104 L 30,143 L -30,143 L -59,30 Z" fill="url(#panelB)"/>
+    <path d="M 0,-14 L 59,30 L -59,30 Z" fill="url(#panelC)"/>
+    <!-- Recessed seams for depth -->
+    <g stroke="#4A5260" stroke-width="4" fill="none" opacity="0.45" stroke-linecap="round">
+      <path d="M 0,-143 L 47,-59 L 0,-14 L -47,-59 Z"/>
+      <path d="M 0,-14 L 59,30 L -59,30 Z"/>
+      <path d="M 47,-59 L 118,-76 M -47,-59 L -118,-76 M 59,30 L 87,104 M -59,30 L -87,104 M 30,143 L -30,143"/>
+    </g>
+  </g>
+</svg>

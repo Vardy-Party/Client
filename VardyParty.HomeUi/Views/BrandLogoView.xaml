@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hu="clr-namespace:VardyParty.HomeUi"
+             x:Class="VardyParty.HomeUi.Views.BrandLogoView"
+             x:DataType="hu:HomeViewModel">
+
+    <ContentView.Resources>
+        <!-- Same brushed-metal ring the match badges wear -->
+        <LinearGradientBrush x:Key="LogoRingBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#FDFDFD" Offset="0" />
+            <GradientStop Color="#C2C8D0" Offset="0.30" />
+            <GradientStop Color="#848B96" Offset="0.50" />
+            <GradientStop Color="#D9DDE2" Offset="0.72" />
+            <GradientStop Color="#F4F6F8" Offset="1" />
+        </LinearGradientBrush>
+
+        <!-- Glass highlight over the upper hemisphere -->
+        <LinearGradientBrush x:Key="LogoGlossBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#66FFFFFF" Offset="0" />
+            <GradientStop Color="#17FFFFFF" Offset="0.42" />
+            <GradientStop Color="#00FFFFFF" Offset="0.58" />
+        </LinearGradientBrush>
+
+        <!-- Light band swept across the crest (intro + ambient shimmer) -->
+        <LinearGradientBrush x:Key="LogoSheenBrush" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#00FFFFFF" Offset="0" />
+            <GradientStop Color="#59FFFFFF" Offset="0.5" />
+            <GradientStop Color="#00FFFFFF" Offset="1" />
+        </LinearGradientBrush>
+
+        <!-- Dark metallic coin-edge behind the face; ScaleX/TranslationX/Opacity
+             driven per spin frame from code-behind (3D thickness illusion) -->
+        <LinearGradientBrush x:Key="LogoEdgeBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#8A9099" Offset="0" />
+            <GradientStop Color="#3A3F47" Offset="0.5" />
+            <GradientStop Color="#14171C" Offset="1" />
+        </LinearGradientBrush>
+    </ContentView.Resources>
+
+    <!-- CrestImage is a SIBLING of the RotationY ring, not a child: WinUI and
+         Android MAUI often paint the spinning ring chrome under RotationY but
+         leave a nested Image blank (empty dark circle). Avalonia (Linux) was
+         fine either way. The crest uses ScaleX = cos(angle) for the same
+         coin-flip silhouette. -->
+    <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
+          HeightRequest="{Binding Layout.BrandLogoSize}">
+
+        <!-- Focus glow: scaled slightly past the ring, faded in from code-behind -->
+        <Border x:Name="GlowRing"
+                StrokeShape="Ellipse"
+                Stroke="#B39CC3FF"
+                StrokeThickness="3"
+                BackgroundColor="Transparent"
+                Opacity="0"
+                Scale="1.12"
+                InputTransparent="True" />
+
+        <!-- Coin-edge rim: sits behind the face; width + shading derive from the
+             spin angle in code-behind, like a coin turning edge-on -->
+        <Border x:Name="EdgeRim"
+                StrokeShape="Ellipse"
+                StrokeThickness="0"
+                Background="{StaticResource LogoEdgeBrush}"
+                Opacity="0"
+                ScaleX="0.12"
+                InputTransparent="True" />
+
+        <!-- Metallic ring + shadow: the 3D backplate (RotationY lives here) -->
+        <Border x:Name="LogoOuter"
+                StrokeShape="Ellipse"
+                StrokeThickness="0"
+                Background="{StaticResource LogoRingBrush}"
+                Padding="3">
+            <Border.Shadow>
+                <Shadow Brush="Black" Opacity="0.5" Radius="12" Offset="0,4" />
+            </Border.Shadow>
+            <!-- Dark inner plate only — crest is the sibling CrestFace below -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" />
+        </Border>
+
+        <!-- Crest face: same inset as the old nested plate; ScaleX/Opacity from spin -->
+        <Grid x:Name="CrestFace"
+              Margin="5"
+              InputTransparent="True">
+            <Image x:Name="CrestImage"
+                   Aspect="AspectFit"
+                   HorizontalOptions="Fill"
+                   VerticalOptions="Fill" />
+
+            <!-- Gloss highlight -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0"
+                    Background="{StaticResource LogoGlossBrush}"
+                    InputTransparent="True" />
+
+            <!-- Sheen band -->
+            <Border StrokeShape="Ellipse" StrokeThickness="0"
+                    BackgroundColor="Transparent"
+                    InputTransparent="True">
+                <BoxView x:Name="LogoSheen"
+                         WidthRequest="26"
+                         HorizontalOptions="Start"
+                         VerticalOptions="Fill"
+                         Background="{StaticResource LogoSheenBrush}"
+                         Opacity="0"
+                         InputTransparent="True" />
+            </Border>
+        </Grid>
+    </Grid>
+</ContentView>

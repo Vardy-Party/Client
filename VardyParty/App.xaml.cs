@@ -2,8 +2,11 @@
 {
     public partial class App : Application
     {
-        public App()
+        private readonly IServiceProvider _services;
+
+        public App(IServiceProvider services)
         {
+            _services = services;
             Console.WriteLine("[App] Constructor start");
             try
             {
@@ -50,12 +53,15 @@
             try
             {
                 Console.WriteLine("[App] CreateWindow - start");
-                var mainPage = new MainPage();
-                Console.WriteLine("[App] CreateWindow - MainPage created");
+                // Every platform boots the shared MAUI XAML homepage (the
+                // Blazor UI was deleted on this branch).
+                Page mainPage = _services.GetRequiredService<HomeHostPage>();
+                Console.WriteLine("[App] CreateWindow - HomeHostPage created");
                 var window = new Window(mainPage)
                 {
                     Title = string.Empty,
                 };
+                WireForegroundState(window);
                 Console.WriteLine("[App] CreateWindow - window created successfully");
                 return window;
             }
@@ -65,6 +71,33 @@
                 Console.WriteLine($"[App] StackTrace: {ex.StackTrace}");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Match-event notifications follow the window lifecycle: a
+        /// backgrounded app delivers NOTHING (no audio, no toast catch-up on
+        /// resume). Foreground means the window is visible — Stopped (hidden/
+        /// minimized) clears it, Activated/Resumed set it. Deactivated (focus
+        /// lost while still visible) deliberately does not count as
+        /// background, so the "playing → toast only" policy row can still
+        /// deliver while a native player window holds focus.
+        ///
+        /// Android twist: our OWN NativeVideoActivity covering the MAUI
+        /// activity also fires Stopped — but the app as a whole is still the
+        /// visible surface, and the "playing → toast only" row must deliver
+        /// (the in-playback banner rides the same delivered-event bus). While
+        /// playback is active the player activity's own lifecycle owns the
+        /// flag instead (see NativeVideoActivity.MatchToast: OnResume sets
+        /// foregrounded, OnStop-while-not-finishing — HOME/another app over
+        /// the player — clears it).
+        /// </summary>
+        private void WireForegroundState(Window window)
+        {
+            var notifications = _services.GetRequiredService<VardyParty.Presentation.MatchEventNotificationPolicy>();
+            window.Activated += (_, _) => notifications.IsAppForegrounded = true;
+            window.Resumed += (_, _) => notifications.IsAppForegrounded = true;
+            window.Stopped += (_, _) => notifications.IsAppForegrounded = notifications.IsPlaybackActive;
+            window.Destroying += (_, _) => notifications.IsAppForegrounded = false;
         }
     }
 }

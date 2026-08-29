@@ -1,18 +1,18 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <Import Project="..\Version.props" />
 
     <PropertyGroup>
         <!-- Visual Studio IDE on Windows: only Windows TFM (fast IDE experience) -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- Windows CLI, local dev (not CI): all TFMs for local APK + MSIX builds -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(BuildingInsideVisualStudio)' != 'true' AND '$(CI)' != 'true'">net11.0-android;net11.0-ios;net11.0-maccatalyst;net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- Windows CI: only Windows TFM (CI installs only maui-windows workload) -->
-        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net10.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
         <!-- macOS: iOS and macCatalyst -->
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0-ios;net11.0-maccatalyst</TargetFrameworks>
         <!-- Linux (CI or local): Android only -->
-        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net10.0-android</TargetFrameworks>
+        <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">net11.0-android</TargetFrameworks>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
         <!-- Note for MacCatalyst:
@@ -27,7 +27,6 @@
         <UseMaui>true</UseMaui>
         <SingleProject>true</SingleProject>
         <ImplicitUsings>enable</ImplicitUsings>
-        <EnableDefaultCssItems>false</EnableDefaultCssItems>
         <Nullable>enable</Nullable>
         <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
         <AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
@@ -49,7 +48,8 @@
         <!-- Removed global WindowsPackageType None so per-target Windows packaging settings can apply -->
 
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
-        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+        <!-- The net11 Mac Catalyst SDK (26.5) enforces a 17.0 minimum; 15.0 fails the build outright. -->
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">17.0</SupportedOSPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
         <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
@@ -57,17 +57,23 @@
         <!-- Android TV Support -->
         <AndroidEnableProfiledAot Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">false</AndroidEnableProfiledAot>
 
-        <!-- Android: all ABIs for store / package-android.cmd all.
+        <!-- Android: all ABIs for store / package-android.ps1 -Mode all.
              Device APK (AndroidArmOnly=true): armeabi-v7a TV + arm64-v8a phones.
              Do not pass a semicolon RID list as -p:RuntimeIdentifiers — the SDK
-             treats it as one RuntimeIdentifier and fails with NETSDK1083. -->
-        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' != 'true'">android-arm;android-arm64;android-x86;android-x64</RuntimeIdentifiers>
+             treats it as one RuntimeIdentifier and fails with NETSDK1083.
+             .NET 11 Android runs on CoreCLR only and has no android-x86 runtime
+             pack (NETSDK1181), so x86 was dropped from the fat APK; x86_64
+             emulators are covered by android-x64. -->
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' != 'true'">android-arm;android-arm64;android-x64</RuntimeIdentifiers>
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(AndroidArmOnly)' == 'true'">android-arm;android-arm64</RuntimeIdentifiers>
         <RuntimeIdentifier Condition="'$(AndroidArmOnly)' == 'true'"></RuntimeIdentifier>
 
-        <!-- Re-enable trimming and AOT for Android now that assembly info is properly generated -->
+        <!-- Trimming stays on for Android (also required: CoreCLR R2R assemblies
+             are mixed-mode and the un-trimmed linker path can't rewrite them).
+             Mono profiled AOT is gone in .NET 11 (XA1044: RunAOTCompilation is
+             incompatible with CoreCLR), so it is guarded to Mono-only targets. -->
         <PublishTrimmed Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</PublishTrimmed>
-        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</RunAotCompilation>
+        <RunAotCompilation Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(UseMonoRuntime)' == 'true'">true</RunAotCompilation>
 
         <!-- FORCE DISABLE Fast Deployment for Android.
              This is critical to prevent the NoClassDefFoundError loop and 6-minute startup delay.
@@ -81,13 +87,8 @@
         <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
 
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' or $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">
-      <UseMonoRuntime>true</UseMonoRuntime>
-    </PropertyGroup>
-
-    <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-      <UseMonoRuntime>true</UseMonoRuntime>
-    </PropertyGroup>
+    <!-- .NET 11 is CoreCLR-only on android, ios and maccatalyst (NETSDK1242):
+         UseMonoRuntime stays off everywhere. -->
 
     <!-- GenerateBuildInfo: always on Debug; Release via RunGenerateBuildInfo=true (CI publish). -->
     <Target Name="GenerateBuildInfo" BeforeTargets="ProcessMauiAssets" Condition="'$(RunGenerateBuildInfo)' == 'true' Or '$(Configuration)' == 'Debug'">
@@ -107,7 +108,16 @@
         <_BuildInfoLine Include="Commit=$(GitHash)" />
         <_BuildInfoLine Include="Built=$(BuildTimestamp)" />
       </ItemGroup>
-      <WriteLinesToFile File="$(MSBuildProjectDirectory)\Resources\Raw\buildinfo.txt" Lines="@(_BuildInfoLine)" Overwrite="true" />
+      <!-- Generated into obj (ignored), not Resources\Raw: the build rewrites this
+           file every run, and a tracked copy kept dirtying the working tree. The
+           MauiAsset below still ships it in packages under the same logical name. -->
+      <PropertyGroup>
+        <_BuildInfoFile>$(IntermediateOutputPath)buildinfo.txt</_BuildInfoFile>
+      </PropertyGroup>
+      <WriteLinesToFile File="$(_BuildInfoFile)" Lines="@(_BuildInfoLine)" Overwrite="true" />
+      <ItemGroup>
+        <MauiAsset Include="$(_BuildInfoFile)" LogicalName="buildinfo.txt" />
+      </ItemGroup>
       <Message Importance="high" Text="GenerateBuildInfo: $(BuildTimestamp) commit=$(GitHash)" />
     </Target>
 
@@ -143,7 +153,7 @@
     </Target>
 
     <!-- Auto-sync Package.appxmanifest version from .csproj properties for Windows builds -->
-    <Target Name="UpdateWindowsPackageVersion" BeforeTargets="_ConvertAppxManifestToGenerationFormat" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <Target Name="UpdateWindowsPackageVersion" BeforeTargets="_ConvertAppxManifestToGenerationFormat" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <PropertyGroup>
         <ManifestFile>$(MSBuildProjectDirectory)\Platforms\Windows\Package.appxmanifest</ManifestFile>
         <!-- MSIX requires 4-part version: Major.Minor.Build.Revision -->
@@ -167,7 +177,6 @@
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
-        <Content Include="Resources\Images\Leagues\**\*.*" Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
         
         <!-- Android TV Banner (wide asset — not the phone launcher icon) -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
@@ -178,6 +187,23 @@
 
         <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+
+        <!-- Packaged Windows never unpacked MauiAssets onto disk; MediaPlayer
+             and OpenAppPackageFileAsync both miss Sounds/*.wav unless they
+             also copy next to the exe / into the loose AppX layout.
+             Windows-only: on Android these WAVs ship solely as MauiAssets
+             (SoundPool loads assets/Sounds/*.wav via Assets.OpenFd) and an
+             unconditioned @(Content) item earns one XA0101 'build action
+             not supported' warning per file. -->
+        <Content Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'"
+                 Include="Resources\Raw\Sounds\*.wav"
+                 Link="Sounds\%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest" />
+
+        <!-- League logos for the XAML homepage (MauiHomeAssetLocator reads them
+             via OpenAppPackageFileAsync). -->
+        <MauiAsset Include="Resources\Images\Leagues\**\*.*" LogicalName="images/leagues/%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
 
     <!-- Removed custom deletion of MAUI app compat layout to retain default fragment containers -->
@@ -185,36 +211,35 @@
     <!-- Retain default MAUI AppCompat layout -->
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="10.0.41" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.0-preview.7.26381.103" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
         <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <ItemGroup Condition="'$(TargetFramework)' == 'net11.0-android'">
       <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.ExoPlayer.Hls" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.Common" Version="1.9.0.1" />
       <PackageReference Include="Xamarin.AndroidX.Media3.UI" Version="1.9.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.9.0" />
+      <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.10.0.1" />
       <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.15.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.1" />
+      <PackageReference Include="Xamarin.AndroidX.Window" Version="1.5.1.3" />
       <!-- Explicit AndroidX Lifecycle packages to resolve version conflicts -->
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModelSavedState" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Runtime.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Process" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel.Ktx" Version="2.10.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.SavedState" Version="1.4.0.1" />
-      <PackageReference Include="Xamarin.AndroidX.SavedState.SavedState.Ktx" Version="1.4.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModelSavedState" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Runtime.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.Process" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.LiveData.Core.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.Lifecycle.ViewModel.Ktx" Version="2.11.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState" Version="1.5.0.1" />
+      <PackageReference Include="Xamarin.AndroidX.SavedState.SavedState.Ktx" Version="1.5.0.1" />
     </ItemGroup>
 
     <ItemGroup>
@@ -245,7 +270,7 @@
     <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
     <GenerateTestArtifacts Condition="'$(Configuration)' == 'Debug'">True</GenerateTestArtifacts>
     <GenerateTestArtifacts Condition="'$(Configuration)' != 'Debug'">False</GenerateTestArtifacts>
-    <AppInstallerUri>bin\Release\net10.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
+    <AppInstallerUri>bin\Release\net11.0-windows10.0.19041.0\win-x64\AppPackages</AppInstallerUri>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
   </PropertyGroup>
@@ -276,7 +301,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Strip MAUI TargetFrameworks/RID so net10.0 domain libraries restore as net10.0, not NETSDK1005. -->
+    <!--
+        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Desktop,
+        net11.0-android/-windows compiled natively into this head).
+        Directory.Build.targets strips TargetFramework off every
+        ProjectReference, which breaks the cross-targeting reference protocol
+        (no compiled output comes back) - so this one reference keeps
+        TargetFramework negotiation and only strips the RID/SelfContained
+        globals.
+    -->
+    <ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <!-- Strip MAUI TargetFrameworks/RID so net11.0 domain libraries restore as net11.0, not NETSDK1005. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
@@ -308,7 +345,7 @@
 
     <!-- MSIX packaging defaults for Windows -->
     <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
-    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
       <!-- PFX exists (CD): override to sign with PFX file -->
@@ -323,7 +360,7 @@
     <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     </PropertyGroup>
 
-    <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android' and '$(Configuration)' == 'Release'">
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-android' and '$(Configuration)' == 'Release'">
 	    <AndroidKeyStore>True</AndroidKeyStore>
 	    <AndroidSigningKeyStore>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'certs', 'vardyparty.keystore'))</AndroidSigningKeyStore>
 	    <AndroidSigningKeyAlias>vardyparty</AndroidSigningKeyAlias>
@@ -332,48 +369,15 @@
     </PropertyGroup>
 
     <!-- Loose-register deploys from OutputPath\AppX; incremental builds often refresh win-x64 only. -->
-    <Target Name="SyncWindowsAppXLayout" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0' and Exists('$(OutputPath)AppX')">
+    <Target Name="SyncWindowsAppXLayout" AfterTargets="Build" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0' and Exists('$(OutputPath)AppX')">
       <PropertyGroup>
         <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
         <_AppXRoot>$(_WinOutputRoot)AppX\</_AppXRoot>
       </PropertyGroup>
       <ItemGroup>
         <_AppXBinary Include="$(_WinOutputRoot)*.dll;$(_WinOutputRoot)*.exe;$(_WinOutputRoot)*.json;$(_WinOutputRoot)*.pri" />
-        <_SourceWwwroot Include="$(MSBuildProjectDirectory)\wwwroot\**\*.*" />
-        <_ScopedCssBundle Include="$(IntermediateOutputPath)scopedcss\bundle\*.*" Condition="Exists('$(IntermediateOutputPath)scopedcss\bundle')" />
-        <_AppXWwwroot Include="$(_WinOutputRoot)wwwroot\**\*.*" />
       </ItemGroup>
       <Copy SourceFiles="@(_AppXBinary)" DestinationFolder="$(_AppXRoot)" SkipUnchangedFiles="false" />
-      <!-- Source wwwroot + scoped CSS bundle: AppX\wwwroot is not refreshed on incremental builds. -->
-      <Copy SourceFiles="@(_SourceWwwroot)"
-            DestinationFiles="@(_SourceWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
-            SkipUnchangedFiles="false" />
-      <Copy SourceFiles="@(_SourceWwwroot)"
-            DestinationFiles="@(_SourceWwwroot->'$(_WinOutputRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
-            SkipUnchangedFiles="false" />
-      <Copy SourceFiles="@(_ScopedCssBundle)"
-            DestinationFolder="$(_AppXRoot)wwwroot"
-            SkipUnchangedFiles="false"
-            Condition="'@(_ScopedCssBundle)' != ''" />
-      <Copy SourceFiles="@(_AppXWwwroot)"
-            DestinationFiles="@(_AppXWwwroot->'$(_AppXRoot)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
-            SkipUnchangedFiles="false" />
-      <!-- Unpackaged dotnet run resolves HostPage from OutputPath\wwwroot; mirror AppX Blazor assets there. -->
-      <ItemGroup>
-        <_AppXFramework Include="$(_AppXRoot)wwwroot\_framework\**\*.*" Condition="Exists('$(_AppXRoot)wwwroot\_framework')" />
-      </ItemGroup>
-      <Copy SourceFiles="@(_AppXFramework)"
-            DestinationFiles="@(_AppXFramework->'$(_WinOutputRoot)wwwroot\_framework\%(RecursiveDir)%(Filename)%(Extension)')"
-            SkipUnchangedFiles="false"
-            Condition="'@(_AppXFramework)' != ''" />
-      <Copy SourceFiles="$(_AppXRoot)wwwroot\index.html"
-            DestinationFiles="$(_WinOutputRoot)wwwroot\index.html"
-            SkipUnchangedFiles="false"
-            Condition="Exists('$(_AppXRoot)wwwroot\index.html')" />
-      <Copy SourceFiles="$(_AppXRoot)wwwroot\VardyParty.styles.css"
-            DestinationFiles="$(_WinOutputRoot)wwwroot\VardyParty.styles.css"
-            SkipUnchangedFiles="false"
-            Condition="Exists('$(_AppXRoot)wwwroot\VardyParty.styles.css')" />
       <!-- Maui splash/tile PNGs: refresh AppX from resizetizer, then mirror beside AppxManifest for loose-register. -->
       <ItemGroup>
         <_ResizetizerPng Include="$(IntermediateOutputPath)resizetizer\sp\*.png;$(IntermediateOutputPath)resizetizer\r\*.png" />
@@ -398,20 +402,43 @@
             Condition="'@(_AppXLooseAsset)' != ''" />
     </Target>
 
-    <!-- Keep MSIX loose-layout wwwroot in sync with league logo assets (AppX folder is not always refreshed on incremental builds). -->
-    <Target Name="SyncLeagueLogosToWindowsWwwroot" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <!-- Keep MSIX loose layout in sync with league logo MauiAssets (AppX folder is not always refreshed on incremental builds). -->
+    <Target Name="SyncLeagueLogosToWindowsLayout" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <ItemGroup>
         <_LeagueLogoFile Include="$(MSBuildProjectDirectory)\Resources\Images\Leagues\**\*.*" />
       </ItemGroup>
       <PropertyGroup>
         <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
       </PropertyGroup>
-      <MakeDir Directories="$(_WinOutputRoot)wwwroot\images\leagues;$(_WinOutputRoot)AppX\wwwroot\images\leagues" />
+      <MakeDir Directories="$(_WinOutputRoot)images\leagues;$(_WinOutputRoot)AppX\images\leagues" />
       <Copy SourceFiles="@(_LeagueLogoFile)"
-            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
+            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
             SkipUnchangedFiles="true" />
       <Copy SourceFiles="@(_LeagueLogoFile)"
-            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)AppX\wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
+            DestinationFiles="@(_LeagueLogoFile->'$(_WinOutputRoot)AppX\images\leagues\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true"
+            Condition="Exists('$(_WinOutputRoot)AppX')" />
+    </Target>
+
+    <!-- Same staleness issue for the UI sound MauiAssets (LogicalName Sounds/*.wav):
+         SyncWindowsAppXLayout's binary allowlist never refreshes the Sounds
+         subfolder, so VS/dotnet-driven incremental syncs shipped stale or missing
+         WAVs and WindowsUiSoundPlayer found nothing to preload. Mirrors the
+         league-logos target above (run-windows-debug.ps1's recursive sync already
+         covers script-driven deploys). -->
+    <Target Name="SyncSoundsToWindowsLayout" AfterTargets="SyncWindowsAppXLayout" Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
+      <ItemGroup>
+        <_UiSoundFile Include="$(MSBuildProjectDirectory)\Resources\Raw\Sounds\**\*.*" />
+      </ItemGroup>
+      <PropertyGroup>
+        <_WinOutputRoot>$([MSBuild]::EnsureTrailingSlash('$(OutputPath)'))</_WinOutputRoot>
+      </PropertyGroup>
+      <MakeDir Directories="$(_WinOutputRoot)Sounds;$(_WinOutputRoot)AppX\Sounds" />
+      <Copy SourceFiles="@(_UiSoundFile)"
+            DestinationFiles="@(_UiSoundFile->'$(_WinOutputRoot)Sounds\%(RecursiveDir)%(Filename)%(Extension)')"
+            SkipUnchangedFiles="true" />
+      <Copy SourceFiles="@(_UiSoundFile)"
+            DestinationFiles="@(_UiSoundFile->'$(_WinOutputRoot)AppX\Sounds\%(RecursiveDir)%(Filename)%(Extension)')"
             SkipUnchangedFiles="true"
             Condition="Exists('$(_WinOutputRoot)AppX')" />
     </Target>
@@ -427,10 +454,10 @@
     </Target>
 
     <!-- Local Development: Patch appsettings.json with user secrets for Android builds -->
-    <!-- Usage: dotnet build -f net10.0-android -p:PatchAppSettings=true -->
+    <!-- Usage: dotnet build -f net11.0-android -p:PatchAppSettings=true -->
     <!-- This patches the SOURCE appsettings.json BEFORE build so it gets embedded into APK -->
     <!-- WARNING: This modifies the source file. Revert with: git restore VardyParty\appsettings.json -->
-    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net10.0-android' AND '$(PatchAppSettings)' == 'true'">
+    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net11.0-android' AND '$(PatchAppSettings)' == 'true'">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
             <UserSecretsId>$(UserSecretsId)</UserSecretsId>

@@ -21,7 +21,7 @@ using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {
-    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
+    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme.NoActionBar", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
     public partial class NativeVideoActivity : Activity
     {
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
@@ -181,14 +181,20 @@ namespace VardyParty.Platforms.Android
         private TextView? _reportStatusView;
         private global::Android.Widget.Button? _reportButton;
         private global::Android.Widget.Button? _videoInfoButton;
-        private LinearLayout? _scoresTickerContainer;
-        private LinearLayout? _tickerInner;
+        private FrameLayout? _scoresTickerContainer;
+        private LinearLayout? _tickerTrack;
         private TextView? _tickerText1;
         private TextView? _tickerText2;
+        private global::Android.Views.View? _tickerGap;
         private global::Android.OS.Handler? _tickerHandler;
         private Java.Lang.Runnable? _tickerRunnable;
         private float _tickerScrollX;
+        private int _tickerCopyWidth;
+        private int _tickerGapPx;
         private float _tickerPixelsPerFrame = 2f; // scroll speed
+        /// <summary>Uptime millis when auto-scroll may begin (hold so the head is readable).</summary>
+        private long _tickerScrollHoldUntilMs;
+        private const long TickerScrollStartDelayMs = 5000;
         private bool _isScoresTickerVisible;
         private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
         private bool _isMenuVisible;
@@ -492,18 +498,22 @@ namespace VardyParty.Platforms.Android
             };
             root.AddView(_menuPanel, menuPanelParams);
 
-            _scoresTickerContainer = new LinearLayout(this)
+            // Seamless infinite ticker (Windows-style): one horizontal track
+            // with copy A + gap + copy B, translated as a unit inside a clipped
+            // viewport. Dual TranslationX on stacked TextViews still failed on
+            // BRAVIA when Measure/Layout lagged RequestLayout — the second
+            // copy stayed viewport-capped and never entered from the right.
+            // Exact EXACTLY widths + sync Measure/Layout make the track wider
+            // than the screen so the trailing copy is real laid-out glyphs.
+            _scoresTickerContainer = new FrameLayout(this)
             {
-                Orientation = Orientation.Horizontal,
                 Visibility = global::Android.Views.ViewStates.Gone
             };
             _scoresTickerContainer.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#CC101010"));
             _scoresTickerContainer.SetPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(8 * density));
-
-            // Seamless infinite ticker: two identical TextViews side-by-side inside a
-            // clipped inner LinearLayout, translated continuously by a Runnable loop.
-            // When the first copy scrolls fully off the left, reset to 0 — seamless wrap.
-            _tickerInner = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+            _scoresTickerContainer.SetClipChildren(true);
+            _scoresTickerContainer.SetClipToPadding(true);
+            _tickerGapPx = (int)(64 * density);
 
             TextView MakeTickerTextView()
             {
@@ -512,44 +522,53 @@ namespace VardyParty.Platforms.Android
                 tv.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
                 ConfigureEmojiFriendlyTextView(tv);
                 tv.SetSingleLine(true);
-                // Do NOT call SetHorizontallyScrolling — that is for TextView's own marquee
-                // engine and interferes with the manual TranslationX scroll approach.
-                tv.SetPadding(0, 0, (int)(64 * density), 0); // gap between copies
+                // Do not SetHorizontallyScrolling — that arms TextView's own
+                // marquee engine and interferes with TranslationX (see 9239408).
+                tv.Ellipsize = null;
+                tv.SetPadding(0, 0, 0, 0);
                 return tv;
             }
 
+            _tickerTrack = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal
+            };
             _tickerText1 = MakeTickerTextView();
             _tickerText2 = MakeTickerTextView();
-            // WrapContent so each TextView measures at its natural text width, not screen width.
-            _tickerInner.AddView(_tickerText1, new LinearLayout.LayoutParams(
+            _tickerGap = new global::Android.Views.View(this);
+            // Exact widths are applied in ApplyTickerCopyLayout once text is known.
+            _tickerTrack.AddView(_tickerText1, new LinearLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
-            _tickerInner.AddView(_tickerText2, new LinearLayout.LayoutParams(
+            _tickerTrack.AddView(_tickerGap, new LinearLayout.LayoutParams(
+                _tickerGapPx,
+                1));
+            _tickerTrack.AddView(_tickerText2, new LinearLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent));
-
-            // _tickerInner must be WrapContent so it expands to hold both copies side-by-side.
-            // Clipping to the visible viewport is handled by _scoresTickerContainer (MatchParent).
-            _scoresTickerContainer.SetClipChildren(true);
-            _scoresTickerContainer.SetClipToPadding(true);
-            _scoresTickerContainer.AddView(_tickerInner, new LinearLayout.LayoutParams(
+            _scoresTickerContainer.AddView(_tickerTrack, new FrameLayout.LayoutParams(
                 global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent));
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.GravityFlags.CenterVertical | global::Android.Views.GravityFlags.Left));
 
             // Runnable-based scroll loop: runs every ~16ms (~60fps)
             _tickerHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _tickerRunnable = new Java.Lang.Runnable(() =>
             {
-                if (_tickerInner == null || _tickerText1 == null || _scoresTickerContainer == null) return;
-                var text1Width = _tickerText1.Width;
-                if (text1Width <= 0)
+                if (_tickerTrack == null || _tickerText1 == null || _scoresTickerContainer == null) return;
+
+                if (_tickerCopyWidth <= 0)
+                {
+                    ApplyTickerCopyLayout();
+                }
+
+                if (_tickerCopyWidth <= 0)
                 {
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 32);
                     return;
                 }
 
-                var gap = _tickerText1.PaddingRight;
-                var contentWidth = Math.Max(0, text1Width - gap);
+                var contentWidth = Math.Max(0, _tickerCopyWidth);
                 var viewportWidth = Math.Max(_scoresTickerContainer.Width, _scoresTickerContainer.MeasuredWidth)
                     - _scoresTickerContainer.PaddingLeft
                     - _scoresTickerContainer.PaddingRight;
@@ -557,10 +576,15 @@ namespace VardyParty.Platforms.Android
                 if (!TickerMarquee.ShouldLoop(contentWidth, viewportWidth))
                 {
                     _tickerScrollX = 0f;
-                    _tickerInner.TranslationX = 0f;
+                    _tickerTrack.TranslationX = 0f;
                     if (_tickerText2 != null)
                     {
                         _tickerText2.Visibility = global::Android.Views.ViewStates.Gone;
+                    }
+
+                    if (_tickerGap != null)
+                    {
+                        _tickerGap.Visibility = global::Android.Views.ViewStates.Gone;
                     }
 
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
@@ -572,9 +596,27 @@ namespace VardyParty.Platforms.Android
                     _tickerText2.Visibility = global::Android.Views.ViewStates.Visible;
                 }
 
-                var period = TickerMarquee.LoopPeriod(contentWidth, gap);
+                if (_tickerGap != null)
+                {
+                    _tickerGap.Visibility = global::Android.Views.ViewStates.Visible;
+                }
+
+                // Hold at the start so the reader can see the head before motion.
+                var nowMs = global::Android.OS.SystemClock.UptimeMillis();
+                if (nowMs < _tickerScrollHoldUntilMs)
+                {
+                    _tickerScrollX = 0f;
+                    _tickerTrack.TranslationX = 0f;
+                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
+                    return;
+                }
+
+                var period = TickerMarquee.LoopPeriod(contentWidth, _tickerGapPx);
                 _tickerScrollX = (float)TickerMarquee.WrapPositive(_tickerScrollX + _tickerPixelsPerFrame, period);
-                _tickerInner.TranslationX = -_tickerScrollX;
+                // One transform on the whole track — copy B is laid out to the
+                // right of the gap, so it fills the viewport as A exits left.
+                _tickerTrack.TranslationX = -_tickerScrollX;
+
                 PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
             });
 
@@ -622,6 +664,7 @@ namespace VardyParty.Platforms.Android
 
             SubscribeToGamesSnapshot();
             SubscribeToStreamSwitching();
+            InitializeMatchToast(root, density);
 
             if (!string.IsNullOrEmpty(_m3u8Url))
             {
@@ -766,6 +809,7 @@ namespace VardyParty.Platforms.Android
         protected override void OnStop()
         {
             StopAndReleasePlayer(release: false);
+            MatchToastOnStop();
             base.OnStop();
         }
 
@@ -778,6 +822,7 @@ namespace VardyParty.Platforms.Android
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
                 RemoveCallback(_overlayHandler, _overlayHideRunnable);
+                MatchToastOnDestroy();
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
@@ -796,6 +841,109 @@ namespace VardyParty.Platforms.Android
             handler.RemoveCallbacks(runnable);
         }
 
+        /// <summary>
+        /// Natural text width of one ticker copy (glyphs + padding). Used to
+        /// size each TextView exactly so the second copy can trail the first.
+        /// </summary>
+        private static int MeasureTickerCopyWidth(TextView textView)
+        {
+            try
+            {
+                var text = textView.Text;
+                if (!string.IsNullOrEmpty(text) && textView.Paint is { } paint)
+                {
+                    var measured = paint.MeasureText(text);
+                    if (measured > 0)
+                    {
+                        return (int)Math.Ceiling(measured) + textView.PaddingLeft + textView.PaddingRight;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            textView.Measure(
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified),
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(0, global::Android.Views.MeasureSpecMode.Unspecified));
+            return textView.MeasuredWidth;
+        }
+
+        /// <summary>
+        /// Pin both copies and the track to exact pixel widths, then measure/
+        /// layout synchronously. MatchParent parents AT_MOST-measure WrapContent
+        /// children to the viewport — without EXACTLY widths the trailing copy
+        /// never lays out past the screen edge (Windows measures unconstrained).
+        /// </summary>
+        private void ApplyTickerCopyLayout()
+        {
+            if (_tickerText1 == null || _tickerTrack == null)
+            {
+                return;
+            }
+
+            var width = MeasureTickerCopyWidth(_tickerText1);
+            if (width <= 0)
+            {
+                _tickerCopyWidth = 0;
+                return;
+            }
+
+            _tickerCopyWidth = width;
+            SetExactChildWidth(_tickerText1, width);
+            if (_tickerText2 != null)
+            {
+                SetExactChildWidth(_tickerText2, width);
+            }
+
+            if (_tickerGap != null)
+            {
+                SetExactChildWidth(_tickerGap, _tickerGapPx);
+            }
+
+            var trackWidth = width + _tickerGapPx + width;
+            var trackLp = _tickerTrack.LayoutParameters;
+            if (trackLp == null)
+            {
+                trackLp = new FrameLayout.LayoutParams(
+                    trackWidth,
+                    global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                    global::Android.Views.GravityFlags.CenterVertical | global::Android.Views.GravityFlags.Left);
+            }
+            else
+            {
+                trackLp.Width = trackWidth;
+            }
+
+            _tickerTrack.LayoutParameters = trackLp;
+
+            // Sync layout so the first scroll frame already has real glyphs past
+            // the viewport — RequestLayout alone left BRAVIA drawing a clipped box.
+            var heightSpec = global::Android.Views.View.MeasureSpec.MakeMeasureSpec(
+                0,
+                global::Android.Views.MeasureSpecMode.Unspecified);
+            _tickerTrack.Measure(
+                global::Android.Views.View.MeasureSpec.MakeMeasureSpec(trackWidth, global::Android.Views.MeasureSpecMode.Exactly),
+                heightSpec);
+            var trackHeight = Math.Max(_tickerTrack.MeasuredHeight, 1);
+            _tickerTrack.Layout(0, 0, trackWidth, trackHeight);
+        }
+
+        private static void SetExactChildWidth(global::Android.Views.View view, int widthPx)
+        {
+            var lp = view.LayoutParameters;
+            if (lp == null)
+            {
+                lp = new LinearLayout.LayoutParams(widthPx, global::Android.Views.ViewGroup.LayoutParams.WrapContent);
+            }
+            else
+            {
+                lp.Width = widthPx;
+            }
+
+            view.LayoutParameters = lp;
+        }
+
         private static void PostDelayedCallback(global::Android.OS.Handler? handler, Java.Lang.IRunnable? runnable, long delayMs)
         {
             if (handler is null || runnable is null)
@@ -810,6 +958,21 @@ namespace VardyParty.Platforms.Android
             {
                 var window = Window;
                 if (window == null) return;
+
+                // Phone: Maui.MainTheme used to paint a blue ActionBar (colorPrimary)
+                // above the player. NoActionBar removes that; also paint status/nav
+                // bars black/transparent so a swipe-back transient strip is not blue.
+                // SetStatusBarColor/SetNavigationBarColor are obsolete on API 35+
+                // (edge-to-edge); InsetsController.Hide covers that path below.
+                window.AddFlags(global::Android.Views.WindowManagerFlags.Fullscreen);
+                window.ClearFlags(global::Android.Views.WindowManagerFlags.ForceNotFullscreen);
+                if (OperatingSystem.IsAndroidVersionAtLeast(21) && !OperatingSystem.IsAndroidVersionAtLeast(35))
+                {
+#pragma warning disable CA1422 // obsolete on API 35+; gated above
+                    window.SetStatusBarColor(global::Android.Graphics.Color.Transparent);
+                    window.SetNavigationBarColor(global::Android.Graphics.Color.Black);
+#pragma warning restore CA1422
+                }
 
                 // Hide status bar and navigation bar for immersive full-screen video
                 if (OperatingSystem.IsAndroidVersionAtLeast(30))
@@ -832,7 +995,10 @@ namespace VardyParty.Platforms.Android
                         global::Android.Views.SystemUiFlags.Fullscreen |
                         global::Android.Views.SystemUiFlags.HideNavigation |
                         global::Android.Views.SystemUiFlags.Immersive |
-                        global::Android.Views.SystemUiFlags.ImmersiveSticky);
+                        global::Android.Views.SystemUiFlags.ImmersiveSticky |
+                        global::Android.Views.SystemUiFlags.LayoutStable |
+                        global::Android.Views.SystemUiFlags.LayoutFullscreen |
+                        global::Android.Views.SystemUiFlags.LayoutHideNavigation);
 #pragma warning restore CS0618
                 }
 
@@ -841,6 +1007,17 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to hide system UI");
+            }
+        }
+
+        public override void OnWindowFocusChanged(bool hasFocus)
+        {
+            base.OnWindowFocusChanged(hasFocus);
+            if (hasFocus)
+            {
+                // Phone status/nav bars reappear after dialogs or notification shade;
+                // re-assert immersive so the blue/system chrome stays gone.
+                HideSystemUI();
             }
         }
 

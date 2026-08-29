@@ -234,7 +234,7 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
-    public async Task StartAsync_OverlappingCall_IsIgnoredUntilFirstCompletes()
+    public async Task StartAsync_OverlappingCall_RefusesWithStartRefused()
     {
         // Arrange
         var game = _fixture.Build<Game>()
@@ -274,10 +274,13 @@ public class StreamResolutionOrchestratorTests
         releaseInit.TrySetResult();
         var firstOutcome = await first;
 
-        // Assert
+        // Assert: the refused call must say so — a silent empty outcome left
+        // hosts with a latched selection and no banner (WSL field dead-end).
+        Assert.True(overlapping.StartRefused);
         Assert.False(overlapping.NoWorkingStreams);
         Assert.Null(overlapping.PlaybackResult);
         Assert.True(firstOutcome.NoWorkingStreams);
+        Assert.False(firstOutcome.StartRefused);
         _fixture.GetMock<IStreamSelectionCoordinator>()
             .Verify(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()), Times.Once);
     }

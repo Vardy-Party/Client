@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<Import Project="..\Version.props" />
+
+	<PropertyGroup>
+		<!--
+			Shared .NET MAUI XAML homepage: net11.0 is drawn by Avalonia
+			(VardyParty.Desktop); net11.0-android/-windows compile the exact same
+			XAML natively into the VardyParty MAUI head.
+
+			This project cross-targets, and Directory.Build.targets strips the
+			TargetFramework global property off every ProjectReference, which breaks
+			the cross-targeting reference protocol (the referencing project gets no
+			compiled output back). Heads referencing this project therefore override
+			GlobalPropertiesToRemove on their ProjectReference to keep
+			TargetFramework negotiation intact (see VardyParty.csproj and
+			VardyParty.Desktop.csproj).
+		-->
+		<!-- Linux: both TFMs so the MAUI head restore has net11.0-android.
+		     Unit tests set HomeUiTargetFrameworks=net11.0 (job env / -p:) so
+		     they do not restore the android workload. Desktop still pins
+		     TargetFrameworks=net11.0 on its ProjectReference. -->
+		<HomeUiTargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true' AND '$(HomeUiTargetFrameworks)' == ''">net11.0;net11.0-android</HomeUiTargetFrameworks>
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">$(HomeUiTargetFrameworks)</TargetFrameworks>
+		<!-- macOS CI: plain TFM only (the ios/maccatalyst heads consume net11.0). -->
+		<TargetFrameworks Condition="'$(OS)' != 'Windows_NT' AND '$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">net11.0</TargetFrameworks>
+		<!-- Windows CI: only the Windows TFM (CI installs only maui-windows). -->
+		<TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' == 'true'">net11.0-windows10.0.19041.0</TargetFrameworks>
+		<!-- Windows local dev: everything the local MAUI head can build. -->
+		<TargetFrameworks Condition="'$(OS)' == 'Windows_NT' AND '$(CI)' != 'true'">net11.0;net11.0-android;net11.0-windows10.0.19041.0</TargetFrameworks>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>VardyParty.HomeUi</RootNamespace>
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+		<!-- Renders the BBC SVG badges to bitmaps that MAUI Image can display everywhere. -->
+		<PackageReference Include="Svg.Skia" Version="5.2.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Metallic brand crest: PNG for reliable first paint; SVG kept as
+		     source + Svg.Skia fallback if the PNG embed is missing. -->
+		<EmbeddedResource Include="Resources\brand_crest.png" />
+		<EmbeddedResource Include="Resources\brand_crest.svg" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
+		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+	</ItemGroup>
+
+</Project>

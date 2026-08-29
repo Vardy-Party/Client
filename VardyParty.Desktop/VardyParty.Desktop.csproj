@@ -1,0 +1,117 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<Import Project="..\Version.props" />
+
+	<PropertyGroup>
+		<!--
+			Linux/desktop head: the shared .NET MAUI homepage drawn by Avalonia
+			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11 preview
+			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
+			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
+		-->
+		<TargetFramework>net11.0</TargetFramework>
+		<OutputType>Exe</OutputType>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<RootNamespace>VardyParty.Desktop</RootNamespace>
+		<AssemblyName>VardyPartyDesktop</AssemblyName>
+
+		<ApplicationTitle>Vardy Party</ApplicationTitle>
+		<ApplicationId>uk.jonbreen.vardyparty.desktop</ApplicationId>
+
+		<!-- Netflix-style dark UI regardless of OS theme. -->
+		<AvaloniaControlsMauiThemeVariant>Dark</AvaloniaControlsMauiThemeVariant>
+
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+
+		<!--
+			Build-time feature switch: in-window video playback (default ON).
+
+			  dotnet build ... -p:EmbeddedDesktopVideo=false
+
+			compiles the embedded-playback feature OUT entirely: no
+			LibVLCSharp.Avalonia package reference, no VideoHostView/handler,
+			no hosted-surface code in DesktopHomePage/DesktopVideoPlayerService
+			— playback opens libvlc's own native video window (the pre-feature
+			behaviour), with the reserved-airspace Close chip still in-app.
+			Everything the switch controls is guarded by the
+			EMBEDDED_DESKTOP_VIDEO define derived below. Independent of the
+			switch, the embedded path also auto-falls back to the standalone
+			window at RUNTIME if the hosted surface cannot be attached (see
+			DesktopVideoPlayerService). Documented in
+			docs/architecture/homepage-maui-avalonia.md.
+		-->
+		<EmbeddedDesktopVideo Condition="'$(EmbeddedDesktopVideo)' == ''">true</EmbeddedDesktopVideo>
+		<DefineConstants Condition="'$(EmbeddedDesktopVideo)' == 'true'">$(DefineConstants);EMBEDDED_DESKTOP_VIDEO</DefineConstants>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
+		<PackageReference Include="Avalonia.Controls.Maui.Desktop" Version="11.0.0-preview.7.26224.328" />
+		<!--
+			Avalonia 12 preview draws with managed SkiaSharp 4.148, but Svg.Skia pins the
+			Linux native library at 3.119. Without this override the wrong libSkiaSharp.so
+			is deployed and the app aborts at startup with a native version mismatch.
+		-->
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.148.0" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-preview.7.26381.103" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
+		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
+		<PackageReference Include="SoundFlow" Version="1.4.1" />
+		<!--
+			LibVLC playback (system libvlc, initialised lazily). LibVLCSharp is
+			the core binding; LibVLCSharp.Avalonia adds the VideoView control
+			the in-window playback feature hosts through the MAUI-Avalonia
+			AvaloniaControlHandler bridge (Controls/VideoHostView*). 3.10.x is
+			the first LibVLCSharp.Avalonia line that supports Avalonia 12 (it
+			declares Avalonia >= 11.3.13 and detects 12 at runtime), matching
+			the Avalonia 12.1 the Avalonia.Controls.Maui.Desktop backend pulls
+			in transitively. The Avalonia package is only referenced when the
+			EmbeddedDesktopVideo switch is ON (see the PropertyGroup above).
+		-->
+		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
+		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.1" Condition="'$(EmbeddedDesktopVideo)' == 'true'" />
+		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
+		<PackageReference Include="QRCoder" Version="1.7.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!--
+			HomeUi cross-targets (net11.0 for this head, net11.0-android/-windows
+			for the MAUI head). Directory.Build.targets strips TargetFramework off
+			every ProjectReference, which would break the cross-targeting reference
+			protocol (no compiled output back) - so this one reference overrides
+			GlobalPropertiesToRemove to keep only the RID/SelfContained stripping.
+		-->
+		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+			<!-- Pin HomeUi to the Avalonia TFM so restore never pulls net11.0-android. -->
+			<AdditionalProperties>TargetFrameworks=net11.0;HomeUiTargetFrameworks=net11.0</AdditionalProperties>
+		</ProjectReference>
+		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
+		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />
+		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<!-- League logos shipped next to the binary, mirroring the VardyParty.Linux layout. -->
+		<None Include="..\VardyParty\Resources\Images\Leagues\**\*.*"
+		      Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+		<!-- UI sounds: the same generated WAVs the MAUI head ships as MauiAssets. -->
+		<None Include="..\VardyParty\Resources\Raw\Sounds\*.wav"
+		      Link="Sounds\%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
+
+</Project>

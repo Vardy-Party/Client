@@ -234,7 +234,9 @@ namespace VardyParty.Platforms.Windows
 
             private List<TickerDisplayPart> FormatUpcomingLineParts(Game g)
             {
-                var local = g.Start.Kind == DateTimeKind.Utc ? g.Start.ToLocalTime() : g.Start;
+                // Same rule as MatchStatusPresenter.FormatStartTime: exactly one
+                // conversion to device-local; non-Local kinds are UTC by ingestion.
+                var local = g.Start.Kind == DateTimeKind.Local ? g.Start : g.Start.ToLocalTime();
                 var ko = local == default ? "TBD" : local.ToString("HH:mm");
                 var international = InternationalTeamDisplay.IsInternationalGame(g);
                 var parts = new List<TickerDisplayPart>

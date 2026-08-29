@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hv="clr-namespace:VardyParty.HomeUi.Views;assembly=VardyParty.HomeUi"
+             x:Class="VardyParty.Desktop.Pages.DesktopHomePage"
+             NavigationPage.HasNavigationBar="False"
+             BackgroundColor="#0B0F1A">
+
+    <Grid>
+        <!-- The shared MAUI XAML homepage (same view the Android/Windows heads host). -->
+        <hv:HomeView x:Name="HomeSurface" />
+
+        <!-- Auth overlay: sign-in hero / device-code QR (same glue as HomeHostPage). -->
+        <Grid x:Name="AuthOverlay" BackgroundColor="#0B0F1A" IsVisible="False">
+            <ScrollView>
+                <VerticalStackLayout Spacing="16"
+                                     Padding="32"
+                                     HorizontalOptions="Center"
+                                     VerticalOptions="Center"
+                                     MaximumWidthRequest="560">
+                    <Label Text="Vardy Party"
+                           FontSize="36"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="AuthWelcomeLabel"
+                           Text="Welcome — please sign in to browse today's matches."
+                           FontSize="16"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="SignInButton"
+                            Text="Sign in — Continue"
+                            Clicked="OnSignInClicked"
+                            BackgroundColor="#2563EB"
+                            TextColor="White"
+                            CornerRadius="10"
+                            Padding="24,12"
+                            HorizontalOptions="Center" />
+
+                    <VerticalStackLayout x:Name="DeviceCodePanel" IsVisible="False" Spacing="12">
+                        <Label x:Name="DeviceCodeLabel"
+                               FontSize="30"
+                               FontAttributes="Bold"
+                               TextColor="White"
+                               HorizontalTextAlignment="Center" />
+                        <Image x:Name="DeviceQrImage"
+                               WidthRequest="240"
+                               HeightRequest="240"
+                               Aspect="AspectFit"
+                               HorizontalOptions="Center" />
+                        <Label x:Name="DeviceUriLabel"
+                               FontSize="15"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Button x:Name="CancelSignInButton"
+                                Text="Cancel"
+                                Clicked="OnCancelSignInClicked"
+                                BackgroundColor="#1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="10"
+                                Padding="24,10"
+                                HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+
+                    <Label x:Name="AuthStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#FECACA"
+                           HorizontalTextAlignment="Center" />
+                </VerticalStackLayout>
+            </ScrollView>
+        </Grid>
+
+        <!-- Stream-resolution progress overlay (same glue as HomeHostPage). -->
+        <Grid x:Name="ResolveOverlay" BackgroundColor="#D9000000" IsVisible="False">
+            <Border BackgroundColor="#111726"
+                    Stroke="#26FFFFFF"
+                    StrokeThickness="1"
+                    StrokeShape="RoundRectangle 14"
+                    Padding="28,22"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    MinimumWidthRequest="360">
+                <VerticalStackLayout Spacing="12">
+                    <Label x:Name="ResolveTitleLabel"
+                           Text="Finding streams..."
+                           FontSize="20"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="ResolveStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <ProgressBar x:Name="ResolveProgressBar"
+                                 ProgressColor="#2563EB" />
+                    <Label x:Name="ResolveCountLabel"
+                           FontSize="13"
+                           TextColor="#5B6478"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="ResolveCancelButton"
+                            Text="Cancel"
+                            Clicked="OnResolveCancelClicked"
+                            BackgroundColor="#1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="10"
+                            Padding="24,8"
+                            HorizontalOptions="Center" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+
+        <!--
+            Playback panel. With the EmbeddedDesktopVideo build switch ON
+            (default) the video renders IN-WINDOW: code-behind injects a
+            VideoHostView into VideoHostContainer and the service attaches
+            the MediaPlayer drawable to it (see DesktopVideoPlayerService).
+
+            AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
+            stacked above the Avalonia-drawn scene. Any MAUI control that
+            overlaps the video row is covered by that child — invisible and
+            unclickable. Do NOT move Close on top of the video to "save a
+            few pixels": it will look right in the designer and fail in the
+            field (the original WSL Close wedge).
+
+            The Close chip is HIDDEN during playback. Collapsing the chrome
+            entirely would put the hit target on the native child, so a thin
+            invisible top reserve stays (black, not a banner; see
+            DesktopCloseChipReveal). Hover near the top-right / a tap on
+            Avalonia-owned playback chrome reveals the chip and expands that
+            row just enough for the 36px control. Escape still closes
+            without the chip. Match-event toasts use the same reserved row
+            when they appear. No "Now Playing" title.
+
+            Standalone fallback (switch OFF, or the hosted surface failed at
+            runtime): libvlc opens its own native video window; the same
+            reveal/hide Close chip lives in the app window.
+        -->
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False" RowDefinitions="Auto,*">
+            <Grid x:Name="PlaybackChromeRow"
+                  BackgroundColor="Black"
+                  HeightRequest="24"
+                  ColumnDefinitions="*,Auto">
+                <hv:MatchEventToastView x:Name="PlaybackToast"
+                                        InputTransparent="True"
+                                        HorizontalOptions="Start"
+                                        VerticalOptions="Start" />
+
+                <!-- Generous top-right hit-zone (wider than the chip). The
+                     button itself is shown only after reveal; the zone stays
+                     so hover works while the chip is hidden. -->
+                <Grid x:Name="CloseHitZone"
+                      Grid.Column="1"
+                      WidthRequest="168"
+                      HeightRequest="24"
+                      VerticalOptions="Start"
+                      HorizontalOptions="End"
+                      BackgroundColor="Transparent">
+                    <Button x:Name="ClosePlaybackButton"
+                            Text="✕"
+                            Clicked="OnClosePlaybackClicked"
+                            VerticalOptions="Start"
+                            HorizontalOptions="End"
+                            Margin="0,4,8,0"
+                            WidthRequest="36"
+                            HeightRequest="36"
+                            Padding="0"
+                            Opacity="0"
+                            InputTransparent="True"
+                            BackgroundColor="#CC1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="18"
+                            FontSize="16"
+                            SemanticProperties.Description="Close playback" />
+                </Grid>
+            </Grid>
+
+            <!-- In-window video surface (VideoHostView injected in code-behind
+                 under EMBEDDED_DESKTOP_VIDEO; hidden in standalone fallback). -->
+            <Grid Grid.Row="1" x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
+
+            <!-- Standalone-window fallback card (pre-feature behaviour). -->
+            <Grid Grid.Row="1" x:Name="StandalonePlaybackPanel">
+                <Border BackgroundColor="#111726"
+                        Stroke="#26FFFFFF"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 14"
+                        Padding="28,22"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center"
+                        MinimumWidthRequest="360">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Video is playing in its own window."
+                               FontSize="14"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="In-window playback is unavailable on this setup — the standalone libvlc window is being used instead."
+                               FontSize="12"
+                               TextColor="#5B6478"
+                               HorizontalTextAlignment="Center"
+                               MaximumWidthRequest="420" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+
+</ContentPage>

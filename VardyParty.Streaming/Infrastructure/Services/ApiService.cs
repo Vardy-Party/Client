@@ -114,6 +114,16 @@ public class ApiService(
                 {
                     using var cts = new CancellationTokenSource(_callTimeout);
                     var response = await httpClient.GetAsync(url, cts.Token);
+
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        // The API answers 404 when its catalog is empty (e.g. late
+                        // night, all matches finished) — a semantic "no games",
+                        // not a failure. Deliver an empty board, never retry.
+                        logger.LogInformation("[Api] Games catalog is empty (404) — returning an empty board");
+                        return new Dictionary<string, List<Game>>();
+                    }
+
                     response.EnsureSuccessStatusCode();
                     var json = await response.Content.ReadAsStringAsync(cts.Token);
                     var parsed = JsonSerializer.Deserialize<Dictionary<string, List<Game>>>(json,
@@ -187,11 +197,26 @@ public class ApiService(
                     return null;
                 }
 
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // 404 is a semantic answer from this API (no streams / no games
+                    // for the request), never transient — retrying cannot change it.
+                    logger.LogInformation("[Api] 404 Not Found for {Url} - not retrying", url);
+                    return null;
+                }
+
                 if (response.IsSuccessStatusCode) return await response.Content.ReadFromJsonAsync<T>(cts.Token);
 
                 // For non-success status codes, throw to be handled by retry logic below
                 throw new HttpRequestException($"Request failed with status code {response.StatusCode}", null,
                     response.StatusCode);
+            }
+            catch (JsonException ex)
+            {
+                // A malformed payload is deterministic — retrying the same bytes cannot succeed.
+                logger.LogError(ex, "[Api] Non-retryable JSON parse failure for {Url} on attempt {Attempt}", url,
+                    attempt);
+                return null;
             }
             catch (Exception ex) when (attempt <= _maxRetries)
             {
@@ -214,7 +239,14 @@ public class ApiService(
         }
     }
 
-    private void NormalizeGames(Dictionary<string, List<Game>> dict)
+    /// <summary>
+    /// The games API emits Z-suffixed UTC timestamps, so <see cref="Game.Start"/>
+    /// normally arrives as <see cref="DateTimeKind.Utc"/> already. Insurance for
+    /// the other kinds: Unspecified is stamped as UTC (the wire value IS UTC —
+    /// running it through ToUniversalTime would wrongly apply the device offset),
+    /// and Local is converted. Public static so tests can pin this contract.
+    /// </summary>
+    public static void NormalizeGames(Dictionary<string, List<Game>> dict)
     {
         foreach (var kvp in dict)
         {
@@ -224,7 +256,14 @@ public class ApiService(
             {
                 if (string.IsNullOrEmpty(g.ApiLeague)) g.ApiLeague = leagueKey;
                 if (string.IsNullOrEmpty(g.League)) g.League = leagueKey;
-                if (g.Start.Kind != DateTimeKind.Utc) g.Start = g.Start.ToUniversalTime();
+                if (g.Start.Kind == DateTimeKind.Unspecified)
+                {
+                    g.Start = DateTime.SpecifyKind(g.Start, DateTimeKind.Utc);
+                }
+                else if (g.Start.Kind == DateTimeKind.Local)
+                {
+                    g.Start = g.Start.ToUniversalTime();
+                }
             }
         }
     }
