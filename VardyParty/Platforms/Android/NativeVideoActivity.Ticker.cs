@@ -27,7 +27,7 @@ namespace VardyParty.Platforms.Android
 
                     if (_isScoresTickerVisible)
                     {
-                        RunOnUiThread(UpdateScoresTickerText);
+                        RunOnUiThread(() => UpdateScoresTickerText());
                     }
                 });
             }

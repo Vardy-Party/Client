@@ -962,12 +962,16 @@ namespace VardyParty.Platforms.Android
                 // Phone: Maui.MainTheme used to paint a blue ActionBar (colorPrimary)
                 // above the player. NoActionBar removes that; also paint status/nav
                 // bars black/transparent so a swipe-back transient strip is not blue.
+                // SetStatusBarColor/SetNavigationBarColor are obsolete on API 35+
+                // (edge-to-edge); InsetsController.Hide covers that path below.
                 window.AddFlags(global::Android.Views.WindowManagerFlags.Fullscreen);
                 window.ClearFlags(global::Android.Views.WindowManagerFlags.ForceNotFullscreen);
-                if (OperatingSystem.IsAndroidVersionAtLeast(21))
+                if (OperatingSystem.IsAndroidVersionAtLeast(21) && !OperatingSystem.IsAndroidVersionAtLeast(35))
                 {
+#pragma warning disable CA1422 // obsolete on API 35+; gated above
                     window.SetStatusBarColor(global::Android.Graphics.Color.Transparent);
                     window.SetNavigationBarColor(global::Android.Graphics.Color.Black);
+#pragma warning restore CA1422
                 }
 
                 // Hide status bar and navigation bar for immersive full-screen video
