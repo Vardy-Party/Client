@@ -3,16 +3,33 @@
 A cross-platform live match streaming app. One shared MAUI XAML homepage on every
 target; native players own video. Built for **v2.0.0**.
 
+## Install
+
+You need the **.NET 11 preview SDK** on every head (distro/apt .NET 10 fails with
+`NETSDK1045`). Start with the install doc for your machine:
+
+- **Linux / WSL** — [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md): install the
+  .NET 11 preview SDK, `dotnet workload install maui-tizen`, and pin
+  `HomeUiTargetFrameworks=net11.0` for restore and run.
+- **Windows** — [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md)
+- **Android (mobile)** and **Android TV** — [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md)
+  (`package-android.ps1` produces `arm64-v8a` phones and `armeabi-v7a` TV)
+
+Architecture, playback, versioning, and the merge playbook stay in the
+[Documentation](#documentation) table below — they are not the first step.
+
 ## Highlights
 
 - **.NET 11** — MAUI and the Linux desktop head both target `net11.0` / `net11.0-*`.
+  Install the preview SDK first (see [Install](#install)).
 - **Avalonia MAUI backend** — on Linux, the same `VardyParty.HomeUi` XAML is drawn by
   Avalonia (`UseAvaloniaApp` / `Avalonia.Controls.Maui.Desktop`), not a second UI stack.
   See [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md).
 - **Video on Linux / WSL** — playback is **LibVLC in a native window**, not hosted inside
   Avalonia controls. The Desktop build runs under WSL with working video + audio.
-- **32-bit Android TV** — exercised on ARM `armeabi-v7a` sets (e.g. Sony BRAVIA). D-pad
-  navigation, focus, and the shared homepage are tuned for a smooth 10-foot UI.
+- **Android (mobile)** and **Android TV** — phones use `arm64-v8a`; 32-bit Android TV
+  is exercised on ARM `armeabi-v7a` sets (e.g. Sony BRAVIA). D-pad / 10-foot UI is
+  **Android TV only**.
 
 VardyParty aggregates live streams, health-checks them, and plays with automatic failover
 when a feed dies.
@@ -20,7 +37,7 @@ when a feed dies.
 ```mermaid
 flowchart LR
   HomeUi["HomeUi<br/>shared MAUI XAML"]
-  HomeUi --> Android["Android / TV<br/>ExoPlayer"]
+  HomeUi --> Android["Android (mobile) + TV<br/>ExoPlayer"]
   HomeUi --> Windows["Windows<br/>MediaPlayerElement"]
   HomeUi --> Desktop["Linux / WSL<br/>Avalonia draw + LibVLC"]
   HomeUi --> Apple["iOS / Mac Catalyst<br/>AVPlayer - untested"]
@@ -60,7 +77,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 
 ## Supported Platforms
 
-- ✅ **Android** phones + **32-bit Android TV** (`armeabi-v7a` + `arm64-v8a`)
+- ✅ **Android (mobile)** + **Android TV** (`arm64-v8a` phones + `armeabi-v7a` TV)
 - ✅ **Windows** 10/11
 - ✅ **Linux** (x64 and ARM64), including **WSL**, via `VardyParty.Desktop`
 - ⏳ **iOS** — CI builds; **untested** pending Apple Developer Account
@@ -72,7 +89,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 - **Stream Resolution & Health Checking** -- Discovers streams from multiple sources, tests their health (manifest availability, segment loading) in parallel, and prioritises healthy ones.
 - **Automatic Stream Switching** -- Monitors playback health and seamlessly switches to backup streams on failure, maintaining a pool of healthy streams.
 - **Native Video Playback** -- Platform-specific HLS/M3U8 players with custom header support; Linux video stays outside the Avalonia-drawn UI tree.
-- **Android TV** -- 32-bit ARM field target, D-pad focus/scroll ownership, remote navigation, QR-code login, smooth shared homepage chrome.
+- **Android (mobile)** and **Android TV** -- phones plus 32-bit ARM TV field target. D-pad focus/scroll ownership is **Android TV** only; QR-code login and shared homepage chrome cover both.
 - **Auth0 Authentication** -- Interactive login on mobile/desktop, device flow with QR code for TV.
 
 ## Project Structure
