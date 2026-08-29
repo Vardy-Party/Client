@@ -1,2 +1,0 @@
-Commit=484ae5d
-Built=2026-07-04 23:13:00 UTC

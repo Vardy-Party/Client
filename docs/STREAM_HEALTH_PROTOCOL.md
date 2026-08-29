@@ -10,7 +10,18 @@
 
 The Stream Health Protocol enables clients to participate in a collective intelligence system that tracks the real-time health and quality of sports streams. By reporting stream health data and receiving recommendations, clients can provide users with faster, more reliable stream selection.
 
-**Update:** Stream health uses `streamUrl` as the unique key for reports and recommendations. This document uses URLs throughout (no index-based examples).
+**Update (client identity):** Crowd health does **not** key on ephemeral playback
+URLs alone. See `VardyParty.Streaming` `StreamHealthIdentity`:
+
+- Prefer the **catalog/page URL** via `ResolveReportUrl` — if `streamUrl` is an
+  ephemeral `.m3u8`/`.mpd`, report the non-ephemeral `refererUrl` instead.
+- Composite key is `BuildStreamKey(url, streamName)` where `streamName` comes from
+  `PlayerStream` / `Channel` when v2 stream selection applies (`GetStreamName`).
+- Recommendations matching uses URL **and** optional `streamName`
+  (`MatchesRecommendation`).
+
+Older examples below still show `streamUrl` fields for the HTTP API shape; treat
+that as the **resolved report URL**, not necessarily the live M3U8.
 
 ### Key Benefits
 

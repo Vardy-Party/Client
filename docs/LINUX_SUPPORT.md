@@ -1,265 +1,98 @@
-# Linux Support for VardyParty
+# Linux Support
 
-## ✅ Current Status - IMPLEMENTED!
+Linux is served by **`VardyParty.Desktop`**: the shared .NET MAUI XAML homepage
+(`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
+device-code/QR sign-in and **LibVLC playback in a native window** (not hosted
+inside Avalonia controls).
 
-VardyParty now has **native Linux support** via the **VardyParty.Linux** project built with Avalonia UI!
-
-### What's Available
-
-✅ **Full Native Application** for Linux  
-✅ **Avalonia UI 11.2** - Modern cross-platform XAML framework  
-✅ **LibVLC Video Player** - Full HLS/M3U8 streaming support  
-✅ **VardyParty.Core Integration** - Shares all business logic with other platforms  
-✅ **Self-Contained Builds** - No .NET installation required  
-✅ **x64 and ARM64 Support** - Works on PCs and Raspberry Pi
-
-## Architecture
-
-```
-VardyParty.Linux (NEW!)
-├── Avalonia UI Frontend
-├── LibVLC Video Player
-└── References VardyParty.Core
-
-VardyParty.Core
-├── Business Logic
-├── Auth0 Integration
-├── Stream Health Checking
-└── API Services
-
-VardyParty (MAUI)
-└── Windows, macOS, iOS, Android
+```mermaid
+flowchart LR
+  XAML["HomeUi XAML"] --> Avalonia["Avalonia MAUI backend"]
+  XAML -.->|"not in tree"| VLC["LibVLC video window"]
+  Avalonia --> Skia["Skia on Linux / WSL"]
 ```
 
-## Installation
+Deep dive: [architecture/homepage-maui-avalonia.md](architecture/homepage-maui-avalonia.md).
 
-### Option 1: Download Pre-built Package
+The Desktop head targets **net11.0**. A .NET 10 SDK (Ubuntu apt or an old
+`~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 preview SDK**, same
+band as the Windows MAUI head: `11.0.100-preview.7` or later
+(`11.0.100-preview.7.26381.103` is the known-good pin).
+
+## Install the .NET 11 preview SDK (Ubuntu)
+
+Do **not** retarget the repo to net10. Install the preview SDK locally so it
+does not fight distro packages.
 
 ```bash
-# Download from releases
-wget https://github.com/Vardy-Party/Client/releases/latest/download/VardyParty-linux-x64.tar.gz
-
-# Extract
-tar -xzf VardyParty-linux-x64.tar.gz -C vardyparty-linux
-
-# Install VLC (required for video playback)
-# Ubuntu/Debian
-sudo apt install vlc libvlc5
-
-# Fedora/RHEL
-sudo dnf install vlc
-
-# Arch Linux
-sudo pacman -S vlc
-
-# Run the application
-cd vardyparty-linux
-chmod +x VardyParty
-./VardyParty
+curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh
+/tmp/dotnet-install.sh --channel 11.0 --quality preview --install-dir "$HOME/.dotnet"
 ```
 
-### Option 2: Build from Source
-
-See [VardyParty.Linux/README.md](../VardyParty.Linux/README.md) for detailed build instructions.
-
-## Features
-
-✅ **Browse Live Matches** - See all available football matches  
-✅ **Stream Health Checking** - Automatic quality verification  
-✅ **HLS Video Playback** - LibVLC handles M3U8 streams perfectly  
-✅ **Auth0 Authentication** - Secure login integration  
-✅ **Dark Theme UI** - Modern Avalonia Fluent theme  
-✅ **Multi-Architecture** - x64 and ARM64 builds  
-
-🚧 **In Progress:**
-- WebView integration for Blazor components
-- TV remote control support
-- AppImage/Flatpak/Snap packages
-
-## Dependencies
-
-### Runtime Requirements
+To pin the same SDK as Windows/CI:
 
 ```bash
-# Ubuntu 22.04 / Debian 12
-sudo apt install vlc libvlc5
+/tmp/dotnet-install.sh --version 11.0.100-preview.7.26381.103 --install-dir "$HOME/.dotnet"
+```
 
-# Ubuntu 20.04 / Debian 11
+Put that host **first** on `PATH` (otherwise `/usr/lib/dotnet` 10.x wins):
+
+```bash
+echo 'export DOTNET_ROOT="$HOME/.dotnet"' >> ~/.bashrc
+echo 'export PATH="$HOME/.dotnet:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Check:
+
+```bash
+which dotnet
+dotnet --version    # 11.0.100-preview.7… not 10.0.x
+dotnet --list-sdks
+```
+
+Official downloads: <https://dotnet.microsoft.com/download/dotnet/11.0>.
+Scripted install: <https://learn.microsoft.com/en-us/dotnet/core/install/linux-scripted-manual>.
+
+## Run the Desktop head
+
+The `maui-tizen` workload carries the plain-TFM MAUI SDK on Linux. You do
+**not** need the `android` workload to run the Desktop head — but you must
+pin HomeUi to `net11.0` in the **environment**, not rely on the Desktop
+head's `ProjectReference` pin alone. HomeUi on Linux defaults to
+`net11.0;net11.0-android` (so APK-from-Linux restore has the android TFM),
+and restore evaluates HomeUi with those defaults regardless of the
+`ProjectReference` `AdditionalProperties` — a plain
+`dotnet run --project VardyParty.Desktop/...` therefore fails with
+NETSDK1147 ("workloads must be installed: android") when the android
+workload is absent. CI's build-desktop job, the unit-test job and
+`scripts/launch-linux-app.cmd` all use the same fix: set
+`HomeUiTargetFrameworks=net11.0` for restore AND build so HomeUi's android
+target never enters the desktop build graph.
+
+```bash
+dotnet workload install maui-tizen
+dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj -p:HomeUiTargetFrameworks=net11.0
+dotnet run --project VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0
+```
+
+> Pass the pin as `-p:` per command — do NOT `export HomeUiTargetFrameworks`
+> into your shell. A lingering export silently drops HomeUi's android target
+> from every later Android build in that shell (Linux/WSL evaluation only)
+> and fails restore with cryptic NETSDK1005/1147 errors. `package-android.ps1`
+> neutralises the variable defensively, but plain `dotnet build` commands
+> won't.
+
+For video playback:
+
+```bash
 sudo apt install vlc libvlc-dev
-
-# Fedora 38+
-sudo dnf install vlc
-
-# Arch Linux
-sudo pacman -S vlc
-
-# openSUSE
-sudo zypper install vlc
 ```
 
-### Development Requirements
-
-```bash
-# Ubuntu/Debian
-sudo apt install dotnet-sdk-10.0 libvlc-dev
-
-# Fedora
-sudo dnf install dotnet-sdk-10.0 vlc-devel
-
-# Arch Linux
-sudo pacman -S dotnet-sdk vlc
-```
-
-## CI/CD Pipeline
-
-### ✅ CI Workflow (ci.yml)
-- Builds VardyParty.Linux for linux-x64
-- Builds VardyParty.Linux for linux-arm64
-- Installs libVLC dependencies
-- Runs automated tests
-
-### ✅ CD Workflow (cd.yml)
-- Generates appsettings.json with secrets
-- Creates self-contained linux-x64 package
-- Creates self-contained linux-arm64 package
-- Uploads tar.gz artifacts to releases
-
-## Project Structure
-
-```
-VardyParty.Linux/
-├── Program.cs                      # Entry point
-├── App.axaml / App.axaml.cs       # Avalonia app + DI setup
-├── MainWindow.axaml / .cs         # Main window UI
-├── Services/
-│   └── LinuxVideoPlayerService.cs # LibVLC video player
-├── Assets/                         # Icons and images
-├── README.md                       # Linux-specific documentation
-└── VardyParty.Linux.csproj        # Project file
-
-Dependencies:
-├── Avalonia 11.2                   # UI Framework
-├── LibVLCSharp 3.9                 # Video playback
-├── VardyParty.Core                 # Shared business logic
-└── Microsoft.Extensions.*          # Configuration & DI
-```
-
-## Supported Distributions
-
-Tested and working on:
-- ✅ Ubuntu 22.04 LTS (Jammy)
-- ✅ Ubuntu 24.04 LTS (Noble)
-- ✅ Debian 12 (Bookworm)
-- ✅ Fedora 39+
-- ✅ Arch Linux
-- ✅ Raspberry Pi OS (ARM64)
-
-Should work on:
-- Pop!_OS 22.04+
-- Linux Mint 21+
-- openSUSE Tumbleweed
-- Manjaro Linux
-- EndeavourOS
-
-## Troubleshooting
-
-### Video Playback Issues
-
-**Problem**: "VLC plugins not found" error
-
-```bash
-# Solution: Install VLC plugins
-sudo apt install vlc-plugin-base vlc-plugin-video-output
-
-# Verify VLC works
-vlc --version
-```
-
-**Problem**: Stream won't play
-
-```bash
-# Test VLC directly with a stream
-vlc https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
-
-# Check libVLC libraries
-ldconfig -p | grep libvlc
-```
-
-### Display Issues
-
-**Problem**: Blank window or rendering issues
-
-```bash
-# Try X11 backend
-export GDK_BACKEND=x11
-./VardyParty
-
-# Or force Wayland
-export GDK_BACKEND=wayland
-./VardyParty
-```
-
-### Missing Dependencies
-
-```bash
-# Check for missing libraries
-ldd ./VardyParty
-
-# Install common missing deps (Ubuntu/Debian)
-sudo apt install libicu72 libssl3 zlib1g
-
-# Fedora
-sudo dnf install icu openssl-libs zlib
-```
-
-## Future Enhancements
-
-### Short Term
-- [ ] Integrate AvaloniaWebView for Blazor components
-- [ ] Add AppImage packaging
-- [ ] Desktop file and icon installation
-- [ ] System tray integration
-
-### Medium Term
-- [ ] Flatpak package on Flathub
-- [ ] Snap package on Snapcraft
-- [ ] .deb package for Ubuntu/Debian
-- [ ] .rpm package for Fedora/RHEL
-
-### Long Term
-- [ ] TV remote control support (for Linux TV boxes)
-- [ ] Hardware acceleration for video
-- [ ] Wayland native support improvements
-
-## Why Avalonia?
-
-From the [Avalonia blog](https://avaloniaui.net/blog/net-maui-is-coming-to-linux-and-the-browser-powered-by-avalonia):
-
-> ".NET MAUI is coming to Linux and the Browser powered by Avalonia"
-
-Avalonia is:
-- ✅ The future backend for MAUI on Linux
-- ✅ Production-ready and mature
-- ✅ True cross-platform (Windows, macOS, Linux, iOS, Android, WASM)
-- ✅ XAML-based like MAUI (easy to learn)
-- ✅ High performance with Skia rendering
-- ✅ Active community and regular updates
-
-By building VardyParty.Linux with Avalonia today, we're aligned with where MAUI is heading!
-
-## Development
-
-Want to contribute? See:
-- [VardyParty.Linux/README.md](../VardyParty.Linux/README.md) - Detailed dev guide
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
-
-## References
-
-- [Avalonia UI Documentation](https://docs.avaloniaui.net/)
-- [LibVLCSharp Documentation](https://code.videolan.org/videolan/LibVLCSharp)
-- [.NET MAUI + Avalonia Announcement](https://avaloniaui.net/blog/net-maui-is-coming-to-linux-and-the-browser-powered-by-avalonia)
-- [VardyParty Repository](https://github.com/Vardy-Party/Client)
-
----
-
-**🎉 Linux support is now live!** Download the latest release and join the party on Linux!
+From Windows/WSL, `scripts/launch-linux-app.cmd` builds and launches the
+Desktop head inside WSLg. That script calls `$HOME/.dotnet/dotnet` directly,
+so step 1 is enough even if `which dotnet` is still 10. It pins
+`HomeUiTargetFrameworks=net11.0` itself (no android workload needed) and, if
+NETSDK1147 still surfaces, prints the fallback remedy
+(`dotnet workload install android`).

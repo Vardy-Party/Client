@@ -44,6 +44,17 @@ public sealed class HomePlaybackIntent
     public static Game? FindMatchingGame(IReadOnlyList<Game> games, Game target) =>
         games.FirstOrDefault(g => SameGame(g, target));
 
+    /// <summary>
+    /// Whether a card pick that lands while a resolution attempt still looks
+    /// active should be swallowed. Only a genuinely in-flight attempt for the
+    /// SAME game may be ignored; once the previous attempt has delivered its
+    /// outcome (<paramref name="resolutionExhausted"/>) a re-click must start
+    /// a fresh resolution — the field dead-end was this guard eating every
+    /// re-click after a no-working-streams outcome left the selection latched.
+    /// </summary>
+    public static bool ShouldIgnoreRepick(bool sameGame, bool resolutionExhausted) =>
+        sameGame && !resolutionExhausted;
+
     public bool IsSelected(Game game, Game? selectedGame) =>
         selectedGame != null && SameGame(game, selectedGame);
 

@@ -21,10 +21,8 @@ namespace VardyParty.Platforms.Android
                         _suppressOverlayShow = true;
                     }
 
-                    DispatchEngine(MediaEngineEvent.UserNext());
-
-                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); }
-                    catch (Exception ex) { LogIgnored("Toast.SwitchRequested", ex); }
+                    var switched = DispatchEngine(MediaEngineEvent.UserNext());
+                    ShowSwitchFeedbackToast(switched, next: true);
 
                     if (wasVisible)
                     {
@@ -51,10 +49,8 @@ namespace VardyParty.Platforms.Android
                         _suppressOverlayShow = true;
                     }
 
-                    DispatchEngine(MediaEngineEvent.UserPrevious());
-
-                    try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); }
-                    catch (Exception ex) { LogIgnored("Toast.SwitchRequested", ex); }
+                    var switched = DispatchEngine(MediaEngineEvent.UserPrevious());
+                    ShowSwitchFeedbackToast(switched, next: false);
 
                     if (wasVisible)
                     {
@@ -67,6 +63,18 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToPreviousStream failed");
             }
+        }
+
+        private void ShowSwitchFeedbackToast(bool switched, bool next)
+        {
+            try
+            {
+                var message = switched
+                    ? (next ? "Next stream…" : "Previous stream…")
+                    : "No other stream yet";
+                Toast.MakeText(this, message, ToastLength.Short)?.Show();
+            }
+            catch (Exception ex) { LogIgnored("Toast.SwitchFeedback", ex); }
         }
 
         private void SetupPinchZoom(FrameLayout container, PlayerView playerView)
@@ -253,13 +261,13 @@ namespace VardyParty.Platforms.Android
                                 _suppressOverlayShow = true;
                             }
 
+                            var switched = false;
                             if (_switching != null)
                             {
-                                DispatchEngine(MediaEngineEvent.UserNext());
+                                switched = DispatchEngine(MediaEngineEvent.UserNext());
                             }
 
-                            try { Toast.MakeText(this, "Switch requested...", ToastLength.Short)?.Show(); }
-                            catch (Exception ex) { LogIgnored("Toast.SwitchRequested", ex); }
+                            ShowSwitchFeedbackToast(switched, next: true);
 
                             if (wasVisible)
                             {
@@ -279,32 +287,101 @@ namespace VardyParty.Platforms.Android
                         break;
 
                     case global::Android.Views.Keycode.Back:
-                        if (_isMenuVisible)
-                        {
-                            HideMenu();
-                            return true;
-                        }
-
-                        if (_isInfoVisible)
-                        {
-                            HideInfoOverlay();
-                            return true;
-                        }
-
-                        if (_isScoresTickerVisible)
-                        {
-                            ToggleSameLeagueScoresTicker();
-                            return true;
-                        }
-
-                        try { _switching?.Cleanup(); } catch { }
-                        DispatchEngine(MediaEngineEvent.UserClose());
-                        return true;
+                        return HandleBackKey();
                 }
             }
             catch (Exception ex) { LogIgnored("OnKeyDown", ex); }
 
             return base.OnKeyDown(keyCode, e);
+        }
+
+        long _backHandledAtMs;
+
+        /// <summary>
+        /// TV remotes often deliver Back via <see cref="OnBackPressed"/> rather
+        /// than <see cref="OnKeyDown"/>. Default Activity.OnBackPressed finishes
+        /// the activity — so an open menu never got HideMenu() and the player
+        /// (or whole task) looked like it "closed". Same layered dismiss as
+        /// OnKeyDown Back.
+        /// </summary>
+#pragma warning disable CA1422 // OnBackPressed obsolete on API 33+; Activity base still needs this for TV API 28
+        public override void OnBackPressed()
+        {
+            try
+            {
+                if (HandleBackKey())
+                    return;
+            }
+            catch (Exception ex)
+            {
+                LogIgnored("OnBackPressed", ex);
+                try { base.OnBackPressed(); } catch { }
+            }
+        }
+#pragma warning restore CA1422
+
+        public override bool DispatchKeyEvent(global::Android.Views.KeyEvent? e)
+        {
+            // Own Back at dispatch time so a focused menu button / PlayerView
+            // cannot let the system finish the activity before OnKeyDown runs.
+            if (e is
+                {
+                    Action: global::Android.Views.KeyEventActions.Down,
+                    KeyCode: global::Android.Views.Keycode.Back,
+                    RepeatCount: 0
+                })
+            {
+                return HandleBackKey();
+            }
+
+            return base.DispatchKeyEvent(e);
+        }
+
+        /// <summary>
+        /// Closes menu / info / ticker, else requests session close.
+        /// Debounces duplicate Back delivery (dispatch + OnBackPressed) so one
+        /// press cannot close the menu and then exit the player.
+        /// </summary>
+        private bool HandleBackKey()
+        {
+            var now = Java.Lang.JavaSystem.CurrentTimeMillis();
+            if (now - _backHandledAtMs < 400)
+                return true;
+            _backHandledAtMs = now;
+
+            if (TryConsumeBackLayer())
+                return true;
+
+            try { _switching?.Cleanup(); } catch { }
+            DispatchEngine(MediaEngineEvent.UserClose());
+            return true;
+        }
+
+        /// <summary>
+        /// Dismiss in-player overlays first (menu → info → scores ticker).
+        /// Returns true when Back was consumed without closing the player.
+        /// </summary>
+        private bool TryConsumeBackLayer()
+        {
+            if (_isMenuVisible)
+            {
+                HideMenu();
+                return true;
+            }
+
+            if (_isInfoVisible)
+            {
+                HideInfoOverlay();
+                return true;
+            }
+
+            if (_isScoresTickerVisible)
+            {
+                ToggleSameLeagueScoresTicker();
+                return true;
+            }
+
+            return false;
         }
     }
 }

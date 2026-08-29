@@ -3,8 +3,7 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
-using Microsoft.AspNetCore.Components;
-using VardyParty.Kernel;
+using VardyParty.Presentation;
 
 namespace VardyParty
 {
@@ -17,13 +16,31 @@ namespace VardyParty
     [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher, Android.Content.Intent.CategoryLeanbackLauncher })]
     public class MainActivity : MauiAppCompatActivity
     {
-        private static bool _overlayBackSuppression;
         private static bool _flyoutMenuOpen;
 
-        public static void SetOverlayBackSuppression(bool suppress)
-        {
-            _overlayBackSuppression = suppress;
-        }
+        /// <summary>
+        /// Per-overlay Back suppression state, reported by <see cref="HomeHostPage"/>.
+        /// Static (process lifetime), so it is reset in <see cref="OnCreate"/> —
+        /// a stale flag from a previous activity instance must never suppress
+        /// Back on a fresh idle homepage.
+        /// </summary>
+        public static OverlayBackSuppressionTracker OverlaySuppression { get; } = new();
+
+        /// <summary>
+        /// Monotonic timestamp of the last Back an overlay consumed. Feeds
+        /// <see cref="HomeBackDecision"/>'s exit grace: on the saturated TV
+        /// main thread the menu closes long before the panel repaints, so a
+        /// repeat Back against the stale frame must not exit the app.
+        /// </summary>
+        private static long _lastOverlayBackMs;
+
+        /// <summary>
+        /// Called when an overlay handler has consumed Back (e.g. cancel
+        /// finding-streams). Arms exit grace so a repeat press against a
+        /// stale frame cannot exit the app.
+        /// </summary>
+        public static void NoteOverlayBackConsumed() =>
+            _lastOverlayBackMs = System.Environment.TickCount64;
 
         public static void SetFlyoutMenuOpen(bool open)
         {
@@ -64,30 +81,38 @@ namespace VardyParty
                 return;
             }
 
-            if (_overlayBackSuppression)
+            // Ask the live page first — OnBackPressed's ExitApp path never
+            // reaches the OnBack multicast, and OverlaySuppression can lag
+            // behind the finding-streams modal by a frame.
+            if (TryConsumeHomeOverlayBack())
             {
-                // Overlay is active and wants to consume Back. Dispatch to the remote handler so the
-                // Blazor overlay can cancel resolution and close itself.
-                Log.Info("MainActivity", "[MAIN] Back pressed while overlay visible - delegating to overlay handler");
-                try
-                {
-                    if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
-                    {
-                        return;
-                    }
-                }
-                catch { }
-
-                // Fallback: if no handler consumed the event, cancel any stream switching state but do not navigate.
-                _overlayBackSuppression = false;
-                try
-                {
-                    var services = IPlatformApplication.Current?.Services;
-                    var switching = services?.GetService(typeof(VardyParty.Ports.IStreamSwitchingService)) as VardyParty.Ports.IStreamSwitchingService;
-                    switching?.Cleanup();
-                }
-                catch { }
+                NoteOverlayBackConsumed();
                 return;
+            }
+
+            switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
+            {
+                case HomeBackDecision.BackAction.DelegateToOverlays:
+                    // Tracker still set but page reported nothing open — still
+                    // do not exit (stale paint / race). Never Reset() here:
+                    // wiping suppression mid-session made the next Back exit.
+                    Log.Info("MainActivity",
+                        $"[MAIN] Back pressed while overlay flag set ({OverlaySuppression.DescribeActive()}) - not exiting");
+                    NoteOverlayBackConsumed();
+                    try
+                    {
+                        if (RemoteKeyHandler.HandleKeyDown(Keycode.Back, null))
+                        {
+                            return;
+                        }
+                    }
+                    catch { }
+
+                    return;
+
+                case HomeBackDecision.BackAction.IgnoreStaleExit:
+                    Log.Info("MainActivity", "[MAIN] Back within exit grace of an overlay close - ignored");
+                    return;
             }
 
             HandleNavigationBack();
@@ -99,6 +124,13 @@ namespace VardyParty
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");
 
+            // Fresh activity: no overlay can be visible yet. Without this reset a
+            // previous session that ended mid-overlay (device-code sign-in, stream
+            // resolution) left the static suppression active on an idle homepage.
+            OverlaySuppression.Reset();
+            SetFlyoutMenuOpen(false);
+            _lastOverlayBackMs = 0;
+
             // Wire hardware back to logical navigation
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
             RemoteKeyHandler.OnBack += RemoteBackHandler;
@@ -106,15 +138,22 @@ namespace VardyParty
             // Wire Stop to logical navigation (return to Streams/Games depending on current)
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             RemoteKeyHandler.OnStop += RemoteStopHandler;
-        }
 
-        protected override void OnResume()
-        {
-            base.OnResume();
-            if (!_overlayBackSuppression)
+            // Tell the system the cold-start path has produced a frame. Without
+            // this, multi-second first-layout Daveys on the 32-bit TV look like
+            // an ANR and Leanback kicks back to the Android home.
+            Window?.DecorView?.Post(() =>
             {
-                MainPage.Instance?.RestoreWebViewFocus();
-            }
+                try
+                {
+                    ReportFullyDrawn();
+                    Log.Info("MainActivity", "[MAIN] ReportFullyDrawn");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("MainActivity", $"[MAIN] ReportFullyDrawn failed: {ex.Message}");
+                }
+            });
         }
 
         protected override void OnDestroy()
@@ -126,19 +165,37 @@ namespace VardyParty
 
         private void RemoteBackHandler(Keycode keyCode)
         {
+            // Prefer live page overlays (menu close) over exit. Same gate as
+            // OnKeyDown / OnBackPressed — RemoteKeyHandler invokes this first
+            // in the OnBack multicast.
+            if (TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return;
+            }
+
             if (_flyoutMenuOpen)
             {
                 Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to flyout menu");
                 return;
             }
 
-            // If an overlay (e.g., stream discovery) is active and intends to consume Back,
-            // do not perform navigation here; let the overlay handler handle cancelation.
-            if (_overlayBackSuppression)
+            switch (HomeBackDecision.Decide(OverlaySuppression.IsSuppressed, _lastOverlayBackMs, System.Environment.TickCount64))
             {
-                Log.Info("MainActivity", "[MAIN] Remote Back suppressed due to overlay");
-                return;
+                case HomeBackDecision.BackAction.DelegateToOverlays:
+                    Log.Info("MainActivity",
+                        $"[MAIN] Remote Back suppressed due to overlay: {OverlaySuppression.DescribeActive()}");
+                    // Tracker said something is open but the page did not consume —
+                    // try once more, then never exit.
+                    TryConsumeHomeOverlayBack();
+                    NoteOverlayBackConsumed();
+                    return;
+
+                case HomeBackDecision.BackAction.IgnoreStaleExit:
+                    Log.Info("MainActivity", "[MAIN] Remote Back within exit grace of an overlay close - ignored");
+                    return;
             }
+
             HandleNavigationBack();
         }
 
@@ -147,120 +204,122 @@ namespace VardyParty
             HandleNavigationBack();
         }
 
-        private void HandleNavigationBack()
+        /// <summary>
+        /// Route Back to <see cref="HomeHostPage"/> overlays (menu, device
+        /// code, finding-streams) using live page state — not only the static
+        /// suppression tracker.
+        /// </summary>
+        private static bool TryConsumeHomeOverlayBack()
         {
-            Log.Info("MainActivity", "[MAIN] HandleNavigationBack called");
-            var services = IPlatformApplication.Current?.Services;
-            var navigation = services?.GetService<NavigationManager>();
-            var selection = services?.GetService<SelectionState>();
-            var mainPage = MainPage.Instance;
-
-            if (navigation == null || mainPage == null)
-            {
-                Log.Info("MainActivity", "[MAIN] Back: no navigation/mainPage, exiting app");
-                FinishAndRemoveTask();
-                return;
-            }
-
-            Uri? uri;
             try
             {
-                uri = navigation.ToAbsoluteUri(navigation.Uri);
+                var page = Microsoft.Maui.Controls.Application.Current?.Windows?.FirstOrDefault()?.Page;
+                if (page is HomeHostPage home)
+                {
+                    return home.TryHandleHardwareBack();
+                }
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex)
             {
-                Log.Warn("MainActivity", $"[MAIN] Navigation not initialized: {ex.Message}; staying on Home");
-                return;
+                Log.Warn("MainActivity", $"[MAIN] TryConsumeHomeOverlayBack failed: {ex.Message}");
             }
 
-            Log.Info("MainActivity", $"[MAIN] Current URI: {uri}");
-            var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-            var targetRoute = ComputeParentRoute(segments, selection);
-            Log.Info("MainActivity", $"[MAIN] Computed target route: '{targetRoute}'");
-
-            if (string.IsNullOrWhiteSpace(targetRoute))
-            {
-                Log.Info("MainActivity", $"[MAIN] Back: current={uri.AbsolutePath} target=null -> exit app");
-                FinishAndRemoveTask();
-                return;
-            }
-
-            if (uri.AbsolutePath == "/" && targetRoute == "/")
-            {
-                Log.Info("MainActivity", "[MAIN] Back: already at root, exiting app");
-                FinishAndRemoveTask();
-                return;
-            }
-
-            Log.Info("MainActivity", $"[MAIN] Back: current={uri.AbsolutePath} target={targetRoute}");
-            mainPage.NavigateToRoute(targetRoute);
+            return false;
         }
 
-        private static string? ComputeParentRoute(IReadOnlyList<string> segments, SelectionState? selection)
+        private void HandleNavigationBack()
         {
-            if (segments.Count == 0)
+            if (TryConsumeHomeOverlayBack())
             {
-                if (selection != null) selection.LastRoute = "/";
-                return "/";
+                NoteOverlayBackConsumed();
+                return;
             }
 
-            if (segments[0].Equals("player", StringComparison.OrdinalIgnoreCase))
+            // Last-chance guard against a stale Decide() that raced an overlay
+            // paint — never FinishAndRemoveTask while suppression is set.
+            if (OverlaySuppression.IsSuppressed)
             {
-                if (segments.Count >= 4)
+                Log.Info("MainActivity",
+                    $"[MAIN] Back exit aborted — overlay still active ({OverlaySuppression.DescribeActive()})");
+                NoteOverlayBackConsumed();
+                return;
+            }
+
+            // The single-page XAML homepage has no route stack: overlays and
+            // the menu consume Back via the suppression flags above, so an
+            // unhandled Back at the homepage exits the app.
+            Log.Info("MainActivity", "[MAIN] Back at homepage - exiting app");
+            FinishAndRemoveTask();
+        }
+
+        /// <summary>
+        /// Single owner for TV D-pad card/header navigation, deliberately at
+        /// the DISPATCH stage — before the view tree sees the key. It cannot
+        /// live in <see cref="OnKeyDown"/>: the card strips are
+        /// HorizontalScrollViews whose own dispatchKeyEvent runs
+        /// executeKeyEvent → arrowScroll for LEFT/RIGHT whenever the focused
+        /// card declines the key, and below them
+        /// ViewRootImpl.performFocusNavigation plays the system navigation
+        /// click and instant-reveals targets. Owning the key here keeps both
+        /// out of card navigation on every rail, regardless of how a card
+        /// was materialized — the activity cannot be detached or recycled
+        /// the way per-card platform views can. Non-direction keys (Back,
+        /// DPAD_CENTER, media keys) and the open menu trap's per-item moves
+        /// pass through untouched.
+        /// </summary>
+        public override bool DispatchKeyEvent(KeyEvent? e)
+        {
+            // Own Back at dispatch so focused cards / Leanback cannot finish the
+            // activity before OnKeyDown — open homepage menu must close first.
+            if (e is { Action: KeyEventActions.Down, KeyCode: Keycode.Back, RepeatCount: 0 })
+            {
+                if (TryConsumeHomeOverlayBack())
                 {
-                    var league = Uri.UnescapeDataString(segments[1]);
-                    var home = Uri.UnescapeDataString(segments[2]);
-                    var away = Uri.UnescapeDataString(segments[3]);
-                    if (selection != null)
-                    {
-                        selection.LastLeague = league;
-                        selection.LastHomeTeam = home;
-                        selection.LastAwayTeam = away;
-                        selection.LastRoute = "/";
-                    }
-                    return "/";
+                    NoteOverlayBackConsumed();
+                    return true;
                 }
 
-                return "/";
-            }
-
-            if (segments[0].Equals("streams", StringComparison.OrdinalIgnoreCase))
-            {
-                if (segments.Count >= 2)
+                if (_flyoutMenuOpen)
                 {
-                    var league = Uri.UnescapeDataString(segments[1]);
-                    var target = $"/games/{Uri.EscapeDataString(league)}";
-                    if (selection != null)
-                    {
-                        selection.LastLeague = league;
-                        selection.LastRoute = target;
-                    }
-                    return target;
+                    SetFlyoutMenuOpen(false);
+                    return true;
                 }
-
-                return "/";
             }
 
-            if (segments[0].Equals("games", StringComparison.OrdinalIgnoreCase))
+            if (e?.Action == KeyEventActions.Down
+                && VardyParty.HomeUi.Views.TvDpadFocusRouter.TryHandleActivityKey(CurrentFocus, e.KeyCode))
             {
-                if (selection != null)
-                {
-                    selection.LastRoute = "/";
-                }
-                return "/";
+                return true;
             }
 
-            // Unknown route -> exit
-            return null;
+            return base.DispatchKeyEvent(e);
         }
 
         public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
         {
+            // Homepage menu / finding-streams must win before RemoteKeyHandler's
+            // OnBack multicast (MainActivity.RemoteBackHandler can FinishAndRemoveTask).
+            // Field: TV Back with the menu open exited the app when the key path
+            // skipped OnBackPressed and the exit subscriber ran first.
+            if (keyCode == Keycode.Back && TryConsumeHomeOverlayBack())
+            {
+                NoteOverlayBackConsumed();
+                return true;
+            }
+
             if (_remoteKeyHandler != null && _remoteKeyHandler.HandleKeyDown(keyCode, e))
             {
                 return true;
             }
+
+            // Menu-trap backstop: a direction key the open panel's items did
+            // not consume must never reach the default focus search (it
+            // could carry focus behind the scrim).
+            if (VardyParty.HomeUi.Views.TvDpadFocusRouter.SealsMenuTrapKey(keyCode))
+            {
+                return true;
+            }
+
             return base.OnKeyDown(keyCode, e);
         }
 

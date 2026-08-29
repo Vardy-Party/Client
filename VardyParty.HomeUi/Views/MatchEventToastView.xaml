@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hu="clr-namespace:VardyParty.HomeUi"
+             x:Class="VardyParty.HomeUi.Views.MatchEventToastView"
+             x:DataType="hu:MatchEventToastViewModel"
+             InputTransparent="True">
+
+    <!-- Compact match-event banner. NEVER interactive: InputTransparent on
+         the whole overlay and no focusable elements, so the TV D-pad can
+         never land on it and touches fall through to the board beneath.
+         Placement (top-right on Desktop/TV, bottom on phones) is applied in
+         code-behind from the layout class; the page-padding margin keeps it
+         inside the TV safe area. -->
+    <Border x:Name="ToastCard"
+            IsVisible="{Binding IsToastVisible}"
+            Opacity="0"
+            InputTransparent="True"
+            Margin="{Binding Layout.PagePaddingThickness}"
+            MaximumWidthRequest="440"
+            HorizontalOptions="End"
+            VerticalOptions="Start"
+            BackgroundColor="#12182A"
+            Stroke="#3DFFFFFF"
+            StrokeThickness="1"
+            StrokeShape="RoundRectangle 14">
+        <Grid InputTransparent="True">
+            <!-- Team-colour tint: the same cheap 2-stop horizontal wash the
+                 flat card chrome uses (no shadows, no diagonal gradients). -->
+            <BoxView Background="{Binding Current.TintBrush}" InputTransparent="True" />
+
+            <Grid RowDefinitions="Auto,Auto"
+                  RowSpacing="6"
+                  Padding="14,10,14,12"
+                  InputTransparent="True">
+                <!-- League attribution -->
+                <HorizontalStackLayout Spacing="8" InputTransparent="True">
+                    <Image Source="{Binding Current.LeagueIcon}"
+                           WidthRequest="18"
+                           HeightRequest="18"
+                           Aspect="AspectFit"
+                           VerticalOptions="Center"
+                           IsVisible="{Binding Current.HasLeagueIcon}" />
+                    <Label Text="{Binding Current.LeagueName}"
+                           FontSize="{Binding Layout.AggregateFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="#AEB6C6"
+                           VerticalOptions="Center" />
+                </HorizontalStackLayout>
+
+                <!-- Badges + headline -->
+                <Grid Grid.Row="1"
+                      ColumnDefinitions="Auto,*,Auto"
+                      ColumnSpacing="10"
+                      InputTransparent="True">
+                    <Grid WidthRequest="26" HeightRequest="26" VerticalOptions="Center">
+                        <!-- Dark plate: white BBC crests (Juventus etc.) vanish on #F3F5F8. -->
+                        <Border StrokeShape="Ellipse"
+                                StrokeThickness="0"
+                                BackgroundColor="#1A2233"
+                                Padding="3"
+                                IsVisible="{Binding Current.HasHomeBadge}">
+                            <Image Source="{Binding Current.HomeBadge}" Aspect="AspectFit" />
+                        </Border>
+                        <Border StrokeShape="Ellipse"
+                                Stroke="#40FFFFFF"
+                                StrokeThickness="1"
+                                Background="{Binding Current.HomeAccent}"
+                                IsVisible="{Binding Current.NoHomeBadge}">
+                            <Label Text="{Binding Current.HomeInitial}"
+                                   FontSize="12"
+                                   FontAttributes="Bold"
+                                   TextColor="White"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Border>
+                    </Grid>
+
+                    <Label Grid.Column="1"
+                           Text="{Binding Current.Headline}"
+                           FontSize="{Binding Layout.TeamFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           MaxLines="2"
+                           LineBreakMode="TailTruncation"
+                           VerticalOptions="Center" />
+
+                    <Grid Grid.Column="2" WidthRequest="26" HeightRequest="26" VerticalOptions="Center">
+                        <Border StrokeShape="Ellipse"
+                                StrokeThickness="0"
+                                BackgroundColor="#1A2233"
+                                Padding="3"
+                                IsVisible="{Binding Current.HasAwayBadge}">
+                            <Image Source="{Binding Current.AwayBadge}" Aspect="AspectFit" />
+                        </Border>
+                        <Border StrokeShape="Ellipse"
+                                Stroke="#40FFFFFF"
+                                StrokeThickness="1"
+                                Background="{Binding Current.AwayAccent}"
+                                IsVisible="{Binding Current.NoAwayBadge}">
+                            <Label Text="{Binding Current.AwayInitial}"
+                                   FontSize="12"
+                                   FontAttributes="Bold"
+                                   TextColor="White"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</ContentView>

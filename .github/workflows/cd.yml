@@ -8,7 +8,8 @@ name: CD - Package & Release
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
-  DOTNET_VERSION: "10.0.x"
+  # Everything targets net11.0(-*): one preview SDK pin for every job.
+  DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
@@ -56,10 +57,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -187,11 +189,11 @@ jobs:
       - name: Publish Windows app
         env:
           MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $searchRoots = @(
-            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/bin/Release/net11.0-windows10.0.19041.0/win-x64/AppPackages",
             "VardyParty/AppPackages"
           )
 
@@ -251,7 +253,7 @@ jobs:
         run: |
           $artifactsDir = "windows-artifacts"
           $searchRoots = @(
-            "VardyParty/bin/Release/net10.0-windows10.0.19041.0/win-x64/AppPackages",
+            "VardyParty/bin/Release/net11.0-windows10.0.19041.0/win-x64/AppPackages",
             "VardyParty/AppPackages"
           )
 
@@ -340,10 +342,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -442,12 +445,12 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish Android app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
         continue-on-error: true
         run: |
           # Find all APK files
-          APK_FILES=($(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f))
+          APK_FILES=($(find ./VardyParty/bin/Release/net11.0-android -name "*Signed.apk" -type f))
           if [ ${#APK_FILES[@]} -eq 0 ]; then
             echo "ERROR: No APK files found"
             exit 1
@@ -492,7 +495,7 @@ jobs:
           mkdir -p "$ARTIFACTS_DIR"
           
           # Copy universal APK (contains all ABIs)
-          APK_FILE=$(find ./VardyParty/bin/Release/net10.0-android -name "*Signed.apk" -type f | head -1)
+          APK_FILE=$(find ./VardyParty/bin/Release/net11.0-android -name "*Signed.apk" -type f | head -1)
           if [ -z "$APK_FILE" ]; then
             echo "ERROR: No signed APK found"
             exit 1
@@ -546,10 +549,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -627,9 +631,9 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish iOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-ios -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-ios -c Release
       - name: Create iOS package
-        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-ios/ios-arm64 .
+        run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-ios/ios-arm64 .
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
@@ -670,10 +674,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -751,9 +756,9 @@ jobs:
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
       - name: Publish macOS app
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net10.0-maccatalyst -c Release
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-maccatalyst -c Release
       - name: Create macOS package
-        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net10.0-maccatalyst/maccatalyst-arm64 .
+        run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
@@ -780,6 +785,8 @@ jobs:
     name: Package Linux x64 Snap
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -794,24 +801,21 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      - name: Download Linux x64 build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-linux-x64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+      - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
         run: |
-          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
           if [ -f "$APPSETTINGS_PATH" ]; then
             BASE_JSON=$(cat "$APPSETTINGS_PATH")
           else
@@ -848,7 +852,7 @@ jobs:
         shell: bash
       - name: Verify AllowUserSecrets is not in Linux appsettings.json
         run: |
-          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
           if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
@@ -856,10 +860,10 @@ jobs:
           echo "OK: AllowUserSecrets not found in Linux appsettings.json"
         shell: bash
       - name: Publish Linux x64 application
-        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
       - name: Verify Linux icon exists
         run: |
-          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          ICON_PATH="VardyParty.Desktop/Assets/vardyparty.svg"
           if [ ! -f "$ICON_PATH" ]; then
             echo "ERROR: Linux icon not found at $ICON_PATH"
             exit 1
@@ -902,7 +906,7 @@ jobs:
           parts:
             app:
               plugin: dump
-              source: VardyParty.Linux/bin/Release/net10.0/linux-x64/publish
+              source: VardyParty.Desktop/bin/Release/net11.0/linux-x64/publish
               override-build: |
                 craftctl default
                 mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
@@ -916,13 +920,13 @@ jobs:
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
-                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Desktop/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
                 export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/x86_64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
                 export VLC_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/vlc/plugins"
-                exec $SNAP/VardyParty "$@"
+                exec $SNAP/VardyPartyDesktop "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:
@@ -1031,6 +1035,8 @@ jobs:
     name: Package Linux ARM64 Snap
     runs-on: ubuntu-24.04-arm
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1045,24 +1051,21 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      - name: Download Linux ARM64 build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-linux-arm64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ env.CI_RUN_ID }}
+      - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj
+        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
         run: |
-          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
           if [ -f "$APPSETTINGS_PATH" ]; then
             BASE_JSON=$(cat "$APPSETTINGS_PATH")
           else
@@ -1099,7 +1102,7 @@ jobs:
         shell: bash
       - name: Verify AllowUserSecrets is not in Linux appsettings.json
         run: |
-          APPSETTINGS_PATH="VardyParty.Linux/appsettings.json"
+          APPSETTINGS_PATH="VardyParty.Desktop/appsettings.json"
           if grep -q "AllowUserSecrets" "$APPSETTINGS_PATH"; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
@@ -1107,10 +1110,10 @@ jobs:
           echo "OK: AllowUserSecrets not found in Linux appsettings.json"
         shell: bash
       - name: Publish Linux ARM64 application
-        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net10.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
       - name: Verify Linux icon exists
         run: |
-          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
+          ICON_PATH="VardyParty.Desktop/Assets/vardyparty.svg"
           if [ ! -f "$ICON_PATH" ]; then
             echo "ERROR: Linux icon not found at $ICON_PATH"
             exit 1
@@ -1153,7 +1156,7 @@ jobs:
           parts:
             app:
               plugin: dump
-              source: VardyParty.Linux/bin/Release/net10.0/linux-arm64/publish
+              source: VardyParty.Desktop/bin/Release/net11.0/linux-arm64/publish
               override-build: |
                 craftctl default
                 mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
@@ -1167,13 +1170,13 @@ jobs:
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
-                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Desktop/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
                 export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu:$SNAP/usr/lib/aarch64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
                 export VLC_PLUGIN_PATH="$SNAP/usr/lib/aarch64-linux-gnu/vlc/plugins"
-                exec $SNAP/VardyParty "$@"
+                exec $SNAP/VardyPartyDesktop "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:

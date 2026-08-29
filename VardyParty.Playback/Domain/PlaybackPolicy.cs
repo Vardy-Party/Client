@@ -25,13 +25,14 @@ public static class PlaybackPolicy
     }
 
     /// <summary>
-    /// User Next/Prev never marks a stream bad — only switches when attach is allowed and pool has another entry.
+    /// User Next/Prev never marks a stream bad — only switches when the pool has another entry.
+    /// Preparing does NOT block: ExoPlayer can stick in BUFFERING without STATE_READY
+    /// (field: Android TV "Switch requested…" toast with no switch). User navigation
+    /// abandons the stuck prepare so the next candidate can attach.
     /// </summary>
     public static bool CanUserNavigate(PlaybackSessionSnapshot snapshot, int healthyStreamCount)
     {
         if (snapshot.State is PlaybackSessionState.Closed or PlaybackSessionState.Failed)
-            return false;
-        if (snapshot.IsPreparing)
             return false;
         return healthyStreamCount > 1;
     }

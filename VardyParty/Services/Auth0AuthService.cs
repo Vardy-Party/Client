@@ -43,6 +43,19 @@ public class Auth0AuthService : Auth0TokenSession
             try
             {
                 Logger.LogInformation("[Auth0] Calling LoginAsync with audience: {Audience}", Settings.Audience);
+#if WINDOWS
+                // LoginAsync uses Auth0's Windows WebAuthenticator, which throws if this
+                // was not recorded for THIS process. Call it again immediately before
+                // the browser opens (Launch activations return false; the flag is set).
+                try
+                {
+                    _ = Auth0.OidcClient.Platforms.Windows.Activator.Default.CheckRedirectionActivation();
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "[Auth0] CheckRedirectionActivation before LoginAsync failed");
+                }
+#endif
                 loginResult = await client.LoginAsync(new { audience = Settings.Audience }, cancellationToken);
                 Logger.LogInformation("[Auth0] LoginAsync returned. IsError: {IsError}, Error: {Error}",
                     loginResult.IsError, loginResult.Error);

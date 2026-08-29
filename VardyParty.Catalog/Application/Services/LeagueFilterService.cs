@@ -38,7 +38,7 @@ public class LeagueFilterService : ILeagueFilterService
             return new List<Game>();
         }
 
-        return games.Where(g => IsLeagueVisible(g.League)).ToList();
+        return games.Where(g => IsLeagueVisible(MenuLeagueName(g))).ToList();
     }
 
     public IReadOnlyList<string> GetKnownLeagues(IDictionary<string, List<Game>>? gamesByLeague)
@@ -48,9 +48,13 @@ public class LeagueFilterService : ILeagueFilterService
             return Array.Empty<string>();
         }
 
-        return gamesByLeague.Keys
-            .Where(k => !string.IsNullOrWhiteSpace(k))
-            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+        return gamesByLeague.Values
+            .SelectMany(list => list ?? Enumerable.Empty<Game>())
+            .Select(MenuLeagueName)
+            .Where(name => name.Length > 0
+                && !name.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
@@ -111,6 +115,12 @@ public class LeagueFilterService : ILeagueFilterService
 
         _store.ClearSavedPreferences();
         Changed?.Invoke();
+    }
+
+    private static string MenuLeagueName(Game game)
+    {
+        var name = string.IsNullOrWhiteSpace(game.DisplayLeague) ? game.League : game.DisplayLeague;
+        return (name ?? string.Empty).Trim();
     }
 
     private void PersistAndNotify()

@@ -3,8 +3,8 @@ using VardyParty.Kernel;
 namespace VardyParty.Presentation;
 
 /// <summary>
-/// Shared home-shell presentation model. Blazor (phase 1) and Avalonia bind to this;
-/// MAUI XAML can later. Does not own Auth0 or native player chrome.
+/// Shared home-shell presentation model bound by the MAUI XAML and Desktop
+/// heads. Does not own Auth0 or native player chrome.
 /// </summary>
 public sealed class HomeShellViewModel
 {

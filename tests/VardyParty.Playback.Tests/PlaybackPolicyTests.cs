@@ -33,7 +33,7 @@ public class PlaybackPolicyTests
     }
 
     [Fact]
-    public void CanUserNavigate_RequiresIdleEnoughAndPool()
+    public void CanUserNavigate_RequiresPool_AllowsWhilePreparing()
     {
         // Arrange
         var playingIdle = _fixture.Build<PlaybackSessionSnapshot>()
@@ -44,6 +44,10 @@ public class PlaybackPolicyTests
             .With(s => s.State, PlaybackSessionState.Playing)
             .With(s => s.IsPreparing, true)
             .Create();
+        var startingPreparing = _fixture.Build<PlaybackSessionSnapshot>()
+            .With(s => s.State, PlaybackSessionState.Starting)
+            .With(s => s.IsPreparing, true)
+            .Create();
         var closed = _fixture.Build<PlaybackSessionSnapshot>()
             .With(s => s.State, PlaybackSessionState.Closed)
             .With(s => s.IsPreparing, false)
@@ -52,13 +56,15 @@ public class PlaybackPolicyTests
         // Act
         var cannotNavigateSolo = PlaybackPolicy.CanUserNavigate(playingIdle, healthyStreamCount: 1);
         var canNavigatePool = PlaybackPolicy.CanUserNavigate(playingIdle, healthyStreamCount: 2);
-        var cannotNavigatePreparing = PlaybackPolicy.CanUserNavigate(playingPreparing, 5);
+        var canNavigatePreparing = PlaybackPolicy.CanUserNavigate(playingPreparing, 5);
+        var canNavigateStarting = PlaybackPolicy.CanUserNavigate(startingPreparing, 3);
         var cannotNavigateClosed = PlaybackPolicy.CanUserNavigate(closed, 5);
 
         // Assert
         Assert.False(cannotNavigateSolo);
         Assert.True(canNavigatePool);
-        Assert.False(cannotNavigatePreparing);
+        Assert.True(canNavigatePreparing);
+        Assert.True(canNavigateStarting);
         Assert.False(cannotNavigateClosed);
     }
 

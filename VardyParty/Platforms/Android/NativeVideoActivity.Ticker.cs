@@ -27,7 +27,7 @@ namespace VardyParty.Platforms.Android
 
                     if (_isScoresTickerVisible)
                     {
-                        RunOnUiThread(UpdateScoresTickerText);
+                        RunOnUiThread(() => UpdateScoresTickerText());
                     }
                 });
             }
@@ -169,7 +169,9 @@ namespace VardyParty.Platforms.Android
 
         private static string FormatUpcomingLine(Game game)
         {
-            var localKickoff = game.Start.Kind == DateTimeKind.Utc ? game.Start.ToLocalTime() : game.Start;
+            // Same rule as MatchStatusPresenter.FormatStartTime: exactly one
+            // conversion to device-local; non-Local kinds are UTC by ingestion.
+            var localKickoff = game.Start.Kind == DateTimeKind.Local ? game.Start : game.Start.ToLocalTime();
             var kickoffText = localKickoff == default ? "TBD" : localKickoff.ToString("HH:mm");
             var international = InternationalTeamDisplay.IsInternationalGame(game);
             var home = FormatTeamForDisplay(game.DisplayHome, international);
@@ -206,11 +208,11 @@ namespace VardyParty.Platforms.Android
 
             if (_isScoresTickerVisible)
             {
-                UpdateScoresTickerText();
+                UpdateScoresTickerText(armStartHold: true);
             }
         }
 
-        private void UpdateScoresTickerText()
+        private void UpdateScoresTickerText(bool armStartHold = false)
         {
             try
             {
@@ -250,7 +252,14 @@ namespace VardyParty.Platforms.Android
                 if (_tickerText1 != null) _tickerText1.Text = fullText;
                 if (_tickerText2 != null) _tickerText2.Text = fullText;
                 _tickerScrollX = 0f;
-                if (_tickerInner != null) _tickerInner.TranslationX = 0f;
+                _tickerCopyWidth = 0;
+                ApplyTickerCopyLayout();
+                if (_tickerTrack != null) _tickerTrack.TranslationX = 0f;
+                if (armStartHold)
+                {
+                    _tickerScrollHoldUntilMs = global::Android.OS.SystemClock.UptimeMillis() + TickerScrollStartDelayMs;
+                }
+
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 if (_isScoresTickerVisible)
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
@@ -276,7 +285,7 @@ namespace VardyParty.Platforms.Android
                 if (_isScoresTickerVisible)
                 {
                     _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                    UpdateScoresTickerText();
+                    UpdateScoresTickerText(armStartHold: true);
                 }
                 else
                 {

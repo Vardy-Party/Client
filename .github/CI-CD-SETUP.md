@@ -119,24 +119,27 @@ Installers will be automatically created and attached to the GitHub Release.
 - Framework: `net10.0-maccatalyst`
 - Output: macOS application
 
-### Linux
+### Linux / WSL (`VardyParty.Desktop`)
 - Builds on: `ubuntu-latest`
-- Frameworks: `net10.0` (core library + future app)
-- Architectures: x64, ARM64 (self-contained)
-- Output: Compressed archives (.tar.gz)
-- Status: Preparing for future full Linux app support
+- Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
+- Architectures: x64, ARM64
+- Output: Desktop publish artifacts / snaps (see `cd.yml` package-linux jobs)
+- Video: LibVLC in a native window (not Avalonia `VideoView`)
+- Status: first-class head (see `docs/LINUX_SUPPORT.md`)
 
 ## Project Structure
 
 ```
-VardyParty/
-├── VardyParty.csproj          # Main MAUI app (multi-platform)
-├── VardyParty.Core/
-│   └── VardyParty.Core.csproj # Core library
-└── tests/
-    ├── VardyParty.TestSupport/   # AutoFixture / GetMock
-    └── VardyParty.*.Tests/       # Per-domain unit tests
+VardyParty/                 # MAUI head (Android/iOS/Mac Catalyst/Windows)
+VardyParty.HomeUi/          # Shared XAML homepage
+VardyParty.Desktop/         # Linux/WSL head
+VardyParty.*/               # Kernel, Ports, Auth, Catalog, Streaming, Playback, Presentation, Hosting
+tests/
+Version.props               # ApplicationDisplayVersion + ApplicationVersion
 ```
+
+Versioning details: [docs/VERSION_MANAGEMENT.md](../docs/VERSION_MANAGEMENT.md).
+Docs index: [docs/INDEX.md](../docs/INDEX.md).
 
 ## Notes
 

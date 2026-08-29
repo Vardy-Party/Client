@@ -10,6 +10,8 @@ namespace VardyParty.Platforms.Android
     {
         public event EventHandler<bool>? BufferingStateChanged;
 
+        public event EventHandler<bool>? PlaybackVisibilityChanged;
+
         private static AndroidVideoPlayerService? _instance;
         private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private static Func<Task>? _onNextStreamRequested;
@@ -74,6 +76,13 @@ namespace VardyParty.Platforms.Android
                     catch { }
                 }
 
+                // NativeVideoActivity now covers the UI (suppresses UI sounds).
+                try
+                {
+                    PlaybackVisibilityChanged?.Invoke(this, true);
+                }
+                catch { }
+
                 // Return task which will be signaled by NativeVideoActivity.ReportPlaybackResult
                 return _playbackTcs.Task;
             }
@@ -92,6 +101,15 @@ namespace VardyParty.Platforms.Android
             catch { }
             _playbackTcs = null;
             _onNextStreamRequested = null;
+
+            try
+            {
+                if (_instance is { } instance)
+                {
+                    instance.PlaybackVisibilityChanged?.Invoke(instance, false);
+                }
+            }
+            catch { }
         }
 
         internal static async Task RequestNextStream()

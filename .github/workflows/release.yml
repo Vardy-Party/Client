@@ -4,10 +4,17 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      linux_only:
+        description: Only the Linux Desktop publish (no GitHub Release). Uncheck to dry-run every platform.
+        type: boolean
+        default: true
 
 jobs:
   create-release:
     name: Create GitHub Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
@@ -27,15 +34,20 @@ jobs:
 
   build-windows-release:
     name: Build & Package Windows (APPX)
+    if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
     runs-on: windows-latest
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -47,35 +59,41 @@ jobs:
         run: dotnet restore
       
       - name: Publish Windows app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
       
       - name: Package Windows
         run: |
           cd output/windows
-          7z a -tzip "VardyParty-windows-${{ github.ref_name }}.zip" *
+          7z a -tzip "VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip" *
           cd ../..
       
       - name: Upload Windows Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/windows/VardyParty-windows-${{ github.ref_name }}.zip
-          asset_name: VardyParty-windows-${{ github.ref_name }}.zip
+          asset_path: ./output/windows/VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip
+          asset_name: VardyParty-windows-${{ env.RELEASE_ASSET_TAG }}.zip
           asset_content_type: application/zip
 
   build-android-release:
     name: Build & Package Android (APK)
+    if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
     runs-on: ubuntu-latest
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -93,29 +111,35 @@ jobs:
         run: dotnet restore
       
       - name: Publish Android app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-android /p:AndroidPackageFormat=apk -o ./output/android
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-android /p:AndroidPackageFormat=apk -o ./output/android
       
       - name: Upload Android Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ./output/android/com.vardyparty-Signed.apk
-          asset_name: VardyParty-android-${{ github.ref_name }}.apk
+          asset_name: VardyParty-android-${{ env.RELEASE_ASSET_TAG }}.apk
           asset_content_type: application/vnd.android.package-archive
 
   build-ios-release:
     name: Build & Package iOS (IPA)
+    if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
     runs-on: macos-14
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -127,29 +151,35 @@ jobs:
         run: dotnet restore
       
       - name: Publish iOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-ios /p:ArchiveOnBuild=true -o ./output/ios
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-ios /p:ArchiveOnBuild=true -o ./output/ios
       
       - name: Upload iOS Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ./output/ios/VardyParty.ipa
-          asset_name: VardyParty-ios-${{ github.ref_name }}.ipa
+          asset_name: VardyParty-ios-${{ env.RELEASE_ASSET_TAG }}.ipa
           asset_content_type: application/octet-stream
 
   build-macos-release:
     name: Build & Package macOS
+    if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
     runs-on: macos-14
     needs: create-release
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -161,82 +191,92 @@ jobs:
         run: dotnet restore
       
       - name: Publish macOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
       
       - name: Package macOS
         run: |
           cd output/macos
-          zip -r "VardyParty-macos-${{ github.ref_name }}.zip" VardyParty.app
+          zip -r "VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip" VardyParty.app
           cd ../..
       
       - name: Upload macOS Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/macos/VardyParty-macos-${{ github.ref_name }}.zip
-          asset_name: VardyParty-macos-${{ github.ref_name }}.zip
+          asset_path: ./output/macos/VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip
+          asset_name: VardyParty-macos-${{ env.RELEASE_ASSET_TAG }}.zip
           asset_content_type: application/zip
 
   build-linux-release:
     name: Build & Package Linux
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
     runs-on: ubuntu-latest
     needs: create-release
+    env:
+      HomeUiTargetFrameworks: net11.0
     steps:
       - uses: actions/checkout@v4
+      - name: Artifact tag
+        shell: bash
+        run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 10
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       
-      - name: Restore workloads
-        run: dotnet workload restore
+      - name: Install MAUI workloads
+        run: dotnet workload install maui-tizen --ignore-failed-sources
       
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore desktop head
+        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
       
       - name: Build core library for Linux
-        run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net10.0
+        run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net11.0
       
       - name: Publish Linux app (x64)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-x64 -o ./output/linux-x64 || true
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64
       
       - name: Publish Linux app (ARM64)
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0 --self-contained -r linux-arm64 -o ./output/linux-arm64 || true
+        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64
       
       - name: Package Linux x64
         run: |
           cd output
-          tar -czf "VardyParty-linux-x64-${{ github.ref_name }}.tar.gz" linux-x64/
+          tar -czf "VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz" linux-x64/
           cd ..
       
       - name: Package Linux ARM64
         run: |
           cd output
-          tar -czf "VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz" linux-arm64/
+          tar -czf "VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz" linux-arm64/
           cd ..
       
       - name: Upload Linux x64 Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/VardyParty-linux-x64-${{ github.ref_name }}.tar.gz
-          asset_name: VardyParty-linux-x64-${{ github.ref_name }}.tar.gz
+          asset_path: ./output/VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
+          asset_name: VardyParty-linux-x64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
           asset_content_type: application/gzip
       
       - name: Upload Linux ARM64 Release Asset
+        if: github.event_name == 'push'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./output/VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz
-          asset_name: VardyParty-linux-arm64-${{ github.ref_name }}.tar.gz
+          asset_path: ./output/VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
+          asset_name: VardyParty-linux-arm64-${{ env.RELEASE_ASSET_TAG }}.tar.gz
           asset_content_type: application/gzip
