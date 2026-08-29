@@ -24,7 +24,9 @@ public sealed class MauiHomeAssetLocator : IHomeAssetLocator
         var logical = webPath.TrimStart('/');
         var cached = Path.Combine(
             FileSystem.CacheDirectory,
-            "home-assets-v2",
+            // Bump when packaged league assets change content (e.g. PL fill).
+            // Exists-only cache otherwise keeps the first purple SVG forever.
+            "home-assets-v3",
             logical.Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(cached)) return cached;
 

@@ -73,6 +73,50 @@ public class BadgeCrestContrastTests
         Assert.Equal(0, Get(buf, 40)(10, 10).A);
     }
 
+    [Fact]
+    public void IsDarkInk_TrueForPremierLeaguePurple()
+    {
+        // Official PL purple #3d195b — old R+G+B<140 test missed this (sum 177).
+        Assert.True(BadgeCrestContrast.IsDarkInk(0x3d, 0x19, 0x5b));
+        Assert.True(BadgeCrestContrast.Luminance(0x3d, 0x19, 0x5b) < BadgeCrestContrast.DarkLuminanceMax);
+        Assert.True(BadgeCrestContrast.Chroma(0x3d, 0x19, 0x5b) <= BadgeCrestContrast.DarkChromaMax);
+    }
+
+    [Fact]
+    public void IsDarkInk_FalseForSaturatedTeamRed()
+    {
+        Assert.False(BadgeCrestContrast.IsDarkInk(200, 16, 46));
+    }
+
+    [Fact]
+    public void LightenDarkInk_RecolorsPremierLeaguePurple()
+    {
+        var buf = NewBuffer(40, 40);
+        FillRect(buf, 40, 10, 10, 30, 30, 0x3d, 0x19, 0x5b, 255);
+
+        Assert.True(BadgeCrestContrast.IsDarkDominant(40, 40, Get(buf, 40)));
+        BadgeCrestContrast.LightenDarkInk(40, 40, Get(buf, 40), Set(buf, 40));
+
+        var p = Get(buf, 40)(20, 20);
+        Assert.Equal(BadgeCrestContrast.LightInkR, p.R);
+        Assert.Equal(BadgeCrestContrast.LightInkG, p.G);
+        Assert.Equal(BadgeCrestContrast.LightInkB, p.B);
+        Assert.Equal(255, p.A);
+    }
+
+    [Fact]
+    public void LightenDarkInk_NoOpForColourfulCrest()
+    {
+        var buf = NewBuffer(40, 40);
+        FillRect(buf, 40, 10, 10, 20, 30, 200, 16, 46, 255);
+        FillRect(buf, 40, 20, 10, 30, 30, 0, 70, 173, 255);
+
+        BadgeCrestContrast.LightenDarkInk(40, 40, Get(buf, 40), Set(buf, 40));
+
+        Assert.Equal(200, Get(buf, 40)(12, 12).R);
+        Assert.Equal(0, Get(buf, 40)(22, 12).R);
+    }
+
     private static byte[] NewBuffer(int w, int h) => new byte[w * h * 4];
 
     private static Func<int, int, BadgeCrestContrast.Rgba> Get(byte[] buf, int w) =>

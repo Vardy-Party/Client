@@ -129,10 +129,10 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
 
             using var snapshot = surface.Snapshot();
             using var bitmap = SKBitmap.FromImage(snapshot);
-            // Dark brandlogos (league wordmarks) → off-white for the dark homepage.
-            // White BBC crests (Juventus etc.) → dark circular backing so they
-            // still read on the match-card light plate (#F3F5F8).
-            LightenDarkMonochrome(bitmap);
+            // Dark brandlogos (near-black OR brand purple like PL #3d195b) →
+            // off-white for the dark homepage. White BBC crests get a dark
+            // circular backing so they still read on light badge plates.
+            BadgeCrestContrast.LightenDarkInk(bitmap);
             BadgeCrestContrast.ApplyDarkBackingIfLightDominant(bitmap);
             using var image = SKImage.FromBitmap(bitmap);
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
@@ -142,40 +142,6 @@ public sealed class SkiaBadgeImageLoader : IBadgeImageLoader
         {
             _logger?.LogWarning(ex, "SVG rasterise failed for {Source}", source);
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Brandlogos league marks are often near-black (#221f1f). On the dark
-    /// homepage that looks like a missing icon. Recolor dark opaque pixels
-    /// to off-white and keep alpha so the silhouette still reads.
-    /// </summary>
-    private static void LightenDarkMonochrome(SKBitmap bitmap)
-    {
-        var dark = 0;
-        var opaque = 0;
-        for (var y = 0; y < bitmap.Height; y += 4)
-        {
-            for (var x = 0; x < bitmap.Width; x += 4)
-            {
-                var pixel = bitmap.GetPixel(x, y);
-                if (pixel.Alpha < 40) continue;
-                opaque++;
-                if (pixel.Red + pixel.Green + pixel.Blue < 140) dark++;
-            }
-        }
-
-        if (opaque == 0 || dark * 2 < opaque) return;
-
-        for (var y = 0; y < bitmap.Height; y++)
-        {
-            for (var x = 0; x < bitmap.Width; x++)
-            {
-                var pixel = bitmap.GetPixel(x, y);
-                if (pixel.Alpha < 40) continue;
-                if (pixel.Red + pixel.Green + pixel.Blue >= 140) continue;
-                bitmap.SetPixel(x, y, new SKColor(245, 246, 248, pixel.Alpha));
-            }
         }
     }
 
