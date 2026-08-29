@@ -191,7 +191,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish macOS app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst /p:ArchiveOnBuild=true -o ./output/macos
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-maccatalyst -r maccatalyst-arm64 /p:ArchiveOnBuild=true -o ./output/macos
       
       - name: Package macOS
         run: |
@@ -237,7 +237,29 @@ jobs:
       
       - name: Restore desktop head
         run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
-      
+
+      - name: Generate appsettings.json for Linux
+        env:
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENTID: ${{ secrets.AUTH0_CLIENTID }}
+          AUTH0_AUDIENCE: ${{ secrets.AUTH0_AUDIENCE }}
+          AUTH0_SCOPE: ${{ secrets.AUTH0_SCOPE }}
+          AUTH0_CALLBACKSCHEME: ${{ secrets.AUTH0_CALLBACKSCHEME }}
+          AUTH0_REDIRECTURI: ${{ secrets.AUTH0_REDIRECTURI }}
+          AUTH0_POSTLOGOUTREDIRECTURI: ${{ secrets.AUTH0_POSTLOGOUTREDIRECTURI }}
+          AUTH0_TOKENLEEAWAYSECONDS: ${{ secrets.AUTH0_TOKENLEEAWAYSECONDS }}
+          AUTH0_REQUIREDROLECLAIMTYPE: ${{ secrets.AUTH0_REQUIREDROLECLAIMTYPE }}
+          AUTH0_REQUIREDROLE: ${{ secrets.AUTH0_REQUIREDROLE }}
+          API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
+        run: |
+          chmod +x scripts/merge-appsettings-secrets.sh
+          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
+            echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
+            exit 1
+          fi
+          echo "OK: Linux appsettings enriched from Actions secrets"
+
       - name: Build core library for Linux
         run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net11.0
       

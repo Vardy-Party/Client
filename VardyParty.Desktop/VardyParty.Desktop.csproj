@@ -21,6 +21,12 @@
 		<ApplicationTitle>Vardy Party</ApplicationTitle>
 		<ApplicationId>uk.jonbreen.vardyparty.desktop</ApplicationId>
 
+		<!--
+			Same UserSecretsId as the MAUI head so one local secrets store
+			feeds Android packaging and Desktop/Linux (-p:PatchAppSettings=true).
+		-->
+		<UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
+
 		<!-- Netflix-style dark UI regardless of OS theme. -->
 		<AvaloniaControlsMauiThemeVariant>Dark</AvaloniaControlsMauiThemeVariant>
 
@@ -113,5 +119,24 @@
 		      CopyToOutputDirectory="PreserveNewest"
 		      CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
+
+	<!--
+		Local Desktop/Linux: patch SOURCE appsettings.json from user-secrets before build
+		so CopyToOutputDirectory / publish embed real Auth0 + API values.
+		Usage: dotnet build/run ... -p:PatchAppSettings=true
+		WARNING: modifies source — revert with git restore VardyParty.Desktop/appsettings.json
+	-->
+	<Target Name="PatchAppSettingsForLocalDesktop" BeforeTargets="BeforeBuild" Condition="'$(PatchAppSettings)' == 'true'">
+		<PropertyGroup>
+			<SourceAppSettingsPath>$(MSBuildProjectDirectory)/appsettings.json</SourceAppSettingsPath>
+			<_PatchScriptPs1>$(MSBuildProjectDirectory)/../scripts/patch-appsettings.ps1</_PatchScriptPs1>
+			<_PatchScriptSh>$(MSBuildProjectDirectory)/../scripts/merge-appsettings-secrets.sh</_PatchScriptSh>
+		</PropertyGroup>
+		<Message Text="[LOCAL BUILD] Patching Desktop appsettings.json from user-secrets BEFORE build" Importance="high" />
+		<Exec Condition="'$(OS)' == 'Windows_NT'"
+		      Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(_PatchScriptPs1)&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+		<Exec Condition="'$(OS)' != 'Windows_NT'"
+		      Command="USER_SECRETS_ID='$(UserSecretsId)' bash &quot;$(_PatchScriptSh)&quot; &quot;$(SourceAppSettingsPath)&quot;" />
+	</Target>
 
 </Project>
