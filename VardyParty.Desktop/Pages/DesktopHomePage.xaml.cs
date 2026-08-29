@@ -57,6 +57,14 @@ public partial class DesktopHomePage : ContentPage
 
     // Stream resolution state (mirrors HomeHostPage's fields).
     private bool _isResolvingStreams;
+    /// <summary>
+    /// True from overlay show until we explicitly hide it. Must NOT track
+    /// <see cref="StreamResolutionProgress.IsResolving"/>: the orchestrator's
+    /// BehaviorSubject emits an initial IsResolving=false on first subscribe
+    /// (and Reset can emit the same), which hid the finding-streams modal on
+    /// first pick before later progress arrived.
+    /// </summary>
+    private bool _resolveOverlayOpen;
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
     private int _resolutionGeneration;
@@ -759,6 +767,7 @@ public partial class DesktopHomePage : ContentPage
         _homeShell.OnUserPicked(game);
         _selection.CurrentGame = game;
         _isResolvingStreams = true;
+        _resolveOverlayOpen = true;
         _resolutionExhausted = false;
         ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
 
@@ -769,7 +778,9 @@ public partial class DesktopHomePage : ContentPage
                 _homeShell.MarkPlayerSessionStarted();
             }
 
-            _isResolvingStreams = progress.IsResolving;
+            // Drive chrome/title from progress, but never clear
+            // _resolveOverlayOpen here — see field comment.
+            _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
             UpdateResolveOverlay(progress);
         });
 
@@ -827,6 +838,7 @@ public partial class DesktopHomePage : ContentPage
                 {
                     _resolutionStartClaimed = false;
                     _isResolvingStreams = false;
+                    _resolveOverlayOpen = false;
                     _viewModel.OnStreamResolutionEnded();
                     Dispatcher.Dispatch(() =>
                     {
@@ -846,16 +858,18 @@ public partial class DesktopHomePage : ContentPage
         {
             _resolutionCts?.Cancel();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "[DesktopHome] Cancel of resolution CTS failed");
         }
 
         try
         {
             _orchestrator.Reset();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "[DesktopHome] Orchestrator reset on cancel failed");
         }
 
         _progressSubscription?.Dispose();
@@ -864,6 +878,7 @@ public partial class DesktopHomePage : ContentPage
         _resolutionStartClaimed = false;
         _resolutionExhausted = true;
         _isResolvingStreams = false;
+        _resolveOverlayOpen = false;
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
@@ -985,6 +1000,7 @@ public partial class DesktopHomePage : ContentPage
         ResolveProgressBar.Progress = 0;
         ResolveCountLabel.Text = "0 tested • 0 healthy";
         ResolveOverlay.IsVisible = true;
+        _resolveOverlayOpen = true;
         ResolveCancelButton.Focus();
     });
 
@@ -1006,7 +1022,9 @@ public partial class DesktopHomePage : ContentPage
         ResolveCountLabel.Text = progress.TotalStreams > 0
             ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
             : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
-        ResolveOverlay.IsVisible = _isResolvingStreams;
+        // Keep the modal up for the whole owned session — progress.IsResolving
+        // alone can go false on first subscribe while we still owe the overlay.
+        ResolveOverlay.IsVisible = _resolveOverlayOpen;
     });
 
     private void ShowStreamPlaybackError(string? message)
@@ -1014,6 +1032,7 @@ public partial class DesktopHomePage : ContentPage
         _serviceError = message ?? "Stream unavailable";
         PushErrorBanner();
         _isResolvingStreams = false;
+        _resolveOverlayOpen = false;
         Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
     }
 }
