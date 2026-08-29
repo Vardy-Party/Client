@@ -208,11 +208,11 @@ namespace VardyParty.Platforms.Android
 
             if (_isScoresTickerVisible)
             {
-                UpdateScoresTickerText();
+                UpdateScoresTickerText(armStartHold: true);
             }
         }
 
-        private void UpdateScoresTickerText()
+        private void UpdateScoresTickerText(bool armStartHold = false)
         {
             try
             {
@@ -255,6 +255,11 @@ namespace VardyParty.Platforms.Android
                 _tickerCopyWidth = 0;
                 ApplyTickerCopyLayout();
                 if (_tickerTrack != null) _tickerTrack.TranslationX = 0f;
+                if (armStartHold)
+                {
+                    _tickerScrollHoldUntilMs = global::Android.OS.SystemClock.UptimeMillis() + TickerScrollStartDelayMs;
+                }
+
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 if (_isScoresTickerVisible)
                     PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
@@ -280,7 +285,7 @@ namespace VardyParty.Platforms.Android
                 if (_isScoresTickerVisible)
                 {
                     _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                    UpdateScoresTickerText();
+                    UpdateScoresTickerText(armStartHold: true);
                 }
                 else
                 {

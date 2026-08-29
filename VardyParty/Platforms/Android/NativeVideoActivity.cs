@@ -192,6 +192,9 @@ namespace VardyParty.Platforms.Android
         private int _tickerCopyWidth;
         private int _tickerGapPx;
         private float _tickerPixelsPerFrame = 2f; // scroll speed
+        /// <summary>Uptime millis when auto-scroll may begin (hold so the head is readable).</summary>
+        private long _tickerScrollHoldUntilMs;
+        private const long TickerScrollStartDelayMs = 5000;
         private bool _isScoresTickerVisible;
         private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
         private bool _isMenuVisible;
@@ -596,6 +599,16 @@ namespace VardyParty.Platforms.Android
                 if (_tickerGap != null)
                 {
                     _tickerGap.Visibility = global::Android.Views.ViewStates.Visible;
+                }
+
+                // Hold at the start so the reader can see the head before motion.
+                var nowMs = global::Android.OS.SystemClock.UptimeMillis();
+                if (nowMs < _tickerScrollHoldUntilMs)
+                {
+                    _tickerScrollX = 0f;
+                    _tickerTrack.TranslationX = 0f;
+                    PostDelayedCallback(_tickerHandler, _tickerRunnable, 16);
+                    return;
                 }
 
                 var period = TickerMarquee.LoopPeriod(contentWidth, _tickerGapPx);
