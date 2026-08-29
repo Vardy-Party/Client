@@ -92,12 +92,24 @@ public partial class HomeView
         if (_tvTrapViewModel != null)
         {
             _tvTrapViewModel.PropertyChanged -= OnTvTrapViewModelPropertyChanged;
+            _tvTrapViewModel.GamesUpdated -= OnTvGamesUpdatedForHeaderFocus;
         }
 
         _tvTrapViewModel = vm;
         if (_tvTrapViewModel != null)
         {
             _tvTrapViewModel.PropertyChanged += OnTvTrapViewModelPropertyChanged;
+            _tvTrapViewModel.GamesUpdated += OnTvGamesUpdatedForHeaderFocus;
+        }
+    }
+
+    private void OnTvGamesUpdatedForHeaderFocus(int gameCount)
+    {
+        // Empty delivered board never arms RequestsInitialFocus — release the
+        // Menu hold so Settings remains reachable.
+        if (gameCount == 0 && ViewModel is { IsContentLoading: false })
+        {
+            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
         }
     }
 
@@ -118,16 +130,13 @@ public partial class HomeView
 
         UnwireMenuButton();
         _wiredMenuButton = native;
-        native.Focusable = true;
-        native.FocusableInTouchMode = false;
-        // Same uniform opt-out as the cards: DPAD_CENTER's performClick must
-        // not play the system click alongside our UI tick. Direction keys
-        // from the header are owned at the ACTIVITY level
-        // (TvDpadFocusRouter.TryHandleActivityKey, HeaderMove) — same single
-        // owner as card navigation, so there is no per-view key listener to
-        // lose. DPAD_CENTER/Enter falls through to the native click.
         native.SoundEffectsEnabled = false;
         native.FocusChange += OnTvItemFocusChange;
+        // Before any rail exists Android's default search lands on Menu
+        // (field: Menu selected, first rail not on screen). Hold Menu out of
+        // the focus order until the first card autofocus finishes — or until
+        // an empty board settles (see OnTvGamesUpdated).
+        TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
         TvDpadFocusRouter.RegisterHeaderTarget(native);
     }
 

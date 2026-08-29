@@ -366,6 +366,12 @@ public partial class MatchCardView : ContentView
             // the board's first appearance lights nothing (user report).
             // Retry once per frame until the card is attached, shown and
             // sized, same pattern as the router's deferred row focus.
+            //
+            // Pull Menu out of the focus order for the duration of the
+            // retry: Android otherwise default-focuses Menu before rails
+            // exist (field: Menu selected, first rail not visible).
+            // (Menu may already be held from WireTvHeaderFocus — idempotent.)
+            TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
             RequestInitialFocusWhenReady(native, InitialFocusRetryFrames);
         }
 #endif
@@ -374,26 +380,37 @@ public partial class MatchCardView : ContentView
 #if ANDROID
     /// <summary>
     /// Frames the one-shot initial autofocus keeps retrying while the first
-    /// card attaches and lays out (~1.5s at 60fps; the 32-bit TV box drops
-    /// frames during the initial catalog apply, and each retry is one cheap
-    /// looper post).
+    /// card attaches and lays out. Budget is generous on 32-bit TV: cold
+    /// start drops frames through BBC parse + SVG decode, and Menu must not
+    /// win the default focus race before this succeeds (~3s at 60fps).
     /// </summary>
-    private const int InitialFocusRetryFrames = 90;
+    private const int InitialFocusRetryFrames = 180;
 
     private static void RequestInitialFocusWhenReady(
         global::Android.Views.View native, int attemptsLeft)
     {
         if (attemptsLeft <= 0)
         {
+            // Give Menu back so the page is still operable if autofocus lost.
+            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
             return;
         }
 
         native.Post(() =>
         {
-            if (native is { IsAttachedToWindow: true, IsShown: true } && native.Width > 0
-                && native.RequestFocus())
+            if (native is { IsAttachedToWindow: true, IsShown: true } && native.Width > 0)
             {
-                return;
+                // First rail must be the visible/selected default — park the
+                // rows list on row 0 before requesting focus (enrichment
+                // reshuffles can leave the viewport mid-board).
+                TvDpadFocusRouter.ScrollRowsToFirstRail(native);
+                if (native.RequestFocus())
+                {
+                    TvDpadFocusRouter.NoteCardFocused(native);
+                    TvDpadFocusRouter.PostTopAlignContaining(native);
+                    TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+                    return;
+                }
             }
 
             RequestInitialFocusWhenReady(native, attemptsLeft - 1);

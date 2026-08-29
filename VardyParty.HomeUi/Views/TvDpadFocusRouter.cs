@@ -432,12 +432,82 @@ public static class TvDpadFocusRouter
     private static WeakReference<AView>? _lastFocusedCard;
 
     /// <summary>
+    /// While true, the Menu header stays non-focusable so Android's default
+    /// focus search cannot land on Menu before the first card exists (field:
+    /// cold start selected Menu and left the rails off the first row).
+    /// Released when the one-shot initial card focus succeeds, or when its
+    /// retry budget expires so Menu remains reachable.
+    /// </summary>
+    private static bool _holdHeaderFocusForInitialCard;
+
+    /// <summary>
     /// The header view (Menu button) that up-from-the-first-row lands on.
     /// Registered by HomeView's TV wiring whenever the button's platform
     /// view (re)creates.
     /// </summary>
-    internal static void RegisterHeaderTarget(AView view) =>
+    internal static void RegisterHeaderTarget(AView view)
+    {
         _headerTarget = new WeakReference<AView>(view);
+        ApplyHeaderFocusGate(view);
+    }
+
+    /// <summary>
+    /// Hold Menu out of the focus order until the first card of the first
+    /// rail takes the one-shot autofocus (or the retry budget expires).
+    /// </summary>
+    internal static void HoldHeaderFocusForInitialCard()
+    {
+        _holdHeaderFocusForInitialCard = true;
+        if (_headerTarget?.TryGetTarget(out var header) == true)
+        {
+            ApplyHeaderFocusGate(header);
+            if (header.IsFocused)
+            {
+                header.ClearFocus();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Re-enable Menu as a D-pad target after initial card focus is done.
+    /// </summary>
+    internal static void ReleaseHeaderFocusForInitialCard()
+    {
+        if (!_holdHeaderFocusForInitialCard)
+        {
+            return;
+        }
+
+        _holdHeaderFocusForInitialCard = false;
+        if (_headerTarget?.TryGetTarget(out var header) == true)
+        {
+            ApplyHeaderFocusGate(header);
+        }
+    }
+
+    private static void ApplyHeaderFocusGate(AView header)
+    {
+        // Menu is focusable only when we are not waiting on the first card.
+        header.Focusable = !_holdHeaderFocusForInitialCard;
+        header.FocusableInTouchMode = false;
+    }
+
+    /// <summary>
+    /// Park the rows RecyclerView on the first league row, then top-align —
+    /// used by the one-shot autofocus so cold start never leaves focus on a
+    /// card whose rail is scrolled off-screen.
+    /// </summary>
+    internal static void ScrollRowsToFirstRail(AView card)
+    {
+        var outer = FindParentRecycler(card);
+        if (outer is null)
+        {
+            return;
+        }
+
+        outer.ScrollToPosition(0);
+        PostTopAlignContaining(card);
+    }
 
     /// <summary>
     /// The card that most recently held native focus — the menu focus trap
@@ -455,8 +525,9 @@ public static class TvDpadFocusRouter
         && card.RequestFocus();
 
     private static bool TryFocusHeaderTarget() =>
-        _headerTarget?.TryGetTarget(out var header) == true
-        && header is { IsAttachedToWindow: true, IsShown: true }
+        !_holdHeaderFocusForInitialCard
+        && _headerTarget?.TryGetTarget(out var header) == true
+        && header is { IsAttachedToWindow: true, IsShown: true, Focusable: true }
         && header.RequestFocus();
 
     private static RecyclerView? FindParentRecycler(AView view)
