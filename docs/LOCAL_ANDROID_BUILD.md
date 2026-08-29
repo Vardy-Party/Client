@@ -2,6 +2,12 @@
 
 This guide explains how to build the Android app locally with proper configuration secrets, matching the CI/CD pipeline behavior.
 
+**Committed `VardyParty/appsettings.json` and `VardyParty.Desktop/appsettings.json` are
+templates only** (empty Auth0 / API values). Never commit real secrets into those files.
+CI/CD (`.github/workflows/cd.yml`) and local packaging (`package-android.ps1` /
+`-p:PatchAppSettings=true`) inject secrets at build time from GitHub Actions secrets or
+.NET user-secrets.
+
 **Preferred (device APK):** from the repo root on Windows/pwsh:
 
 ```powershell
