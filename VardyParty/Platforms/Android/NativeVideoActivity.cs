@@ -1017,12 +1017,6 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        protected override void OnResume()
-        {
-            base.OnResume();
-            HideSystemUI();
-        }
-
         private PlaybackMetrics BuildPlaybackMetrics(bool isBuffering = false)
         {
             var metrics = new PlaybackMetrics

@@ -241,6 +241,7 @@ namespace VardyParty.Platforms.Android
         protected override void OnResume()
         {
             base.OnResume();
+            HideSystemUI();
             if (_matchEventPolicy != null) _matchEventPolicy.IsAppForegrounded = true;
         }
 
