@@ -1,10 +1,13 @@
 name: Bump Display Version
 
 # Semver (ApplicationDisplayVersion) is a release decision — never auto-bump on PRs.
-# Run manually from Actions when you want major/minor/patch.
+# Run manually from Actions when you want major/minor/patch. After the bump
+# lands on main, this workflow dispatches CD so the GitHub release uses the
+# new display version (product-merge CI still has the old Version.props).
 #
-# ApplicationVersion (build counter) is incremented on successful CI for main
-# by "Increment Build Version" — not here, unless you also tick bump_build_number.
+# ApplicationVersion on a product PR is set on the feature branch. Tick
+# bump_build_number here only when you want another build number with the
+# display bump.
 on:
   workflow_dispatch:
     inputs:
@@ -30,6 +33,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   bump-display-version:
@@ -133,3 +137,7 @@ jobs:
           fi
 
           echo "::notice::ApplicationDisplayVersion ${DISPLAY_VERSION} (build ${BUILD_VERSION}) is on main"
+
+          PACKAGE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          chmod +x scripts/dispatch-cd-for-release.sh
+          scripts/dispatch-cd-for-release.sh "${PACKAGE_SHA}" "${BUILD_VERSION}"
