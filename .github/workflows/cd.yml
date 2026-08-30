@@ -444,6 +444,13 @@ jobs:
           fi
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
+      - name: Install Liberation Sans for splash rasterization
+        run: |
+          # MauiSplashScreen SVG text is baked on the runner. Ubuntu has no Arial,
+          # so Skia used to pick DejaVu. Liberation Sans is Arial-metric.
+          sudo apt-get update
+          sudo apt-get install -y fonts-liberation
+          fc-cache -f
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature

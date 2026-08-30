@@ -25,6 +25,7 @@ public sealed class HomeViewModelTests : IDisposable
     private readonly Mock<IHomeAssetLocator> _assets;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly MatchEventBus _bus = new();
+    private readonly SelectionState _selection = new();
     private readonly HomeViewModel _sut;
 
     public HomeViewModelTests()
@@ -59,6 +60,7 @@ public sealed class HomeViewModelTests : IDisposable
             sounds,
             _notifications,
             _bus,
+            _selection,
             NullLogger<HomeViewModel>.Instance);
     }
 
@@ -638,6 +640,42 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Null(_sut.Toast.Current);
     }
 
+    [Fact]
+    public void FlushPendingApply_GoalOnWatchedGame_WhilePlaying_DeliversNothing()
+    {
+        var delivered = 0;
+        _bus.Published += _ => delivered++;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
+        _notifications.IsPlaybackActive = true;
+
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        Assert.Equal(0, delivered);
+        Assert.Null(_sut.Toast.Current);
+    }
+
+    [Fact]
+    public void FlushPendingApply_GoalOnOtherGame_WhilePlaying_StillToasts()
+    {
+        var delivered = new List<MatchEvent>();
+        _bus.Published += delivered.Add;
+        _sut.UpdateGames(TwoLiveCatalog(homeA: 0, homeB: 0));
+        _sut.FlushPendingApply();
+        _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
+        _notifications.IsPlaybackActive = true;
+
+        _sut.UpdateGames(TwoLiveCatalog(homeA: 0, homeB: 1));
+        _sut.FlushPendingApply();
+
+        var matchEvent = Assert.Single(delivered);
+        Assert.Equal("River Town", matchEvent.Game.Home);
+        Assert.NotNull(_sut.Toast.Current);
+        Assert.Contains("River Town", _sut.Toast.Current!.Headline, StringComparison.Ordinal);
+    }
+
     private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
     {
         var game = _fixture.Build<Game>()
@@ -664,6 +702,34 @@ public sealed class HomeViewModelTests : IDisposable
         return new Dictionary<string, List<Game>>
         {
             ["League Alpha"] = [game],
+        };
+    }
+
+    private Dictionary<string, List<Game>> TwoLiveCatalog(int homeA, int homeB)
+    {
+        var kickoff = DateTime.UtcNow.Date.AddHours(-1);
+        Game Live(string home, string away, int homeScore) => _fixture.Build<Game>()
+            .With(g => g.Home, home)
+            .With(g => g.Away, away)
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)20)
+            .With(g => g.HomeScore, (int?)homeScore)
+            .With(g => g.AwayScore, (int?)0)
+            .With(g => g.Start, kickoff)
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = [Live("Home United", "Away City", homeA), Live("River Town", "Lake Borough", homeB)],
         };
     }
 

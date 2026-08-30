@@ -610,15 +610,12 @@ public partial class MatchCardView : ContentView
             element = element.Parent as VisualElement;
         }
 
-        if (element is null || CardOuter.Width <= 0 || strip.Width <= 0
-            || strip.ContentSize.Width <= 0)
+        if (element is null || CardOuter.Width <= 0 || strip.Width <= 0)
         {
             // Geometry not settled yet: a just-materialized staged card has
-            // no post-layout bounds on the focus frame (and a strip whose
-            // content is still measuring reports ContentSize 0, which would
-            // clamp every target to 0). Defer to the next layout pass rather
-            // than scroll to a garbage target; give up quietly if focus has
-            // already moved elsewhere.
+            // no post-layout bounds on the focus frame. Do not wait on
+            // ContentSize — Android often reports 0/viewport while children
+            // are already laid out (focus then walks off-screen and stays).
             if (attemptsLeft > 0 && _isFocused)
             {
                 Dispatcher.Dispatch(() => ScrollStripToFocusedCard(strip, attemptsLeft - 1));
@@ -630,13 +627,24 @@ public partial class MatchCardView : ContentView
         var overhead = TvFocusScrollMath.FocusChromeOverhead(
             CardOuter.Width, ViewModel?.Layout.FocusRingThickness ?? 3);
         var contentWidth = ResolveStripContentWidth(strip);
+        if (contentWidth <= strip.Width && attemptsLeft > 0 && _isFocused
+            && SumStripChildExtent(strip) <= 0)
+        {
+            Dispatcher.Dispatch(() => ScrollStripToFocusedCard(strip, attemptsLeft - 1));
+            return;
+        }
+
+        var currentScrollX = strip.ScrollX;
+#if ANDROID
+        currentScrollX = NativeStripScrollXDip(strip, currentScrollX);
+#endif
         var target = TvFocusScrollMath.ComputeStripTarget(
             cardLeft,
             CardOuter.Width,
             overhead,
             strip.Width,
             contentWidth,
-            strip.ScrollX);
+            currentScrollX);
         if (target is { } scrollX)
         {
 #if ANDROID
@@ -658,41 +666,117 @@ public partial class MatchCardView : ContentView
     /// </summary>
     private static double ResolveStripContentWidth(ScrollView strip)
     {
-        if (strip.ContentSize.Width > strip.Width + 1)
+        var inner = strip.Content as VisualElement;
+        return TvFocusScrollMath.ResolveStripContentWidth(
+            strip.ContentSize.Width,
+            inner?.Width ?? 0,
+            strip.Width,
+            SumStripChildExtent(strip));
+    }
+
+    private static double SumStripChildExtent(ScrollView strip)
+    {
+        if (strip.Content is not Layout layout)
         {
-            return strip.ContentSize.Width;
+            return 0;
         }
 
-        if (strip.Content is VisualElement content && content.Width > strip.Width + 1)
+        double maxRight = 0;
+        foreach (var child in layout.Children)
         {
-            return content.Width;
+            if (child is VisualElement ve && ve.Width > 0)
+            {
+                maxRight = Math.Max(maxRight, ve.X + ve.Width);
+            }
         }
 
-        return Math.Max(strip.ContentSize.Width, strip.Content?.Width ?? 0);
+        return TvFocusScrollMath.SumHorizontalChildExtent(maxRight, layout.Padding.Right);
     }
 
 #if ANDROID
-    private static bool TryNativeStripScroll(ScrollView strip, double scrollX)
+    private static bool TryNativeStripScroll(ScrollView strip, double scrollXDip)
     {
         try
         {
-            if (strip.Handler?.PlatformView is not global::Android.Views.View platform)
+            if (!TryFindHorizontalScrollView(strip, out var hsv))
             {
                 return false;
             }
 
-            for (var walk = platform; walk != null; walk = walk.Parent as global::Android.Views.View)
+            var density = hsv.Resources?.DisplayMetrics?.Density ?? 1f;
+            if (density <= 0)
             {
-                if (walk is global::Android.Widget.HorizontalScrollView hsv)
+                density = 1f;
+            }
+
+            var xPx = TvFocusScrollMath.DipToPx(scrollXDip, density);
+            var contentPx = TvFocusScrollMath.DipToPx(
+                TvFocusScrollMath.ResolveStripContentWidth(
+                    strip.ContentSize.Width,
+                    (strip.Content as VisualElement)?.Width ?? 0,
+                    strip.Width,
+                    SumStripChildExtent(strip)),
+                density);
+
+            if (hsv.ChildCount > 0)
+            {
+                var child = hsv.GetChildAt(0);
+                if (child != null && contentPx > child.Width)
                 {
-                    var x = (int)Math.Round(scrollX);
-                    hsv.Post(() => hsv.SmoothScrollTo(x, 0));
-                    return true;
+                    child.SetMinimumWidth(contentPx);
                 }
             }
+
+            hsv.Post(() => hsv.SmoothScrollTo(xPx, 0));
+            return true;
         }
         catch
         {
+        }
+
+        return false;
+    }
+
+    private static double NativeStripScrollXDip(ScrollView strip, double fallbackDip)
+    {
+        try
+        {
+            if (!TryFindHorizontalScrollView(strip, out var hsv))
+            {
+                return fallbackDip;
+            }
+
+            var density = hsv.Resources?.DisplayMetrics?.Density ?? 1f;
+            if (density <= 0)
+            {
+                return fallbackDip;
+            }
+
+            return hsv.ScrollX / density;
+        }
+        catch
+        {
+            return fallbackDip;
+        }
+    }
+
+    private static bool TryFindHorizontalScrollView(
+        ScrollView strip,
+        out global::Android.Widget.HorizontalScrollView hsv)
+    {
+        hsv = null!;
+        if (strip.Handler?.PlatformView is not global::Android.Views.View platform)
+        {
+            return false;
+        }
+
+        for (var walk = platform; walk != null; walk = walk.Parent as global::Android.Views.View)
+        {
+            if (walk is global::Android.Widget.HorizontalScrollView found)
+            {
+                hsv = found;
+                return true;
+            }
         }
 
         return false;

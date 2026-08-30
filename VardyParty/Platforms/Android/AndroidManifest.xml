@@ -1,5 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application 
         android:allowBackup="true" 
         android:label="VardyParty"
@@ -10,6 +11,21 @@
         android:roundIcon="@mipmap/appicon_round"
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
+        <!-- Leanback is an alias so phones never advertise LEANBACK_LAUNCHER.
+             Do not declare SplashActivity here: a merge stub dropped MAIN/LAUNCHER
+             and the Nokia C12 drawer hid the app. Splash comes from [Activity]. -->
+        <activity-alias
+            android:name="com.vardyparty.TvLeanbackAlias"
+            android:targetActivity="com.vardyparty.MainActivity"
+            android:enabled="@bool/show_tv_launcher"
+            android:exported="true"
+            android:label="VardyParty"
+            android:banner="@drawable/banner">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
     </application>
     
     <!-- Network permissions -->

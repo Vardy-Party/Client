@@ -67,7 +67,7 @@ and restore evaluates HomeUi with those defaults regardless of the
 `dotnet run --project VardyParty.Desktop/...` therefore fails with
 NETSDK1147 ("workloads must be installed: android") when the android
 workload is absent. CI's build-desktop job, the unit-test job and
-`scripts/launch-linux-app.cmd` all use the same fix: set
+`scripts/launch-linux-app.ps1` all use the same fix: set
 `HomeUiTargetFrameworks=net11.0` for restore AND build so HomeUi's android
 target never enters the desktop build graph.
 
@@ -90,7 +90,7 @@ For video playback:
 sudo apt install vlc libvlc-dev
 ```
 
-From Windows/WSL, `scripts/launch-linux-app.cmd` builds and launches the
+From Windows/WSL, `scripts/launch-linux-app.ps1` builds and launches the
 Desktop head inside WSLg. That script calls `$HOME/.dotnet/dotnet` directly,
 so step 1 is enough even if `which dotnet` is still 10. It pins
 `HomeUiTargetFrameworks=net11.0` itself (no android workload needed) and, if
@@ -106,7 +106,7 @@ Domain/ClientId/Audience and production API URLs). Builds must enrich it:
 |------|--------------------------|
 | **CD snap jobs** | `.github/workflows/cd.yml` → `Generate appsettings.json for Linux` |
 | **release.yml Linux** | `scripts/merge-appsettings-secrets.sh` from Actions secrets |
-| **Local `launch-linux-app.cmd`** | Merges .NET user-secrets (same `UserSecretsId` as MAUI), then `git restore`s the template on exit |
+| **Local `launch-linux-app.ps1`** | Merges .NET user-secrets (same `UserSecretsId` as MAUI), then `git restore`s the template on exit |
 | **Local `dotnet` with patch** | `-p:PatchAppSettings=true` on `VardyParty.Desktop` (pwsh or bash merge) |
 
 One-time local setup (same store as Android):

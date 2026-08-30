@@ -1,5 +1,4 @@
 <svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'>
-<rect width='512' height='512' fill='#003090'/>
 <g transform='translate(256, 160)'>
 <circle cx='0' cy='0' r='100' fill='#0052B4' stroke='#003090' stroke-width='5'/>
 <path d='M 0,-85 L 28,-35 L 0,-8 L -28,-35 Z' fill='#003090'/>
@@ -9,7 +8,7 @@
 <path d='M 0,-8 L 35,18 L -35,18 Z' fill='#D5D5D5'/>
 </g>
 <text x='256' y='330' font-size='44' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='700' text-anchor='middle'>VardyParty</text>
-<text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='600' text-anchor='middle'>Version 1.7.99</text>
-<text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Commit: c212e3f</text>
-<text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Built: 2026-06-13 21:11:21 UTC</text>
+<text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='600' text-anchor='middle'>Version 2.0.0</text>
+<text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Commit: fb87acb</text>
+<text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Built: 2026-08-30 17:42:54 UTC</text>
 </svg>

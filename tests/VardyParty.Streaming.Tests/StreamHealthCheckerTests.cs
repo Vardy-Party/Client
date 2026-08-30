@@ -258,6 +258,119 @@ public class StreamHealthCheckerTests
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
     }
 
+    [Fact]
+    public async Task CheckStreamHealth_ImageSegment_Rejected()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl =
+            "https://p16-common-sign.tiktokcdn-us.com/tos-useast8-v-5300-tx2/abc~tplv-tiktokx-origin.image?dr=1";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:4.0,\n{segmentUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
+    }
+
+    [Fact]
+    public async Task CheckStreamHealth_SkipsImageSegment_ThenHealthyTs()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var imageUrl = "https://cdn.example.com/poster.image";
+        var segmentUrl = "http://streams.example.com/segment.ts";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:1,\n{imageUrl}\n#EXTINF:4,\n{segmentUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task CheckStreamHealth_SegmentHeadOk_ImageContentType_Rejected()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/seg.bin";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:10,\n{segmentUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([]) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg") } }
+        });
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
+    }
+
+    [Fact]
+    public async Task CheckStreamHealth_OnlyImageSegments_Unreachable()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var imageUrl = "https://cdn.example.com/poster.image";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:1,\n{imageUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{imageUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new();

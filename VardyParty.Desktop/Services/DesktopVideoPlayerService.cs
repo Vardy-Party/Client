@@ -728,12 +728,11 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             previousMedia?.Dispose();
 
             var media = new Media(vlc.LibVlc, new Uri(m3u8Url));
-            if (!string.IsNullOrWhiteSpace(referer))
-                media.AddOption($":http-referrer={referer}");
-
-            media.AddOption($":http-user-agent={userAgent}");
-            media.AddOption(UseConservativeVlcOptions ? ":avcodec-hw=none" : ":avcodec-hw=any");
-            media.AddOption(":network-caching=3000");
+            foreach (var option in DesktopPlatformProbe.BuildPlaybackMediaOptions(
+                         UseConservativeVlcOptions, referer, userAgent))
+            {
+                media.AddOption(option);
+            }
 
             ConfigureAudioOutput(vlc.Player);
             _currentMedia = media;
@@ -983,9 +982,13 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 if (IsLibVlcErrorLevel(level))
                 {
                     _logger.LogError("[DesktopVideoPlayerService] {Message}", renderedMessage);
-                    if (IsFatalAdaptiveDemuxFailure(module, message))
+                    if (LibVlcPlaybackFailure.IsFatalAdaptiveDemux(module, message))
                     {
-                        RaiseDemuxFailureOnce("LibVLC adaptive demux failed (segment not playable)");
+                        RaisePlaybackFailureOnce("LibVLC adaptive demux failed (segment not playable)");
+                    }
+                    else if (LibVlcPlaybackFailure.IsHttpForbidden(module, message))
+                    {
+                        RaisePlaybackFailureOnce("LibVLC HTTP 403 (CDN rejected request headers)");
                     }
 
                     return;
@@ -1056,11 +1059,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                message.Contains("drm", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsFatalAdaptiveDemuxFailure(string? module, string message) =>
-        (string.IsNullOrEmpty(module) || module.Contains("adaptive", StringComparison.OrdinalIgnoreCase)) &&
-        message.Contains("Failed to create demuxer", StringComparison.OrdinalIgnoreCase);
-
-    private void RaiseDemuxFailureOnce(string reason)
+    private void RaisePlaybackFailureOnce(string reason)
     {
         var generation = _session.Snapshot.AttachGeneration;
         if (Interlocked.Exchange(ref _demuxFailureGeneration, generation) == generation)
@@ -1068,7 +1067,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogWarning("[DesktopVideoPlayerService] Treating demux failure as stream error: {Reason}", reason);
+        _logger.LogWarning("[DesktopVideoPlayerService] Treating LibVLC failure as stream error: {Reason}", reason);
         _engine.Raise(MediaEngineEvent.Error(generation, reason));
     }
 }

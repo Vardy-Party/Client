@@ -70,6 +70,56 @@ public class DualStackSocketsHttpHandlerTests
     }
 
     [Fact]
+    public void WithSupplementalIpv4_FillsEmptyIpv4FromARecords()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::1");
+        var ipv4 = new IPAddress([192, 0, 2, 80]);
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6]);
+
+        // Act
+        var merged = DualStackSocketsHttpHandler.WithSupplementalIpv4(plan, [ipv4]);
+
+        // Assert
+        Assert.Equal([ipv6], merged.Ipv6);
+        Assert.Equal([ipv4], merged.Ipv4);
+    }
+
+    [Fact]
+    public void WithSupplementalIpv4_DoesNotReplaceExistingIpv4()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::1");
+        var existing = new IPAddress([192, 0, 2, 10]);
+        var extra = new IPAddress([192, 0, 2, 20]);
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6, existing]);
+
+        // Act
+        var merged = DualStackSocketsHttpHandler.WithSupplementalIpv4(plan, [extra]);
+
+        // Assert
+        Assert.Equal([existing], merged.Ipv4);
+    }
+
+    [Fact]
+    public void WithSupplementalIpv4_EmptyOrIpv6Extras_LeavesPlanUnchanged()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::1");
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6]);
+
+        // Act
+        var empty = DualStackSocketsHttpHandler.WithSupplementalIpv4(plan, []);
+        var v6Only = DualStackSocketsHttpHandler.WithSupplementalIpv4(
+            plan, [IPAddress.Parse("2001:db8::2")]);
+
+        // Assert
+        Assert.Empty(empty.Ipv4);
+        Assert.Empty(v6Only.Ipv4);
+        Assert.Equal(plan.Ipv6, empty.Ipv6);
+    }
+
+    [Fact]
     public void Create_ConfiguresConnectCallbackAndTimeouts()
     {
         // Arrange

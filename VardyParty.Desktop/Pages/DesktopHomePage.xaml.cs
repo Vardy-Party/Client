@@ -997,7 +997,7 @@ public partial class DesktopHomePage : ContentPage
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
-        ResolveProgressBar.Progress = 0;
+        ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
         ResolveCountLabel.Text = "0 tested • 0 healthy";
         ResolveOverlay.IsVisible = true;
         _resolveOverlayOpen = true;
@@ -1006,8 +1006,7 @@ public partial class DesktopHomePage : ContentPage
 
     private void UpdateResolveOverlay(StreamResolutionProgress progress) => Dispatcher.Dispatch(() =>
     {
-        var isNoHealthy = !string.IsNullOrEmpty(progress.Status)
-            && progress.Status.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
+        var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
 
         ResolveTitleLabel.Text = isNoHealthy
             ? string.Empty
@@ -1016,9 +1015,9 @@ public partial class DesktopHomePage : ContentPage
         ResolveStatusLabel.Text = progress.Status;
         ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
             && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
-        ResolveProgressBar.Progress = progress.TotalStreams > 0
-            ? Math.Clamp((double)progress.StreamsTested / progress.TotalStreams, 0, 1)
-            : 0;
+        ApplyResolveWaitVisual(
+            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
         ResolveCountLabel.Text = progress.TotalStreams > 0
             ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
             : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
@@ -1026,6 +1025,14 @@ public partial class DesktopHomePage : ContentPage
         // alone can go false on first subscribe while we still owe the overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
     });
+
+    private void ApplyResolveWaitVisual(bool indeterminate, double fraction)
+    {
+        ResolveActivityIndicator.IsVisible = indeterminate;
+        ResolveActivityIndicator.IsRunning = indeterminate;
+        ResolveProgressBar.IsVisible = !indeterminate;
+        ResolveProgressBar.Progress = fraction;
+    }
 
     private void ShowStreamPlaybackError(string? message)
     {

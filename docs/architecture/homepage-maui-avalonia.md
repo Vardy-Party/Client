@@ -105,7 +105,7 @@ Deleted on this branch (no dormant rollback code):
   two unique capabilities were ported into `VardyParty.Desktop` first: the
   Auth0 device-code sign-in with QR (`DesktopAuthService` + QRCoder) and
   LibVLC playback (`DesktopVideoPlayerService`). `VardyParty.slnx`, CI, CD
-  snap packaging and `scripts/launch-linux-app.cmd` now point at the
+  snap packaging and `scripts/launch-linux-app.ps1` now point at the
   Desktop head.
 
 The pure logic lives in `VardyParty.Presentation` (net11.0, fully
@@ -479,7 +479,7 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 | App state | Surface | Sting (audio) | Toast | Card flash |
 | --- | --- | --- | --- | --- |
 | Foreground | Homepage (no stream) | Yes | Yes | Yes |
-| Foreground | Stream playing | No | Yes | Yes (behind player) |
+| Foreground | Stream playing | No | Other games only (not the watched fixture) | Other games only |
 | Background / minimized | any | No | No — dropped, no catch-up on resume | No |
 
 - **"Goal notifications"** (default ON, persisted via the

@@ -8,12 +8,12 @@ using VardyParty.Presentation;
 namespace VardyParty
 {
     [Activity(
-        Theme = "@style/Maui.SplashTheme",
-        MainLauncher = true,
+        Name = "com.vardyparty.MainActivity",
+        Theme = "@style/VardyParty.MauiTheme",
+        MainLauncher = false,
         LaunchMode = LaunchMode.SingleTop,
         Exported = true,
         ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation | ConfigChanges.UiMode | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
-    [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher, Android.Content.Intent.CategoryLeanbackLauncher })]
     public class MainActivity : MauiAppCompatActivity
     {
         private static bool _flyoutMenuOpen;
@@ -120,6 +120,8 @@ namespace VardyParty
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
+            ((MainApplication)MauiApplication.Current).EnsureMauiApp();
+
             base.OnCreate(savedInstanceState);
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");

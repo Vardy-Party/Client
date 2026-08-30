@@ -98,6 +98,46 @@ public static class TvFocusScrollMath
     }
 
     /// <summary>
+    /// MAUI <c>ScrollView.ContentSize</c> on Android often reports the
+    /// viewport (or 0) for a BindableLayout strip, so
+    /// <see cref="ComputeStripTarget"/> clamps to maxScroll 0 and focus
+    /// walks off-screen. Prefer a child-summed extent when the reported
+    /// sizes cannot scroll.
+    /// </summary>
+    public static double ResolveStripContentWidth(
+        double reportedContentWidth,
+        double reportedInnerWidth,
+        double viewportWidth,
+        double summedChildExtent)
+    {
+        var reported = Math.Max(reportedContentWidth, reportedInnerWidth);
+        if (reported > viewportWidth + 1)
+            return Math.Max(reported, summedChildExtent);
+
+        if (summedChildExtent > viewportWidth + 1)
+            return summedChildExtent;
+
+        return Math.Max(reported, summedChildExtent);
+    }
+
+    /// <summary>
+    /// Right edge of the last laid-out child plus trailing padding — the
+    /// scrollable extent of a horizontal stack whose MAUI ContentSize lags.
+    /// </summary>
+    public static double SumHorizontalChildExtent(
+        double maxChildRight,
+        double trailingPadding)
+    {
+        if (maxChildRight <= 0)
+            return 0;
+
+        return maxChildRight + Math.Max(0, trailingPadding);
+    }
+
+    public static int DipToPx(double dip, double density) =>
+        (int)Math.Round(dip * Math.Max(density, 0));
+
+    /// <summary>
     /// Vertical scroll delta (native px) that parks the focused row's TOP —
     /// league header first — at the top of the rows viewport, Netflix-style.
     /// Positive scrolls down, negative up, matching RecyclerView.smoothScrollBy.

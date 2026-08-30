@@ -691,7 +691,7 @@ public partial class HomeHostPage : ContentPage
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
-        ResolveProgressBar.Progress = 0;
+        ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
         ResolveCountLabel.Text = "0 tested • 0 healthy";
         ResolveOverlay.IsVisible = true;
         // Re-assert suppression on the UI thread with the overlay actually
@@ -704,8 +704,7 @@ public partial class HomeHostPage : ContentPage
 
     private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
     {
-        var isNoHealthy = !string.IsNullOrEmpty(progress.Status)
-            && progress.Status.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
+        var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
 
         ResolveTitleLabel.Text = isNoHealthy
             ? string.Empty
@@ -714,9 +713,9 @@ public partial class HomeHostPage : ContentPage
         ResolveStatusLabel.Text = progress.Status;
         ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
             && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
-        ResolveProgressBar.Progress = progress.TotalStreams > 0
-            ? Math.Clamp((double)progress.StreamsTested / progress.TotalStreams, 0, 1)
-            : 0;
+        ApplyResolveWaitVisual(
+            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
         ResolveCountLabel.Text = progress.TotalStreams > 0
             ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
             : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
@@ -725,6 +724,19 @@ public partial class HomeHostPage : ContentPage
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
         UpdateBackSuppression();
     });
+
+    /// <summary>
+    /// MAUI <c>ProgressBar</c> has no <c>IsIndeterminate</c> (CS1061 on
+    /// net11.0-android). Spin an <c>ActivityIndicator</c> until the resolver
+    /// publishes a candidate total, then show the determinate bar.
+    /// </summary>
+    private void ApplyResolveWaitVisual(bool indeterminate, double fraction)
+    {
+        ResolveActivityIndicator.IsVisible = indeterminate;
+        ResolveActivityIndicator.IsRunning = indeterminate;
+        ResolveProgressBar.IsVisible = !indeterminate;
+        ResolveProgressBar.Progress = fraction;
+    }
 
     private void ShowStreamPlaybackError(string? message)
     {

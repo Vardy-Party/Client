@@ -358,14 +358,24 @@ namespace VardyParty.Platforms.Android
                 try { _streamToastView.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
             });
 
-            _bufferingIndicator = new global::Android.Widget.ProgressBar(this)
+            _bufferingIndicator = new global::Android.Widget.ProgressBar(
+                this,
+                null,
+                global::Android.Resource.Attribute.ProgressBarStyleLarge)
             {
                 Indeterminate = true,
                 Visibility = global::Android.Views.ViewStates.Gone
             };
-            var bufferingParams = new FrameLayout.LayoutParams(
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
-                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            try
+            {
+                _bufferingIndicator.IndeterminateTintList =
+                    global::Android.Content.Res.ColorStateList.ValueOf(global::Android.Graphics.Color.White);
+            }
+            catch (Exception ex) { LogIgnored("BufferingIndicatorTint", ex); }
+
+            int spinnerDp = _isTvDevice ? 72 : 48;
+            int spinnerPx = (int)(spinnerDp * density);
+            var bufferingParams = new FrameLayout.LayoutParams(spinnerPx, spinnerPx)
             {
                 Gravity = global::Android.Views.GravityFlags.Center
             };
@@ -670,6 +680,7 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogInformation("[NativeVideoActivity] Starting initial playback: {Url}", _m3u8Url);
                 AttachViaSession(_m3u8Url, usedCachedUrl: true);
+                RefreshWaitIndicator();
             }
 
             HideOverlayAnimated();
@@ -1246,11 +1257,13 @@ namespace VardyParty.Platforms.Android
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnPlaybackStateChanged", ex); }
 
+                if (playbackState == PlayerStateBuffering)
+                    _activity._isBuffering = true;
+
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
                     _activity._isBuffering = false;
-                    _activity.HideBufferingIndicator();
                     _activity._isPreparing = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
@@ -1294,6 +1307,8 @@ namespace VardyParty.Platforms.Android
 
                     _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
+
+                _activity.RefreshWaitIndicator();
             }
 
             public void OnTracksChanged(Tracks? tracks)
@@ -1316,7 +1331,7 @@ namespace VardyParty.Platforms.Android
                     {
                         _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
                         _activity._isBuffering = true;
-                        _activity.ShowBufferingIndicator();
+                        _activity.RefreshWaitIndicator();
                         _activity.HideOverlayAnimated();
                         _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
                     }
@@ -1324,8 +1339,13 @@ namespace VardyParty.Platforms.Android
                     {
                         _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
                         _activity._isBuffering = false;
-                        _activity.HideBufferingIndicator();
+                        _activity.RefreshWaitIndicator();
                         _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
+                    }
+                    else
+                    {
+                        _activity._isBuffering = false;
+                        _activity.RefreshWaitIndicator();
                     }
 
                     var last = _activity._lastOverlayInfo;
@@ -1360,7 +1380,7 @@ namespace VardyParty.Platforms.Android
                     _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
                     _activity._isBuffering = false;
                     _activity._isPreparing = false;
-                    _activity.HideBufferingIndicator();
+                    _activity.RefreshWaitIndicator();
                     _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnPlayerErrorChanged", ex); }

@@ -281,4 +281,41 @@ public class TvFocusScrollMathTests
 
         Assert.True(TvFocusScrollMath.ShouldScrollRowIntoView(isTv: false, items, first));
     }
+
+    [Fact]
+    public void ResolveStripContentWidth_PrefersReportedWhenWiderThanViewport()
+    {
+        var resolved = TvFocusScrollMath.ResolveStripContentWidth(
+            reportedContentWidth: 1800, reportedInnerWidth: 400,
+            viewportWidth: 800, summedChildExtent: 1200);
+
+        Assert.Equal(1800, resolved);
+    }
+
+    [Fact]
+    public void ResolveStripContentWidth_UsesChildSumWhenReportedIsViewport()
+    {
+        // Three 280dp cards + padding that MAUI reported as the 800dp viewport.
+        var resolved = TvFocusScrollMath.ResolveStripContentWidth(
+            reportedContentWidth: 800, reportedInnerWidth: 800,
+            viewportWidth: 800, summedChildExtent: 1120);
+
+        Assert.Equal(1120, resolved);
+    }
+
+    [Fact]
+    public void SumHorizontalChildExtent_AddsTrailingPadding()
+    {
+        Assert.Equal(907, TvFocusScrollMath.SumHorizontalChildExtent(900, 7));
+        Assert.Equal(0, TvFocusScrollMath.SumHorizontalChildExtent(0, 7));
+    }
+
+    [Theory]
+    [InlineData(100, 2.75, 275)]
+    [InlineData(100.4, 2, 201)]
+    [InlineData(50, 0, 0)]
+    public void DipToPx_RoundsDevicePixels(double dip, double density, int expected)
+    {
+        Assert.Equal(expected, TvFocusScrollMath.DipToPx(dip, density));
+    }
 }
