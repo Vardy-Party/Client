@@ -30,7 +30,7 @@
   <Folder Name="/Local-Build/">
     <File Path="package-android.ps1" />
     <File Path="package-windows.ps1" />
-    <File Path="scripts/launch-linux-app.cmd" />
+    <File Path="scripts/launch-linux-app.ps1" />
   </Folder>
   <Project Path="tests/VardyParty.TestSupport/VardyParty.TestSupport.csproj" />
   <Project Path="tests/VardyParty.Kernel.Tests/VardyParty.Kernel.Tests.csproj" />

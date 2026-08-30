@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WSL body for scripts/launch-linux-app.cmd.
+# WSL body for scripts/launch-linux-app.ps1.
 # Strip CR so this file and merge-appsettings-secrets.sh still run if
 # Windows checks them out as CRLF.
 set -euo pipefail
