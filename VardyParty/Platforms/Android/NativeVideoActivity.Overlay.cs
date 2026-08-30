@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Android.Widget;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
+using VardyParty.Playback;
 
 namespace VardyParty.Platforms.Android
 {
@@ -226,6 +227,24 @@ namespace VardyParty.Platforms.Android
                 // Clear suppression after applying update so future updates behave normally
                 _suppressOverlayShow = false;
             }
+        }
+
+        private void RefreshWaitIndicator()
+        {
+            try
+            {
+                var state = _player?.PlaybackState ?? PlayerStateIdle;
+                var show = PlaybackWaitChrome.ShouldShowWaitIndicator(
+                    isReady: state == PlayerStateReady,
+                    isLoading: _isBuffering,
+                    isPreparing: _isPreparing,
+                    isEnded: state == PlayerStateEnded);
+                if (show)
+                    ShowBufferingIndicator();
+                else
+                    HideBufferingIndicator();
+            }
+            catch (Exception ex) { LogIgnored("RefreshWaitIndicator", ex); }
         }
 
         private void ShowBufferingIndicator()

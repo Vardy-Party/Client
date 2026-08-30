@@ -94,7 +94,8 @@
                            TextColor="#8A93A6"
                            HorizontalTextAlignment="Center" />
                     <ProgressBar x:Name="ResolveProgressBar"
-                                 ProgressColor="#2563EB" />
+                                 ProgressColor="#2563EB"
+                                 HeightRequest="8" />
                     <Label x:Name="ResolveCountLabel"
                            FontSize="13"
                            TextColor="#5B6478"

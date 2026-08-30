@@ -171,6 +171,7 @@ namespace VardyParty.Platforms.Android
 
                         _isPreparing = true;
                         _m3u8Url = m3u8Url;
+                        RefreshWaitIndicator();
 
                         var dataSourceFactory = new AndroidX.Media3.DataSource.DefaultHttpDataSource.Factory();
                         try
