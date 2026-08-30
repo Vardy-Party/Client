@@ -3,9 +3,10 @@
   Merge Auth0 / Api values from .NET user-secrets into an appsettings.json template.
 
 .DESCRIPTION
-  Used by local Android packaging (-p:PatchAppSettings=true) and Desktop/Linux
-  local builds. Resolves the user-secrets store on Windows (%APPDATA%) and on
-  Linux/macOS (~/.microsoft/usersecrets).
+  Used by local Android packaging (-p:PatchAppSettings=true), Windows debug
+  (run-windows-debug.ps1), and Desktop/Linux local builds. Resolves the
+  user-secrets store on Windows (%APPDATA%) and on Linux/macOS
+  (~/.microsoft/usersecrets).
 
 .PARAMETER AppSettingsPath
   Path to the template appsettings.json to patch in place.
