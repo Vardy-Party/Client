@@ -3,6 +3,12 @@
 ###############################################################################
 * text=auto
 
+# Shell scripts run under WSL/Linux — CRLF breaks shebang as `/usr/bin/env bash\r`.
+*.sh text eol=lf
+
+# Windows cmd launchers stay CRLF when checked out on Windows.
+*.cmd text eol=crlf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #
