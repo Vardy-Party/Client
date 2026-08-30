@@ -8,4 +8,6 @@
     <color name="vardyparty_blue">#4A9EFF</color>
     <color name="vardyparty_blue_dark">#2D7DD2</color>
     <color name="vardyparty_purple">#7B5AFF</color>
+    <!-- Matches MauiSplashScreen Color; windowBackground behind the splash art. -->
+    <color name="splash_screen_background">#003090</color>
 </resources>

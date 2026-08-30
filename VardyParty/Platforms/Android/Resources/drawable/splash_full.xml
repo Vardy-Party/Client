@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-screen splash for the activity window. Android 12+ phones only show
+     a circular icon during the system splash; this drawable is the window
+     background so logo + build lines remain visible until MAUI paints. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_screen_background" />
+    <item android:gravity="center">
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/vardyparty_splash_generated" />
+    </item>
+</layer-list>

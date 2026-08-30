@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<resources>
+    <style name="VardyParty.SplashTheme" parent="Maui.SplashTheme">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+    </style>
+</resources>

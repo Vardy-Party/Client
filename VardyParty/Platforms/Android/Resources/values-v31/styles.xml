@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<resources>
+    <!-- API 31+ system splash is a circular icon on Color. Keep that icon as
+         the transparent-background splash art (ball + text), and keep the
+         full layer-list as windowBackground after the system splash ends. -->
+    <style name="VardyParty.SplashTheme" parent="Maui.SplashTheme">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_screen_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/vardyparty_splash_generated</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_screen_background</item>
+    </style>
+</resources>

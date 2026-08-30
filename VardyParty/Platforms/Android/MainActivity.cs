@@ -8,7 +8,7 @@ using VardyParty.Presentation;
 namespace VardyParty
 {
     [Activity(
-        Theme = "@style/Maui.SplashTheme",
+        Theme = "@style/VardyParty.SplashTheme",
         MainLauncher = true,
         LaunchMode = LaunchMode.SingleTop,
         Exported = true,

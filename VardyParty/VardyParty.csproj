@@ -139,7 +139,9 @@
       <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
       <ItemGroup>
         <_SplashLines Include="&lt;svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'&gt;" />
-        <_SplashLines Include="&lt;rect width='512' height='512' fill='#003090'/&gt;" />
+        <!-- No full-bleed rect: MauiSplashScreen Color paints the screen. A
+             matching rect made Android 12+ phones a solid blue circle (the
+             system splash masks the image). Logo + build lines stay in the SVG. -->
 
 		<!-- Soccer Ball Logo (centered at 256, 160) -->
 		<_SplashLines Include="&lt;g transform='translate(256, 160)'&gt;" />
