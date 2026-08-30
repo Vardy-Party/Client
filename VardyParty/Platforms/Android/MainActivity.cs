@@ -209,7 +209,7 @@ namespace VardyParty
                     ViewGroup.LayoutParams.MatchParent,
                     ViewGroup.LayoutParams.MatchParent));
                 _phoneSplashOverlay = root;
-                _phoneSplashShownAtMs = Environment.TickCount64;
+                _phoneSplashShownAtMs = System.Environment.TickCount64;
             }
             catch (Exception ex)
             {
@@ -225,7 +225,7 @@ namespace VardyParty
                 return;
             }
 
-            var remain = Math.Max(0, PhoneSplashMinMs - (int)(Environment.TickCount64 - _phoneSplashShownAtMs));
+            var remain = Math.Max(0, PhoneSplashMinMs - (int)(System.Environment.TickCount64 - _phoneSplashShownAtMs));
             overlay.PostDelayed(new Java.Lang.Runnable(DismissPhoneSplashOverlay), remain);
         }
 
