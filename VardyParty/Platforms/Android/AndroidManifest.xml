@@ -11,13 +11,9 @@
         android:roundIcon="@mipmap/appicon_round"
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
-        <!-- Phone drawer: SplashActivity. TV row: this alias. Do not leave
-             LEANBACK_LAUNCHER enabled on phones — several launchers then
-             hide the package from the app drawer after adb install. -->
-        <activity
-            android:name="com.vardyparty.SplashActivity"
-            android:enabled="@bool/show_phone_launcher"
-            tools:node="merge" />
+        <!-- Leanback is an alias so phones never advertise LEANBACK_LAUNCHER.
+             Do not declare SplashActivity here: a merge stub dropped MAIN/LAUNCHER
+             and the Nokia C12 drawer hid the app. Splash comes from [Activity]. -->
         <activity-alias
             android:name="com.vardyparty.TvLeanbackAlias"
             android:targetActivity="com.vardyparty.MainActivity"

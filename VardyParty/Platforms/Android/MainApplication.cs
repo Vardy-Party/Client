@@ -1,5 +1,6 @@
 ﻿using Android.App;
 using Android.Content;
+using Android.Content.PM;
 using Android.Runtime;
 using Android.Widget;
 
@@ -46,6 +47,7 @@ namespace VardyParty
             }
 
             DetectTv();
+            ApplyLauncherComponents();
 
             if (MauiProgram.IsTv)
             {
@@ -72,6 +74,33 @@ namespace VardyParty
 
             _mauiStarted = true;
             base.OnCreate();
+        }
+
+        void ApplyLauncherComponents()
+        {
+            try
+            {
+                var pm = PackageManager;
+                if (pm == null)
+                {
+                    return;
+                }
+
+                var splash = new ComponentName("com.vardyparty", "com.vardyparty.SplashActivity");
+                var tvAlias = new ComponentName("com.vardyparty", "com.vardyparty.TvLeanbackAlias");
+                var splashState = MauiProgram.IsTv
+                    ? ComponentEnabledState.Disabled
+                    : ComponentEnabledState.Enabled;
+                var tvState = MauiProgram.IsTv
+                    ? ComponentEnabledState.Enabled
+                    : ComponentEnabledState.Disabled;
+                pm.SetComponentEnabledSetting(splash, splashState, ComponentEnableOption.DontKillApp);
+                pm.SetComponentEnabledSetting(tvAlias, tvState, ComponentEnableOption.DontKillApp);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainApplication] Launcher component update failed: {ex.Message}");
+            }
         }
 
         void DetectTv()

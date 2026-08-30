@@ -10,10 +10,11 @@ using VardyParty.Presentation;
 namespace VardyParty
 {
     /// <summary>
-    /// Phone launcher only. Native so the first frame can be the splash art
-    /// before MAUI is built. TV keeps <see cref="MainActivity"/> as the
-    /// Leanback launcher (<c>show_phone_launcher</c> is false on
-    /// <c>values-television</c>; AAPT has no <c>leanback</c> qualifier).
+    /// Phone launcher. Native so the first frame can be the splash art
+    /// before MAUI is built. Do not redeclare this activity in
+    /// AndroidManifest.xml — a merge stub previously dropped
+    /// CATEGORY_LAUNCHER and phones hid the app. TV uses
+    /// <c>TvLeanbackAlias</c> on <see cref="MainActivity"/>.
     /// </summary>
     [Activity(
         Name = "com.vardyparty.SplashActivity",
