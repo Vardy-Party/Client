@@ -23,6 +23,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly MatchEventBus _events;
+    private readonly SelectionState _selection;
     private readonly ILogger<HomeViewModel> _logger;
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
@@ -75,6 +76,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
         MatchEventBus events,
+        SelectionState selection,
         ILogger<HomeViewModel> logger)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
@@ -84,6 +86,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _events = events ?? throw new ArgumentNullException(nameof(events));
+        _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         Toast = new MatchEventToastViewModel(Layout);
 
@@ -427,9 +430,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>
     /// Deliver detected events AFTER the board applied, so the row/card VMs
     /// the toast borrows (league icon, badges) already carry the new state.
-    /// <see cref="MatchEventNotificationPolicy.ShouldPresent"/> gates
+    /// <see cref="MatchEventNotificationPolicy.ShouldPresentEvent"/> gates
     /// everything — backgrounded or toggled-off events are dropped here,
-    /// never queued for a catch-up. Audio additionally requires the homepage
+    /// never queued for a catch-up. The watched fixture is also dropped
+    /// while its stream is playing. Audio additionally requires the homepage
     /// to be the active surface (no stream playing): one sting per apply,
     /// however many events it carried, routed through UiSoundService which
     /// adds the "UI sounds" toggle + playback suppression on top.
@@ -441,12 +445,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        var watching = _selection.CurrentGame;
+        var deliverable = events
+            .Where(matchEvent => _notifications.ShouldPresentEvent(matchEvent, watching))
+            .ToList();
+        if (deliverable.Count == 0)
+        {
+            return;
+        }
+
         if (_notifications.ShouldPlayAudio)
         {
             _sounds.Play(UiSound.Goal);
         }
 
-        foreach (var matchEvent in events)
+        foreach (var matchEvent in deliverable)
         {
             // Delivered-event stream: the homepage toast consumes it below;
             // the playback overlays (Desktop panel, Android banner, Windows
