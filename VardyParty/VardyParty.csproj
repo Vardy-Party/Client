@@ -124,12 +124,17 @@
       <Message Importance="high" Text="GenerateBuildInfo: $(BuildTimestamp) commit=$(GitHash)" />
     </Target>
 
-    <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true -->
+    <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true.
+         Text is rasterized at publish time. Windows has Arial; GitHub Android
+         runs on Ubuntu and used to fall back to DejaVu (worse TV splash). Use
+         Liberation Sans there (Arial-metric) after CD installs fonts-liberation. -->
     <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" DependsOnTargets="GenerateBuildInfo" Condition="'$(RunGenerateSplash)' == 'true'">
       <PropertyGroup>
         <SplashFile>$(MSBuildProjectDirectory)\Resources\Splash\vardyparty_splash_generated.svg</SplashFile>
         <BuildTimestamp Condition="'$(BuildTimestamp)' == ''">$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) UTC</BuildTimestamp>
         <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
+        <SplashTextFont>Arial</SplashTextFont>
+        <SplashTextFont Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Liberation Sans</SplashTextFont>
       </PropertyGroup>
       <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
       <ItemGroup>
@@ -146,10 +151,10 @@
 		<_SplashLines Include="&lt;path d='M 0,-8 L 35,18 L -35,18 Z' fill='#D5D5D5'/&gt;" />
 		<_SplashLines Include="&lt;/g&gt;" />
 
-		<_SplashLines Include="&lt;text x='256' y='330' font-size='44' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='700' text-anchor='middle'&gt;VardyParty&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='600' text-anchor='middle'&gt;Version $(ApplicationDisplayVersion)&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'&gt;Commit: $(GitHash)&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'&gt;Built: $(BuildTimestamp)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='330' font-size='44' fill='#ffffff' font-family='$(SplashTextFont)' font-weight='700' text-anchor='middle'&gt;VardyParty&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='380' font-size='24' fill='#ffffff' font-family='$(SplashTextFont)' font-weight='600' text-anchor='middle'&gt;Version $(ApplicationDisplayVersion)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='$(SplashTextFont)' text-anchor='middle'&gt;Commit: $(GitHash)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='$(SplashTextFont)' text-anchor='middle'&gt;Built: $(BuildTimestamp)&lt;/text&gt;" />
 		<_SplashLines Include="&lt;/svg&gt;" />
 	  </ItemGroup>
       <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
