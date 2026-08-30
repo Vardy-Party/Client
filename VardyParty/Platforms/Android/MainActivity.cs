@@ -3,6 +3,7 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
+using Android.Widget;
 using VardyParty.Presentation;
 
 namespace VardyParty
@@ -139,6 +140,8 @@ namespace VardyParty
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             RemoteKeyHandler.OnStop += RemoteStopHandler;
 
+            ShowPhoneSplashOverlay();
+
             // Tell the system the cold-start path has produced a frame. Without
             // this, multi-second first-layout Daveys on the 32-bit TV look like
             // an ANR and Leanback kicks back to the Android home.
@@ -153,14 +156,94 @@ namespace VardyParty
                 {
                     Log.Warn("MainActivity", $"[MAIN] ReportFullyDrawn failed: {ex.Message}");
                 }
+
+                SchedulePhoneSplashDismiss();
             });
         }
 
         protected override void OnDestroy()
         {
+            DismissPhoneSplashOverlay();
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             base.OnDestroy();
+        }
+
+        /// <summary>
+        /// Android 12+ phones only show a 108dp circular system splash. Our
+        /// splash art is a 512px sheet (ball + version/commit); the circle
+        /// samples the empty middle and looks like solid brand blue. TV uses
+        /// the pre-31 full window drawable, so it already looks right.
+        /// Cover the phone window with that same art until the homepage is up.
+        /// </summary>
+        private const int PhoneSplashMinMs = 1800;
+        private global::Android.Views.View? _phoneSplashOverlay;
+        private long _phoneSplashShownAtMs;
+
+        private void ShowPhoneSplashOverlay()
+        {
+            if (MauiProgram.IsTv)
+            {
+                return;
+            }
+
+            try
+            {
+                var drawableId = Resources?.GetIdentifier(
+                    "vardyparty_splash_generated", "drawable", PackageName) ?? 0;
+                if (drawableId == 0)
+                {
+                    Log.Warn("MainActivity", "[MAIN] Phone splash drawable missing");
+                    return;
+                }
+
+                var root = new FrameLayout(this);
+                root.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#003090"));
+                var image = new ImageView(this);
+                image.SetScaleType(ImageView.ScaleType.FitCenter);
+                image.SetImageResource(drawableId);
+                root.AddView(image, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MatchParent,
+                    ViewGroup.LayoutParams.MatchParent));
+                AddContentView(root, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MatchParent,
+                    ViewGroup.LayoutParams.MatchParent));
+                _phoneSplashOverlay = root;
+                _phoneSplashShownAtMs = Environment.TickCount64;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("MainActivity", $"[MAIN] Phone splash overlay failed: {ex.Message}");
+            }
+        }
+
+        private void SchedulePhoneSplashDismiss()
+        {
+            var overlay = _phoneSplashOverlay;
+            if (overlay is null)
+            {
+                return;
+            }
+
+            var remain = Math.Max(0, PhoneSplashMinMs - (int)(Environment.TickCount64 - _phoneSplashShownAtMs));
+            overlay.PostDelayed(new Java.Lang.Runnable(DismissPhoneSplashOverlay), remain);
+        }
+
+        private void DismissPhoneSplashOverlay()
+        {
+            try
+            {
+                if (_phoneSplashOverlay?.Parent is ViewGroup parent)
+                {
+                    parent.RemoveView(_phoneSplashOverlay);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("MainActivity", $"[MAIN] Phone splash dismiss failed: {ex.Message}");
+            }
+
+            _phoneSplashOverlay = null;
         }
 
         private void RemoteBackHandler(Keycode keyCode)
