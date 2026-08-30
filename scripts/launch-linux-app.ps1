@@ -21,7 +21,11 @@
 $ErrorActionPreference = 'Stop'
 
 $repoWin = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$repoWsl = (& wsl.exe wslpath -a $repoWin).Trim()
+# Native argv to wsl.exe eats `\` (wslpath then sees C:Usersjonbr...).
+# Forward slashes are valid Windows paths and survive the hop.
+$repoPosix = $repoWin.Replace('\', '/')
+$repoWsl = (& wsl.exe wslpath -a $repoPosix | Select-Object -First 1)
+if ($repoWsl) { $repoWsl = $repoWsl.ToString().Trim() }
 if ([string]::IsNullOrWhiteSpace($repoWsl)) {
     throw "Failed to resolve WSL path for $repoWin"
 }
