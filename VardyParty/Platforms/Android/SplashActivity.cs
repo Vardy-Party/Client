@@ -12,9 +12,11 @@ namespace VardyParty
     /// <summary>
     /// Phone launcher only. Native so the first frame can be the splash art
     /// before MAUI is built. TV keeps <see cref="MainActivity"/> as the
-    /// Leanback launcher.
+    /// Leanback launcher (<c>show_phone_launcher</c> is false on
+    /// television/leanback).
     /// </summary>
     [Activity(
+        Name = "com.vardyparty.SplashActivity",
         Theme = "@style/VardyParty.PhoneSplashTheme",
         MainLauncher = true,
         NoHistory = true,
@@ -24,10 +26,18 @@ namespace VardyParty
     public class SplashActivity : Activity
     {
         bool _handedOff;
+        bool _splashFrameSubmitted;
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
             base.OnCreate(savedInstanceState);
+
+            if (!PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(MauiProgram.IsTv))
+            {
+                Log.Info("SplashActivity", "[SPLASH] television device — skip phone launcher, start MainActivity");
+                StartMauiThenMainActivity();
+                return;
+            }
 
             var image = new ImageView(this);
             image.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#003090"));
@@ -53,11 +63,51 @@ namespace VardyParty
             }
             else
             {
-                image.Post(HandoffToMaui);
+                ScheduleHandoffAfterPresentedFrame(image);
             }
         }
 
+        void ScheduleHandoffAfterPresentedFrame(Android.Views.View view)
+        {
+            view.Post(() =>
+            {
+                if (IsFinishing || IsDestroyed)
+                {
+                    return;
+                }
+
+                _splashFrameSubmitted = true;
+                try
+                {
+                    ReportFullyDrawn();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("SplashActivity", $"[SPLASH] ReportFullyDrawn failed: {ex.Message}");
+                }
+
+                var queue = Looper.MyQueue();
+                if (queue == null)
+                {
+                    HandoffToMaui();
+                    return;
+                }
+
+                queue.AddIdleHandler(new AfterFrameIdleHandler(this));
+            });
+        }
+
         void HandoffToMaui()
+        {
+            if (!PhoneSplashHandoff.ShouldBuildMauiOnLooperIdle(_splashFrameSubmitted, looperIdle: true))
+            {
+                return;
+            }
+
+            StartMauiThenMainActivity();
+        }
+
+        void StartMauiThenMainActivity()
         {
             if (!PhoneSplashHandoff.ShouldBuildMaui(_handedOff, IsFinishing, IsDestroyed))
             {
@@ -65,7 +115,7 @@ namespace VardyParty
             }
 
             _handedOff = true;
-            Log.Info("SplashActivity", "[SPLASH] first frame done — starting MAUI");
+            Log.Info("SplashActivity", "[SPLASH] starting MAUI");
 
             var mauiStarted = false;
             try
@@ -89,6 +139,19 @@ namespace VardyParty
             intent.AddFlags(ActivityFlags.NoAnimation);
             StartActivity(intent);
             Finish();
+        }
+
+        sealed class AfterFrameIdleHandler : Java.Lang.Object, MessageQueue.IIdleHandler
+        {
+            readonly SplashActivity _activity;
+
+            public AfterFrameIdleHandler(SplashActivity activity) => _activity = activity;
+
+            public bool QueueIdle()
+            {
+                _activity.HandoffToMaui();
+                return false;
+            }
         }
 
         sealed class FirstDrawListener : Java.Lang.Object, ViewTreeObserver.IOnDrawListener
@@ -119,13 +182,12 @@ namespace VardyParty
                 {
                 }
 
-                // Next looper message: the splash frame has been submitted.
                 if (_activity.IsFinishing || _activity.IsDestroyed)
                 {
                     return;
                 }
 
-                _view.Post(_activity.HandoffToMaui);
+                _activity.ScheduleHandoffAfterPresentedFrame(_view);
             }
         }
     }

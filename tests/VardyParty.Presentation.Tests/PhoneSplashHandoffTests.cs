@@ -53,4 +53,24 @@ public class PhoneSplashHandoffTests
         // Assert
         Assert.False(should);
     }
+
+    [Fact]
+    public void ShouldAdvertisePhoneLauncher_PhonesOnly()
+    {
+        // Arrange / Act / Assert
+        Assert.True(PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(isTelevisionDevice: false));
+        Assert.False(PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(isTelevisionDevice: true));
+    }
+
+    [Fact]
+    public void ShouldBuildMauiOnLooperIdle_WaitsForFrameAndIdle()
+    {
+        // Arrange / Act / Assert
+        Assert.False(PhoneSplashHandoff.ShouldBuildMauiOnLooperIdle(
+            splashFrameSubmitted: false, looperIdle: true));
+        Assert.False(PhoneSplashHandoff.ShouldBuildMauiOnLooperIdle(
+            splashFrameSubmitted: true, looperIdle: false));
+        Assert.True(PhoneSplashHandoff.ShouldBuildMauiOnLooperIdle(
+            splashFrameSubmitted: true, looperIdle: true));
+    }
 }

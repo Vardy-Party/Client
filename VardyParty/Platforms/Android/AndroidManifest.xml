@@ -1,5 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application 
         android:allowBackup="true" 
         android:label="VardyParty"
@@ -10,6 +11,12 @@
         android:roundIcon="@mipmap/appicon_round"
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
+        <!-- Disabled on television/leanback so Shield/Fire TV do not list a
+             second icon next to the Leanback MainActivity. -->
+        <activity
+            android:name="com.vardyparty.SplashActivity"
+            android:enabled="@bool/show_phone_launcher"
+            tools:node="merge" />
     </application>
     
     <!-- Network permissions -->
