@@ -11,8 +11,8 @@
         android:roundIcon="@mipmap/appicon_round"
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
-        <!-- Disabled on television/leanback so Shield/Fire TV do not list a
-             second icon next to the Leanback MainActivity. -->
+        <!-- Disabled when UI mode is television so Shield/Fire TV do not list
+             a second icon next to the Leanback MainActivity. -->
         <activity
             android:name="com.vardyparty.SplashActivity"
             android:enabled="@bool/show_phone_launcher"
