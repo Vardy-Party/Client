@@ -1,10 +1,12 @@
 name: Increment Build Version
 
-# After CI succeeds on main for a *product* commit, package that commit.
-# ApplicationVersion is set on the feature branch (pre-commit hook + PR
-# workflow) so it lands with the reviewed merge. This workflow must not open a
-# second bump PR — github-actions[bot] cannot satisfy required reviews on main.
+# After CI succeeds on main for a *product* commit, package that commit only
+# when ApplicationDisplayVersion is newer than the latest GitHub release.
+# Otherwise CD would publish another 2.0.0-bN and --clobber that line.
+# Display bumps are released by "Bump Display Version" (not here): main CI
+# skips `ci: bump*` commits, so this workflow never sees them.
 #
+# ApplicationVersion is set on the feature branch so it lands with the PR.
 # If Version.props on the merge is still behind published -bN tags, package
 # last-release+1 (does not rewrite main).
 on:
@@ -83,8 +85,18 @@ jobs:
           echo "new_version=${USE}" >> "$GITHUB_OUTPUT"
           echo "::notice::Packaging ApplicationVersion ${USE} (commit ${COMMIT_V}, released max ${RELEASED})"
 
+          COMMIT_D=$(sed -n 's/.*<ApplicationDisplayVersion>\([^<]*\)<\/ApplicationDisplayVersion>.*/\1/p' Version.props | head -n 1)
+          LAST_D=$(gh release list --limit 1 --json tagName --jq '((.[0] // {}).tagName // "") | split("-b")[0]')
+          echo "display=${COMMIT_D}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${LAST_D}" && "${COMMIT_D}" == "${LAST_D}" ]]; then
+            echo "same_display=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Display version ${COMMIT_D} already has a GitHub release. Skipping CD so a new ${COMMIT_D}-b${USE} cannot clobber that line. Run Actions → Bump Display Version, which dispatches CD."
+          else
+            echo "same_display=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Dispatch CD for this unique version
-        if: ${{ steps.guard.outputs.skip != 'true' }}
+        if: ${{ steps.guard.outputs.skip != 'true' && steps.version.outputs.same_display != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
