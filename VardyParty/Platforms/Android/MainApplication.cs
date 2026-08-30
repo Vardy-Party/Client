@@ -20,6 +20,11 @@ namespace VardyParty
         public MainApplication(IntPtr handle, JniHandleOwnership ownership)
             : base(handle, ownership)
         {
+            // ILLink has no managed callers for the phone launcher besides
+            // the manifest. Keep the type so Release APKs still register
+            // CATEGORY_LAUNCHER (otherwise the app installs with only
+            // LEANBACK_LAUNCHER and phone drawers hide it).
+            _ = typeof(SplashActivity);
         }
 
         protected override MauiApp CreateMauiApp()

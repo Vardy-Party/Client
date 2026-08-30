@@ -11,12 +11,25 @@
         android:roundIcon="@mipmap/appicon_round"
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
-        <!-- Disabled when UI mode is television so Shield/Fire TV do not list
-             a second icon next to the Leanback MainActivity. -->
+        <!-- Phone drawer: SplashActivity. TV row: this alias. Do not leave
+             LEANBACK_LAUNCHER enabled on phones — several launchers then
+             hide the package from the app drawer after adb install. -->
         <activity
             android:name="com.vardyparty.SplashActivity"
             android:enabled="@bool/show_phone_launcher"
             tools:node="merge" />
+        <activity-alias
+            android:name="com.vardyparty.TvLeanbackAlias"
+            android:targetActivity="com.vardyparty.MainActivity"
+            android:enabled="@bool/show_tv_launcher"
+            android:exported="true"
+            android:label="VardyParty"
+            android:banner="@drawable/banner">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
     </application>
     
     <!-- Network permissions -->

@@ -17,6 +17,8 @@ namespace VardyParty
     /// </summary>
     [Activity(
         Name = "com.vardyparty.SplashActivity",
+        Label = "VardyParty",
+        Icon = "@mipmap/appicon",
         Theme = "@style/VardyParty.PhoneSplashTheme",
         MainLauncher = true,
         NoHistory = true,

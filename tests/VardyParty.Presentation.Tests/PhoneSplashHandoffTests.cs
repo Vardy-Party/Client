@@ -63,6 +63,14 @@ public class PhoneSplashHandoffTests
     }
 
     [Fact]
+    public void ShouldAdvertiseTvLeanbackLauncher_TelevisionOnly()
+    {
+        // Arrange / Act / Assert
+        Assert.False(PhoneSplashHandoff.ShouldAdvertiseTvLeanbackLauncher(isTelevisionDevice: false));
+        Assert.True(PhoneSplashHandoff.ShouldAdvertiseTvLeanbackLauncher(isTelevisionDevice: true));
+    }
+
+    [Fact]
     public void ShouldBuildMauiOnLooperIdle_WaitsForFrameAndIdle()
     {
         // Arrange / Act / Assert

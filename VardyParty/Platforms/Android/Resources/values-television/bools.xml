@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <resources>
-    <!-- Shield / Fire TV / Google TV: Leanback launcher only (MainActivity). -->
+    <!-- Shield / Fire TV / Google TV: Leanback alias only (no phone drawer icon). -->
     <bool name="show_phone_launcher">false</bool>
+    <bool name="show_tv_launcher">true</bool>
 </resources>

@@ -10,6 +10,14 @@ public static class PhoneSplashHandoff
     public static bool ShouldAdvertisePhoneLauncher(bool isTelevisionDevice) =>
         !isTelevisionDevice;
 
+    /// <summary>
+    /// Leanback must not stay enabled on phones. Several phone launchers
+    /// hide packages that advertise <c>LEANBACK_LAUNCHER</c>, so the app
+    /// installs but never appears in the drawer.
+    /// </summary>
+    public static bool ShouldAdvertiseTvLeanbackLauncher(bool isTelevisionDevice) =>
+        isTelevisionDevice;
+
     public static bool ShouldBuildMaui(bool alreadyHandedOff, bool isFinishing, bool isDestroyed) =>
         !alreadyHandedOff && !isFinishing && !isDestroyed;
 
