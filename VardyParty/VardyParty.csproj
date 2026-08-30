@@ -175,9 +175,13 @@
     </Target>
 
 
-    <!-- Splash uses generated SVG with build info -->
+    <!-- Splash uses generated SVG with build info (TV full window + phone overlay). -->
     <ItemGroup>
       <MauiSplashScreen Include="Resources\Splash\vardyparty_splash_generated.svg" Color="#003090" BaseSize="456,456" />
+      <!-- Ball-only, for Android 12+ 108dp circular system splash. -->
+      <MauiImage Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'"
+                 Include="Resources\Splash\vardyparty_splash.svg"
+                 BaseSize="288,288" />
     </ItemGroup>
 
     <ItemGroup>
