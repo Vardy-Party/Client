@@ -3,18 +3,17 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
-using Android.Widget;
 using VardyParty.Presentation;
 
 namespace VardyParty
 {
     [Activity(
-        Theme = "@style/VardyParty.SplashTheme",
-        MainLauncher = true,
+        Theme = "@style/VardyParty.MauiTheme",
+        MainLauncher = false,
         LaunchMode = LaunchMode.SingleTop,
         Exported = true,
         ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation | ConfigChanges.UiMode | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
-    [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher, Android.Content.Intent.CategoryLeanbackLauncher })]
+    [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLeanbackLauncher })]
     public class MainActivity : MauiAppCompatActivity
     {
         private static bool _flyoutMenuOpen;
@@ -121,18 +120,7 @@ namespace VardyParty
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
-            if (!MauiProgram.IsTv)
-            {
-                try
-                {
-                    var splash = AndroidX.Core.SplashScreen.SplashScreen.InstallSplashScreen(this);
-                    splash.SetKeepOnScreenCondition(new SplashKeepCondition(() => _keepSystemSplash));
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn("MainActivity", $"[MAIN] InstallSplashScreen failed: {ex.Message}");
-                }
-            }
+            ((MainApplication)MauiApplication.Current).EnsureMauiApp();
 
             base.OnCreate(savedInstanceState);
 
@@ -153,9 +141,6 @@ namespace VardyParty
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             RemoteKeyHandler.OnStop += RemoteStopHandler;
 
-            ShowPhoneSplashOverlay();
-            _keepSystemSplash = false;
-
             // Tell the system the cold-start path has produced a frame. Without
             // this, multi-second first-layout Daveys on the 32-bit TV look like
             // an ANR and Leanback kicks back to the Android home.
@@ -175,115 +160,9 @@ namespace VardyParty
 
         protected override void OnDestroy()
         {
-            DismissPhoneSplashOverlay();
             RemoteKeyHandler.OnBack -= RemoteBackHandler;
             RemoteKeyHandler.OnStop -= RemoteStopHandler;
             base.OnDestroy();
-        }
-
-        /// <summary>
-        /// Android 12+ phones only show a 108dp circular system splash. The
-        /// 512px build-info sheet is empty in the middle of that circle
-        /// (plain blue for several seconds of MAUI startup). TV uses the
-        /// pre-31 full window drawable. Phones: ball icon for the wait,
-        /// then this overlay with logo + version/commit until it has actually
-        /// been on screen (not from OnCreate, which already burned the wait).
-        /// </summary>
-        private const int PhoneSplashMinMs = 2500;
-        private global::Android.Views.View? _phoneSplashOverlay;
-        private bool _keepSystemSplash = true;
-        private bool _phoneSplashDismissScheduled;
-
-        private sealed class SplashKeepCondition : Java.Lang.Object, AndroidX.Core.SplashScreen.SplashScreen.IKeepOnScreenCondition
-        {
-            private readonly Func<bool> _keep;
-            public SplashKeepCondition(Func<bool> keep) => _keep = keep;
-            public bool ShouldKeepOnScreen() => _keep();
-        }
-
-        private void ShowPhoneSplashOverlay()
-        {
-            if (MauiProgram.IsTv)
-            {
-                return;
-            }
-
-            try
-            {
-                var drawableId = Resources?.GetIdentifier(
-                    "vardyparty_splash_generated", "drawable", PackageName) ?? 0;
-                if (drawableId == 0)
-                {
-                    Log.Warn("MainActivity", "[MAIN] Phone splash drawable missing");
-                    return;
-                }
-
-                var root = new FrameLayout(this);
-                root.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#003090"));
-                root.Elevation = 64f;
-                var image = new ImageView(this);
-                image.SetScaleType(ImageView.ScaleType.FitCenter);
-                image.SetImageResource(drawableId);
-                root.AddView(image, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MatchParent,
-                    ViewGroup.LayoutParams.MatchParent));
-                AddContentView(root, new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MatchParent,
-                    ViewGroup.LayoutParams.MatchParent));
-                root.BringToFront();
-                _phoneSplashOverlay = root;
-                root.ViewTreeObserver!.PreDraw += OnPhoneSplashPreDraw;
-                Log.Info("MainActivity", "[MAIN] Phone splash overlay attached");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("MainActivity", $"[MAIN] Phone splash overlay failed: {ex.Message}");
-            }
-        }
-
-        private void OnPhoneSplashPreDraw(object? sender, ViewTreeObserver.PreDrawEventArgs e)
-        {
-            if (_phoneSplashDismissScheduled)
-            {
-                return;
-            }
-
-            _phoneSplashDismissScheduled = true;
-            try
-            {
-                _phoneSplashOverlay?.ViewTreeObserver?.PreDraw -= OnPhoneSplashPreDraw;
-            }
-            catch
-            {
-            }
-
-            Log.Info("MainActivity", $"[MAIN] Phone splash first paint — hold {PhoneSplashMinMs}ms");
-            _phoneSplashOverlay?.PostDelayed(
-                new Java.Lang.Runnable(DismissPhoneSplashOverlay), PhoneSplashMinMs);
-        }
-
-        private void DismissPhoneSplashOverlay()
-        {
-            try
-            {
-                if (_phoneSplashOverlay?.ViewTreeObserver != null)
-                {
-                    _phoneSplashOverlay.ViewTreeObserver.PreDraw -= OnPhoneSplashPreDraw;
-                }
-
-                if (_phoneSplashOverlay?.Parent is ViewGroup parent)
-                {
-                    parent.RemoveView(_phoneSplashOverlay);
-                }
-
-                Log.Info("MainActivity", "[MAIN] Phone splash overlay dismissed");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("MainActivity", $"[MAIN] Phone splash dismiss failed: {ex.Message}");
-            }
-
-            _phoneSplashOverlay = null;
         }
 
         private void RemoteBackHandler(Keycode keyCode)

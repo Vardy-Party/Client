@@ -5,9 +5,18 @@ using Android.Widget;
 
 namespace VardyParty
 {
+    /// <summary>
+    /// <see cref="MauiApplication.OnCreate"/> always builds the MAUI host
+    /// before any activity can paint. Phones skip that until
+    /// <see cref="SplashActivity"/> has drawn the splash; TV still starts
+    /// MAUI here because Leanback launches <see cref="MainActivity"/>
+    /// directly.
+    /// </summary>
     [Application]
     public class MainApplication : MauiApplication
     {
+        bool _mauiStarted;
+
         public MainApplication(IntPtr handle, JniHandleOwnership ownership)
             : base(handle, ownership)
         {
@@ -15,12 +24,53 @@ namespace VardyParty
 
         protected override MauiApp CreateMauiApp()
         {
-            // Detect TV devices using PackageManager features
+            DetectTv();
+            AndroidEnvironment.UnhandledExceptionRaiser += OnUnhandledException;
+            return MauiProgram.CreateMauiApp();
+        }
+
+        public override void OnCreate()
+        {
             try
             {
-                var ctx = Android.App.Application.Context
-                    ?? throw new InvalidOperationException("Application context is unavailable.");
-                var pm = ctx.PackageManager
+                RegisterActivityLifecycleCallbacks(new Platforms.Android.ActivityInjectionCallbacks());
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainApplication] Failed to register activity injection callbacks: {ex}");
+            }
+
+            DetectTv();
+
+            if (MauiProgram.IsTv)
+            {
+                EnsureMauiApp();
+                return;
+            }
+
+            CallAndroidApplicationOnCreate();
+        }
+
+        /// <summary>
+        /// Runs <see cref="MauiApplication.OnCreate"/>. Phone
+        /// <see cref="SplashActivity"/> calls this after the first splash frame.
+        /// </summary>
+        public void EnsureMauiApp()
+        {
+            if (_mauiStarted)
+            {
+                return;
+            }
+
+            _mauiStarted = true;
+            base.OnCreate();
+        }
+
+        void DetectTv()
+        {
+            try
+            {
+                var pm = PackageManager
                     ?? throw new InvalidOperationException("PackageManager is unavailable.");
                 var hasLeanback = pm.HasSystemFeature(Android.Content.PM.PackageManager.FeatureLeanback);
 #pragma warning disable CS0618 // FeatureTelevision is the pre-Leanback TV flag still present on older images
@@ -34,23 +84,21 @@ namespace VardyParty
             {
                 Console.WriteLine($"[MainApplication] TV detection failed: {ex.Message}");
             }
-
-            AndroidEnvironment.UnhandledExceptionRaiser += OnUnhandledException;
-            return MauiProgram.CreateMauiApp();
         }
 
-        public override void OnCreate()
+        void CallAndroidApplicationOnCreate()
         {
-            base.OnCreate();
-
-            // Register lifecycle callbacks to perform constructor-like injection into activities
+            // MauiApplication.OnCreate is skipped on phones until the splash
+            // has painted; still run Application.onCreate (empty in AOSP).
+            var classRef = JNIEnv.FindClass("android/app/Application");
             try
             {
-                RegisterActivityLifecycleCallbacks(new VardyParty.Platforms.Android.ActivityInjectionCallbacks());
+                var methodId = JNIEnv.GetMethodID(classRef, "onCreate", "()V");
+                JNIEnv.CallNonvirtualVoidMethod(Handle, classRef, methodId);
             }
-            catch (Exception ex)
+            finally
             {
-                Console.WriteLine($"[MainApplication] Failed to register activity injection callbacks: {ex}");
+                JNIEnv.DeleteLocalRef(classRef);
             }
         }
 
@@ -66,7 +114,6 @@ namespace VardyParty
                     Context context = Platform.CurrentActivity ?? Android.App.Application.Context;
                     Toast.MakeText(context, "An error occurred. Reloading...", ToastLength.Long)?.Show();
 
-                    // Relaunch the homepage activity to restore stability.
                     var intent = PackageManager?.GetLaunchIntentForPackage(PackageName ?? "");
                     if (intent != null)
                     {

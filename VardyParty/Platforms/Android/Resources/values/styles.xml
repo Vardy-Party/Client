@@ -3,4 +3,16 @@
     <style name="VardyParty.SplashTheme" parent="Maui.SplashTheme">
         <item name="android:windowBackground">@drawable/splash_full</item>
     </style>
+
+    <!-- MainActivity starting window (TV cold start + phone after SplashActivity). -->
+    <style name="VardyParty.MauiTheme" parent="Maui.MainTheme.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+    </style>
+
+    <!-- Native phone launcher: full splash as window background, no MAUI. -->
+    <style name="VardyParty.PhoneSplashTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+        <item name="android:statusBarColor">@color/splash_screen_background</item>
+        <item name="android:navigationBarColor">@color/splash_screen_background</item>
+    </style>
 </resources>

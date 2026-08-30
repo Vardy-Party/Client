@@ -1,10 +1,22 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <resources>
-    <!-- API 31 system splash is a 108dp circle. Use the ball-only art so the
-         4–5s before MainActivity is not empty brand blue. Full sheet (logo +
-         build lines) is the phone overlay in MainActivity. -->
     <style name="VardyParty.SplashTheme" parent="Maui.SplashTheme">
         <item name="android:windowBackground">@drawable/splash_full</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_screen_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/vardyparty_splash</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_screen_background</item>
+    </style>
+
+    <style name="VardyParty.MauiTheme" parent="Maui.MainTheme.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+    </style>
+
+    <!-- System splash is still a 108dp circle until the first frame. Ball icon
+         for that instant; windowBackground is the full sheet once drawn. -->
+    <style name="VardyParty.PhoneSplashTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_full</item>
+        <item name="android:statusBarColor">@color/splash_screen_background</item>
+        <item name="android:navigationBarColor">@color/splash_screen_background</item>
         <item name="android:windowSplashScreenBackground">@color/splash_screen_background</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/vardyparty_splash</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_screen_background</item>
