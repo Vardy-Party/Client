@@ -997,8 +997,7 @@ public partial class DesktopHomePage : ContentPage
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
-        ResolveProgressBar.Progress = 0;
-        ResolveProgressBar.IsIndeterminate = true;
+        ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
         ResolveCountLabel.Text = "0 tested • 0 healthy";
         ResolveOverlay.IsVisible = true;
         _resolveOverlayOpen = true;
@@ -1016,10 +1015,9 @@ public partial class DesktopHomePage : ContentPage
         ResolveStatusLabel.Text = progress.Status;
         ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
             && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
-        ResolveProgressBar.IsIndeterminate =
-            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
-        ResolveProgressBar.Progress =
-            StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams);
+        ApplyResolveWaitVisual(
+            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
         ResolveCountLabel.Text = progress.TotalStreams > 0
             ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
             : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
@@ -1027,6 +1025,14 @@ public partial class DesktopHomePage : ContentPage
         // alone can go false on first subscribe while we still owe the overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
     });
+
+    private void ApplyResolveWaitVisual(bool indeterminate, double fraction)
+    {
+        ResolveActivityIndicator.IsVisible = indeterminate;
+        ResolveActivityIndicator.IsRunning = indeterminate;
+        ResolveProgressBar.IsVisible = !indeterminate;
+        ResolveProgressBar.Progress = fraction;
+    }
 
     private void ShowStreamPlaybackError(string? message)
     {

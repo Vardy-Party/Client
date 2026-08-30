@@ -93,9 +93,16 @@
                            FontSize="15"
                            TextColor="#8A93A6"
                            HorizontalTextAlignment="Center" />
+                    <ActivityIndicator x:Name="ResolveActivityIndicator"
+                                       Color="#2563EB"
+                                       HeightRequest="32"
+                                       WidthRequest="32"
+                                       HorizontalOptions="Center"
+                                       IsRunning="True" />
                     <ProgressBar x:Name="ResolveProgressBar"
                                  ProgressColor="#2563EB"
-                                 HeightRequest="8" />
+                                 HeightRequest="8"
+                                 IsVisible="False" />
                     <Label x:Name="ResolveCountLabel"
                            FontSize="13"
                            TextColor="#5B6478"
