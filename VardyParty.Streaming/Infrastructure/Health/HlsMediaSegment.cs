@@ -15,9 +15,6 @@ public static class HlsMediaSegment
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return LooksLikeVideoPath(url);
 
-        if (uri.Host.Contains("tiktokcdn", StringComparison.OrdinalIgnoreCase))
-            return false;
-
         return LooksLikeVideoPath(uri.AbsolutePath);
     }
 

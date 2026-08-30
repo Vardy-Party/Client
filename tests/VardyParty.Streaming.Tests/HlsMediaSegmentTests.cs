@@ -9,6 +9,7 @@ public class HlsMediaSegmentTests
     [InlineData("http://cdn.example.com/seg.ts")]
     [InlineData("http://cdn.example.com/seg.m4s")]
     [InlineData("http://cdn.example.com/chunk")]
+    [InlineData("https://p16-common-sign.tiktokcdn-us.com/tos/seg.ts")]
     public void LooksLikeVideoSegment_AcceptsMediaUris(string url)
     {
         Assert.True(HlsMediaSegment.LooksLikeVideoSegment(url));
