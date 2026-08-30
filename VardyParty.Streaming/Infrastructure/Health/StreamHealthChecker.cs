@@ -175,8 +175,17 @@ public class StreamHealthChecker(
         // Media playlist contains EXTINF
         if (content.Contains("#EXTINF"))
         {
-            var segmentUrl = ExtractFirstSegmentUrl(content, url);
-            if (string.IsNullOrEmpty(segmentUrl)) return StreamHealthStatus.EmptyManifest;
+            var segmentUrls = EnumerateSegmentUrls(content, url).ToList();
+            if (segmentUrls.Count == 0) return StreamHealthStatus.EmptyManifest;
+
+            var segmentUrl = segmentUrls.FirstOrDefault(HlsMediaSegment.LooksLikeVideoSegment);
+            if (string.IsNullOrEmpty(segmentUrl))
+            {
+                logger.LogWarning(
+                    "[StreamHealthChecker] Media playlist lists only non-video segments for {Url}",
+                    url);
+                return StreamHealthStatus.SegmentUnreachable;
+            }
 
             return await CheckSegmentAsync(segmentUrl, refererUrl, ct);
         }
@@ -203,32 +212,26 @@ public class StreamHealthChecker(
         return null;
     }
 
-    private string? ExtractFirstSegmentUrl(string content, string baseUrl)
+    private static IEnumerable<string> EnumerateSegmentUrls(string content, string baseUrl)
     {
         var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < lines.Length; i++)
-            // Typically segment follows EXTINF
-            if (lines[i].StartsWith("#EXTINF"))
-                if (i + 1 < lines.Length)
-                {
-                    var uriLine = lines[i + 1].Trim();
-                    // Some playlists might have other tags before the URL
-                    // Keep scanning until we find a non-tag line or end
-                    for (var j = i + 1; j < lines.Length; j++)
-                    {
-                        var nextLine = lines[j].Trim();
-                        if (string.IsNullOrEmpty(nextLine)) continue;
+        {
+            if (!lines[i].StartsWith("#EXTINF"))
+                continue;
 
-                        if (!nextLine.StartsWith("#")) return ResolveUrl(baseUrl, nextLine);
-                        // If it's another tag, continue. 
-                        // Note: #EXT-X-BYTERANGE might appear.
-                    }
-                }
-
-        return null;
+            for (var j = i + 1; j < lines.Length; j++)
+            {
+                var nextLine = lines[j].Trim();
+                if (string.IsNullOrEmpty(nextLine)) continue;
+                if (nextLine.StartsWith('#')) continue;
+                yield return ResolveUrl(baseUrl, nextLine);
+                break;
+            }
+        }
     }
 
-    private string ResolveUrl(string baseUrl, string relativeUrl)
+    private static string ResolveUrl(string baseUrl, string relativeUrl)
     {
         if (Uri.TryCreate(relativeUrl, UriKind.Absolute, out _)) return relativeUrl;
         if (Uri.TryCreate(new Uri(baseUrl), relativeUrl, out var absoluteUri)) return absoluteUri.ToString();
@@ -307,8 +310,19 @@ public class StreamHealthChecker(
         {
             logger.LogDebug("Segment {Method} probe returned {StatusCode} for {Url}",
                 method.Method, response.StatusCode, url);
+            return false;
         }
 
-        return response.IsSuccessStatusCode;
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (!HlsMediaSegment.ContentTypeLooksLikeMedia(contentType) ||
+            !HlsMediaSegment.LooksLikeVideoSegment(url))
+        {
+            logger.LogWarning(
+                "[StreamHealthChecker] Rejecting non-video segment {Url} (Content-Type={ContentType})",
+                url, contentType ?? "(none)");
+            return false;
+        }
+
+        return true;
     }
 }

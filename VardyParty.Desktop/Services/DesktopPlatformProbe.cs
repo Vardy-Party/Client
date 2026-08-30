@@ -96,6 +96,8 @@ public static class DesktopPlatformProbe
         {
             vlcOptions.Add("--avcodec-hw=none"); // software decode, no VA-API/VDPAU probing
             vlcOptions.Add("--vout=x11");        // plain X11 output, no GL/compositor probing
+            // Do not pin --demux=avformat: libavformat's HTTP stack ignores
+            // :http-referrer, so hotlink CDNs 403 after HttpClient health passed.
         }
         else
         {
@@ -103,6 +105,39 @@ public static class DesktopPlatformProbe
         }
 
         return vlcOptions.ToArray();
+    }
+
+    /// <summary>
+    /// Per-media LibVLC options: VLC http access gets referrer/UA; avformat
+    /// gets the same as <c>headers</c> if it is selected as a fallback demuxer.
+    /// Do not quote values — quoted Referer is sent literally and CDNs 403.
+    /// </summary>
+    public static IReadOnlyList<string> BuildPlaybackMediaOptions(
+        bool conservative,
+        string? referer,
+        string userAgent)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userAgent);
+
+        var options = new List<string>
+        {
+            $":http-user-agent={userAgent}",
+            conservative ? ":avcodec-hw=none" : ":avcodec-hw=any",
+            ":network-caching=3000",
+        };
+
+        if (string.IsNullOrWhiteSpace(referer))
+            return options;
+
+        var trimmed = referer.Trim();
+        options.Add($":http-referrer={trimmed}");
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            var origin = uri.GetLeftPart(UriPartial.Authority);
+            options.Add($":avformat-options=headers=Referer: {trimmed}\r\nOrigin: {origin}\r\nUser-Agent: {userAgent}");
+        }
+
+        return options;
     }
 
     /// <summary>
