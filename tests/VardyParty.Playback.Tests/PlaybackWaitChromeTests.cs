@@ -39,4 +39,19 @@ public class PlaybackWaitChromeTests
         Assert.False(PlaybackWaitChrome.ShouldShowWaitIndicator(
             isReady: false, isLoading: false, isPreparing: false, isEnded: true));
     }
+
+    [Fact]
+    public void Shows_WhenReadyAndStillPreparing()
+    {
+        // Attach can leave isPreparing true for a beat after STATE_READY.
+        Assert.True(PlaybackWaitChrome.ShouldShowWaitIndicator(
+            isReady: true, isLoading: false, isPreparing: true));
+    }
+
+    [Fact]
+    public void Hides_WhenEndedEvenIfLoading()
+    {
+        Assert.False(PlaybackWaitChrome.ShouldShowWaitIndicator(
+            isReady: true, isLoading: true, isPreparing: true, isEnded: true));
+    }
 }

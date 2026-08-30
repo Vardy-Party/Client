@@ -344,6 +344,33 @@ public class StreamHealthCheckerTests
         Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
     }
 
+    [Fact]
+    public async Task CheckStreamHealth_OnlyImageSegments_Unreachable()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var imageUrl = "https://cdn.example.com/poster.image";
+
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"#EXTM3U\n#EXTINF:1,\n{imageUrl}")
+        });
+
+        handler.AddResponse($"HEAD:{imageUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new();

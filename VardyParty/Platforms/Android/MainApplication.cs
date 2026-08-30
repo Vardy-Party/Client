@@ -45,14 +45,17 @@ namespace VardyParty
             if (MauiProgram.IsTv)
             {
                 EnsureMauiApp();
-                return;
             }
 
-            CallAndroidApplicationOnCreate();
+            // Phones: do not call Application.onCreate here. MauiApplication.OnCreate
+            // builds the host (seconds) before any frame. SplashActivity paints,
+            // then EnsureMauiApp runs the single super.OnCreate. AOSP Application
+            // onCreate is empty; skipping the JNI hop avoids CheckJNI DeleteLocalRef
+            // and a second onCreate.
         }
 
         /// <summary>
-        /// Runs <see cref="MauiApplication.OnCreate"/>. Phone
+        /// Runs <see cref="MauiApplication.OnCreate"/> once. Phone
         /// <see cref="SplashActivity"/> calls this after the first splash frame.
         /// </summary>
         public void EnsureMauiApp()
@@ -83,22 +86,6 @@ namespace VardyParty
             catch (Exception ex)
             {
                 Console.WriteLine($"[MainApplication] TV detection failed: {ex.Message}");
-            }
-        }
-
-        void CallAndroidApplicationOnCreate()
-        {
-            // MauiApplication.OnCreate is skipped on phones until the splash
-            // has painted; still run Application.onCreate (empty in AOSP).
-            var classRef = JNIEnv.FindClass("android/app/Application");
-            try
-            {
-                var methodId = JNIEnv.GetMethodID(classRef, "onCreate", "()V");
-                JNIEnv.CallNonvirtualVoidMethod(Handle, classRef, methodId);
-            }
-            finally
-            {
-                JNIEnv.DeleteLocalRef(classRef);
             }
         }
 

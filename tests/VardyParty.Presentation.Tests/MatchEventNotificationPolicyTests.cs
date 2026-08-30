@@ -185,4 +185,23 @@ public class MatchEventNotificationPolicyTests
 
         Assert.True(sut.ShouldPresentEvent(matchEvent, watching));
     }
+
+    [Fact]
+    public void ShouldPresentEvent_Backgrounded_DropsEvenOtherGames()
+    {
+        var sut = CreateSut();
+        sut.IsAppForegrounded = false;
+        sut.IsPlaybackActive = true;
+        var watching = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var other = _fixture.Build<Game>()
+            .With(g => g.Home, "River Town")
+            .With(g => g.Away, "Lake Borough")
+            .Create();
+        var matchEvent = new MatchEvent(MatchEventKind.Goal, other, 1, 0, GoalSide.Home);
+
+        Assert.False(sut.ShouldPresentEvent(matchEvent, watching));
+    }
 }

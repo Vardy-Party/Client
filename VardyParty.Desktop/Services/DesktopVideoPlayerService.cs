@@ -982,11 +982,11 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 if (IsLibVlcErrorLevel(level))
                 {
                     _logger.LogError("[DesktopVideoPlayerService] {Message}", renderedMessage);
-                    if (IsFatalAdaptiveDemuxFailure(module, message))
+                    if (LibVlcPlaybackFailure.IsFatalAdaptiveDemux(module, message))
                     {
                         RaisePlaybackFailureOnce("LibVLC adaptive demux failed (segment not playable)");
                     }
-                    else if (IsHttpForbidden(module, message))
+                    else if (LibVlcPlaybackFailure.IsHttpForbidden(module, message))
                     {
                         RaisePlaybackFailureOnce("LibVLC HTTP 403 (CDN rejected request headers)");
                     }
@@ -1058,16 +1058,6 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                message.Contains("avcodec", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("drm", StringComparison.OrdinalIgnoreCase);
     }
-
-    private static bool IsFatalAdaptiveDemuxFailure(string? module, string message) =>
-        (string.IsNullOrEmpty(module) || module.Contains("adaptive", StringComparison.OrdinalIgnoreCase)) &&
-        message.Contains("Failed to create demuxer", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsHttpForbidden(string? module, string message) =>
-        message.Contains("HTTP 403", StringComparison.OrdinalIgnoreCase) ||
-        (module is not null &&
-         module.Contains("access", StringComparison.OrdinalIgnoreCase) &&
-         message.Contains("403", StringComparison.OrdinalIgnoreCase));
 
     private void RaisePlaybackFailureOnce(string reason)
     {

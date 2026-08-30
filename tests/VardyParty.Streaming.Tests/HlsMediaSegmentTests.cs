@@ -25,10 +25,35 @@ public class HlsMediaSegmentTests
     }
 
     [Fact]
-    public void ContentTypeLooksLikeMedia_RejectsImageJpeg()
+    public void LooksLikeVideoSegment_RejectsEmptyAndWhitespace()
     {
+        // Arrange / Act / Assert
+        Assert.False(HlsMediaSegment.LooksLikeVideoSegment(""));
+        Assert.False(HlsMediaSegment.LooksLikeVideoSegment("   "));
+    }
+
+    [Fact]
+    public void LooksLikeVideoSegment_RelativePathWithoutScheme_StillRejectsImages()
+    {
+        // Arrange
+        const string relative = "/tos/abc~tplv-tiktokx-origin.image";
+
+        // Act
+        var looksLikeVideo = HlsMediaSegment.LooksLikeVideoSegment(relative);
+
+        // Assert
+        Assert.False(looksLikeVideo);
+    }
+
+    [Fact]
+    public void ContentTypeLooksLikeMedia_RejectsHtmlAndImages_AcceptsEmptyAndVideo()
+    {
+        // Arrange / Act / Assert
+        Assert.False(HlsMediaSegment.ContentTypeLooksLikeMedia("text/html; charset=utf-8"));
         Assert.False(HlsMediaSegment.ContentTypeLooksLikeMedia("image/jpeg"));
-        Assert.True(HlsMediaSegment.ContentTypeLooksLikeMedia("video/MP2T"));
+        Assert.True(HlsMediaSegment.ContentTypeLooksLikeMedia(""));
         Assert.True(HlsMediaSegment.ContentTypeLooksLikeMedia(null));
+        Assert.True(HlsMediaSegment.ContentTypeLooksLikeMedia("application/octet-stream"));
+        Assert.True(HlsMediaSegment.ContentTypeLooksLikeMedia("video/MP2T"));
     }
 }

@@ -5,6 +5,7 @@ using Android.OS;
 using Android.Util;
 using Android.Views;
 using Android.Widget;
+using VardyParty.Presentation;
 
 namespace VardyParty
 {
@@ -58,7 +59,7 @@ namespace VardyParty
 
         void HandoffToMaui()
         {
-            if (_handedOff)
+            if (!PhoneSplashHandoff.ShouldBuildMaui(_handedOff, IsFinishing, IsDestroyed))
             {
                 return;
             }
@@ -66,14 +67,21 @@ namespace VardyParty
             _handedOff = true;
             Log.Info("SplashActivity", "[SPLASH] first frame done — starting MAUI");
 
+            var mauiStarted = false;
             try
             {
                 ((MainApplication)MauiApplication.Current).EnsureMauiApp();
+                mauiStarted = true;
             }
             catch (Exception ex)
             {
                 Log.Error("SplashActivity", $"[SPLASH] EnsureMauiApp failed: {ex}");
                 Finish();
+                return;
+            }
+
+            if (!PhoneSplashHandoff.ShouldStartMainActivity(mauiStarted, IsFinishing, IsDestroyed))
+            {
                 return;
             }
 
@@ -112,6 +120,11 @@ namespace VardyParty
                 }
 
                 // Next looper message: the splash frame has been submitted.
+                if (_activity.IsFinishing || _activity.IsDestroyed)
+                {
+                    return;
+                }
+
                 _view.Post(_activity.HandoffToMaui);
             }
         }

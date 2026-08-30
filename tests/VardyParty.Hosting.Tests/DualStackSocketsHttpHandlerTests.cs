@@ -102,6 +102,24 @@ public class DualStackSocketsHttpHandlerTests
     }
 
     [Fact]
+    public void WithSupplementalIpv4_EmptyOrIpv6Extras_LeavesPlanUnchanged()
+    {
+        // Arrange
+        var ipv6 = IPAddress.Parse("2001:db8::1");
+        var plan = DualStackSocketsHttpHandler.PlanConnect([ipv6]);
+
+        // Act
+        var empty = DualStackSocketsHttpHandler.WithSupplementalIpv4(plan, []);
+        var v6Only = DualStackSocketsHttpHandler.WithSupplementalIpv4(
+            plan, [IPAddress.Parse("2001:db8::2")]);
+
+        // Assert
+        Assert.Empty(empty.Ipv4);
+        Assert.Empty(v6Only.Ipv4);
+        Assert.Equal(plan.Ipv6, empty.Ipv6);
+    }
+
+    [Fact]
     public void Create_ConfiguresConnectCallbackAndTimeouts()
     {
         // Arrange
