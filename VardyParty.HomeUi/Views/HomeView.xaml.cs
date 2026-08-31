@@ -355,6 +355,8 @@ public partial class HomeView : ContentView
 
     private void OnResetClicked(object? sender, EventArgs e) => ViewModel?.ResetLeaguesToDefaults();
 
+    private void OnUpdateClicked(object? sender, EventArgs e) => ViewModel?.RequestUpdate();
+
     private void OnSignOutClicked(object? sender, EventArgs e) => ViewModel?.RequestSignOut();
 
     private void OnMenuItemFocused(object? sender, FocusEventArgs e)

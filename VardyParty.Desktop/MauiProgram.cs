@@ -8,6 +8,7 @@ using VardyParty.Desktop.Services;
 using VardyParty.Hosting;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
+using VardyParty.Presentation;
 
 namespace VardyParty.Desktop;
 
@@ -81,6 +82,9 @@ public static class MauiProgram
         }
 
         builder.Services.AddVardyPartyHomeUi();
+        builder.Services.AddSingleton<IRunningAppVersion, AssemblyRunningAppVersion>();
+        builder.Services.AddSingleton<IDesktopInstallerLauncher, ProcessDesktopInstallerLauncher>();
+        builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
         builder.Services.AddSingleton<Pages.DesktopHomePage>();
 
         return builder.Build();

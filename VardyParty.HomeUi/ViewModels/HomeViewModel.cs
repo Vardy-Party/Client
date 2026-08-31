@@ -43,6 +43,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private string? _pendingError;
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
+    private readonly IDesktopUpdateService _updates;
+    private DesktopUpdateOffer? _offer;
+    private bool _updateBusy;
 
     /// <summary>
     /// Header subtitle until the first catalog WITH API data lands (the games
@@ -77,7 +80,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MatchEventNotificationPolicy notifications,
         MatchEventBus events,
         SelectionState selection,
-        ILogger<HomeViewModel> logger)
+        ILogger<HomeViewModel> logger,
+        IDesktopUpdateService updates)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -88,9 +92,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
+        _updates.OfferChanged += OnUpdateOfferChanged;
+        _updates.Start();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -318,6 +325,77 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         SignOutRequested?.Invoke();
     }
 
+    public bool HasUpdateAvailable => _offer is not null;
+
+    public bool ShowUpdateButton => HasUpdateAvailable;
+
+    public bool UpdateIdle => !_updateBusy;
+
+    public string UpdateButtonLabel =>
+        _updateBusy ? "Downloading…" : "Update";
+
+    public void RequestUpdate()
+    {
+        var offer = _offer;
+        if (offer is null || _updateBusy)
+        {
+            return;
+        }
+
+        _sounds.Play(UiSound.Select);
+        _updateBusy = true;
+        RaiseUpdateUi();
+        _ = InstallUpdateAsync(offer);
+    }
+
+    private async Task InstallUpdateAsync(DesktopUpdateOffer offer)
+    {
+        try
+        {
+            await _updates.InstallAsync(offer, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Desktop update install failed");
+            SetError("Could not download or start the update.");
+        }
+        finally
+        {
+            lock (_pendingLock)
+            {
+                _pendingUiAssign.Enqueue(() =>
+                {
+                    _updateBusy = false;
+                    RaiseUpdateUi();
+                });
+            }
+
+            NotifyWorkQueued();
+        }
+    }
+
+    private void OnUpdateOfferChanged(DesktopUpdateOffer? offer)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUiAssign.Enqueue(() =>
+            {
+                _offer = offer;
+                RaiseUpdateUi();
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
+    private void RaiseUpdateUi()
+    {
+        Raise(nameof(HasUpdateAvailable));
+        Raise(nameof(ShowUpdateButton));
+        Raise(nameof(UpdateIdle));
+        Raise(nameof(UpdateButtonLabel));
+    }
+
     /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
     public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
 
@@ -336,7 +414,11 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         NotifyWorkQueued();
     }
 
-    public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
+    public void Dispose()
+    {
+        _leagueFilter.Changed -= OnFilterChanged;
+        _updates.OfferChanged -= OnUpdateOfferChanged;
+    }
 
     private void OnFilterChanged() => Rebuild();
 

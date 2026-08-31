@@ -85,17 +85,37 @@
                            FontSize="{Binding Layout.PageSubtitleFontSize}"
                            TextColor="#8A93A6" />
                 </VerticalStackLayout>
-                <Button Grid.Column="2"
-                        x:Name="MenuButton"
-                        Text="Menu"
-                        Clicked="OnMenuClicked"
-                        Focused="OnMenuItemFocused"
-                        Unfocused="OnHeaderUnfocused"
-                        BackgroundColor="#1C2333"
-                        TextColor="#E5E7EB"
-                        CornerRadius="10"
-                        Padding="18,10"
-                        VerticalOptions="Center" />
+                <Grid Grid.Column="2" VerticalOptions="Center">
+                    <Button x:Name="MenuButton"
+                            Text="Menu"
+                            Clicked="OnMenuClicked"
+                            Focused="OnMenuItemFocused"
+                            Unfocused="OnHeaderUnfocused"
+                            BackgroundColor="#1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="10"
+                            Padding="18,10"
+                            VerticalOptions="Center" />
+                    <Border HorizontalOptions="End"
+                            VerticalOptions="Start"
+                            Margin="0,-6,-6,0"
+                            Padding="0"
+                            WidthRequest="18"
+                            HeightRequest="18"
+                            BackgroundColor="#34D399"
+                            StrokeThickness="0"
+                            StrokeShape="RoundRectangle 9"
+                            IsVisible="{Binding HasUpdateAvailable}"
+                            InputTransparent="True">
+                        <Label Text="★"
+                               FontSize="10"
+                               TextColor="#0B0F1A"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               HorizontalTextAlignment="Center"
+                               VerticalTextAlignment="Center" />
+                    </Border>
+                </Grid>
             </Grid>
 
             <!-- Service error banner -->
@@ -254,6 +274,14 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Button Text="{Binding UpdateButtonLabel}"
+                            Clicked="OnUpdateClicked"
+                            Focused="OnMenuItemFocused"
+                            IsVisible="{Binding ShowUpdateButton}"
+                            IsEnabled="{Binding UpdateIdle}"
+                            BackgroundColor="#1C4A3A"
+                            TextColor="#34D399"
+                            CornerRadius="10" />
                     <Button Text="Sign out"
                             Clicked="OnSignOutClicked"
                             Focused="OnMenuItemFocused"

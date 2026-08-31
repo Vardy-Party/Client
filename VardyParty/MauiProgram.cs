@@ -9,6 +9,7 @@ using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Hosting;
 using VardyParty.Playback;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 #if ANDROID
 using VardyParty.Platforms.Android;
@@ -264,6 +265,11 @@ public static class MauiProgram
         // platform boots HomeHostPage).
         builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
         builder.Services.AddVardyPartyHomeUi();
+#if WINDOWS
+        builder.Services.AddSingleton<IRunningAppVersion, AssemblyRunningAppVersion>();
+        builder.Services.AddSingleton<IDesktopInstallerLauncher, ProcessDesktopInstallerLauncher>();
+        builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+#endif
         builder.Services.AddSingleton<HomeHostPage>();
         builder.Services.AddSingleton(DeviceInfo.Current);
 
