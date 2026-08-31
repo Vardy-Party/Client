@@ -7,6 +7,7 @@ namespace VardyParty.Hosting;
 public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposable
 {
     public const string HttpClientName = "GitHubReleases";
+    public const string AssetHttpClientName = "GitHubReleaseAssets";
     public const string ReleasesPath = "repos/Vardy-Party/Client/releases";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromHours(6);
@@ -14,7 +15,9 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
 
     private readonly IHttpClientFactory _http;
     private readonly IRunningAppVersion _running;
-    private readonly IDesktopInstallerLauncher _installer;
+    private readonly IDesktopPackageApplier _applier;
+    private readonly IDesktopPendingUpdateStore _pending;
+    private readonly IDesktopAppQuitter _quitter;
     private readonly ILogger<GitHubDesktopUpdateService> _logger;
     private readonly DesktopUpdatePlatform? _platform;
     private Timer? _timer;
@@ -23,12 +26,16 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
     public GitHubDesktopUpdateService(
         IHttpClientFactory http,
         IRunningAppVersion running,
-        IDesktopInstallerLauncher installer,
+        IDesktopPackageApplier applier,
+        IDesktopPendingUpdateStore pending,
+        IDesktopAppQuitter quitter,
         ILogger<GitHubDesktopUpdateService> logger)
     {
         _http = http;
         _running = running;
-        _installer = installer;
+        _applier = applier;
+        _pending = pending;
+        _quitter = quitter;
         _logger = logger;
         _platform = DesktopUpdatePolicy.DetectPlatform();
     }
@@ -44,22 +51,37 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
             return;
         }
 
+        ReconcilePending();
         _timer = new Timer(OnTick, null, FirstCheckDelay, PollInterval);
     }
 
     public async Task InstallAsync(DesktopUpdateOffer offer, CancellationToken cancellationToken)
     {
-        var dest = Path.Combine(Path.GetTempPath(), offer.AssetName);
+        var destDir = Path.Combine(Path.GetTempPath(), "VardyParty");
+        Directory.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, offer.AssetName);
         _logger.LogInformation("Downloading desktop update {Tag} to {Path}", offer.Tag, dest);
 
-        var client = _http.CreateClient(HttpClientName);
-        await using (var remote = await client.GetStreamAsync(offer.DownloadUrl, cancellationToken))
+        var client = _http.CreateClient(AssetHttpClientName);
+        await using (var remote = await client.GetStreamAsync(offer.DownloadUrl, cancellationToken)
+            .ConfigureAwait(false))
         await using (var local = File.Create(dest))
         {
-            await remote.CopyToAsync(local, cancellationToken);
+            await remote.CopyToAsync(local, cancellationToken).ConfigureAwait(false);
         }
 
-        _installer.LaunchDownloadedInstaller(dest);
+        _pending.Write(offer.Version);
+        try
+        {
+            await _applier.ApplyAsync(dest, offer, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            _pending.Clear();
+            throw;
+        }
+
+        _quitter.RequestQuit();
     }
 
     public void Dispose() => _timer?.Dispose();
@@ -82,6 +104,8 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
         {
             return;
         }
+
+        ReconcilePending();
 
         var client = _http.CreateClient(HttpClientName);
         await using var stream = await client.GetStreamAsync(ReleasesPath, cancellationToken)
@@ -113,6 +137,24 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
         if (offer is not null)
         {
             _logger.LogInformation("Desktop update available: {Tag} ({Asset})", offer.Tag, offer.AssetName);
+        }
+    }
+
+    private void ReconcilePending()
+    {
+        var pending = _pending.Read();
+        var state = DesktopPendingUpdatePolicy.Evaluate(_running.Current, pending);
+        if (state == DesktopPendingUpdateState.Applied)
+        {
+            _pending.Clear();
+            _logger.LogInformation("Desktop update applied; now running {Version}", _running.Current);
+        }
+        else if (state == DesktopPendingUpdateState.FailedToApply)
+        {
+            _logger.LogWarning(
+                "Desktop update to {Expected} did not land; still running {Version}",
+                pending,
+                _running.Current);
         }
     }
 

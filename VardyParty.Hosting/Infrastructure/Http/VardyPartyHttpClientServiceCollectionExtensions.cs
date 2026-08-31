@@ -66,6 +66,14 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             })
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
 
+        services.AddHttpClient(GitHubDesktopUpdateService.AssetHttpClientName, client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "VardyParty-Client");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/octet-stream");
+                client.Timeout = TimeSpan.FromMinutes(15);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+
         return services;
     }
 }

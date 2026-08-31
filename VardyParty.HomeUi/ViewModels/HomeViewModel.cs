@@ -332,7 +332,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     public bool UpdateIdle => !_updateBusy;
 
     public string UpdateButtonLabel =>
-        _updateBusy ? "Downloading…" : "Update";
+        _updateBusy ? "Updating…" : "Update";
 
     public void RequestUpdate()
     {
@@ -357,7 +357,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Desktop update install failed");
-            SetError("Could not download or start the update.");
+            SetError("Could not apply the update.");
         }
         finally
         {

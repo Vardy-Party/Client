@@ -267,7 +267,8 @@ public static class MauiProgram
         builder.Services.AddVardyPartyHomeUi();
 #if WINDOWS
         builder.Services.AddSingleton<IRunningAppVersion, AssemblyRunningAppVersion>();
-        builder.Services.AddSingleton<IDesktopInstallerLauncher, ProcessDesktopInstallerLauncher>();
+        builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
+        builder.Services.AddSingleton<IDesktopPackageApplier, MsixPackageManagerApplier>();
         builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
 #endif
         builder.Services.AddSingleton<HomeHostPage>();
