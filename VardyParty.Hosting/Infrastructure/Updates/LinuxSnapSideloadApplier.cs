@@ -7,15 +7,24 @@ namespace VardyParty.Hosting;
 
 public sealed class LinuxSnapSideloadApplier : IDesktopPackageApplier
 {
-    public Task ApplyAsync(string localPackagePath, DesktopUpdateOffer offer, CancellationToken cancellationToken)
+    public Task<DesktopApplyResult> ApplyAsync(
+        string localPackagePath,
+        DesktopUpdateOffer offer,
+        CancellationToken cancellationToken)
     {
-        if (OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsLinux())
         {
-            ApplyLinux(localPackagePath, cancellationToken);
-            return Task.CompletedTask;
+            throw new PlatformNotSupportedException("Snap sideload is Linux only.");
         }
 
-        throw new PlatformNotSupportedException("Snap sideload is Linux only.");
+        if (!LinuxSnapSideload.IsVardyPartySnap())
+        {
+            throw new InvalidOperationException(
+                "Snap updates apply only when this app is installed as the vardyparty snap.");
+        }
+
+        ApplyLinux(localPackagePath, cancellationToken);
+        return Task.FromResult(new DesktopApplyResult(CallerShouldQuit: true));
     }
 
     [SupportedOSPlatform("linux")]
@@ -38,15 +47,23 @@ public sealed class LinuxSnapSideloadApplier : IDesktopPackageApplier
 
         var start = new ProcessStartInfo
         {
-            FileName = "/bin/sh",
+            FileName = "/usr/bin/setsid",
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
+        start.ArgumentList.Add("-f");
+        start.ArgumentList.Add("/bin/sh");
         start.ArgumentList.Add(scriptPath);
         start.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
         start.ArgumentList.Add(Path.GetFullPath(localPackagePath));
 
-        Process.Start(start);
+        using var process = Process.Start(start);
+        if (process is null)
+        {
+            throw new InvalidOperationException("Failed to detach the snap update helper.");
+        }
     }
 }
-

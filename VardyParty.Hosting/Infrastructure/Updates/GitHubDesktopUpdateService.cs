@@ -22,6 +22,8 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
     private readonly DesktopUpdatePlatform? _platform;
     private Timer? _timer;
     private int _started;
+    private int _checking;
+    private int _failedApplyLogged;
 
     public GitHubDesktopUpdateService(
         IHttpClientFactory http,
@@ -44,6 +46,8 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
 
     public event Action<DesktopUpdateOffer?>? OfferChanged;
 
+    public event Action<string>? ApplyFailed;
+
     public void Start()
     {
         if (_platform is null || Interlocked.Exchange(ref _started, 1) != 0)
@@ -57,9 +61,14 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
 
     public async Task InstallAsync(DesktopUpdateOffer offer, CancellationToken cancellationToken)
     {
+        if (!DesktopUpdateDownload.IsAllowedDownloadUrl(offer.DownloadUrl))
+        {
+            throw new InvalidOperationException("Update download URL is not a GitHub HTTPS asset.");
+        }
+
         var destDir = Path.Combine(Path.GetTempPath(), "VardyParty");
         Directory.CreateDirectory(destDir);
-        var dest = Path.Combine(destDir, offer.AssetName);
+        var dest = Path.Combine(destDir, DesktopUpdateDownload.FileNameFromAsset(offer.AssetName));
         _logger.LogInformation("Downloading desktop update {Tag} to {Path}", offer.Tag, dest);
 
         var client = _http.CreateClient(AssetHttpClientName);
@@ -67,27 +76,34 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
             .ConfigureAwait(false))
         await using (var local = File.Create(dest))
         {
-            await remote.CopyToAsync(local, cancellationToken).ConfigureAwait(false);
+            await CopyCappedAsync(remote, local, cancellationToken).ConfigureAwait(false);
         }
 
         _pending.Write(offer.Version);
         try
         {
-            await _applier.ApplyAsync(dest, offer, cancellationToken).ConfigureAwait(false);
+            var applied = await _applier.ApplyAsync(dest, offer, cancellationToken).ConfigureAwait(false);
+            if (applied.CallerShouldQuit)
+            {
+                _quitter.RequestQuit();
+            }
         }
         catch
         {
             _pending.Clear();
             throw;
         }
-
-        _quitter.RequestQuit();
     }
 
     public void Dispose() => _timer?.Dispose();
 
     private async void OnTick(object? _)
     {
+        if (Interlocked.Exchange(ref _checking, 1) != 0)
+        {
+            return;
+        }
+
         try
         {
             await CheckAsync().ConfigureAwait(false);
@@ -95,6 +111,10 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "GitHub release check failed");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _checking, 0);
         }
     }
 
@@ -147,14 +167,38 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
         if (state == DesktopPendingUpdateState.Applied)
         {
             _pending.Clear();
+            Interlocked.Exchange(ref _failedApplyLogged, 0);
             _logger.LogInformation("Desktop update applied; now running {Version}", _running.Current);
         }
-        else if (state == DesktopPendingUpdateState.FailedToApply)
+        else if (state == DesktopPendingUpdateState.FailedToApply
+            && Interlocked.Exchange(ref _failedApplyLogged, 1) == 0)
         {
-            _logger.LogWarning(
-                "Desktop update to {Expected} did not land; still running {Version}",
-                pending,
-                _running.Current);
+            var message = $"Update to {pending} did not land; still running {_running.Current}.";
+            _logger.LogWarning("{Message}", message);
+            ApplyFailed?.Invoke(message);
+        }
+    }
+
+    private static async Task CopyCappedAsync(Stream remote, Stream local, CancellationToken cancellationToken)
+    {
+        var remaining = DesktopUpdateDownload.MaxAssetBytes;
+        var buffer = new byte[81920];
+        while (true)
+        {
+            var read = await remote.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
+                .ConfigureAwait(false);
+            if (read == 0)
+            {
+                return;
+            }
+
+            remaining -= read;
+            if (remaining < 0)
+            {
+                throw new InvalidOperationException("Update asset exceeds the download size cap.");
+            }
+
+            await local.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
     }
 

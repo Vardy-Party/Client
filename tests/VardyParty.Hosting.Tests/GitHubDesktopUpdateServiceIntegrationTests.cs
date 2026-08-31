@@ -27,6 +27,13 @@ public class GitHubDesktopUpdateServiceIntegrationTests
     [Fact]
     public async Task CheckAsync_LiveGitHubReleasesUrl_AppliesTwoDayPolicy()
     {
+        if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase)
+            && Environment.GetEnvironmentVariable("VARDYPARTY_LIVE_GITHUB") != "1")
+        {
+            _output.WriteLine("Skipping live GitHub GET on CI (set VARDYPARTY_LIVE_GITHUB=1 to enable).");
+            return;
+        }
+
         // Arrange
         var services = new ServiceCollection();
         services.AddVardyPartyHttpClients();

@@ -12,7 +12,7 @@ namespace VardyParty.Platforms.Windows;
 /// </summary>
 public sealed class MsixPackageManagerApplier : IDesktopPackageApplier
 {
-    public async Task ApplyAsync(
+    public async Task<DesktopApplyResult> ApplyAsync(
         string localPackagePath,
         DesktopUpdateOffer offer,
         CancellationToken cancellationToken)
@@ -28,9 +28,8 @@ public sealed class MsixPackageManagerApplier : IDesktopPackageApplier
         var restart = NativeMethods.RegisterApplicationRestart(null, NativeMethods.RestartFlags.None);
         if (restart != 0)
         {
-            WindowsEventLogger.Warning(
-                "MsixUpdate",
-                $"RegisterApplicationRestart returned 0x{restart:X8}");
+            throw new InvalidOperationException(
+                $"RegisterApplicationRestart failed (0x{restart:X8}); refusing to force-shutdown without a restart.");
         }
 
         var manager = new PackageManager();
@@ -49,6 +48,8 @@ public sealed class MsixPackageManagerApplier : IDesktopPackageApplier
                     : result.ErrorText,
                 error);
         }
+
+        return new DesktopApplyResult(CallerShouldQuit: false);
     }
 
     private static class NativeMethods

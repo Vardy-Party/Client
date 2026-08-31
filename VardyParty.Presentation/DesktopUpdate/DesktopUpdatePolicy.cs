@@ -44,9 +44,12 @@ public static class DesktopUpdatePolicy
 
         if (OperatingSystem.IsLinux())
         {
-            return RuntimeInformation.OSArchitecture == Architecture.Arm64
-                ? DesktopUpdatePlatform.LinuxArm64
-                : DesktopUpdatePlatform.LinuxX64;
+            return RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.Arm64 => DesktopUpdatePlatform.LinuxArm64,
+                Architecture.X64 => DesktopUpdatePlatform.LinuxX64,
+                _ => null,
+            };
         }
 
         return null;

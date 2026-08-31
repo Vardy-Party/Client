@@ -82,10 +82,14 @@ public static class MauiProgram
         }
 
         builder.Services.AddVardyPartyHomeUi();
-        builder.Services.AddSingleton<IRunningAppVersion, AssemblyRunningAppVersion>();
-        builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
-        builder.Services.AddSingleton<IDesktopPackageApplier, LinuxSnapSideloadApplier>();
-        builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+        if (LinuxSnapSideload.IsVardyPartySnap())
+        {
+            builder.Services.AddSingleton<IRunningAppVersion>(_ =>
+                new AssemblyRunningAppVersion(typeof(MauiProgram).Assembly));
+            builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
+            builder.Services.AddSingleton<IDesktopPackageApplier, LinuxSnapSideloadApplier>();
+            builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+        }
         builder.Services.AddSingleton<Pages.DesktopHomePage>();
 
         return builder.Build();

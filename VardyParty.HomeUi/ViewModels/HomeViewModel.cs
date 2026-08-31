@@ -28,6 +28,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
+    private readonly Queue<Action> _pendingUpdateUi = new();
     private readonly Queue<StagedStrip> _stagedStrips = new();
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
@@ -97,6 +98,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
         _leagueFilter.Changed += OnFilterChanged;
         _updates.OfferChanged += OnUpdateOfferChanged;
+        _updates.ApplyFailed += OnUpdateApplyFailed;
         _updates.Start();
     }
 
@@ -131,7 +133,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                     || _pendingError != null
                     || _pendingClearResolving
                     || _pendingResetScores
-                    || _pendingUiAssign.Count > 0;
+                    || _pendingUiAssign.Count > 0
+                    || _pendingUpdateUi.Count > 0;
             }
         }
     }
@@ -363,7 +366,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             lock (_pendingLock)
             {
-                _pendingUiAssign.Enqueue(() =>
+                _pendingUpdateUi.Enqueue(() =>
                 {
                     _updateBusy = false;
                     RaiseUpdateUi();
@@ -378,7 +381,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     {
         lock (_pendingLock)
         {
-            _pendingUiAssign.Enqueue(() =>
+            _pendingUpdateUi.Enqueue(() =>
             {
                 _offer = offer;
                 RaiseUpdateUi();
@@ -414,10 +417,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         NotifyWorkQueued();
     }
 
+    private void OnUpdateApplyFailed(string message) => SetError(message);
+
     public void Dispose()
     {
         _leagueFilter.Changed -= OnFilterChanged;
         _updates.OfferChanged -= OnUpdateOfferChanged;
+        _updates.ApplyFailed -= OnUpdateApplyFailed;
     }
 
     private void OnFilterChanged() => Rebuild();
@@ -502,6 +508,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             }
 
             DrainPendingImageAssigns();
+            DrainPendingUpdateUi();
         }
         catch (Exception ex)
         {
@@ -893,6 +900,28 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Homepage image assign failed");
+            }
+        }
+    }
+
+    private void DrainPendingUpdateUi()
+    {
+        while (true)
+        {
+            Action? assign;
+            lock (_pendingLock)
+            {
+                if (_pendingUpdateUi.Count == 0) return;
+                assign = _pendingUpdateUi.Dequeue();
+            }
+
+            try
+            {
+                assign();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Homepage update UI assign failed");
             }
         }
     }

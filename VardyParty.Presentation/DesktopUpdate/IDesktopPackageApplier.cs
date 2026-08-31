@@ -7,5 +7,5 @@ namespace VardyParty.Presentation;
 /// </summary>
 public interface IDesktopPackageApplier
 {
-    Task ApplyAsync(string localPackagePath, DesktopUpdateOffer offer, CancellationToken cancellationToken);
+    Task<DesktopApplyResult> ApplyAsync(string localPackagePath, DesktopUpdateOffer offer, CancellationToken cancellationToken);
 }

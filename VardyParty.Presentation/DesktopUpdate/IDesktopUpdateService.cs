@@ -6,6 +6,8 @@ public interface IDesktopUpdateService
 
     event Action<DesktopUpdateOffer?>? OfferChanged;
 
+    event Action<string>? ApplyFailed;
+
     void Start();
 
     Task InstallAsync(DesktopUpdateOffer offer, CancellationToken cancellationToken);

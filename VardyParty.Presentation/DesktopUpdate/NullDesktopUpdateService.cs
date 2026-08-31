@@ -10,6 +10,12 @@ public sealed class NullDesktopUpdateService : IDesktopUpdateService
         remove { }
     }
 
+    public event Action<string>? ApplyFailed
+    {
+        add { }
+        remove { }
+    }
+
     public void Start()
     {
     }

@@ -5,8 +5,13 @@ namespace VardyParty.Presentation;
 public sealed class AssemblyRunningAppVersion : IRunningAppVersion
 {
     public AssemblyRunningAppVersion()
+        : this(Assembly.GetEntryAssembly() ?? typeof(AssemblyRunningAppVersion).Assembly)
     {
-        var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+    }
+
+    public AssemblyRunningAppVersion(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
         var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion;
         var assemblyVersion = assembly.GetName().Version;

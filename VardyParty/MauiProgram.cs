@@ -266,10 +266,14 @@ public static class MauiProgram
         builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
         builder.Services.AddVardyPartyHomeUi();
 #if WINDOWS
-        builder.Services.AddSingleton<IRunningAppVersion, AssemblyRunningAppVersion>();
-        builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
-        builder.Services.AddSingleton<IDesktopPackageApplier, MsixPackageManagerApplier>();
-        builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+        if (IsWindowsPackaged)
+        {
+            builder.Services.AddSingleton<IRunningAppVersion>(_ =>
+                new AssemblyRunningAppVersion(typeof(MauiProgram).Assembly));
+            builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
+            builder.Services.AddSingleton<IDesktopPackageApplier, MsixPackageManagerApplier>();
+            builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+        }
 #endif
         builder.Services.AddSingleton<HomeHostPage>();
         builder.Services.AddSingleton(DeviceInfo.Current);
