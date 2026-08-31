@@ -81,12 +81,24 @@ public static class DesktopUpdatePolicy
             }
 
             GitHubReleaseAssetSnapshot? asset = null;
+            GitHubReleaseAssetSnapshot? signature = null;
             foreach (var candidate in release.Assets)
             {
                 if (AssetMatches(candidate.Name, platform)
                     && !string.IsNullOrWhiteSpace(candidate.BrowserDownloadUrl))
                 {
                     asset = candidate;
+                    var sigName = candidate.Name + MinisignHashed.SignatureSuffix;
+                    foreach (var maybeSig in release.Assets)
+                    {
+                        if (string.Equals(maybeSig.Name, sigName, StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(maybeSig.BrowserDownloadUrl))
+                        {
+                            signature = maybeSig;
+                            break;
+                        }
+                    }
+
                     break;
                 }
             }
@@ -96,12 +108,18 @@ public static class DesktopUpdatePolicy
                 continue;
             }
 
+            if (RequiresMinisign(platform) && signature is null)
+            {
+                continue;
+            }
+
             var offer = new DesktopUpdateOffer(
                 release.TagName,
                 asset.Name,
                 asset.BrowserDownloadUrl,
                 version,
-                release.PublishedAt.Value);
+                release.PublishedAt.Value,
+                signature?.BrowserDownloadUrl);
             if (best is null || offer.Version.CompareTo(best.Version) > 0)
             {
                 best = offer;
@@ -110,4 +128,7 @@ public static class DesktopUpdatePolicy
 
         return best;
     }
+
+    public static bool RequiresMinisign(DesktopUpdatePlatform platform) =>
+        platform is DesktopUpdatePlatform.LinuxX64 or DesktopUpdatePlatform.LinuxArm64;
 }

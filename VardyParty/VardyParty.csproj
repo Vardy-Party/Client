@@ -231,6 +231,7 @@
         <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0-preview.7.26381.103" />
         <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.3" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
         <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>

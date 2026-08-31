@@ -79,6 +79,28 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
             await CopyCappedAsync(remote, local, cancellationToken).ConfigureAwait(false);
         }
 
+        if (!string.IsNullOrWhiteSpace(offer.SignatureUrl))
+        {
+            if (!DesktopUpdateDownload.IsAllowedDownloadUrl(offer.SignatureUrl))
+            {
+                throw new InvalidOperationException("Update signature URL is not a GitHub HTTPS asset.");
+            }
+
+            var sigPath = dest + MinisignHashed.SignatureSuffix;
+            await using (var remoteSig = await client.GetStreamAsync(offer.SignatureUrl, cancellationToken)
+                .ConfigureAwait(false))
+            await using (var localSig = File.Create(sigPath))
+            {
+                await CopyCappedAsync(remoteSig, localSig, cancellationToken).ConfigureAwait(false);
+            }
+
+            MinisignHashed.VerifyFile(dest, File.ReadAllText(sigPath), MinisignPublicKeys.Linux);
+        }
+        else if (_platform is DesktopUpdatePlatform.LinuxX64 or DesktopUpdatePlatform.LinuxArm64)
+        {
+            throw new InvalidOperationException("Linux snaps must include a minisign signature.");
+        }
+
         _pending.Write(offer.Version);
         try
         {

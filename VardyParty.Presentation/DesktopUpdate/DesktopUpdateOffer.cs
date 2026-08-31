@@ -5,4 +5,5 @@ public sealed record DesktopUpdateOffer(
     string AssetName,
     string DownloadUrl,
     AppReleaseVersion Version,
-    DateTimeOffset PublishedAt);
+    DateTimeOffset PublishedAt,
+    string? SignatureUrl = null);

@@ -239,9 +239,9 @@ public class DesktopUpdateDetectionTests
         // Arrange
         var releases = new[]
         {
-            Stable("2.0.1-b161", LinuxSnap("x64", "2.0.1", "161")),
-            Stable("2.1.0-b160", LinuxSnap("x64", "2.1.0", "160")),
-            Stable("2.3.0-b180", LinuxSnap("arm64", "2.3.0", "180")),
+            Stable("2.0.1-b161", LinuxSnap("x64", "2.0.1", "161"), LinuxSnapSig("x64", "2.0.1", "161")),
+            Stable("2.1.0-b160", LinuxSnap("x64", "2.1.0", "160"), LinuxSnapSig("x64", "2.1.0", "160")),
+            Stable("2.3.0-b180", LinuxSnap("arm64", "2.3.0", "180"), LinuxSnapSig("arm64", "2.3.0", "180")),
         };
 
         // Act
@@ -252,6 +252,7 @@ public class DesktopUpdateDetectionTests
         Assert.NotNull(offer);
         Assert.Equal("2.1.0-b160", offer.Tag);
         Assert.Contains("linux-x64", offer.AssetName, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("https://example/x64.snap.minisig", offer.SignatureUrl);
     }
 
     [Fact]
@@ -291,6 +292,20 @@ public class DesktopUpdateDetectionTests
         Assert.Equal("https://example/2.1.0-b160.msix", offer.DownloadUrl);
     }
 
+    [Fact]
+    public void SelectOffer_LinuxSnapWithoutMinisig_IsNotOffered()
+    {
+        // Arrange
+        var releases = new[] { Stable("2.1.0-b160", LinuxSnap("x64", "2.1.0", "160")) };
+
+        // Act
+        var offer = DesktopUpdatePolicy.SelectOffer(
+            releases, _running, DesktopUpdatePlatform.LinuxX64, _now);
+
+        // Assert
+        Assert.Null(offer);
+    }
+
     private GitHubReleaseSnapshot Stable(
         string tag,
         params GitHubReleaseAssetSnapshot[] assets) =>
@@ -301,4 +316,9 @@ public class DesktopUpdateDetectionTests
 
     private static GitHubReleaseAssetSnapshot LinuxSnap(string arch, string display, string build) =>
         new($"VardyParty-linux-{arch}-v{display}+{build}.snap", $"https://example/{arch}.snap");
+
+    private static GitHubReleaseAssetSnapshot LinuxSnapSig(string arch, string display, string build) =>
+        new(
+            $"VardyParty-linux-{arch}-v{display}+{build}.snap.minisig",
+            $"https://example/{arch}.snap.minisig");
 }

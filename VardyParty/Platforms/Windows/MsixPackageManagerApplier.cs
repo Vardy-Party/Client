@@ -23,6 +23,7 @@ public sealed class MsixPackageManagerApplier : IDesktopPackageApplier
         }
 
         _ = global::Windows.ApplicationModel.Package.Current.Id.FullName;
+        MsixPackageSignature.EnsureDownloadedMatchesInstalled(localPackagePath);
 
         var packageUri = new Uri(Path.GetFullPath(localPackagePath));
         var restart = NativeMethods.RegisterApplicationRestart(null, NativeMethods.RestartFlags.None);

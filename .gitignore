@@ -353,6 +353,10 @@ ASALocalRun/
 # Local History for Visual Studio
 .localhistory/
 
+# Local secrets — never commit (sync to GitHub with scripts/sync-github-secrets-from-env.ps1)
+.env
+.env.local
+
 # BeatPulse healthcheck temp database
 healthchecksdb
 
