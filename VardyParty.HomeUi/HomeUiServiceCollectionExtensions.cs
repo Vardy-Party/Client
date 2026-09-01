@@ -17,6 +17,8 @@ public static class HomeUiServiceCollectionExtensions
     public static IServiceCollection AddVardyPartyHomeUi(this IServiceCollection services)
     {
         services.TryAddSingleton<MenuViewModel>();
+        services.TryAddSingleton<IDesktopUpdateService, NullDesktopUpdateService>();
+        services.TryAddSingleton<IDesktopAppQuitter, MauiDesktopAppQuitter>();
         services.TryAddSingleton<IBadgeImageLoader, SkiaBadgeImageLoader>();
         services.TryAddSingleton<IUiSoundPlayer, NullUiSoundPlayer>();
         services.TryAddSingleton<ISoundPreferencesStore, InMemorySoundPreferencesStore>();

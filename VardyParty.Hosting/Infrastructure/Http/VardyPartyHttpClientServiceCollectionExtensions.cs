@@ -57,6 +57,23 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .AddHttpMessageHandler<M3U8HttpHandler>()
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create(useCookies: true));
 
+        services.AddHttpClient(GitHubDesktopUpdateService.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri("https://api.github.com/");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "VardyParty-Client");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/vnd.github+json");
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+
+        services.AddHttpClient(GitHubDesktopUpdateService.AssetHttpClientName, client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "VardyParty-Client");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/octet-stream");
+                client.Timeout = TimeSpan.FromMinutes(15);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+
         return services;
     }
 }

@@ -317,10 +317,11 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls ./windows-artifacts/VardyParty-windows-v*-b*.msix | head -1)
+          CER_FILE=./windows-artifacts/vardyparty.cer
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --clobber
           fi
         shell: bash
 
@@ -992,11 +993,27 @@ jobs:
             exit 1
           fi
           echo "OK: Linux x64 snap found at $OUTPUT_PATH"
+      - name: Sign Linux x64 snap
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "ERROR: MINISIGN_SECRET_KEY is required to sign Linux snaps"
+            exit 1
+          fi
+          SNAP=$(ls "$GITHUB_WORKSPACE"/VardyParty-linux-x64-v*+*.snap | head -1)
+          dotnet run --project Tools/VardyParty.Minisign/VardyParty.Minisign.csproj -c Release -- sign "$SNAP"
+          test -f "${SNAP}.minisig"
       - name: Upload Linux x64 package
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-package-v${{ steps.snap_version.outputs.full }}
-          path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
+          path: |
+            ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
+            ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap.minisig
+            ${{ github.workspace }}/packaging/minisign.pub
           retention-days: 30
       - name: Publish Linux x64 package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
@@ -1007,10 +1024,12 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-x64-v*+*.snap | head -1)
+          SIG_FILE="${PACKAGE_FILE}.minisig"
+          PUB_FILE="$GITHUB_WORKSPACE/packaging/minisign.pub"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           fi
         shell: bash
 
@@ -1218,11 +1237,27 @@ jobs:
             exit 1
           fi
           echo "OK: Linux ARM64 snap found at $OUTPUT_PATH"
+      - name: Sign Linux ARM64 snap
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "ERROR: MINISIGN_SECRET_KEY is required to sign Linux snaps"
+            exit 1
+          fi
+          SNAP=$(ls "$GITHUB_WORKSPACE"/VardyParty-linux-arm64-v*+*.snap | head -1)
+          dotnet run --project Tools/VardyParty.Minisign/VardyParty.Minisign.csproj -c Release -- sign "$SNAP"
+          test -f "${SNAP}.minisig"
       - name: Upload Linux ARM64 package
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-package-v${{ steps.snap_version.outputs.full }}
-          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
+          path: |
+            ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
+            ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap.minisig
+            ${{ github.workspace }}/packaging/minisign.pub
           retention-days: 30
       - name: Publish Linux ARM64 package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
@@ -1233,10 +1268,12 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-arm64-v*+*.snap | head -1)
+          SIG_FILE="${PACKAGE_FILE}.minisig"
+          PUB_FILE="$GITHUB_WORKSPACE/packaging/minisign.pub"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           fi
         shell: bash
 

@@ -28,6 +28,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
+    private readonly Queue<Action> _pendingUpdateUi = new();
     private readonly Queue<StagedStrip> _stagedStrips = new();
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
@@ -43,6 +44,9 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private string? _pendingError;
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
+    private readonly IDesktopUpdateService _updates;
+    private DesktopUpdateOffer? _offer;
+    private bool _updateBusy;
 
     /// <summary>
     /// Header subtitle until the first catalog WITH API data lands (the games
@@ -77,7 +81,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MatchEventNotificationPolicy notifications,
         MatchEventBus events,
         SelectionState selection,
-        ILogger<HomeViewModel> logger)
+        ILogger<HomeViewModel> logger,
+        IDesktopUpdateService updates)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -88,9 +93,13 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
+        _updates.OfferChanged += OnUpdateOfferChanged;
+        _updates.ApplyFailed += OnUpdateApplyFailed;
+        _updates.Start();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -124,7 +133,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                     || _pendingError != null
                     || _pendingClearResolving
                     || _pendingResetScores
-                    || _pendingUiAssign.Count > 0;
+                    || _pendingUiAssign.Count > 0
+                    || _pendingUpdateUi.Count > 0;
             }
         }
     }
@@ -318,6 +328,77 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         SignOutRequested?.Invoke();
     }
 
+    public bool HasUpdateAvailable => _offer is not null;
+
+    public bool ShowUpdateButton => HasUpdateAvailable;
+
+    public bool UpdateIdle => !_updateBusy;
+
+    public string UpdateButtonLabel =>
+        _updateBusy ? "Updating…" : "Update";
+
+    public void RequestUpdate()
+    {
+        var offer = _offer;
+        if (offer is null || _updateBusy)
+        {
+            return;
+        }
+
+        _sounds.Play(UiSound.Select);
+        _updateBusy = true;
+        RaiseUpdateUi();
+        _ = InstallUpdateAsync(offer);
+    }
+
+    private async Task InstallUpdateAsync(DesktopUpdateOffer offer)
+    {
+        try
+        {
+            await _updates.InstallAsync(offer, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Desktop update install failed");
+            SetError("Could not apply the update.");
+        }
+        finally
+        {
+            lock (_pendingLock)
+            {
+                _pendingUpdateUi.Enqueue(() =>
+                {
+                    _updateBusy = false;
+                    RaiseUpdateUi();
+                });
+            }
+
+            NotifyWorkQueued();
+        }
+    }
+
+    private void OnUpdateOfferChanged(DesktopUpdateOffer? offer)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                _offer = offer;
+                RaiseUpdateUi();
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
+    private void RaiseUpdateUi()
+    {
+        Raise(nameof(HasUpdateAvailable));
+        Raise(nameof(ShowUpdateButton));
+        Raise(nameof(UpdateIdle));
+        Raise(nameof(UpdateButtonLabel));
+    }
+
     /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
     public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
 
@@ -336,7 +417,14 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         NotifyWorkQueued();
     }
 
-    public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
+    private void OnUpdateApplyFailed(string message) => SetError(message);
+
+    public void Dispose()
+    {
+        _leagueFilter.Changed -= OnFilterChanged;
+        _updates.OfferChanged -= OnUpdateOfferChanged;
+        _updates.ApplyFailed -= OnUpdateApplyFailed;
+    }
 
     private void OnFilterChanged() => Rebuild();
 
@@ -420,6 +508,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             }
 
             DrainPendingImageAssigns();
+            DrainPendingUpdateUi();
         }
         catch (Exception ex)
         {
@@ -811,6 +900,28 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Homepage image assign failed");
+            }
+        }
+    }
+
+    private void DrainPendingUpdateUi()
+    {
+        while (true)
+        {
+            Action? assign;
+            lock (_pendingLock)
+            {
+                if (_pendingUpdateUi.Count == 0) return;
+                assign = _pendingUpdateUi.Dequeue();
+            }
+
+            try
+            {
+                assign();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Homepage update UI assign failed");
             }
         }
     }

@@ -61,7 +61,8 @@ public sealed class HomeViewModelTests : IDisposable
             _notifications,
             _bus,
             _selection,
-            NullLogger<HomeViewModel>.Instance);
+            NullLogger<HomeViewModel>.Instance,
+            new NullDesktopUpdateService());
     }
 
     public void Dispose() => _sut.Dispose();
