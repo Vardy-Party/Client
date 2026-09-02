@@ -159,11 +159,7 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
             return;
         }
 
-        var snapshots = new List<GitHubReleaseSnapshot>();
-        foreach (var item in doc.RootElement.EnumerateArray())
-        {
-            snapshots.Add(ReadRelease(item));
-        }
+        var snapshots = GitHubReleaseFeed.ReadArray(doc.RootElement);
         var offer = DesktopUpdatePolicy.SelectOffer(
             snapshots,
             _running.Current,
@@ -224,32 +220,4 @@ public sealed class GitHubDesktopUpdateService : IDesktopUpdateService, IDisposa
         }
     }
 
-    private static GitHubReleaseSnapshot ReadRelease(JsonElement item)
-    {
-        var tag = item.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() ?? "" : "";
-        var draft = item.TryGetProperty("draft", out var draftEl) && draftEl.GetBoolean();
-        var pre = item.TryGetProperty("prerelease", out var preEl) && preEl.GetBoolean();
-        DateTimeOffset? published = null;
-        if (item.TryGetProperty("published_at", out var publishedEl)
-            && publishedEl.ValueKind == JsonValueKind.String
-            && DateTimeOffset.TryParse(publishedEl.GetString(), out var parsed))
-        {
-            published = parsed;
-        }
-
-        var assets = new List<GitHubReleaseAssetSnapshot>();
-        if (item.TryGetProperty("assets", out var assetsEl) && assetsEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var asset in assetsEl.EnumerateArray())
-            {
-                var name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                var url = asset.TryGetProperty("browser_download_url", out var urlEl)
-                    ? urlEl.GetString() ?? ""
-                    : "";
-                assets.Add(new GitHubReleaseAssetSnapshot(name, url));
-            }
-        }
-
-        return new GitHubReleaseSnapshot(tag, draft, pre, published, assets);
-    }
 }
