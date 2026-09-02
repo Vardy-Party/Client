@@ -21,6 +21,7 @@ public class DesktopUpdateDetectionTests
     [InlineData("v2.1.0-b160", 2, 1, 0, 160)]
     [InlineData("V2.1.0-b160", 2, 1, 0, 160)]
     [InlineData("2.0.0-b159", 2, 0, 0, 159)]
+    [InlineData("2.1.2-b164", 2, 1, 2, 164)]
     public void TryParseTag_GitHubReleaseTags(string tag, int major, int minor, int patch, int build)
     {
         // Arrange / Act
@@ -69,6 +70,10 @@ public class DesktopUpdateDetectionTests
     [InlineData(true, "vardyparty-windows-v2.1.0-b160.MSIX", DesktopUpdatePlatform.Windows)]
     [InlineData(true, "VardyParty-linux-x64-v2.1.0+160.snap", DesktopUpdatePlatform.LinuxX64)]
     [InlineData(true, "VardyParty-linux-arm64-v2.1.0+160.snap", DesktopUpdatePlatform.LinuxArm64)]
+    [InlineData(true, "VardyParty-linux-x64-v2.1.2+164.snap", DesktopUpdatePlatform.LinuxX64)]
+    [InlineData(true, "VardyParty-linux-arm64-v2.1.2+164.snap", DesktopUpdatePlatform.LinuxArm64)]
+    [InlineData(false, "VardyParty-linux-x64-v2.1.2+164.snap.minisig", DesktopUpdatePlatform.LinuxX64)]
+    [InlineData(false, "VardyParty-linux-arm64-v2.1.2+164.snap.minisig", DesktopUpdatePlatform.LinuxArm64)]
     [InlineData(false, "VardyParty-linux-x64-v2.1.0+160.snap", DesktopUpdatePlatform.Windows)]
     [InlineData(false, "VardyParty-linux-arm64-v2.1.0+160.snap", DesktopUpdatePlatform.LinuxX64)]
     [InlineData(false, "VardyParty-linux-x64-v2.1.0+160.snap", DesktopUpdatePlatform.LinuxArm64)]
