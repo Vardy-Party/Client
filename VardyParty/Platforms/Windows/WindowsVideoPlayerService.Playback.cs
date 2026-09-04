@@ -143,8 +143,73 @@ namespace VardyParty.Platforms.Windows
 
             private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
             {
+                // Intentional attach (switch / start) — reset soft live recoveries.
+                liveHlsRecoveries = 0;
                 SyncHealthyStreamCount();
                 ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
+            }
+
+            /// <summary>
+            /// Linux LibVLC reconnects; Android seeks to live edge on BehindLiveWindow.
+            /// WinUI has no BLWE API — rebuild AdaptiveMediaSource for the same URL instead of
+            /// raising Error (which removes the stream from the pool).
+            /// </summary>
+            private bool TryRecoverLiveHlsFailure(MediaPlayerFailedEventArgs? args)
+            {
+                if (!IsRecoverableMediaFailure(args))
+                    return false;
+
+                if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(liveHlsRecoveries, currentPlaybackUrl))
+                {
+                    _host._logger.LogWarning(
+                        "Live HLS recoveries exhausted ({Count}) — escalating MediaFailed",
+                        liveHlsRecoveries);
+                    return false;
+                }
+
+                var url = currentPlaybackUrl;
+                liveHlsRecoveries++;
+                var errMsg = args?.ErrorMessage ?? "unknown";
+                _host._logger.LogWarning(
+                    "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
+                    liveHlsRecoveries,
+                    PlaybackPolicy.MaxLiveHlsRecoveries,
+                    errMsg);
+
+                try
+                {
+                    engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, true));
+                }
+                catch (Exception ex)
+                {
+                    _host._logger.LogDebug(ex, "Buffering raise during live recover failed");
+                }
+
+                // Do not BeginAttach — keep session generation / pool entry; only rebuild the OS source.
+                _ = StartPlaybackAsync(url);
+                return true;
+            }
+
+            private static bool IsRecoverableMediaFailure(MediaPlayerFailedEventArgs? args)
+            {
+                if (args == null)
+                {
+                    return PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+                        isNetworkError: true,
+                        isDecodingError: false,
+                        isUnknownError: false,
+                        isSourceNotSupported: false,
+                        isAborted: false);
+                }
+
+                var detail = $"{args.ErrorMessage} {args.ExtendedErrorCode?.Message}";
+                return PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+                    isNetworkError: args.Error == MediaPlayerError.NetworkError,
+                    isDecodingError: args.Error == MediaPlayerError.DecodingError,
+                    isUnknownError: args.Error == MediaPlayerError.Unknown,
+                    isSourceNotSupported: args.Error == MediaPlayerError.SourceNotSupported,
+                    isAborted: args.Error == MediaPlayerError.Aborted,
+                    detailMessage: detail);
             }
 
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
@@ -457,6 +522,8 @@ namespace VardyParty.Platforms.Windows
                             }
 
                             currentPlaybackUrl = url;
+                            // Successful attach (including after live reattach) — allow a fresh recovery budget.
+                            liveHlsRecoveries = 0;
                             engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
                             // Ensure the grid is visible and hit testable

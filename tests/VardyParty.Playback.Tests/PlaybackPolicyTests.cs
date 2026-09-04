@@ -292,4 +292,84 @@ public class PlaybackPolicyTests
         Assert.True(skipCountdown);
         Assert.False(keepPlayable);
     }
+
+    [Theory]
+    [InlineData(0, "http://oak-lane.m3u8", true)]
+    [InlineData(4, "http://oak-lane.m3u8", true)]
+    [InlineData(5, "http://oak-lane.m3u8", false)]
+    [InlineData(0, null, false)]
+    [InlineData(0, "", false)]
+    [InlineData(0, "  ", false)]
+    public void ShouldAttemptLiveHlsRecovery_CapsBudgetAndRequiresUrl(
+        int recoveriesAlreadyAttempted,
+        string? currentPlaybackUrl,
+        bool expected)
+    {
+        // Arrange
+
+        // Act
+        var shouldAttempt = PlaybackPolicy.ShouldAttemptLiveHlsRecovery(
+            recoveriesAlreadyAttempted,
+            currentPlaybackUrl);
+
+        // Assert
+        Assert.Equal(expected, shouldAttempt);
+        Assert.Equal(5, PlaybackPolicy.MaxLiveHlsRecoveries);
+    }
+
+    [Theory]
+    [InlineData(1002, null, null, true)]
+    [InlineData(null, "BehindLiveWindowException", null, true)]
+    [InlineData(null, "source error", "androidx.media3.exoplayer.source.BehindLiveWindowException", true)]
+    [InlineData(2001, "Decoder init failed", null, false)]
+    [InlineData(null, "network timeout", null, false)]
+    public void IsBehindLiveWindowFailure_MatchesExoPlayerSignals(
+        int? errorCode,
+        string? message,
+        string? causeSummary,
+        bool expected)
+    {
+        // Arrange
+
+        // Act
+        var isBehind = PlaybackPolicy.IsBehindLiveWindowFailure(errorCode, message, causeSummary);
+
+        // Assert
+        Assert.Equal(expected, isBehind);
+        Assert.Equal(1002, PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow);
+    }
+
+    [Theory]
+    [InlineData(true, false, false, false, false, null, true)]
+    [InlineData(false, true, false, false, false, null, true)]
+    [InlineData(false, false, true, false, false, null, true)]
+    [InlineData(false, false, false, true, false, null, false)]
+    [InlineData(false, false, false, false, true, null, false)]
+    [InlineData(true, false, false, false, false, "HTTP 403", false)]
+    [InlineData(true, false, false, false, false, "401 unauthorized", false)]
+    [InlineData(false, false, true, false, false, "format not supported", false)]
+    public void IsRecoverableLiveHlsMediaFailure_MatchesWindowsSignals(
+        bool network,
+        bool decoding,
+        bool unknown,
+        bool unsupported,
+        bool aborted,
+        string? detail,
+        bool expected)
+    {
+        // Arrange
+
+        // Act
+        var recoverable = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            network,
+            decoding,
+            unknown,
+            unsupported,
+            aborted,
+            detail);
+
+        // Assert
+        Assert.Equal(expected, recoverable);
+        Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
+    }
 }

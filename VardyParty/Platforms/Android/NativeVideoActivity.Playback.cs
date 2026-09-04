@@ -154,6 +154,86 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }
 
+        /// <summary>
+        /// Media3 reports <c>ERROR_CODE_BEHIND_LIVE_WINDOW</c> when live HLS falls behind the
+        /// sliding window (buffering / TS glitches). Linux LibVLC reconnects; ExoPlayer needs an
+        /// explicit seek-to-live-edge + prepare. Returns true when recovery was attempted.
+        /// </summary>
+        private bool TryRecoverBehindLiveWindow(AndroidX.Media3.Common.PlaybackException error)
+        {
+            if (!IsBehindLiveWindowError(error))
+                return false;
+
+            var generation = CurrentAttachGeneration;
+            if (_behindLiveWindowRecoveryGeneration != generation)
+            {
+                _behindLiveWindowRecoveryGeneration = generation;
+                _behindLiveWindowRecoveries = 0;
+            }
+
+            if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(_behindLiveWindowRecoveries, _m3u8Url))
+            {
+                _logger?.LogWarning(
+                    "[NativeVideoActivity] Behind live window recoveries exhausted ({Count}) — escalating",
+                    _behindLiveWindowRecoveries);
+                return false;
+            }
+
+            if (_player == null)
+                return false;
+
+            _behindLiveWindowRecoveries++;
+            _logger?.LogWarning(
+                "[NativeVideoActivity] Behind live window — seeking to live edge (attempt {Attempt}/{Max})",
+                _behindLiveWindowRecoveries,
+                PlaybackPolicy.MaxLiveHlsRecoveries);
+
+            try
+            {
+                _isPreparing = true;
+                _isBuffering = true;
+                _playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
+                RefreshWaitIndicator();
+                _engine.Raise(MediaEngineEvent.Buffering(generation, true));
+
+                _player.SeekToDefaultPosition();
+                _player.Prepare();
+                _player.PlayWhenReady = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "[NativeVideoActivity] Behind live window recovery failed");
+                return false;
+            }
+        }
+
+        private static bool IsBehindLiveWindowError(AndroidX.Media3.Common.PlaybackException error)
+        {
+            string? causeSummary = null;
+            try
+            {
+                var parts = new System.Collections.Generic.List<string>();
+                for (var cause = error.Cause; cause != null; cause = cause.Cause)
+                {
+                    var name = cause.Class?.Name ?? cause.GetType().FullName;
+                    if (!string.IsNullOrEmpty(name))
+                        parts.Add(name);
+                    if (!string.IsNullOrEmpty(cause.Message))
+                        parts.Add(cause.Message);
+                }
+
+                if (parts.Count > 0)
+                    causeSummary = string.Join(' ', parts);
+            }
+            catch
+            {
+                // Ignore cause walk failures — ErrorCode / message checks remain.
+            }
+
+            return PlaybackPolicy.IsBehindLiveWindowFailure(error.ErrorCode, error.Message, causeSummary);
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
