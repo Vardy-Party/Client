@@ -138,6 +138,9 @@ namespace VardyParty.Platforms.Android
         private IExoPlayer? _player;
         private InternalPlayerListener? _playerListener;
         private PlayerView? _playerView;
+        /// <summary>Live HLS fell behind the window — recover by seeking to live edge (capped per attach).</summary>
+        private int _behindLiveWindowRecoveries;
+        private long _behindLiveWindowRecoveryGeneration;
         private TextView? _titleView;
         private TextView? _statusView;
         private TextView? _indexView;
@@ -234,8 +237,19 @@ namespace VardyParty.Platforms.Android
             _currentHomeTeam = Intent?.GetStringExtra("HOME_TEAM") ?? string.Empty;
             _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;
 
-            // Basic UI: PlayerView with overlay
-            _player = new ExoPlayerBuilder(this).Build();
+            // Basic UI: PlayerView with overlay.
+            // Larger buffers reduce BehindLiveWindow on flaky live HLS (Linux LibVLC uses network-caching + reconnect).
+            // Durations live in PlaybackPolicy next to DesiredLiveOffsetSeconds for cross-OS parity tests.
+            var loadControl = new DefaultLoadControl.Builder()
+                .SetBufferDurationsMs(
+                    PlaybackPolicy.AndroidMinBufferMs,
+                    PlaybackPolicy.AndroidMaxBufferMs,
+                    PlaybackPolicy.AndroidBufferForPlaybackMs,
+                    PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs)!
+                .Build()!;
+            _player = new ExoPlayerBuilder(this)
+                .SetLoadControl(loadControl)!
+                .Build()!;
             _playerView = new PlayerView(this) { Player = _player };
             _playerListener = new InternalPlayerListener(this);
             // disable built-in controller (remove play/prev/next/seek UI)
@@ -1265,6 +1279,9 @@ namespace VardyParty.Platforms.Android
                 {
                     _activity._isBuffering = false;
                     _activity._isPreparing = false;
+                    // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
+                    if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
+                        _activity._behindLiveWindowRecoveries = 0;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
@@ -1376,6 +1393,9 @@ namespace VardyParty.Platforms.Android
                 if (error == null) return;
                 try
                 {
+                    if (_activity.TryRecoverBehindLiveWindow(error))
+                        return;
+
                     var message = error.Message ?? "Playback error";
                     _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
                     _activity._isBuffering = false;

@@ -91,6 +91,110 @@ public static class PlaybackPolicy
         => consecutiveFailures >= MaxConsecutiveDownloadFailures;
 
     /// <summary>
+    /// Soft live-HLS recoveries (Android BehindLiveWindow seek, Windows AdaptiveMediaSource reattach)
+    /// before escalating to <see cref="MediaEngineEventKind.Error"/> / pool remove.
+    /// Linux LibVLC uses --http-reconnect instead of this budget.
+    /// </summary>
+    public const int MaxLiveHlsRecoveries = 5;
+
+    /// <summary>
+    /// WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c> backoff from the live edge (seconds).
+    /// Larger = more tolerant of brief rebuffers (pairs with Android LoadControl buffers).
+    /// </summary>
+    public const int DesiredLiveOffsetSeconds = 25;
+
+    /// <summary>
+    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms). Pairs with
+    /// <see cref="DesiredLiveOffsetSeconds"/> / Linux <c>--network-caching</c>.
+    /// </summary>
+    public const int AndroidMinBufferMs = 30_000;
+
+    /// <summary>Android Media3 <c>DefaultLoadControl</c> max buffer (ms).</summary>
+    public const int AndroidMaxBufferMs = 60_000;
+
+    /// <summary>Android Media3 buffer required before first play (ms).</summary>
+    public const int AndroidBufferForPlaybackMs = 2_500;
+
+    /// <summary>Android Media3 buffer required after a rebuffer (ms).</summary>
+    public const int AndroidBufferForPlaybackAfterRebufferMs = 8_000;
+
+    /// <summary>
+    /// Media3 <c>PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW</c> (1002).
+    /// Hosts pass <c>error.ErrorCode</c>; keep the numeric here so Core tests stay OS-free.
+    /// </summary>
+    public const int ExoPlayerErrorCodeBehindLiveWindow = 1002;
+
+    /// <summary>
+    /// Whether the host may soft-recover (seek/reattach) instead of raising Error.
+    /// </summary>
+    public static bool ShouldAttemptLiveHlsRecovery(int recoveriesAlreadyAttempted, string? currentPlaybackUrl)
+        => recoveriesAlreadyAttempted < MaxLiveHlsRecoveries
+           && !string.IsNullOrWhiteSpace(currentPlaybackUrl);
+
+    /// <summary>
+    /// Android ExoPlayer fell behind the HLS live window — recoverable by seek-to-live-edge.
+    /// </summary>
+    public static bool IsBehindLiveWindowFailure(int? errorCode, string? message, string? causeSummary = null)
+    {
+        if (errorCode == ExoPlayerErrorCodeBehindLiveWindow)
+            return true;
+
+        if (ContainsLiveWindowMarker(message))
+            return true;
+
+        return ContainsLiveWindowMarker(causeSummary);
+    }
+
+    /// <summary>
+    /// Windows MediaPlayer failure classification for live HLS soft-recover.
+    /// Network-class only — mirrors Android’s BehindLiveWindow-only gate.
+    /// Decoding / Unknown / unsupported / aborted / auth must escalate to Error
+    /// so Ready-after-reattach cannot pin the user on a permanently dead stream.
+    /// </summary>
+    public static bool IsRecoverableLiveHlsMediaFailure(
+        bool isNetworkError,
+        bool isDecodingError,
+        bool isUnknownError,
+        bool isSourceNotSupported,
+        bool isAborted,
+        string? detailMessage = null)
+    {
+        // Decoding/Unknown are accepted as parameters so hosts stay typed and tests
+        // can lock “not recoverable” without inventing a second API surface.
+        _ = isDecodingError;
+        _ = isUnknownError;
+
+        if (!isNetworkError)
+            return false;
+
+        if (isSourceNotSupported || isAborted)
+            return false;
+
+        if (IsPermanentLiveHlsAuthOrUnsupported(detailMessage))
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Shared reject list: auth / explicit unsupported signals in OS error text.
+    /// </summary>
+    public static bool IsPermanentLiveHlsAuthOrUnsupported(string? detailMessage)
+    {
+        if (string.IsNullOrWhiteSpace(detailMessage))
+            return false;
+
+        var detail = detailMessage.ToLowerInvariant();
+        return detail.Contains("403")
+               || detail.Contains("401")
+               || detail.Contains("not supported", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsLiveWindowMarker(string? text)
+        => !string.IsNullOrEmpty(text)
+           && text.Contains("BehindLiveWindow", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// ExoPlayer raises OnPlayerErrorChanged(null) to clear a previous error. Hosts must not
     /// translate that into <see cref="MediaEngineEventKind.Error"/> (legacy Android auto-switched).
     /// </summary>

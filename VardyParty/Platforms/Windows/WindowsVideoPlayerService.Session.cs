@@ -119,6 +119,10 @@ namespace VardyParty.Platforms.Windows
             private HttpClientWin? activePlaybackClient;
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
             private bool isClosingPlayer;
+            /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
+            private int liveHlsRecoveries;
+            /// <summary>True while a soft-recover <c>StartPlaybackAsync</c> is in flight — coalesce nested MediaFailed.</summary>
+            private bool liveHlsSoftRecoverInFlight;
 
             public PlayerSession(
                 WindowsVideoPlayerService host,
@@ -550,6 +554,9 @@ namespace VardyParty.Platforms.Windows
                         try
                         {
                             if (cleanupInvoked) return;
+
+                            if (TryRecoverLiveHlsFailure(e))
+                                return;
 
                             var errMsg = e?.ErrorMessage ?? "Unknown media error";
                             var ext = string.Empty;

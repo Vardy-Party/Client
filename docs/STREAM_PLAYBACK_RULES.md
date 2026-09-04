@@ -90,7 +90,9 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 | **Prefetch next M3U8** | `PrefetchUpcomingStreamUrl` | Index change rebinds | Keep |
 | **User Next / Prev** | Session `UserNext` / `UserPrevious` | Rebind URL; **must not** mark bad | Shared policy |
 | **Hard playback error** | Session `Error` → remove + advance or revert | `engine.Raise(Error)` | One policy |
+| **Soft live-HLS recover** | `PlaybackPolicy.MaxLiveHlsRecoveries` (+ BLWE / network gates) | Android: seek-to-live on BLWE; Windows: AdaptiveMediaSource reattach on **NetworkError only**; Linux: `--http-reconnect` (no budget) | Host-local; no session Error until budget exhausted |
 | **Soft decline (buffer/bitrate)** | `StreamMetricsWindow` via session Metrics/Buffering | Android 30s metrics; Windows throttled PositionChanged; Linux 30s timer | Shared window |
+| **Brief rebuffer tolerance** | `DesiredLiveOffsetSeconds` + Android LoadControl ms constants | Windows DesiredLiveOffset; Android DefaultLoadControl; Linux `--network-caching` | Named in `PlaybackPolicy` |
 | **Failed switch** | Restore last-good once | Hosts execute `PlaybackCommand` | Locked by `PlaybackUnificationRulesTests` |
 | **Failed start (never established)** | Remove + advance if pool remains | Hosts execute `PlaybackCommand` | Shared |
 | **Stale failure during switch** | Ignore if `generation != AttachGeneration` | Hosts compare session generation | Shared |
@@ -131,9 +133,30 @@ Android duplicates this in `NativeVideoActivity.CanSwitchTo`. Windows uses local
 
 ExoPlayer facts go through `DelegatingMediaEngine` → `PlaybackSessionController`. The activity executes `PlaybackCommand` (pool remove, attach, buffering report). Null `OnPlayerErrorChanged` is ignored (`ShouldIgnoreClearedEngineError`). Playback ended does not auto-next.
 
+**Soft live-HLS recover (host-local, before Error):** On `BehindLiveWindow` (`PlaybackPolicy.IsBehindLiveWindowFailure` / Media3 error code 1002), the host seeks to the live edge and `Prepare`s without raising `MediaEngineEvent.Error`. Attempts are capped by `PlaybackPolicy.MaxLiveHlsRecoveries` (shared with Windows). Budget resets on intentional attach generation change and on `STATE_READY`. After the budget is exhausted, the host escalates via `MediaEngineEvent.Error` → pool remove / advance (same session path as any hard failure).
+
+**Brief rebuffer tolerance:** `DefaultLoadControl` buffer durations come from `PlaybackPolicy` (`AndroidMinBufferMs` / `AndroidMaxBufferMs` / `AndroidBufferForPlaybackMs` / `AndroidBufferForPlaybackAfterRebufferMs`), paired with Windows `DesiredLiveOffsetSeconds` and Linux `--network-caching`.
+
 ### 5. Windows recovery (`WindowsVideoPlayerService`)
 
-WinUI `MediaFailed` / download failures / buffering raise engine facts. Stale work is ignored when `generation != session.AttachGeneration`. Consecutive AdaptiveMediaSource download failures call `NotifyDownloadFailure` (threshold in Core). Successful downloads call `NotifyDownloadSuccess`. There is no local `RecoverFromFailed*`.
+WinUI `MediaFailed` / download failures / buffering raise engine facts. Stale work is ignored when `generation != session.AttachGeneration`. Consecutive AdaptiveMediaSource download failures call `NotifyDownloadFailure` (threshold in Core). Successful downloads call `NotifyDownloadSuccess`.
+
+**Soft live-HLS recover (host-local, before Error):** WinUI has no BehindLiveWindow API. For **network-class** `MediaFailed` only (`PlaybackPolicy.IsRecoverableLiveHlsMediaFailure` — Decoding / Unknown / unsupported / aborted / auth escalate immediately), the host rebuilds `AdaptiveMediaSource` for the same URL via `StartPlaybackAsync` **without** `BeginAttach` (session generation and pool entry stay). Attempts are capped by `PlaybackPolicy.MaxLiveHlsRecoveries`. The counter resets only on intentional `AttachViaSession` (switch/start) — soft-reattach Ready does **not** zero it (Ready fires as soon as the item is assigned). Nested `MediaFailed` while a soft-reattach is in flight is coalesced (in-flight guard). After the budget is exhausted, escalate with `MediaEngineEvent.Error` → pool remove / advance.
+
+**Live edge backoff:** `AdaptiveMediaSource.DesiredLiveOffset` uses `PlaybackPolicy.DesiredLiveOffsetSeconds`.
+
+Linux LibVLC uses `--http-reconnect` instead of this shared soft-recover budget; classification and Error escalation for hard failures still go through the same session controller.
+
+```mermaid
+flowchart TD
+  fail[OS MediaFailed / PlayerError] --> classify{PlaybackPolicy gate}
+  classify -->|Android BLWE / Windows Network| budget{recoveries less than MaxLiveHlsRecoveries?}
+  classify -->|Decoding Unknown auth unsupported| err[MediaEngineEvent.Error]
+  budget -->|yes| soft[Host soft-recover: seek or reattach]
+  budget -->|no| err
+  soft -->|still flaky| fail
+  err --> session[PlaybackSessionController remove / advance / revert]
+```
 
 **Decline window** (`StreamMetricsWindow`, 60s buffering/bitrate window; errors over 300s):
 

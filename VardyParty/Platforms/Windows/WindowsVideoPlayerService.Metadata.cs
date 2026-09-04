@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
+using VardyParty.Playback;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
@@ -211,6 +212,7 @@ namespace VardyParty.Platforms.Windows
             var adaptiveResult = await AdaptiveMediaSource.CreateFromUriAsync(manifestUri, client);
             if (adaptiveResult.Status == AdaptiveMediaSourceCreationStatus.Success && adaptiveResult.MediaSource != null)
             {
+                ConfigureAdaptiveLiveTolerance(adaptiveResult.MediaSource);
                 return adaptiveResult;
             }
 
@@ -223,15 +225,46 @@ namespace VardyParty.Platforms.Windows
                 var response = await client.GetAsync(manifestUri);
                 response.EnsureSuccessStatusCode();
                 var manifestStream = await response.Content.ReadAsInputStreamAsync();
-                return await AdaptiveMediaSource.CreateFromStreamAsync(
+                var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
                     manifestStream,
                     manifestUri,
                     "application/vnd.apple.mpegurl");
+                if (streamResult.Status == AdaptiveMediaSourceCreationStatus.Success && streamResult.MediaSource != null)
+                    ConfigureAdaptiveLiveTolerance(streamResult.MediaSource);
+                return streamResult;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Manual manifest download failed");
                 return adaptiveResult;
+            }
+        }
+
+        /// <summary>
+        /// Back off from the live edge so brief rebuffers are less likely to stall/fail
+        /// (Android: larger LoadControl; Linux: --network-caching).
+        /// </summary>
+        private static void ConfigureAdaptiveLiveTolerance(AdaptiveMediaSource ams)
+        {
+            try
+            {
+                var desired = TimeSpan.FromSeconds(PlaybackPolicy.DesiredLiveOffsetSeconds);
+                try
+                {
+                    var min = ams.MinLiveOffset;
+                    if (min is TimeSpan minOffset && minOffset > TimeSpan.Zero && desired < minOffset)
+                        desired = minOffset;
+                }
+                catch
+                {
+                    // MinLiveOffset may throw if not applicable yet.
+                }
+
+                ams.DesiredLiveOffset = desired;
+            }
+            catch
+            {
+                // DesiredLiveOffset is best-effort; some manifests reject the value.
             }
         }
     }

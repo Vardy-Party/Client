@@ -188,6 +188,116 @@ public class PlaybackUnificationRulesTests
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
     }
 
+    [Fact]
+    public void LiveHlsSoftRecover_AndroidBehindLiveWindow_AndWindowsNetwork_ShareBudget()
+    {
+        // Arrange — Android ExoPlayer BLWE + Windows MediaFailed(Network) before raising Error.
+        const string playingUrl = "http://oak-lane-live.m3u8";
+
+        // Act
+        var androidSignal = PlaybackPolicy.IsBehindLiveWindowFailure(
+            PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow,
+            message: "Source error",
+            causeSummary: null);
+        var androidMessageFallback = PlaybackPolicy.IsBehindLiveWindowFailure(
+            errorCode: null,
+            message: "Caused by: BehindLiveWindowException",
+            causeSummary: null);
+        var windowsNetwork = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: true,
+            isDecodingError: false,
+            isUnknownError: false,
+            isSourceNotSupported: false,
+            isAborted: false);
+        var canRecover = PlaybackPolicy.ShouldAttemptLiveHlsRecovery(0, playingUrl);
+
+        // Assert
+        Assert.Equal(5, PlaybackPolicy.MaxLiveHlsRecoveries);
+        Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
+        Assert.Equal(30_000, PlaybackPolicy.AndroidMinBufferMs);
+        Assert.Equal(60_000, PlaybackPolicy.AndroidMaxBufferMs);
+        Assert.Equal(2_500, PlaybackPolicy.AndroidBufferForPlaybackMs);
+        Assert.Equal(8_000, PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs);
+        Assert.Equal(1002, PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow);
+        Assert.True(androidSignal);
+        Assert.True(androidMessageFallback);
+        Assert.True(windowsNetwork);
+        Assert.True(canRecover);
+    }
+
+    [Fact]
+    public void LiveHlsSoftRecover_ExhaustedBudget_BothOsEscalateToError()
+    {
+        // Arrange
+        const string playingUrl = "http://oak-lane-live.m3u8";
+
+        // Act
+        var stillUnderBudget = PlaybackPolicy.ShouldAttemptLiveHlsRecovery(
+            PlaybackPolicy.MaxLiveHlsRecoveries - 1,
+            playingUrl);
+        var exhausted = PlaybackPolicy.ShouldAttemptLiveHlsRecovery(
+            PlaybackPolicy.MaxLiveHlsRecoveries,
+            playingUrl);
+        var noUrl = PlaybackPolicy.ShouldAttemptLiveHlsRecovery(0, null);
+
+        // Assert — hosts then raise MediaEngineEvent.Error → pool remove (covered elsewhere).
+        Assert.True(stillUnderBudget);
+        Assert.False(exhausted);
+        Assert.False(noUrl);
+    }
+
+    [Fact]
+    public void LiveHlsSoftRecover_PermanentFailures_DoNotRecover_OnEitherOs()
+    {
+        // Arrange
+        // Decoding/Unknown must escalate (network-only soft-recover, mirrors Android BLWE-only).
+
+        // Act
+        var windowsUnsupported = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: false,
+            isDecodingError: false,
+            isUnknownError: false,
+            isSourceNotSupported: true,
+            isAborted: false);
+        var windowsAborted = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: true,
+            isDecodingError: false,
+            isUnknownError: false,
+            isSourceNotSupported: false,
+            isAborted: true);
+        var windowsAuth = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: true,
+            isDecodingError: false,
+            isUnknownError: false,
+            isSourceNotSupported: false,
+            isAborted: false,
+            detailMessage: "HTTP 403 Forbidden");
+        var windowsDecoding = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: false,
+            isDecodingError: true,
+            isUnknownError: false,
+            isSourceNotSupported: false,
+            isAborted: false);
+        var windowsUnknown = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: false,
+            isDecodingError: false,
+            isUnknownError: true,
+            isSourceNotSupported: false,
+            isAborted: false);
+        var notBehindLive = PlaybackPolicy.IsBehindLiveWindowFailure(
+            errorCode: 2004,
+            message: "Decoder init failed",
+            causeSummary: null);
+
+        // Assert
+        Assert.False(windowsUnsupported);
+        Assert.False(windowsAborted);
+        Assert.False(windowsAuth);
+        Assert.False(windowsDecoding);
+        Assert.False(windowsUnknown);
+        Assert.False(notBehindLive);
+    }
+
     private static PlaybackSessionController Established(int healthy)
     {
         var session = new PlaybackSessionController();
