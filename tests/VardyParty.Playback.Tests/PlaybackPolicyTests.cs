@@ -341,12 +341,13 @@ public class PlaybackPolicyTests
 
     [Theory]
     [InlineData(true, false, false, false, false, null, true)]
-    [InlineData(false, true, false, false, false, null, true)]
-    [InlineData(false, false, true, false, false, null, true)]
+    [InlineData(false, true, false, false, false, null, false)]
+    [InlineData(false, false, true, false, false, null, false)]
     [InlineData(false, false, false, true, false, null, false)]
     [InlineData(false, false, false, false, true, null, false)]
     [InlineData(true, false, false, false, false, "HTTP 403", false)]
     [InlineData(true, false, false, false, false, "401 unauthorized", false)]
+    [InlineData(true, true, false, false, false, null, true)]
     [InlineData(false, false, true, false, false, "format not supported", false)]
     public void IsRecoverableLiveHlsMediaFailure_MatchesWindowsSignals(
         bool network,
@@ -368,8 +369,12 @@ public class PlaybackPolicyTests
             aborted,
             detail);
 
-        // Assert
+        // Assert — network-class only (Decoding/Unknown escalate; mirrors Android BLWE-only).
         Assert.Equal(expected, recoverable);
         Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
+        Assert.Equal(30_000, PlaybackPolicy.AndroidMinBufferMs);
+        Assert.Equal(60_000, PlaybackPolicy.AndroidMaxBufferMs);
+        Assert.Equal(2_500, PlaybackPolicy.AndroidBufferForPlaybackMs);
+        Assert.Equal(8_000, PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs);
     }
 }

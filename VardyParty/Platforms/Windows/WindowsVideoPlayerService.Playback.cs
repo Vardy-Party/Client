@@ -145,6 +145,7 @@ namespace VardyParty.Platforms.Windows
             {
                 // Intentional attach (switch / start) — reset soft live recoveries.
                 liveHlsRecoveries = 0;
+                liveHlsSoftRecoverInFlight = false;
                 SyncHealthyStreamCount();
                 ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
             }
@@ -159,6 +160,14 @@ namespace VardyParty.Platforms.Windows
                 if (!IsRecoverableMediaFailure(args))
                     return false;
 
+                // Nested MediaFailed while soft-reattach is already queued — absorb without stacking.
+                if (liveHlsSoftRecoverInFlight)
+                {
+                    _host._logger.LogDebug(
+                        "Live HLS MediaFailed while soft-recover in flight — coalescing");
+                    return true;
+                }
+
                 if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(liveHlsRecoveries, currentPlaybackUrl))
                 {
                     _host._logger.LogWarning(
@@ -169,6 +178,7 @@ namespace VardyParty.Platforms.Windows
 
                 var url = currentPlaybackUrl;
                 liveHlsRecoveries++;
+                liveHlsSoftRecoverInFlight = true;
                 var errMsg = args?.ErrorMessage ?? "unknown";
                 _host._logger.LogWarning(
                     "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
@@ -186,8 +196,24 @@ namespace VardyParty.Platforms.Windows
                 }
 
                 // Do not BeginAttach — keep session generation / pool entry; only rebuild the OS source.
-                _ = StartPlaybackAsync(url);
+                _ = SoftRecoverPlaybackAsync(url);
                 return true;
+            }
+
+            /// <summary>
+            /// Soft live reattach: clears <see cref="liveHlsSoftRecoverInFlight"/> when finished
+            /// so a later NetworkError can start another budgeted attempt.
+            /// </summary>
+            private async Task SoftRecoverPlaybackAsync(string url)
+            {
+                try
+                {
+                    await StartPlaybackAsync(url).ConfigureAwait(false);
+                }
+                finally
+                {
+                    liveHlsSoftRecoverInFlight = false;
+                }
             }
 
             private static bool IsRecoverableMediaFailure(MediaPlayerFailedEventArgs? args)
@@ -522,8 +548,10 @@ namespace VardyParty.Platforms.Windows
                             }
 
                             currentPlaybackUrl = url;
-                            // Successful attach (including after live reattach) — allow a fresh recovery budget.
-                            liveHlsRecoveries = 0;
+                            // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
+                            // MediaPlaybackItem is assigned (before sustained play). Reset only in
+                            // AttachViaSession (intentional switch/start). Network-only recoverable
+                            // classification + this counter keeps MaxLiveHlsRecoveries effective.
                             engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
                             // Ensure the grid is visible and hit testable

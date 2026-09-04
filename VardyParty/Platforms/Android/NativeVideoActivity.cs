@@ -239,12 +239,13 @@ namespace VardyParty.Platforms.Android
 
             // Basic UI: PlayerView with overlay.
             // Larger buffers reduce BehindLiveWindow on flaky live HLS (Linux LibVLC uses network-caching + reconnect).
+            // Durations live in PlaybackPolicy next to DesiredLiveOffsetSeconds for cross-OS parity tests.
             var loadControl = new DefaultLoadControl.Builder()
                 .SetBufferDurationsMs(
-                    /* minBufferMs */ 30_000,
-                    /* maxBufferMs */ 60_000,
-                    /* bufferForPlaybackMs */ 2_500,
-                    /* bufferForPlaybackAfterRebufferMs */ 8_000)!
+                    PlaybackPolicy.AndroidMinBufferMs,
+                    PlaybackPolicy.AndroidMaxBufferMs,
+                    PlaybackPolicy.AndroidBufferForPlaybackMs,
+                    PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs)!
                 .Build()!;
             _player = new ExoPlayerBuilder(this)
                 .SetLoadControl(loadControl)!

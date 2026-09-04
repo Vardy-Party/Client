@@ -104,6 +104,21 @@ public static class PlaybackPolicy
     public const int DesiredLiveOffsetSeconds = 25;
 
     /// <summary>
+    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms). Pairs with
+    /// <see cref="DesiredLiveOffsetSeconds"/> / Linux <c>--network-caching</c>.
+    /// </summary>
+    public const int AndroidMinBufferMs = 30_000;
+
+    /// <summary>Android Media3 <c>DefaultLoadControl</c> max buffer (ms).</summary>
+    public const int AndroidMaxBufferMs = 60_000;
+
+    /// <summary>Android Media3 buffer required before first play (ms).</summary>
+    public const int AndroidBufferForPlaybackMs = 2_500;
+
+    /// <summary>Android Media3 buffer required after a rebuffer (ms).</summary>
+    public const int AndroidBufferForPlaybackAfterRebufferMs = 8_000;
+
+    /// <summary>
     /// Media3 <c>PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW</c> (1002).
     /// Hosts pass <c>error.ErrorCode</c>; keep the numeric here so Core tests stay OS-free.
     /// </summary>
@@ -132,7 +147,9 @@ public static class PlaybackPolicy
 
     /// <summary>
     /// Windows MediaPlayer failure classification for live HLS soft-recover.
-    /// Permanent categories (unsupported / aborted / auth) must escalate.
+    /// Network-class only — mirrors Android’s BehindLiveWindow-only gate.
+    /// Decoding / Unknown / unsupported / aborted / auth must escalate to Error
+    /// so Ready-after-reattach cannot pin the user on a permanently dead stream.
     /// </summary>
     public static bool IsRecoverableLiveHlsMediaFailure(
         bool isNetworkError,
@@ -142,13 +159,21 @@ public static class PlaybackPolicy
         bool isAborted,
         string? detailMessage = null)
     {
+        // Decoding/Unknown are accepted as parameters so hosts stay typed and tests
+        // can lock “not recoverable” without inventing a second API surface.
+        _ = isDecodingError;
+        _ = isUnknownError;
+
+        if (!isNetworkError)
+            return false;
+
         if (isSourceNotSupported || isAborted)
             return false;
 
         if (IsPermanentLiveHlsAuthOrUnsupported(detailMessage))
             return false;
 
-        return isNetworkError || isDecodingError || isUnknownError;
+        return true;
     }
 
     /// <summary>

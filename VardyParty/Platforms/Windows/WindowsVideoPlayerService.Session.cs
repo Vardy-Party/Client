@@ -121,6 +121,8 @@ namespace VardyParty.Platforms.Windows
             private bool isClosingPlayer;
             /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
             private int liveHlsRecoveries;
+            /// <summary>True while a soft-recover <c>StartPlaybackAsync</c> is in flight — coalesce nested MediaFailed.</summary>
+            private bool liveHlsSoftRecoverInFlight;
 
             public PlayerSession(
                 WindowsVideoPlayerService host,

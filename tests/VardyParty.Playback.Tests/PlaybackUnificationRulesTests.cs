@@ -214,6 +214,10 @@ public class PlaybackUnificationRulesTests
         // Assert
         Assert.Equal(5, PlaybackPolicy.MaxLiveHlsRecoveries);
         Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
+        Assert.Equal(30_000, PlaybackPolicy.AndroidMinBufferMs);
+        Assert.Equal(60_000, PlaybackPolicy.AndroidMaxBufferMs);
+        Assert.Equal(2_500, PlaybackPolicy.AndroidBufferForPlaybackMs);
+        Assert.Equal(8_000, PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs);
         Assert.Equal(1002, PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow);
         Assert.True(androidSignal);
         Assert.True(androidMessageFallback);
@@ -245,7 +249,10 @@ public class PlaybackUnificationRulesTests
     [Fact]
     public void LiveHlsSoftRecover_PermanentFailures_DoNotRecover_OnEitherOs()
     {
-        // Arrange / Act
+        // Arrange
+        // Decoding/Unknown must escalate (network-only soft-recover, mirrors Android BLWE-only).
+
+        // Act
         var windowsUnsupported = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
             isNetworkError: false,
             isDecodingError: false,
@@ -265,6 +272,18 @@ public class PlaybackUnificationRulesTests
             isSourceNotSupported: false,
             isAborted: false,
             detailMessage: "HTTP 403 Forbidden");
+        var windowsDecoding = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: false,
+            isDecodingError: true,
+            isUnknownError: false,
+            isSourceNotSupported: false,
+            isAborted: false);
+        var windowsUnknown = PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+            isNetworkError: false,
+            isDecodingError: false,
+            isUnknownError: true,
+            isSourceNotSupported: false,
+            isAborted: false);
         var notBehindLive = PlaybackPolicy.IsBehindLiveWindowFailure(
             errorCode: 2004,
             message: "Decoder init failed",
@@ -274,6 +293,8 @@ public class PlaybackUnificationRulesTests
         Assert.False(windowsUnsupported);
         Assert.False(windowsAborted);
         Assert.False(windowsAuth);
+        Assert.False(windowsDecoding);
+        Assert.False(windowsUnknown);
         Assert.False(notBehindLive);
     }
 
