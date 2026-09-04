@@ -42,22 +42,11 @@ internal static class MsixPackageSignature
     internal static X509Certificate2 ReadSigner(byte[] pkcs7)
     {
         var cms = new SignedCms();
-        cms.Decode(UnwrapAppxSignature(pkcs7));
+        cms.Decode(AppxSignaturePayload.Unwrap(pkcs7));
         cms.CheckSignature(verifySignatureOnly: true);
         var cert = cms.SignerInfos.Count > 0
             ? cms.SignerInfos[0].Certificate
             : cms.Certificates.Count > 0 ? cms.Certificates[0] : null;
         return cert ?? throw new InvalidOperationException("MSIX PKCS#7 signature has no signer certificate.");
-    }
-
-    private static byte[] UnwrapAppxSignature(byte[] data)
-    {
-        if (data.Length > 4 && data[0] == (byte)'A' && data[1] == (byte)'P'
-            && data[2] == (byte)'P' && data[3] == (byte)'X')
-        {
-            return data[4..];
-        }
-
-        return data;
     }
 }
