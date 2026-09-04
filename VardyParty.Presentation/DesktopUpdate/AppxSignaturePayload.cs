@@ -9,14 +9,24 @@ public static class AppxSignaturePayload
     public static byte[] Unwrap(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        if (HasFileId(data, "PKCX"u8) || HasFileId(data, "APPX"u8))
+        if (TryStripFileId(data, "PKCX"u8, out var stripped) ||
+            TryStripFileId(data, "APPX"u8, out stripped))
         {
-            return data[4..];
+            return stripped;
         }
 
         return data;
     }
 
-    private static bool HasFileId(byte[] data, ReadOnlySpan<byte> magic) =>
-        data.Length > magic.Length && data.AsSpan(0, magic.Length).SequenceEqual(magic);
+    private static bool TryStripFileId(byte[] data, ReadOnlySpan<byte> magic, out byte[] stripped)
+    {
+        if (data.Length > magic.Length && data.AsSpan(0, magic.Length).SequenceEqual(magic))
+        {
+            stripped = data[magic.Length..];
+            return true;
+        }
+
+        stripped = null!;
+        return false;
+    }
 }
