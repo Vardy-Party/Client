@@ -5,6 +5,7 @@ using Android.Widget;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Presentation;
 
 namespace VardyParty.Platforms.Android
 {
