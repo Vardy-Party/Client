@@ -80,6 +80,11 @@ namespace VardyParty.Platforms.Android
                 requestNext: () => AndroidVideoPlayerService.RequestNextStream(),
                 cleanupPool: () => _switching?.Cleanup());
             _chrome.StateChanged += (_, __) => RunOnUiThread(ApplyChromeState);
+            _chrome.StreamToastDismissed += (_, __) => RunOnUiThread(() =>
+            {
+                if (_streamToastView != null)
+                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+            });
             return _chrome;
         }
 
@@ -423,7 +428,13 @@ namespace VardyParty.Platforms.Android
             _streamToastHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _streamToastRunnable = new Java.Lang.Runnable(() =>
             {
-                try { _streamToastView.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
+                try
+                {
+                    _chrome?.DismissStreamToast();
+                    if (_streamToastView != null)
+                        _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+                }
+                catch { }
             });
 
             _bufferingIndicator = new global::Android.Widget.ProgressBar(

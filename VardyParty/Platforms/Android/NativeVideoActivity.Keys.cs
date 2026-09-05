@@ -363,15 +363,12 @@ namespace VardyParty.Platforms.Android
         /// </summary>
         private bool TryConsumeBackLayer()
         {
-            if (_isMenuVisible)
+            var chrome = EnsureChrome();
+            var scoresWereVisible = chrome.IsScoresVisible;
+            if (chrome.TryDismissLayer())
             {
-                HideMenu();
-                return true;
-            }
-
-            if (_isInfoVisible)
-            {
-                HideInfoOverlay();
+                if (scoresWereVisible && !chrome.IsScoresVisible && _isScoresTickerVisible)
+                    ToggleSameLeagueScoresTicker();
                 return true;
             }
 

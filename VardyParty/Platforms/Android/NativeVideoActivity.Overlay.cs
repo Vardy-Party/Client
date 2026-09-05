@@ -299,13 +299,26 @@ namespace VardyParty.Platforms.Android
         private void ShowMenu()
         {
             var chrome = EnsureChrome();
-            if (!chrome.IsMenuVisible) chrome.ToggleMenu();
-            else ApplyChromeState();
+            if (!chrome.IsMenuVisible)
+                chrome.ToggleMenu();
+            else
+                ApplyChromeState();
+            _videoInfoButton?.Post(() => _videoInfoButton.RequestFocus());
         }
 
         private void HideMenu() => EnsureChrome().HideMenu();
 
-        private void ShowInfoOverlay() => EnsureChrome().ShowVideoInfo();
+        private void ShowInfoOverlay()
+        {
+            try
+            {
+                RemoveCallback(_streamToastHandler, _streamToastRunnable);
+                if (_streamToastView != null)
+                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+            }
+            catch (Exception ex) { LogIgnored("DismissStreamToast", ex); }
+            EnsureChrome().ShowVideoInfo();
+        }
 
         private void HideInfoOverlay() => EnsureChrome().HideVideoInfo();
 
@@ -355,7 +368,9 @@ namespace VardyParty.Platforms.Android
         private void UpdateBackdropVisibility()
         {
             if (_menuBackdrop == null) return;
-            _menuBackdrop.Visibility = (_isMenuVisible || _isInfoVisible) && !_isTvDevice
+            var menu = _chrome?.IsMenuVisible ?? _isMenuVisible;
+            var info = _chrome?.IsVideoInfoVisible ?? _isInfoVisible;
+            _menuBackdrop.Visibility = (menu || info) && !_isTvDevice
                 ? global::Android.Views.ViewStates.Visible
                 : global::Android.Views.ViewStates.Gone;
         }
