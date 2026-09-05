@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Microsoft.Extensions.Logging;
@@ -5,6 +6,7 @@ using Microsoft.Extensions.Options;
 using QRCoder;
 using VardyParty.Auth;
 using VardyParty.Catalog;
+using VardyParty.Linux.Controls;
 using VardyParty.Linux.Services;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
@@ -32,6 +34,7 @@ public partial class LinuxHomePage : ContentPage
     private readonly IEnrichedGameService _gameService;
     private readonly IStreamResolutionOrchestrator _orchestrator;
     private readonly INativeVideoPlayerService _videoPlayer;
+    private readonly IStreamSwitchingService _switching;
     private readonly IAuthTokenProvider _authTokens;
     private readonly IAuthLoginService _authLogin;
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
@@ -46,6 +49,7 @@ public partial class LinuxHomePage : ContentPage
 
     private readonly List<IDisposable> _subscriptions = new();
     private IDisposable? _progressSubscription;
+    private readonly List<IDisposable> _chromeSubscriptions = new();
     private bool _initialized;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
@@ -54,6 +58,12 @@ public partial class LinuxHomePage : ContentPage
 
     private string? _serviceError;
     private string? _lanWarning;
+
+    private PlaybackChromePresenter? _playbackChrome;
+    private LinuxPlaybackChromeWindow? _playbackChromeWindow;
+    private IDispatcherTimer? _chromePlacementTimer;
+    private List<Game> _gamesSnapshot = new();
+    private bool _chromeVisible;
 
     // Stream resolution state (mirrors HomeHostPage's fields).
     private bool _isResolvingStreams;
@@ -85,6 +95,7 @@ public partial class LinuxHomePage : ContentPage
         IEnrichedGameService gameService,
         IStreamResolutionOrchestrator orchestrator,
         INativeVideoPlayerService videoPlayer,
+        IStreamSwitchingService switching,
         IAuthTokenProvider authTokens,
         IAuthLoginService authLogin,
         ILocalLanServiceAvailabilityMonitor lanMonitor,
@@ -100,6 +111,7 @@ public partial class LinuxHomePage : ContentPage
         _gameService = gameService;
         _orchestrator = orchestrator;
         _videoPlayer = videoPlayer;
+        _switching = switching;
         _authTokens = authTokens;
         _authLogin = authLogin;
         _lanMonitor = lanMonitor;
@@ -276,6 +288,12 @@ public partial class LinuxHomePage : ContentPage
     {
         if (e.Key != Key.Escape || !PlaybackOverlay.IsVisible)
         {
+            return;
+        }
+
+        if (_playbackChrome?.TryDismissLayer() == true)
+        {
+            e.Handled = true;
             return;
         }
 
@@ -891,13 +909,16 @@ public partial class LinuxHomePage : ContentPage
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
 
     /// <summary>
-    /// Escape / Android-back while the playback overlay is up is the same
-    /// cancel path as the Close chip. Does not run libvlc on this thread.
+    /// Escape / Android-back while the playback overlay is up dismisses chrome
+    /// layers first, then closes playback (same as the Close chip).
     /// </summary>
     protected override bool OnBackButtonPressed()
     {
         if (PlaybackOverlay.IsVisible)
         {
+            if (_playbackChrome?.TryDismissLayer() == true)
+                return true;
+
             OnClosePlaybackClicked(this, EventArgs.Empty);
             return true;
         }
@@ -907,6 +928,26 @@ public partial class LinuxHomePage : ContentPage
 
     /// <summary>Close chip for in-window / standalone libvlc playback.</summary>
     private void OnClosePlaybackClicked(object? sender, EventArgs e)
+    {
+        // Prefer presenter Exit so layers/toast clear; ExitRequested then
+        // completes StopPlayback. If chrome was never created, stop directly.
+        if (_playbackChrome is not null)
+        {
+            try
+            {
+                _playbackChrome.Exit();
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[DesktopHome] Chrome Exit during close failed");
+            }
+        }
+
+        CompletePlaybackClose();
+    }
+
+    private void CompletePlaybackClose()
     {
         try
         {
@@ -920,6 +961,7 @@ public partial class LinuxHomePage : ContentPage
 
         Dispatcher.Dispatch(() =>
         {
+            HidePlaybackChrome();
             ResetCloseChip();
             PlaybackOverlay.IsVisible = false;
         });
@@ -955,13 +997,282 @@ public partial class LinuxHomePage : ContentPage
             if (visible)
             {
                 ResetCloseChip();
+                ShowPlaybackChrome();
             }
             else
             {
+                HidePlaybackChrome();
                 ResetCloseChip();
                 TryResumeAfterPlayer();
             }
         });
+    }
+
+    private PlaybackChromePresenter EnsurePlaybackChrome()
+    {
+        if (_playbackChrome is not null)
+            return _playbackChrome;
+
+        _playbackChrome = new PlaybackChromePresenter(
+            reportBadStream: async (reason, _) =>
+                await _orchestrator.ReportCurrentStreamAsBadAsync(reason),
+            requestNext: () =>
+            {
+                if (_videoPlayer is LinuxVideoPlayerService linux)
+                    return linux.RequestNextStreamAsync();
+                return Task.CompletedTask;
+            },
+            cleanupPool: () =>
+            {
+                try { _switching.Cleanup(); }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[DesktopHome] Switching cleanup failed");
+                }
+            });
+
+        _playbackChrome.ExitRequested += (_, _) =>
+            Dispatcher.Dispatch(CompletePlaybackClose);
+        _playbackChrome.StateChanged += (_, _) =>
+            Dispatcher.Dispatch(RefreshChromeScoresText);
+
+        return _playbackChrome;
+    }
+
+    private void ShowPlaybackChrome()
+    {
+        try
+        {
+            var chrome = EnsurePlaybackChrome();
+            _playbackChromeWindow ??= new LinuxPlaybackChromeWindow(chrome);
+
+            if (_playbackTopLevel is Avalonia.Controls.Window owner)
+                _playbackChromeWindow.Show(owner);
+            else
+                _playbackChromeWindow.Show();
+
+            _chromeVisible = true;
+            WireChromeDataFeeds();
+            PushOverlayInfoFromSwitching();
+            RefreshChromeScoresText();
+            SyncChromePlacement();
+            ArmChromePlacementTimer();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DesktopHome] Failed to show Avalonia playback chrome");
+        }
+    }
+
+    private void HidePlaybackChrome()
+    {
+        _chromeVisible = false;
+        _chromePlacementTimer?.Stop();
+
+        foreach (var sub in _chromeSubscriptions)
+        {
+            try { sub.Dispose(); }
+            catch { /* ignore */ }
+        }
+        _chromeSubscriptions.Clear();
+
+        try
+        {
+            _playbackChromeWindow?.Hide();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DesktopHome] Hide playback chrome failed");
+        }
+    }
+
+    private void WireChromeDataFeeds()
+    {
+        if (_chromeSubscriptions.Count > 0)
+            return;
+
+        _chromeSubscriptions.Add(_switching.OverlayInfoChanged.Subscribe(info =>
+            Dispatcher.Dispatch(() => ApplyOverlayInfo(info))));
+
+        _chromeSubscriptions.Add(_switching.HealthyStreamsUpdated.Subscribe(list =>
+            Dispatcher.Dispatch(() =>
+            {
+                _playbackChrome?.NotifyHealthyCount(list.Count);
+                PushOverlayInfoFromSwitching();
+            })));
+
+        _chromeSubscriptions.Add(_gameService.GamesStream.Subscribe(dict =>
+        {
+            _gamesSnapshot = FlattenGames(dict);
+            Dispatcher.Dispatch(RefreshChromeScoresText);
+        }));
+    }
+
+    private void PushOverlayInfoFromSwitching()
+    {
+        try
+        {
+            var current = _switching.GetCurrentStream();
+            var total = _switching.GetHealthyStreams().Count;
+            var index = _switching.GetCurrentStreamIndex();
+            var info = LinuxPlaybackChromeInfoText.BuildOverlayInfo(
+                current, index, total, current?.Referer);
+            ApplyOverlayInfo(info);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DesktopHome] PushOverlayInfoFromSwitching failed");
+        }
+    }
+
+    private void ApplyOverlayInfo(PlayerOverlayInfo? info)
+    {
+        if (_playbackChrome is null)
+            return;
+
+        _playbackChrome.ApplyOverlayInfo(info);
+        if (info is not null)
+            _playbackChrome.NotifyHealthyCount(info.Total);
+
+        if (_playbackChromeWindow is null)
+            return;
+
+        _playbackChromeWindow.SetVideoInfoBody(
+            info is null ? string.Empty : LinuxPlaybackChromeInfoText.FormatVideoInfo(info));
+        _playbackChromeWindow.SetSourceBadge(
+            _switching.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
+    }
+
+    private void RefreshChromeScoresText()
+    {
+        if (_playbackChromeWindow is null || _playbackChrome is null)
+            return;
+
+        var league = _selection.CurrentGame?.DisplayLeague
+            ?? _homeShell.SelectedGame?.DisplayLeague;
+        _playbackChromeWindow.SetScoresText(
+            LinuxPlaybackChromeInfoText.FormatScoresTicker(
+                _gamesSnapshot, _playbackChrome.ScoresMode, league));
+    }
+
+    private void ArmChromePlacementTimer()
+    {
+        _chromePlacementTimer ??= CreateChromePlacementTimer();
+        _chromePlacementTimer.Stop();
+        _chromePlacementTimer.Start();
+    }
+
+    private IDispatcherTimer CreateChromePlacementTimer()
+    {
+        var timer = Dispatcher.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(250);
+        timer.Tick += (_, _) =>
+        {
+            if (!_chromeVisible)
+            {
+                timer.Stop();
+                return;
+            }
+
+            SyncChromePlacement();
+        };
+        return timer;
+    }
+
+    private void SyncChromePlacement()
+    {
+        if (_playbackChromeWindow is null || _playbackTopLevel is null)
+            return;
+
+        try
+        {
+            var hostVisual = ResolvePlaybackHostVisual();
+            if (hostVisual is null)
+                return;
+
+            var chromeRowHeight = Math.Max(0, PlaybackChromeRow.Height);
+            if (chromeRowHeight <= 0)
+                chromeRowHeight = PlaybackChromeRow.MinimumHeightRequest > 0
+                    ? PlaybackChromeRow.MinimumHeightRequest
+                    : LinuxCloseChipReveal.HiddenReserveHeight;
+
+            // When the overlay covers the full page, subtract the reserved row.
+            // VideoHostContainer / Standalone panel share the video row; prefer
+            // the visible one's platform visual when available.
+            var topLeft = hostVisual.PointToScreen(new Avalonia.Point(0, 0));
+            if (!LinuxPlaybackChromePlacement.TryComputeVideoRowBounds(
+                    topLeft.X,
+                    topLeft.Y,
+                    hostVisual.Bounds.Width,
+                    hostVisual.Bounds.Height,
+                    IsVideoRowVisual(hostVisual) ? 0 : chromeRowHeight,
+                    out var x,
+                    out var y,
+                    out var width,
+                    out var height))
+            {
+                return;
+            }
+
+            _playbackChromeWindow.PlaceOver(new Avalonia.PixelRect(
+                (int)Math.Round(x),
+                (int)Math.Round(y),
+                (int)Math.Round(width),
+                (int)Math.Round(height)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[DesktopHome] SyncChromePlacement failed");
+        }
+    }
+
+    private Avalonia.Visual? ResolvePlaybackHostVisual()
+    {
+#if EMBEDDED_LINUX_VIDEO
+        if (VideoHostContainer.IsVisible &&
+            VideoHostContainer.Handler?.PlatformView is Avalonia.Visual videoVisual)
+        {
+            return videoVisual;
+        }
+#endif
+        if (StandalonePlaybackPanel.IsVisible &&
+            StandalonePlaybackPanel.Handler?.PlatformView is Avalonia.Visual standaloneVisual)
+        {
+            return standaloneVisual;
+        }
+
+        if (PlaybackOverlay.Handler?.PlatformView is Avalonia.Visual overlayVisual)
+            return overlayVisual;
+
+        return null;
+    }
+
+    private bool IsVideoRowVisual(Avalonia.Visual visual)
+    {
+#if EMBEDDED_LINUX_VIDEO
+        if (VideoHostContainer.Handler?.PlatformView is Avalonia.Visual video &&
+            ReferenceEquals(video, visual))
+        {
+            return true;
+        }
+#endif
+        return StandalonePlaybackPanel.Handler?.PlatformView is Avalonia.Visual standalone
+            && ReferenceEquals(standalone, visual);
+    }
+
+    private static List<Game> FlattenGames(Dictionary<string, List<Game>>? dict)
+    {
+        if (dict is null || dict.Count == 0)
+            return new List<Game>();
+
+        var list = new List<Game>();
+        foreach (var pair in dict)
+        {
+            if (pair.Value is null) continue;
+            list.AddRange(pair.Value);
+        }
+
+        return list;
     }
 
     /// <summary>Same decision the other heads make after the native player closed.</summary>

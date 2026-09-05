@@ -2,13 +2,18 @@
 
 Linux is served by **`VardyParty.Linux`**: the shared .NET MAUI XAML homepage
 (`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
-device-code/QR sign-in and **LibVLC playback in a native window** (not hosted
-inside Avalonia controls).
+device-code/QR sign-in and **LibVLC playback** (in-window via hosted
+`VideoHostView` when `EmbeddedLinuxVideo` is on; otherwise libvlc's own
+native window). Playback chrome (menu / info / toast / scores / next) is a
+separate transparent Avalonia window over the video row — MAUI cannot draw
+on the native child airspace. Close + match-event toasts stay in the reserved
+MAUI chrome strip above the video.
 
 ```mermaid
 flowchart LR
   XAML["HomeUi XAML"] --> Avalonia["Avalonia MAUI backend"]
-  XAML -.->|"not in tree"| VLC["LibVLC video window"]
+  Avalonia --> Chrome["Avalonia chrome window"]
+  Avalonia --> Host["VideoHostView / LibVLC"]
   Avalonia --> Skia["Skia on Linux / WSL"]
 ```
 
@@ -89,6 +94,18 @@ For video playback:
 ```bash
 sudo apt install vlc libvlc-dev
 ```
+
+### Stream audio (WSL + Ubuntu)
+
+LibVLC and SoundFlow (UI sounds) share Pulse/ALSA. Policy:
+
+| Knob / behaviour | Detail |
+|------------------|--------|
+| `--aout` | WSL / `VARDYPARTY_LINUX_VLC_SAFE=1` → `pulse`; native → `any`. Override with `VARDYPARTY_LINUX_VLC_AOUT=pulse\|alsa\|any`. Never `--no-audio`. |
+| SoundFlow yield | `PlaybackAudioSession` yields the UI device **before** Play and recovers after Close. |
+| `SetAudioOutput` | Not called before Play (early pulse load raced Stop/demux on WSL). |
+
+If video plays but audio is wrong, try `VARDYPARTY_LINUX_VLC_AOUT=pulse` (or `alsa`) and confirm Pulse/PipeWire is the default sink. Field acceptance on both WSL and native Ubuntu is still tracked as Phase 3b.
 
 From Windows/WSL, `scripts/launch-linux-app.ps1` builds and launches the
 Linux head inside WSLg. That script calls `$HOME/.dotnet/dotnet` directly,

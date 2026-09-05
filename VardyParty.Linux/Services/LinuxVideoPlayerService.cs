@@ -241,6 +241,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// libvlc down on a worker with a timeout — a stop that wedges is
     /// abandoned, never awaited, so Close is always prompt.
     /// </summary>
+    /// <summary>
+    /// Invokes the orchestrator-supplied next-stream callback (same path as
+    /// session SwitchPoolToNext). Used by the Avalonia playback chrome.
+    /// </summary>
+    public Task RequestNextStreamAsync()
+    {
+        if (_onNextStreamRequested is null)
+            return Task.CompletedTask;
+        return _onNextStreamRequested();
+    }
+
     public void StopPlayback()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);

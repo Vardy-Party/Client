@@ -132,6 +132,13 @@
             few pixels": it will look right in the designer and fail in the
             field (the original WSL Close wedge).
 
+            Playback chrome (menu / video info / stream toast / scores /
+            next) is a separate transparent Avalonia window
+            (LinuxPlaybackChromeWindow) positioned over the video row and
+            driven by PlaybackChromePresenter — same state machine as
+            Android/Windows. Close + match-event toasts stay in this
+            reserved MAUI airspace row.
+
             The Close chip is HIDDEN during playback. Collapsing the chrome
             entirely would put the hit target on the native child, so a thin
             invisible top reserve stays (black, not a banner; see
