@@ -107,6 +107,18 @@ LibVLC and SoundFlow (UI sounds) share Pulse/ALSA. Policy:
 
 If video plays but audio is wrong, try `VARDYPARTY_LINUX_VLC_AOUT=pulse` (or `alsa`) and confirm Pulse/PipeWire is the default sink. Field acceptance on both WSL and native Ubuntu is still tracked as Phase 3b.
 
+### Fullscreen playback
+
+Host/window fullscreen (Avalonia `WindowState.FullScreen`) - not LibVLC-only - so the transparent `LinuxPlaybackChromeWindow` stays placeable over the video.
+
+| Action | How |
+|--------|-----|
+| Enter / exit | Menu **Fullscreen** / **Exit fullscreen**, **F11**, or double-click the chrome overlay (LibVLC native child does not receive Avalonia clicks) |
+| Escape | Dismiss chrome layers (menu -> info -> scores) -> **exit fullscreen** -> close playback |
+| Close / match toast | Reserved MAUI airspace row is kept in fullscreen (preferred). Escape and menu Exit remain fallbacks |
+
+WSLg: fullscreen can be flaky under Weston/RDP. Set `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED=1` to enter Maximized instead. Standalone libvlc-own-window fallback still supports host fullscreen for the app window; the separate video window is unchanged.
+
 From Windows/WSL, `scripts/launch-linux-app.ps1` builds and launches the
 Linux head inside WSLg. That script calls `$HOME/.dotnet/dotnet` directly,
 so step 1 is enough even if `which dotnet` is still 10. It pins

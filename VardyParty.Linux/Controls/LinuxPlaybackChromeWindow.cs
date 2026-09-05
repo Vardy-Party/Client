@@ -53,9 +53,18 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
     private readonly AvTextBlock _nextHint;
     private readonly AvBorder _nextHost;
     private readonly AvPanel _dismissSurface;
+    private readonly AvButton _fullscreenMenuButton;
 
     private DispatcherTimer? _toastHideTimer;
     private string _videoInfoBody = string.Empty;
+
+    /// <summary>Host toggles Avalonia shell WindowState (not LibVLC-only).</summary>
+    public event EventHandler? FullscreenToggleRequested;
+
+    /// <summary>
+    /// Escape with no chrome layers left — host exits fullscreen or closes.
+    /// </summary>
+    public event EventHandler? EscapeBeyondChromeRequested;
 
     public LinuxPlaybackChromeWindow(PlaybackChromePresenter chrome)
     {
@@ -96,6 +105,8 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
         _menuPanel.Children.Add(MakeMenuItem("Report stream", () => _ = ReportAsync()));
         _nextMenuButton = MakeMenuItem("Next", () => _ = _chrome.RequestNextStreamAsync());
         _menuPanel.Children.Add(_nextMenuButton);
+        _fullscreenMenuButton = MakeMenuItem("Fullscreen", ToggleFullscreenFromMenu);
+        _menuPanel.Children.Add(_fullscreenMenuButton);
         _menuPanel.Children.Add(MakeMenuItem("Exit", () => _chrome.Exit()));
         _reportStatus = new AvTextBlock
         {
@@ -240,6 +251,7 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
         root.Children.Add(_menuPanel);
         root.Children.Add(_menuButton);
         Content = root;
+        root.PointerPressed += OnRootPointerPressed;
 
         KeyDown += OnKeyDown;
         _chrome.StateChanged += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(ApplyState);
@@ -275,6 +287,11 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
         _sourceBadge.IsVisible = true;
     }
 
+    public void SetFullscreenLabel(bool isFullscreen)
+    {
+        _fullscreenMenuButton.Content = isFullscreen ? "Exit fullscreen" : "Fullscreen";
+    }
+
     public void PlaceOver(AvPixelRect screenBounds)
     {
         if (screenBounds.Width <= 0 || screenBounds.Height <= 0)
@@ -285,8 +302,34 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
         Height = screenBounds.Height;
     }
 
+    private void ToggleFullscreenFromMenu()
+    {
+        FullscreenToggleRequested?.Invoke(this, EventArgs.Empty);
+        _chrome.HideMenu();
+    }
+
+    private void OnRootPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Native LibVLC child never sees Avalonia input; double-click on the
+        // transparent chrome surface mirrors Windows video-surface toggle.
+        if (e.ClickCount != 2)
+            return;
+        if (_chrome.IsMenuVisible || _chrome.IsVideoInfoVisible)
+            return;
+
+        FullscreenToggleRequested?.Invoke(this, EventArgs.Empty);
+        e.Handled = true;
+    }
+
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F11)
+        {
+            FullscreenToggleRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key != Key.Escape)
             return;
 
@@ -296,7 +339,7 @@ public sealed class LinuxPlaybackChromeWindow : AvWindow
             return;
         }
 
-        _chrome.Exit();
+        EscapeBeyondChromeRequested?.Invoke(this, EventArgs.Empty);
         e.Handled = true;
     }
 

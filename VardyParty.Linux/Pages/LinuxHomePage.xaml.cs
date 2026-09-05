@@ -64,6 +64,7 @@ public partial class LinuxHomePage : ContentPage
     private IDispatcherTimer? _chromePlacementTimer;
     private List<Game> _gamesSnapshot = new();
     private bool _chromeVisible;
+    private readonly LinuxPlaybackFullscreenSession _fullscreenSession = new();
 
     // Stream resolution state (mirrors HomeHostPage's fields).
     private bool _isResolvingStreams;
@@ -286,7 +287,19 @@ public partial class LinuxHomePage : ContentPage
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || !PlaybackOverlay.IsVisible)
+        if (!PlaybackOverlay.IsVisible)
+        {
+            return;
+        }
+
+        if (e.Key == Key.F11)
+        {
+            TogglePlaybackFullscreen();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key != Key.Escape)
         {
             return;
         }
@@ -297,7 +310,7 @@ public partial class LinuxHomePage : ContentPage
             return;
         }
 
-        OnClosePlaybackClicked(this, EventArgs.Empty);
+        HandleEscapeBeyondChrome();
         e.Handled = true;
     }
 
@@ -919,7 +932,7 @@ public partial class LinuxHomePage : ContentPage
             if (_playbackChrome?.TryDismissLayer() == true)
                 return true;
 
-            OnClosePlaybackClicked(this, EventArgs.Empty);
+            HandleEscapeBeyondChrome();
             return true;
         }
 
@@ -961,6 +974,7 @@ public partial class LinuxHomePage : ContentPage
 
         Dispatcher.Dispatch(() =>
         {
+            ExitPlaybackFullscreenIfNeeded();
             HidePlaybackChrome();
             ResetCloseChip();
             PlaybackOverlay.IsVisible = false;
@@ -1044,7 +1058,14 @@ public partial class LinuxHomePage : ContentPage
         try
         {
             var chrome = EnsurePlaybackChrome();
-            _playbackChromeWindow ??= new LinuxPlaybackChromeWindow(chrome);
+            if (_playbackChromeWindow is null)
+            {
+                _playbackChromeWindow = new LinuxPlaybackChromeWindow(chrome);
+                _playbackChromeWindow.FullscreenToggleRequested += (_, _) =>
+                    Dispatcher.Dispatch(TogglePlaybackFullscreen);
+                _playbackChromeWindow.EscapeBeyondChromeRequested += (_, _) =>
+                    Dispatcher.Dispatch(HandleEscapeBeyondChrome);
+            }
 
             if (_playbackTopLevel is Avalonia.Controls.Window owner)
                 _playbackChromeWindow.Show(owner);
@@ -1052,6 +1073,7 @@ public partial class LinuxHomePage : ContentPage
                 _playbackChromeWindow.Show();
 
             _chromeVisible = true;
+            _playbackChromeWindow.SetFullscreenLabel(_fullscreenSession.IsFullscreen);
             WireChromeDataFeeds();
             PushOverlayInfoFromSwitching();
             RefreshChromeScoresText();
@@ -1178,6 +1200,95 @@ public partial class LinuxHomePage : ContentPage
         };
         return timer;
     }
+
+    /// <summary>
+    /// Escape after chrome layers are gone: exit host fullscreen first, then close.
+    /// Close chip + match toast stay in the reserved MAUI airspace row in fullscreen
+    /// (preferred option); Escape / menu Exit remain fallbacks.
+    /// </summary>
+    private void HandleEscapeBeyondChrome()
+    {
+        switch (LinuxPlaybackEscapeOrder.Next(_fullscreenSession.IsFullscreen))
+        {
+            case LinuxPlaybackEscapeAction.ExitFullscreen:
+                ExitPlaybackFullscreenIfNeeded();
+                break;
+            default:
+                OnClosePlaybackClicked(this, EventArgs.Empty);
+                break;
+        }
+    }
+
+    private void TogglePlaybackFullscreen()
+    {
+        if (_playbackTopLevel is not Avalonia.Controls.Window window)
+        {
+            _logger.LogDebug("[DesktopHome] Fullscreen toggle skipped — no Avalonia Window");
+            return;
+        }
+
+        try
+        {
+            var current = ToHostWindowMode(window.WindowState);
+            var next = _fullscreenSession.Toggle(current);
+            window.WindowState = ToAvaloniaWindowState(next);
+            _playbackChromeWindow?.SetFullscreenLabel(_fullscreenSession.IsFullscreen);
+            SyncChromePlacement();
+            ArmChromePlacementTimer();
+            _logger.LogInformation(
+                "[DesktopHome] Playback host window -> {State} (fullscreenSession={IsFs})",
+                next, _fullscreenSession.IsFullscreen);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DesktopHome] TogglePlaybackFullscreen failed");
+        }
+    }
+
+    private void ExitPlaybackFullscreenIfNeeded()
+    {
+        if (!_fullscreenSession.IsFullscreen)
+            return;
+
+        if (_playbackTopLevel is not Avalonia.Controls.Window window)
+        {
+            _fullscreenSession.Reset();
+            _playbackChromeWindow?.SetFullscreenLabel(false);
+            return;
+        }
+
+        try
+        {
+            var restore = _fullscreenSession.Exit();
+            window.WindowState = ToAvaloniaWindowState(restore);
+            _playbackChromeWindow?.SetFullscreenLabel(false);
+            SyncChromePlacement();
+            ArmChromePlacementTimer();
+        }
+        catch (Exception ex)
+        {
+            _fullscreenSession.Reset();
+            _logger.LogDebug(ex, "[DesktopHome] ExitPlaybackFullscreenIfNeeded failed");
+        }
+    }
+
+    private static LinuxHostWindowMode ToHostWindowMode(Avalonia.Controls.WindowState state) =>
+        state switch
+        {
+            Avalonia.Controls.WindowState.Maximized => LinuxHostWindowMode.Maximized,
+            Avalonia.Controls.WindowState.FullScreen => LinuxHostWindowMode.FullScreen,
+            Avalonia.Controls.WindowState.Minimized => LinuxHostWindowMode.Minimized,
+            _ => LinuxHostWindowMode.Normal,
+        };
+
+    private static Avalonia.Controls.WindowState ToAvaloniaWindowState(LinuxHostWindowMode mode) =>
+        mode switch
+        {
+            LinuxHostWindowMode.Maximized => Avalonia.Controls.WindowState.Maximized,
+            LinuxHostWindowMode.FullScreen => Avalonia.Controls.WindowState.FullScreen,
+            LinuxHostWindowMode.Minimized => Avalonia.Controls.WindowState.Minimized,
+            _ => Avalonia.Controls.WindowState.Normal,
+        };
 
     private void SyncChromePlacement()
     {

@@ -18,5 +18,6 @@
     <Compile Include="..\..\VardyParty.Linux\Services\LibVlcPlaybackFailure.cs" Link="LibVlcPlaybackFailure.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackChromeInfoText.cs" Link="LinuxPlaybackChromeInfoText.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackChromePlacement.cs" Link="LinuxPlaybackChromePlacement.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackFullscreenSession.cs" Link="LinuxPlaybackFullscreenSession.cs" />
   </ItemGroup>
 </Project>

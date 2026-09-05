@@ -183,3 +183,47 @@ public class LinuxPlaybackChromePlacementTests
         Assert.False(ok);
     }
 }
+
+public class LinuxPlaybackFullscreenSessionTests
+{
+    [Fact]
+    public void Toggle_EntersFullScreen_AndRestoresPriorMode()
+    {
+        // Arrange
+        var sut = new LinuxPlaybackFullscreenSession();
+
+        // Act
+        var entered = sut.Toggle(LinuxHostWindowMode.Maximized, _ => null);
+        var exited = sut.Toggle(LinuxHostWindowMode.FullScreen, _ => null);
+
+        // Assert
+        Assert.Equal(LinuxHostWindowMode.FullScreen, entered);
+        Assert.False(sut.IsFullscreen);
+        Assert.Equal(LinuxHostWindowMode.Maximized, exited);
+    }
+
+    [Fact]
+    public void ResolveEnterTarget_RespectsMaximizeEnv()
+    {
+        // Arrange
+        // Act
+        var mode = LinuxPlaybackFullscreenSession.ResolveEnterTarget(
+            name => name == LinuxPlaybackFullscreenSession.MaximizeInsteadEnv ? "1" : null);
+
+        // Assert
+        Assert.Equal(LinuxHostWindowMode.Maximized, mode);
+    }
+
+    [Fact]
+    public void EscapeOrder_ExitsFullscreenBeforeClose()
+    {
+        // Arrange
+        // Act
+        var whenFs = LinuxPlaybackEscapeOrder.Next(isFullscreenPlayback: true);
+        var whenWindowed = LinuxPlaybackEscapeOrder.Next(isFullscreenPlayback: false);
+
+        // Assert
+        Assert.Equal(LinuxPlaybackEscapeAction.ExitFullscreen, whenFs);
+        Assert.Equal(LinuxPlaybackEscapeAction.ClosePlayback, whenWindowed);
+    }
+}

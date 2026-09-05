@@ -144,8 +144,10 @@
             invisible top reserve stays (black, not a banner; see
             LinuxCloseChipReveal). Hover near the top-right / a tap on
             Avalonia-owned playback chrome reveals the chip and expands that
-            row just enough for the 36px control. Escape still closes
-            without the chip. Match-event toasts use the same reserved row
+            row just enough for the 36px control. Escape dismisses chrome layers, then exits host-window
+            fullscreen, then closes (without needing the chip). F11 / menu /
+            double-click chrome toggles fullscreen; reserved Close/match-toast
+            row is kept. Match-event toasts use the same reserved row
             when they appear. No "Now Playing" title.
 
             Standalone fallback (switch OFF, or the hosted surface failed at
