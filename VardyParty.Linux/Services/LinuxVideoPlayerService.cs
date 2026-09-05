@@ -1,4 +1,5 @@
 using LibVLCSharp.Shared;
+using LibVLCSharp.Shared.Structures;
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
 using VardyParty.Playback;
@@ -405,18 +406,19 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private string[] BuildVlcOptions()
     {
         var options = LinuxPlatformProbe.BuildLibVlcOptions();
+        var aout = LinuxPlatformProbe.ResolveAudioOutputModule();
         if (UseConservativeVlcOptions)
         {
             _logger.LogInformation(
-                "[LinuxVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}",
+                "[LinuxVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}; {AudioEnv}",
                 LinuxPlatformProbe.IsWsl, LinuxPlatformProbe.ForceSafeVlcOptions,
-                LinuxPlatformProbe.ResolveAudioOutputModule());
+                aout, LinuxPlatformProbe.DescribeAudioEnvironment());
         }
         else
         {
             _logger.LogInformation(
-                "[LinuxVideoPlayerService] libvlc aout={Aout}",
-                LinuxPlatformProbe.ResolveAudioOutputModule());
+                "[LinuxVideoPlayerService] libvlc aout={Aout}; {AudioEnv}",
+                aout, LinuxPlatformProbe.DescribeAudioEnvironment());
         }
 
         return options;
@@ -438,6 +440,64 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch
         {
+        }
+    }
+
+    /// <summary>
+    /// After Playing: keep unmuted, and if no audio track is selected pick the
+    /// first real track (Id &gt;= 0). LibVLC occasionally starts with track -1
+    /// (silent picture) until the user toggles audio.
+    /// </summary>
+    private void EnsurePlaybackAudio(MediaPlayer player)
+    {
+        try
+        {
+            player.Mute = false;
+            player.Volume = 100;
+
+            var selected = player.AudioTrack;
+            var descriptions = player.AudioTrackDescription;
+            if (selected >= 0 || descriptions is null || descriptions.Length == 0)
+            {
+                _logger.LogInformation(
+                    "[LinuxVideoPlayerService] Playback audio state: mute={Mute}, volume={Volume}, audioTrack={Track}, tracks={TrackCount}",
+                    player.Mute, player.Volume, selected, descriptions?.Length ?? 0);
+                return;
+            }
+
+            TrackDescription? first = null;
+            foreach (var track in descriptions)
+            {
+                if (track.Id >= 0)
+                {
+                    first = track;
+                    break;
+                }
+            }
+
+            if (first is null)
+            {
+                _logger.LogWarning(
+                    "[LinuxVideoPlayerService] Playback has no selectable audio track (mute={Mute}, volume={Volume})",
+                    player.Mute, player.Volume);
+                return;
+            }
+
+            if (!player.SetAudioTrack(first.Value.Id))
+            {
+                _logger.LogWarning(
+                    "[LinuxVideoPlayerService] SetAudioTrack({TrackId}) failed; mute={Mute}, volume={Volume}",
+                    first.Value.Id, player.Mute, player.Volume);
+                return;
+            }
+
+            _logger.LogInformation(
+                "[LinuxVideoPlayerService] Selected audio track {TrackId} ({Name}); mute={Mute}, volume={Volume}",
+                first.Value.Id, first.Value.Name, player.Mute, player.Volume);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] EnsurePlaybackAudio failed");
         }
     }
 
@@ -701,18 +761,22 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         CancellationToken cancellationToken)
     {
         var generation = _session.Snapshot.AttachGeneration;
+
+        // Yield SoundFlow before LibVLC session create/Play so Pulse is free
+        // when --aout=pulse opens (PlaybackAudioSession + probe docs).
+        PlaybackVisibilityChanged?.Invoke(this, true);
+
         var vlc = await EnsureSessionAsync();
         if (vlc == null)
         {
+            PlaybackVisibilityChanged?.Invoke(this, false);
             _engine.Raise(MediaEngineEvent.Error(generation, "LibVLC is not initialized"));
             return;
         }
 
-        // Show the in-app playback surface first (hosts dispatch internally),
-        // then attach the drawable, then play — the drawable must be set
-        // before the vout is created or libvlc opens its own window anyway.
-        PlaybackVisibilityChanged?.Invoke(this, true);
 #if EMBEDDED_LINUX_VIDEO
+        // Drawable must be set before the vout is created or libvlc opens
+        // its own window.
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
@@ -790,16 +854,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
-        try
+        if (sender is MediaPlayer player)
         {
-            if (sender is MediaPlayer player)
-            {
-                player.Mute = false;
-                player.Volume = 100;
-            }
-        }
-        catch
-        {
+            EnsurePlaybackAudio(player);
         }
 
         PlaybackVisibilityChanged?.Invoke(this, true);

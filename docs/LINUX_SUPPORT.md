@@ -101,11 +101,21 @@ LibVLC and SoundFlow (UI sounds) share Pulse/ALSA. Policy:
 
 | Knob / behaviour | Detail |
 |------------------|--------|
-| `--aout` | WSL / `VARDYPARTY_LINUX_VLC_SAFE=1` → `pulse`; native → `any`. Override with `VARDYPARTY_LINUX_VLC_AOUT=pulse\|alsa\|any`. Never `--no-audio`. |
-| SoundFlow yield | `PlaybackAudioSession` yields the UI device **before** Play and recovers after Close. |
+| `--aout` | Default **`pulse`** on both WSL and native Ubuntu (PipeWire-as-Pulse). Override with `VARDYPARTY_LINUX_VLC_AOUT=pulse\|alsa\|any`. Never `--no-audio`. Prefer `alsa` only when Pulse is absent; `any` is diagnostic (can pick exclusive ALSA / wrong module → crackle or one-shot silence). |
+| Caching | Instance `--network-caching=3000` + `--live-caching=3000`, per-media `:network-caching=3000` (live HLS underrun cushion). |
+| SoundFlow yield | `PlaybackAudioSession` yields the UI device **before** LibVLC session create/Play (75 ms Pulse handoff settle) and recovers after Close. |
 | `SetAudioOutput` | Not called before Play (early pulse load raced Stop/demux on WSL). |
+| Track ensure | On `Playing`, unmute/volume 100 and select the first real audio track if LibVLC started with track `-1`. |
+| Diagnostics | Startup logs `LinuxPlatformProbe.DescribeAudioEnvironment()` (`aout`, WSL, `PULSE_SERVER`, `XDG_RUNTIME_DIR`). Filter logs for `aout` / `pulse` / `audio`. |
 
-If video plays but audio is wrong, try `VARDYPARTY_LINUX_VLC_AOUT=pulse` (or `alsa`) and confirm Pulse/PipeWire is the default sink. Field acceptance on both WSL and native Ubuntu is still tracked as Phase 3b.
+#### Field verify (WSL + Ubuntu)
+
+1. Play a live/CDN stream; confirm audible audio (not silent / not crackling for the whole clip).
+2. Close playback; confirm UI sounds (focus tick / select) work again.
+3. If audio is still wrong: try `VARDYPARTY_LINUX_VLC_AOUT=alsa` then `any`, and confirm `pactl info` shows a default sink. Capture lines containing `aout` / `pulse` / `Playback audio state`.
+4. Confirm Close stays responsive under load (no UI-thread libvlc).
+
+Phase 3b code hardening is on the PR tip; **live WSL/Ubuntu acceptance still needs a machine with Pulse/WSLg**.
 
 ### Fullscreen playback
 

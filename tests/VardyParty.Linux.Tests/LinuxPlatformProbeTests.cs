@@ -23,7 +23,7 @@ public class LinuxPlatformProbeTests
     }
 
     [Fact]
-    public void BuildLibVlcOptions_Native_PrefersHardwareAndAnyAout()
+    public void BuildLibVlcOptions_Native_PrefersHardwareAndPulseAout()
     {
         // Arrange
         // Act
@@ -31,7 +31,7 @@ public class LinuxPlatformProbeTests
 
         // Assert
         Assert.Contains("--avcodec-hw=any", options);
-        Assert.Contains("--aout=any", options);
+        Assert.Contains("--aout=pulse", options);
         Assert.DoesNotContain("--vout=x11", options);
         Assert.DoesNotContain("--demux=avformat", options);
         Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
@@ -50,7 +50,8 @@ public class LinuxPlatformProbeTests
         {
             Assert.Contains("--quiet", options);
             Assert.Contains("--no-video-title-show", options);
-            Assert.Contains("--network-caching=2000", options);
+            Assert.Contains("--network-caching=3000", options);
+            Assert.Contains("--live-caching=3000", options);
             Assert.Contains("--http-reconnect", options);
             Assert.Contains("--no-spdif", options);
             Assert.Equal(1, options.Count(o => o.StartsWith("--aout=", StringComparison.Ordinal)));
@@ -91,7 +92,36 @@ public class LinuxPlatformProbeTests
 
         // Assert
         Assert.Equal(LinuxPlatformProbe.PulseAudioOutput, conservative);
-        Assert.Equal(LinuxPlatformProbe.AnyAudioOutput, native);
+        Assert.Equal(LinuxPlatformProbe.PulseAudioOutput, native);
+    }
+
+    [Fact]
+    public void ResolveAudioOutputModule_AnyOverride_StillHonoured()
+    {
+        // Arrange
+        // Act
+        var module = LinuxPlatformProbe.ResolveAudioOutputModule(conservative: false, "any");
+
+        // Assert
+        Assert.Equal(LinuxPlatformProbe.AnyAudioOutput, module);
+    }
+
+    [Fact]
+    public void DescribeAudioEnvironment_IncludesAoutAndPulseContext()
+    {
+        // Arrange
+        // Act
+        var description = LinuxPlatformProbe.DescribeAudioEnvironment(
+            audioOutputModule: "pulse",
+            pulseServer: "unix:/tmp/pulse",
+            runtimeDir: "/run/user/1000",
+            isWsl: true);
+
+        // Assert
+        Assert.Contains("aout=pulse", description, StringComparison.Ordinal);
+        Assert.Contains("wsl=True", description, StringComparison.Ordinal);
+        Assert.Contains("PULSE_SERVER=unix:/tmp/pulse", description, StringComparison.Ordinal);
+        Assert.Contains("XDG_RUNTIME_DIR=set", description, StringComparison.Ordinal);
     }
 
     [Fact]

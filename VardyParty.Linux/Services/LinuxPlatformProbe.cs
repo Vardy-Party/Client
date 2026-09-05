@@ -16,9 +16,11 @@ namespace VardyParty.Linux.Services;
 /// Audio: SoundFlow (miniaudio) and libvlc share Pulse/ALSA. Leaving aout
 /// unspecified lets VLC probe into a dummy output under WSLg (silent
 /// video) or grab the sink in a way that kills the UI-sound device
-/// permanently. Conservative runs pin Pulse (WSLg's server); native Linux
-/// uses VLC's <c>any</c> probe (Pulse, then ALSA). Never <c>--no-audio</c>.
-/// Override with <c>VARDYPARTY_LINUX_VLC_AOUT=pulse|alsa|any</c>.
+/// permanently. Default is always <c>pulse</c> (WSLg Pulse and Ubuntu
+/// PipeWire-as-Pulse). <c>any</c> is opt-in only — on PipeWire hosts it can
+/// pick ALSA exclusive or a bad module and show as crackle / one-shot
+/// silence. Never <c>--no-audio</c>. Override with
+/// <c>VARDYPARTY_LINUX_VLC_AOUT=pulse|alsa|any</c>.
 /// </summary>
 public static class LinuxPlatformProbe
 {
@@ -53,17 +55,20 @@ public static class LinuxPlatformProbe
 
     /// <summary>
     /// Picks the libvlc <c>--aout</c> module. An explicit env/override of
-    /// pulse, alsa, or any wins; otherwise conservative/WSL → pulse (WSLg),
-    /// native Linux → any (Pulse then ALSA). Dummy / no-audio are rejected.
+    /// pulse, alsa, or any wins; otherwise <c>pulse</c> on both WSL and
+    /// native Ubuntu (PipeWire Pulse server). Dummy / no-audio are rejected.
+    /// <paramref name="conservative"/> is retained for call-site symmetry
+    /// with video options; it does not change the aout default.
     /// </summary>
     public static string ResolveAudioOutputModule(bool conservative, string? overrideModule = null)
     {
+        _ = conservative;
         if (TryNormalizeAudioOutput(overrideModule, out var fromOverride))
         {
             return fromOverride;
         }
 
-        return conservative ? PulseAudioOutput : AnyAudioOutput;
+        return PulseAudioOutput;
     }
 
     /// <summary>
@@ -86,7 +91,8 @@ public static class LinuxPlatformProbe
         {
             "--quiet",                       // Reduce verbose output
             "--no-video-title-show",         // Don't show video title on playback
-            "--network-caching=2000",        // 2 second network cache
+            "--network-caching=3000",        // Align with per-media :network-caching (live HLS)
+            "--live-caching=3000",           // Live/HLS underrun cushion (a/v crackle)
             "--http-reconnect",              // Auto-reconnect on network issues
             "--no-spdif",                    // Avoid passthrough / exclusive SPDIF
             $"--aout={aout}",
@@ -166,6 +172,28 @@ public static class LinuxPlatformProbe
 
         module = string.Empty;
         return false;
+    }
+
+    /// <summary>
+    /// One-line host audio context for field logs (Pulse env + aout pin).
+    /// Pure string formatting over already-resolved values / env reads.
+    /// </summary>
+    public static string DescribeAudioEnvironment(
+        string? audioOutputModule = null,
+        string? pulseServer = null,
+        string? runtimeDir = null,
+        bool? isWsl = null)
+    {
+        var aout = ResolveAudioOutputModule(
+            UseConservativeVlcOptions,
+            audioOutputModule ?? Environment.GetEnvironmentVariable(AudioOutputVariableName));
+        pulseServer ??= Environment.GetEnvironmentVariable("PULSE_SERVER");
+        runtimeDir ??= Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        var wsl = isWsl ?? IsWsl;
+
+        var pulse = string.IsNullOrWhiteSpace(pulseServer) ? "default" : pulseServer.Trim();
+        var runtime = string.IsNullOrWhiteSpace(runtimeDir) ? "unset" : "set";
+        return $"aout={aout}; wsl={wsl}; PULSE_SERVER={pulse}; XDG_RUNTIME_DIR={runtime}";
     }
 
     private static bool DetectWsl()

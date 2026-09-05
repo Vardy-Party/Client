@@ -299,6 +299,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy`; shared `PlaybackChromePresenter` binds Android/Windows; Linux uses Avalonia transparent overlay window (`LinuxPlaybackChromeWindow`) over LibVLC airspace |
 | Linux Avalonia playback chrome | Done — `LinuxHomePage` + `LinuxPlaybackChromeWindow` driven by `PlaybackChromePresenter`; Close/match toast stay in reserved MAUI airspace row |
 | Linux host-window fullscreen | Done — Avalonia `WindowState.FullScreen` (or Maximized via `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED`); Escape: dismiss chrome → exit fullscreen → close; reserved Close/match-toast row kept |
+| Linux stream audio (WSL + Ubuntu) | Hardened — default `--aout=pulse`, live/network caching 3000, SoundFlow yield-before-session + 75 ms handoff settle, audio-track ensure + env diagnostics. **Field verify on WSL/Ubuntu still required** (see `LINUX_SUPPORT.md`). |
 
 ---
 
@@ -311,7 +312,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys). Linux Avalonia overlay chrome landed (`LinuxPlaybackChromeWindow`).
 6. ~~Align or retire `VideoPlayer.razor` failover behavior.~~ (deleted with Blazor)
 7. Optional: dump session event JSON next to logcat for agent observation.
-8. Linux stream audio reliability (WSL + Ubuntu) — aout / SoundFlow yield / Pulse-PipeWire (Phase 3b).
+8. ~~Linux stream audio reliability (WSL + Ubuntu) — aout / SoundFlow yield / Pulse-PipeWire (Phase 3b).~~ Code hardened; field verify checklist in `LINUX_SUPPORT.md`.
 9. ~~Linux fullscreen enter/exit with chrome overlays usable (Phase 3c).~~
 
 ---
