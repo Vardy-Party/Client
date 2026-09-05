@@ -102,6 +102,118 @@ public class StreamResolverTests
     }
 
     [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_YieldsCompletedStreamWithoutWaitingForPeer()
+    {
+        // Arrange
+        var slowStream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/slow")
+            .With(s => s.Channel, "Channel Slow")
+            .Create();
+        var fastStream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/fast")
+            .With(s => s.Channel, "Channel Fast")
+            .Create();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+        var releaseSlow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(slowStream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string? __, CancellationToken ct) =>
+            {
+                await releaseSlow.Task.WaitAsync(ct);
+                return m3u8;
+            });
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(fastStream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        var yielded = new List<string>();
+
+        // Act
+        await foreach (var item in Sut.ResolveStreamsIncrementallyAsync([slowStream, fastStream], 2))
+        {
+            yielded.Add(item.Stream.Channel);
+            if (yielded.Count == 1)
+            {
+                releaseSlow.SetResult();
+            }
+        }
+
+        // Assert
+        Assert.Equal(["Channel Fast", "Channel Slow"], yielded);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_StartsNextStreamWhenASlotFrees()
+    {
+        // Arrange
+        var streams = Enumerable.Range(1, 4)
+            .Select(i => _fixture.Build<Stream>()
+                .With(s => s.Url, $"https://streams.example.com/{i}")
+                .With(s => s.Channel, $"Channel {i}")
+                .Create())
+            .ToList();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+        var inFlight = 0;
+        var maxInFlight = 0;
+        var gate = new object();
+        var thirdStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string url, string? _, CancellationToken ct) =>
+            {
+                lock (gate)
+                {
+                    inFlight++;
+                    if (inFlight > maxInFlight)
+                    {
+                        maxInFlight = inFlight;
+                    }
+                }
+
+                try
+                {
+                    if (url.EndsWith("/3", StringComparison.Ordinal))
+                    {
+                        thirdStarted.TrySetResult();
+                    }
+
+                    await Task.Delay(40, ct);
+                    return m3u8;
+                }
+                finally
+                {
+                    lock (gate)
+                    {
+                        inFlight--;
+                    }
+                }
+            });
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync(streams, 2));
+        await thirdStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert
+        Assert.Equal(4, results.Count);
+        Assert.Equal(2, maxInFlight);
+        Assert.True(thirdStarted.Task.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task ResolveStreamsIncrementallyAsync_FailedM3U8Resolution_MarksFailed()
     {
         // Arrange

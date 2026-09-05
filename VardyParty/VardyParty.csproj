@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <Import Project="..\Version.props" />
 
@@ -468,17 +468,46 @@
         <Exec Command="powershell -NoProfile -Command &quot;(Get-Content '$(ManifestPath)') -replace 'Version=&quot;[\d.]+&quot;', 'Version=&quot;$(WindowsVersion)&quot;' | Set-Content '$(ManifestPath)'&quot;" />
     </Target>
 
-    <!-- Local Development: patch SOURCE appsettings.json with user-secrets so
-         they are embedded (MauiAsset + EmbeddedResource) for Android APKs and
-         Windows loose/MSIX debug. Usage: -p:PatchAppSettings=true
-         WARNING: modifies the source file. Revert: git restore VardyParty\appsettings.json -->
-    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(PatchAppSettings)' == 'true' AND ('$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0')">
+    <!-- .NET Android preview can run CoreCompile with an empty
+         _CoreCompileResourceInputs list (Non-Resx EmbeddedResources never reach
+         csc). Force appsettings.json onto the Csc Resources list so MauiProgram's
+         GetManifestResourceStream("VardyParty.appsettings.json") works. -->
+    <Target Name="EnsureAppSettingsEmbeddedResource"
+            BeforeTargets="CoreCompile"
+            Condition="'$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
+        <!-- Preview SDKs sometimes omit Non-Resx EmbeddedResources from csc; force one entry.
+             Remove any existing appsettings.json compile input first (CS1508 if duplicated). -->
+        <ItemGroup>
+            <_AppSettingsCompileResource Include="@(_CoreCompileResourceInputs)"
+                                         Condition="'%(Filename)%(Extension)' == 'appsettings.json'" />
+            <_CoreCompileResourceInputs Remove="@(_AppSettingsCompileResource)" />
+            <_CoreCompileResourceInputs Include="@(EmbeddedResource)"
+                                        Condition="'%(Filename)%(Extension)' == 'appsettings.json'">
+                <LogicalName>VardyParty.appsettings.json</LogicalName>
+                <Type>Non-Resx</Type>
+                <WithCulture>false</WithCulture>
+            </_CoreCompileResourceInputs>
+        </ItemGroup>
+        <Message Text="[BUILD] Ensuring EmbeddedResource appsettings.json is passed to CoreCompile" Importance="high" />
+    </Target>
+
+    <!-- Local Development: patch SOURCE appsettings.json from user-secrets so
+         MauiAsset + EmbeddedResource embed real Auth0/API values.
+         Usage: -p:PatchAppSettings=true
+         WARNING: modifies the source file. Restore: git restore VardyParty\appsettings.json
+         Runs immediately before CoreCompile/MauiAssets (and before
+         EnsureAppSettingsEmbeddedResource via target order below). -->
+    <Target Name="PatchAppSettingsForLocalAndroid"
+            BeforeTargets="EnsureAppSettingsEmbeddedResource;ProcessMauiAssets"
+            Condition="'$(PatchAppSettings)' == 'true' AND ('$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0')">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
-            <UserSecretsId>$(UserSecretsId)</UserSecretsId>
         </PropertyGroup>
-        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE build" Importance="high" />
+        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE CoreCompile/MauiAssets" Importance="high" />
         <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+        <ItemGroup>
+            <CustomAdditionalCompileInputs Include="$(SourceAppSettingsPath)" />
+        </ItemGroup>
     </Target>
 
 </Project>

@@ -22,8 +22,10 @@ public static class HomeUiServiceCollectionExtensions
         services.TryAddSingleton<IBadgeImageLoader, SkiaBadgeImageLoader>();
         services.TryAddSingleton<IUiSoundPlayer, NullUiSoundPlayer>();
         services.TryAddSingleton<ISoundPreferencesStore, InMemorySoundPreferencesStore>();
+        services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
         services.TryAddSingleton<UiSoundService>();
         services.TryAddSingleton<MatchEventNotificationPolicy>();
+        services.TryAddSingleton<DnsOverHttpsPreference>();
         services.TryAddSingleton<MatchEventBus>();
         services.AddSingleton<HomeViewModel>();
         services.AddSingleton<Views.HomePage>();

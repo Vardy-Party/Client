@@ -57,6 +57,11 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<DesktopAuthService>());
 
         var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
+        builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore>(_ =>
+            new VardyParty.Ports.FileDnsPreferencesStore(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VardyParty.Desktop",
+                "dns-preferences.json")));
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
         builder.Services.AddSingleton<IHomeAssetLocator, DesktopHomeAssetLocator>();
