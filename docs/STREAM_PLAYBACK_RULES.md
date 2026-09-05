@@ -1,7 +1,7 @@
 # Stream Playback Rules
 
 **STATUS:** Android, Windows, Linux, and Apple hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
-**AUDIENCE:** Developers and AI assistants working on MAUI/Desktop stream handling (Android, Android TV, Windows, Linux/WSL)  
+**AUDIENCE:** Developers and AI assistants working on MAUI stream handling (Android, Android TV, Windows, Linux/WSL)  
 **RELATED:** [STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)
 
 ### Implementation
@@ -52,7 +52,7 @@ Health reports key on the catalog/page URL via `StreamHealthIdentity.ResolveRepo
 One set of business rules for stream **selection → start → survive → switch → recover**.  
 OS code should only attach/detach media and surface metrics/errors. Shared domain owns decisions.
 
-Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux/Desktop, and Apple. Hosts only attach/stop and raise engine facts.
+Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux, and Apple. Hosts only attach/stop and raise engine facts.
 
 ---
 

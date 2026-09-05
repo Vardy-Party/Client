@@ -281,7 +281,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] Escape-to-close wiring skipped");
+            _logger.LogDebug(ex, "[LinuxHome] Escape-to-close wiring skipped");
         }
     }
 
@@ -453,7 +453,7 @@ public partial class LinuxHomePage : ContentPage
 
         if (UseSampleData)
         {
-            _logger.LogInformation("[DesktopHome] Sample data mode: skipping auth");
+            _logger.LogInformation("[LinuxHome] Sample data mode: skipping auth");
             _viewModel.UpdateGames(SampleGames.Build());
 
             // Exercise the in-place diff path (goal, minute ticks, add/remove,
@@ -463,7 +463,7 @@ public partial class LinuxHomePage : ContentPage
             _ = Task.Run(async () =>
             {
                 await Task.Delay(TimeSpan.FromSeconds(4));
-                _logger.LogInformation("[DesktopHome] Sample data mode: applying refreshed board");
+                _logger.LogInformation("[LinuxHome] Sample data mode: applying refreshed board");
                 _viewModel.UpdateGames(SampleGames.BuildRefreshed());
             });
             return;
@@ -474,7 +474,7 @@ public partial class LinuxHomePage : ContentPage
 
     private async Task InitializeAuthAsync()
     {
-        _logger.LogInformation("[DesktopHome] Initialize start");
+        _logger.LogInformation("[LinuxHome] Initialize start");
         _isAuthenticated = await _authTokens.IsAuthenticatedAsync();
         _viewModel.CanSignOut = _isAuthenticated;
 
@@ -488,7 +488,7 @@ public partial class LinuxHomePage : ContentPage
             SetAuthOverlayVisible(true);
         }
 
-        _logger.LogInformation("[DesktopHome] Initialize complete (authenticated={Authenticated})", _isAuthenticated);
+        _logger.LogInformation("[LinuxHome] Initialize complete (authenticated={Authenticated})", _isAuthenticated);
     }
 
     private void StartGamesFeed()
@@ -517,7 +517,7 @@ public partial class LinuxHomePage : ContentPage
     {
         if (_isAuthenticating) return;
 
-        _logger.LogInformation("[DesktopHome] Sign in pressed");
+        _logger.LogInformation("[LinuxHome] Sign in pressed");
         _isAuthenticating = true;
         _deviceCode = null;
         Dispatcher.Dispatch(() =>
@@ -577,7 +577,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] Sign-in failed");
+            _logger.LogWarning(ex, "[LinuxHome] Sign-in failed");
             SetAuthStatus(string.IsNullOrWhiteSpace(ex.Message) ? "Sign-in failed." : ex.Message);
         }
         finally
@@ -619,7 +619,7 @@ public partial class LinuxHomePage : ContentPage
 
     private async Task SignOutAsync()
     {
-        _logger.LogInformation("[DesktopHome] Signing out");
+        _logger.LogInformation("[LinuxHome] Signing out");
         try
         {
             _authCts?.Cancel();
@@ -683,7 +683,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] Failed to generate QR code locally");
+            _logger.LogWarning(ex, "[LinuxHome] Failed to generate QR code locally");
         }
 
         Dispatcher.Dispatch(() =>
@@ -753,7 +753,7 @@ public partial class LinuxHomePage : ContentPage
             : new Uri(Path.GetFullPath(testMedia)).AbsoluteUri;
         var title = $"{game.DisplayHome} v {game.DisplayAway}";
         _logger.LogInformation(
-            "[DesktopHome] TEST MEDIA hook: playing {Url} for '{Title}' (stream resolution bypassed)",
+            "[LinuxHome] TEST MEDIA hook: playing {Url} for '{Title}' (stream resolution bypassed)",
             mediaUrl, title);
         try
         {
@@ -761,12 +761,12 @@ public partial class LinuxHomePage : ContentPage
                 mediaUrl, refererUrl: string.Empty, title,
                 league: game.League, homeTeam: game.DisplayHome, awayTeam: game.DisplayAway);
             _logger.LogInformation(
-                "[DesktopHome] TEST MEDIA playback ended (success={Success}, message={Message})",
+                "[LinuxHome] TEST MEDIA playback ended (success={Success}, message={Message})",
                 result.Success, result.Message);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] TEST MEDIA playback failed");
+            _logger.LogWarning(ex, "[LinuxHome] TEST MEDIA playback failed");
         }
         finally
         {
@@ -777,7 +777,7 @@ public partial class LinuxHomePage : ContentPage
     private async Task StartStreamResolutionAsync(Game game)
     {
         _logger.LogInformation(
-            "[DesktopHome] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
+            "[LinuxHome] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
 
         if (_resolutionStartClaimed || _resolutionTask is { IsCompleted: false })
         {
@@ -785,7 +785,7 @@ public partial class LinuxHomePage : ContentPage
                 && HomePlaybackIntent.SameGame(_homeShell.SelectedGame, game);
             if (HomePlaybackIntent.ShouldIgnoreRepick(sameGame, _resolutionExhausted))
             {
-                _logger.LogInformation("[DesktopHome] Stream resolution already running for this game");
+                _logger.LogInformation("[LinuxHome] Stream resolution already running for this game");
                 return;
             }
 
@@ -848,11 +848,11 @@ public partial class LinuxHomePage : ContentPage
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("[DesktopHome] Stream resolution cancelled");
+                _logger.LogInformation("[LinuxHome] Stream resolution cancelled");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[DesktopHome] Error during stream resolution");
+                _logger.LogError(ex, "[LinuxHome] Error during stream resolution");
                 if (generation != Volatile.Read(ref _resolutionGeneration))
                 {
                     return;
@@ -891,7 +891,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] Cancel of resolution CTS failed");
+            _logger.LogDebug(ex, "[LinuxHome] Cancel of resolution CTS failed");
         }
 
         try
@@ -900,7 +900,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] Orchestrator reset on cancel failed");
+            _logger.LogDebug(ex, "[LinuxHome] Orchestrator reset on cancel failed");
         }
 
         _progressSubscription?.Dispose();
@@ -914,7 +914,7 @@ public partial class LinuxHomePage : ContentPage
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
         _sounds.Play(UiSound.Back);
-        _logger.LogInformation("[DesktopHome] Stream discovery cancelled by user");
+        _logger.LogInformation("[LinuxHome] Stream discovery cancelled by user");
 
         Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
     }
@@ -953,7 +953,7 @@ public partial class LinuxHomePage : ContentPage
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "[DesktopHome] Chrome Exit during close failed");
+                _logger.LogDebug(ex, "[LinuxHome] Chrome Exit during close failed");
             }
         }
 
@@ -969,7 +969,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] Failed to close playback");
+            _logger.LogWarning(ex, "[LinuxHome] Failed to close playback");
         }
 
         Dispatcher.Dispatch(() =>
@@ -1041,7 +1041,7 @@ public partial class LinuxHomePage : ContentPage
                 try { _switching.Cleanup(); }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "[DesktopHome] Switching cleanup failed");
+                    _logger.LogDebug(ex, "[LinuxHome] Switching cleanup failed");
                 }
             });
 
@@ -1082,7 +1082,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] Failed to show Avalonia playback chrome");
+            _logger.LogWarning(ex, "[LinuxHome] Failed to show Avalonia playback chrome");
         }
     }
 
@@ -1104,7 +1104,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] Hide playback chrome failed");
+            _logger.LogDebug(ex, "[LinuxHome] Hide playback chrome failed");
         }
     }
 
@@ -1143,7 +1143,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] PushOverlayInfoFromSwitching failed");
+            _logger.LogDebug(ex, "[LinuxHome] PushOverlayInfoFromSwitching failed");
         }
     }
 
@@ -1223,7 +1223,7 @@ public partial class LinuxHomePage : ContentPage
     {
         if (_playbackTopLevel is not Avalonia.Controls.Window window)
         {
-            _logger.LogDebug("[DesktopHome] Fullscreen toggle skipped — no Avalonia Window");
+            _logger.LogDebug("[LinuxHome] Fullscreen toggle skipped — no Avalonia Window");
             return;
         }
 
@@ -1236,12 +1236,12 @@ public partial class LinuxHomePage : ContentPage
             SyncChromePlacement();
             ArmChromePlacementTimer();
             _logger.LogInformation(
-                "[DesktopHome] Playback host window -> {State} (fullscreenSession={IsFs})",
+                "[LinuxHome] Playback host window -> {State} (fullscreenSession={IsFs})",
                 next, _fullscreenSession.IsFullscreen);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopHome] TogglePlaybackFullscreen failed");
+            _logger.LogWarning(ex, "[LinuxHome] TogglePlaybackFullscreen failed");
         }
     }
 
@@ -1268,7 +1268,7 @@ public partial class LinuxHomePage : ContentPage
         catch (Exception ex)
         {
             _fullscreenSession.Reset();
-            _logger.LogDebug(ex, "[DesktopHome] ExitPlaybackFullscreenIfNeeded failed");
+            _logger.LogDebug(ex, "[LinuxHome] ExitPlaybackFullscreenIfNeeded failed");
         }
     }
 
@@ -1333,7 +1333,7 @@ public partial class LinuxHomePage : ContentPage
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] SyncChromePlacement failed");
+            _logger.LogDebug(ex, "[LinuxHome] SyncChromePlacement failed");
         }
     }
 
@@ -1403,14 +1403,14 @@ public partial class LinuxHomePage : ContentPage
             else if (resume == ResumeAfterPlayerAction.Resume && _homeShell.SelectedGame != null)
             {
                 _logger.LogInformation(
-                    "[DesktopHome] Resuming stream resolution after native player for {Home} vs {Away}",
+                    "[LinuxHome] Resuming stream resolution after native player for {Home} vs {Away}",
                     _homeShell.SelectedGame.DisplayHome, _homeShell.SelectedGame.DisplayAway);
                 _ = StartStreamResolutionAsync(_homeShell.SelectedGame);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopHome] Resume-after-player check failed");
+            _logger.LogDebug(ex, "[LinuxHome] Resume-after-player check failed");
         }
     }
 
