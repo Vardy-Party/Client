@@ -1,8 +1,7 @@
-using System;
-using AutoFixture;
 using VardyParty.Kernel;
-using Xunit;
 using VardyParty.TestSupport;
+using Xunit;
+using AutoFixture;
 
 namespace VardyParty.Kernel.Tests
 {
@@ -38,6 +37,144 @@ namespace VardyParty.Kernel.Tests
             Assert.Equal(3000, bitrate);
             Assert.Equal("1080p", resolution);
             Assert.Equal("Test", title);
+        }
+
+        [Theory]
+        [InlineData("1920x1080", "16:9")]
+        [InlineData("1280X720", "16:9")]
+        [InlineData("100x100", "1:1")]
+        [InlineData("", null)]
+        [InlineData("not-a-res", null)]
+        public void BuildAspect_ParsesOrReturnsNull(string? input, string? expected)
+        {
+            // Arrange
+            // Act
+            var actual = PlayerOverlayFormatter.BuildAspect(input);
+
+            // Assert
+            Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public void BuildAspect_FromPixels_MatchesStringForm()
+        {
+            // Arrange
+            // Act
+            var fromPixels = PlayerOverlayFormatter.BuildAspect(1920u, 1080u);
+            var fromString = PlayerOverlayFormatter.BuildAspect("1920x1080");
+
+            // Assert
+            Assert.Equal("16:9", fromPixels);
+            Assert.Equal(fromString, fromPixels);
+        }
+
+        [Fact]
+        public void StripQuery_RemovesQueryString()
+        {
+            // Arrange
+            var url = "https://streams.example.com/live.m3u8?token=abc&exp=1";
+
+            // Act
+            var stripped = PlayerOverlayFormatter.StripQuery(url);
+
+            // Assert
+            Assert.Equal("https://streams.example.com/live.m3u8", stripped);
+        }
+
+        [Fact]
+        public void RefererHost_ReturnsHostWhenAbsolute()
+        {
+            // Arrange
+            var url = "https://catalog.example.com/match/1";
+
+            // Act
+            var host = PlayerOverlayFormatter.RefererHost(url);
+
+            // Assert
+            Assert.Equal("catalog.example.com", host);
+        }
+
+        [Theory]
+        [InlineData("1920x1080", "1080p")]
+        [InlineData("1280 X 720", "720p")]
+        [InlineData("bad", null)]
+        public void ExtractVerticalResolutionLabel_ParsesHeight(string? input, string? expected)
+        {
+            // Arrange
+            // Act
+            var actual = PlayerOverlayFormatter.ExtractVerticalResolutionLabel(input);
+
+            // Assert
+            Assert.Equal(expected, actual);
+        }
+
+        [Theory]
+        [InlineData(1, 0, null, "Streams: 0")]
+        [InlineData(2, 5, null, "Stream: 2/5")]
+        [InlineData(2, 5, "720p", "Stream: 2/5 (720p)")]
+        public void FormatStreamToast_BuildsExpectedCopy(int index, int total, string? vertical, string expected)
+        {
+            // Arrange
+            // Act
+            var actual = PlayerOverlayFormatter.FormatStreamToast(index, total, vertical);
+
+            // Assert
+            Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public void SourceBadgeStyle_ForFb_UsesBluePair()
+        {
+            // Arrange
+            // Act
+            var style = SourceBadgeStyle.ForLabel("FB");
+
+            // Assert
+            Assert.NotNull(style);
+            Assert.Equal(0x1E, style!.Value.BgR);
+            Assert.Equal(0x3A, style.Value.BgG);
+            Assert.Equal(0x5F, style.Value.BgB);
+            Assert.Equal("#1e3a5f", style.Value.BackgroundHex);
+            Assert.Equal("#93c5fd", style.Value.ForegroundHex);
+        }
+
+        [Fact]
+        public void SourceBadgeStyle_ForOther_UsesPurplePair()
+        {
+            // Arrange
+            // Act
+            var style = SourceBadgeStyle.ForLabel("V2");
+
+            // Assert
+            Assert.NotNull(style);
+            Assert.Equal("#3b0764", style!.Value.BackgroundHex);
+            Assert.Equal("#d8b4fe", style.Value.ForegroundHex);
+        }
+
+        [Fact]
+        public void SourceBadgeStyle_ForEmpty_ReturnsNull()
+        {
+            // Arrange
+            // Act
+            var style = SourceBadgeStyle.ForLabel("  ");
+
+            // Assert
+            Assert.Null(style);
+        }
+
+        [Theory]
+        [InlineData("avc1.640028", "H.264")]
+        [InlineData("hvc1.1.6", "H.265")]
+        [InlineData("vp9", "VP9")]
+        [InlineData("mp4a.40.2", "AAC")]
+        public void MapCodecToFriendlyName_MapsCommonTokens(string codec, string expected)
+        {
+            // Arrange
+            // Act
+            var actual = PlayerOverlayFormatter.MapCodecToFriendlyName(codec);
+
+            // Assert
+            Assert.Equal(expected, actual);
         }
     }
 }

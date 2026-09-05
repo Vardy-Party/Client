@@ -1,7 +1,7 @@
-using VardyParty.Desktop.Services;
+using VardyParty.Linux.Services;
 using Xunit;
 
-namespace VardyParty.Desktop.Tests;
+namespace VardyParty.Linux.Tests;
 
 public class LibVlcPlaybackFailureTests
 {

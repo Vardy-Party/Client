@@ -11,7 +11,7 @@
 #      API_HEADLESSBASEURL
 #
 # Usage:
-#   scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
+#   scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
 #   USER_SECRETS_ID=... scripts/merge-appsettings-secrets.sh path/to/appsettings.json
 #
 # Requires: python3 (stdlib only).

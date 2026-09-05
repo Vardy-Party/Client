@@ -18,7 +18,7 @@
 | `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
 | Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
-| Linux host | `VardyParty.Desktop/Services/DesktopVideoPlayerService.cs` | LibVLC facts → same loop (native window, not Avalonia `VideoView`) |
+| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop (native window, not Avalonia `VideoView`) |
 | iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
 | MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
@@ -59,7 +59,7 @@ Today: selection/pre-play is shared; **runtime recovery is Playback** (`Playback
 ## As-is architecture
 
 ```
-HomeHostPage / DesktopHomePage
+HomeHostPage / LinuxHomePage
   └─ StreamResolutionOrchestrator          ← shared select / start / post-PlayVideoAsync failure
        ├─ StreamSelectionCoordinator
        ├─ StreamResolver + StreamHealthChecker
@@ -67,7 +67,7 @@ HomeHostPage / DesktopHomePage
             └─ INativeVideoPlayerService.PlayVideoAsync(...)
                  ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
                  ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
-                 ├─ Linux/WSL: DesktopVideoPlayerService + DelegatingMediaEngine (LibVLC window)
+                 ├─ Linux/WSL: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC window)
                  ├─ iOS: Platforms/iOS + AppleVideoPlayerServiceBase (AVPlayer)
                  └─ MacCatalyst: Platforms/MacCatalyst + AppleVideoPlayerServiceBase (AVPlayer)
                       all: engine facts → PlaybackSessionController → PlaybackCommandExecutor

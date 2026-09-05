@@ -42,7 +42,7 @@ on:
       - "**/AndroidManifest.xml"
       - "**/*.plist"
       - "VardyParty/appsettings.json"
-      - "VardyParty.Desktop/appsettings.json"
+      - "VardyParty.Linux/appsettings.json"
       - "VardyParty/Resources/**"
       - "tests/**"
   merge_group:
@@ -144,9 +144,9 @@ jobs:
       # Code Quality. .NET 11 Android is CoreCLR-only: PublishTrimmed must stay
       # ON (the linker path requires it) and Mono AOT no longer exists (the
       # csproj guards RunAotCompilation to Mono targets).
-      # VardyParty.HomeUi / VardyParty.Desktop are excluded: HomeUi is built
-      # through the VardyParty head, and Desktop needs the maui-tizen workload;
-      # the build-desktop job covers both.
+      # VardyParty.HomeUi / VardyParty.Linux are excluded: HomeUi is built
+      # through the VardyParty head, and Linux needs the maui-tizen workload;
+      # the build-linux job covers both.
       - name: Run analyzers (warnings as errors)
         run: |
           set -euo pipefail
@@ -158,12 +158,12 @@ jobs:
               /p:AndroidKeyStore=false
             echo "::endgroup::"
           done < <(find . -name "*.csproj" -not -name "*Tests.csproj" \
-            -not -name "VardyParty.HomeUi.csproj" -not -name "VardyParty.Desktop.csproj" \
+            -not -name "VardyParty.HomeUi.csproj" -not -name "VardyParty.Linux.csproj" \
             -type f -print0)
       # --no-restore: everything is already restored by the analyzer step; test
       # projects are restored here so format still checks them. The preview
       # projects stay excluded from formatting (they are exercised by
-      # build-desktop / the head builds instead).
+      # build-linux / the head builds instead).
       - name: Restore test projects for format check
         env:
           HomeUiTargetFrameworks: net11.0
@@ -173,7 +173,7 @@ jobs:
             dotnet restore "$proj"
           done < <(find tests -name "*Tests.csproj" -type f -print0)
       - name: Check code formatting
-        run: dotnet format --verify-no-changes --verbosity diagnostic --no-restore --exclude VardyParty.HomeUi/ VardyParty.Desktop/
+        run: dotnet format --verify-no-changes --verbosity diagnostic --no-restore --exclude VardyParty.HomeUi/ VardyParty.Linux/
 
   build-windows:
     name: Build Windows
@@ -458,11 +458,11 @@ jobs:
             !VardyParty.Hosting/obj/
           retention-days: 5
 
-  # Linux desktop head (VardyParty.Desktop): the shared MAUI XAML homepage
+  # Linux head (VardyParty.Linux): the shared MAUI XAML homepage
   # (VardyParty.HomeUi) drawn by Avalonia on the .NET 11 preview SDK. See
   # docs/architecture/homepage-maui-avalonia.md.
-  build-desktop:
-    name: Build Desktop (Linux, MAUI-Avalonia)
+  build-linux:
+    name: Build Linux (MAUI-Avalonia)
     runs-on: ubuntu-latest
     needs:
       - resolve-flags
@@ -483,29 +483,28 @@ jobs:
       # keeps HomeUi on net11.0 so restore does not demand maui-android.
       - name: Install MAUI workloads
         run: dotnet workload install maui-tizen --ignore-failed-sources
-      - name: Restore desktop head
+      - name: Restore Linux head
         env:
           HomeUiTargetFrameworks: net11.0
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
-      - name: Build desktop head
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
+      - name: Build Linux head
         env:
           HomeUiTargetFrameworks: net11.0
-        run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-desktop
+          name: build-linux
           path: |
-            VardyParty.Desktop/bin/Release/net11.0/
+            VardyParty.Linux/bin/Release/net11.0/
           retention-days: 5
 
-  # Startup smoke test for the Linux desktop head (xvfb pattern, modelled on
-  # the old VardyParty.Linux runtime smoke). Rebuilds from source: the app must
+  # Startup smoke test for the Linux head (xvfb). Rebuilds from source: the app must
   # start against sample data and stay alive for 20s under a virtual display.
-  desktop-runtime-smoke:
-    name: Desktop Runtime Smoke
+  linux-runtime-smoke:
+    name: Linux Runtime Smoke
     runs-on: ubuntu-latest
-    needs: build-desktop
+    needs: build-linux
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET 11 preview
@@ -516,41 +515,41 @@ jobs:
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
-      # Same workload as build-desktop (HomeUi is pinned to net11.0).
+      # Same workload as build-linux (HomeUi is pinned to net11.0).
       - name: Install MAUI workloads
         run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libvlc-dev vlc xvfb
-      - name: Restore desktop head
+      - name: Restore Linux head
         env:
           HomeUiTargetFrameworks: net11.0
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
-      - name: Build desktop head
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
+      - name: Build Linux head
         env:
           HomeUiTargetFrameworks: net11.0
-        run: dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release --no-restore
+        run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-restore
       - name: Runtime smoke test (xvfb, sample data)
         run: |
           set +e
-          APP_PATH="VardyParty.Desktop/bin/Release/net11.0/VardyPartyDesktop"
+          APP_PATH="VardyParty.Linux/bin/Release/net11.0/VardyPartyLinux"
           if [ ! -x "$APP_PATH" ]; then
             echo "ERROR: Expected app binary not found or not executable at $APP_PATH"
-            ls -la VardyParty.Desktop/bin/Release/net11.0 || true
+            ls -la VardyParty.Linux/bin/Release/net11.0 || true
             exit 1
           fi
 
-          VARDYPARTY_DESKTOP_SAMPLE_DATA=1 xvfb-run -a timeout 20s "$APP_PATH"
+          VARDYPARTY_LINUX_SAMPLE_DATA=1 xvfb-run -a timeout 20s "$APP_PATH"
           RC=$?
           set -e
 
           if [ "$RC" -eq 124 ]; then
-            echo "OK: Desktop head launched and stayed running under xvfb (timeout expected)."
+            echo "OK: Linux head launched and stayed running under xvfb (timeout expected)."
             exit 0
           fi
 
-          echo "ERROR: Desktop runtime smoke test failed with exit code $RC"
+          echo "ERROR: Linux runtime smoke test failed with exit code $RC"
           exit 1
 
   ci-complete:
@@ -563,8 +562,8 @@ jobs:
       - build-android
       - build-ios
       - build-macos
-      - build-desktop
-      - desktop-runtime-smoke
+      - build-linux
+      - linux-runtime-smoke
     if: "${{ always() && !((github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'github-actions[bot]' || startsWith(github.head_ref, 'ci/increment-application-version-') || startsWith(github.event.pull_request.title, 'ci: auto-increment'))) || (github.event_name == 'merge_group' && startsWith(github.head_ref, 'ci/increment-application-version-')) || (github.event_name == 'push' && (startsWith(github.event.head_commit.message, 'ci: auto-increment') || startsWith(github.event.head_commit.message, 'ci: bump')))) }}"
     steps:
       - name: Check CI status
@@ -578,10 +577,10 @@ jobs:
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \
                 "${{ needs.build-android.result }}" == "failure" || \
-                "${{ needs.build-desktop.result }}" == "failure" || \
-                "${{ needs.build-desktop.result }}" == "skipped" || \
-                "${{ needs.desktop-runtime-smoke.result }}" == "failure" || \
-                "${{ needs.desktop-runtime-smoke.result }}" == "skipped" ]]; then
+                "${{ needs.build-linux.result }}" == "failure" || \
+                "${{ needs.build-linux.result }}" == "skipped" || \
+                "${{ needs.linux-runtime-smoke.result }}" == "failure" || \
+                "${{ needs.linux-runtime-smoke.result }}" == "skipped" ]]; then
             echo "❌ CI pipeline failed"
             exit 1
           fi

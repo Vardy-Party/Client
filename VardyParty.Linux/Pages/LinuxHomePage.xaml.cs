@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 using QRCoder;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Desktop.Services;
+using VardyParty.Linux.Services;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Playback;
@@ -13,7 +13,7 @@ using VardyParty.Ports;
 using VardyParty.Presentation;
 using VardyParty.Streaming;
 
-namespace VardyParty.Desktop.Pages;
+namespace VardyParty.Linux.Pages;
 
 /// <summary>
 /// Desktop-head host for the shared XAML homepage: the same auth +
@@ -21,13 +21,13 @@ namespace VardyParty.Desktop.Pages;
 /// desktop-specific twists — sign-in uses the Auth0 device-code flow with a QR
 /// code (ported from the retired VardyParty.Linux head), and playback runs
 /// in-window (or libvlc's own window as fallback) with a reserved-airspace
-/// Close chip (see <see cref="DesktopVideoPlayerService"/>).
-/// Set VARDYPARTY_DESKTOP_SAMPLE_DATA=1 to skip auth and render a fabricated
+/// Close chip (see <see cref="LinuxVideoPlayerService"/>).
+/// Set VARDYPARTY_LINUX_SAMPLE_DATA=1 to skip auth and render a fabricated
 /// catalog (demos and the headless CI smoke test).
 /// </summary>
-public partial class DesktopHomePage : ContentPage
+public partial class LinuxHomePage : ContentPage
 {
-    private readonly ILogger<DesktopHomePage> _logger;
+    private readonly ILogger<LinuxHomePage> _logger;
     private readonly HomeViewModel _viewModel;
     private readonly IEnrichedGameService _gameService;
     private readonly IStreamResolutionOrchestrator _orchestrator;
@@ -73,14 +73,14 @@ public partial class DesktopHomePage : ContentPage
 
     private bool _escapeWired;
     private Avalonia.Controls.TopLevel? _playbackTopLevel;
-    private readonly DesktopCloseChipReveal _closeChip = new();
+    private readonly LinuxCloseChipReveal _closeChip = new();
     private IDispatcherTimer? _closeChipHideTimer;
 
     private static bool UseSampleData =>
-        Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_SAMPLE_DATA") == "1";
+        Environment.GetEnvironmentVariable("VARDYPARTY_LINUX_SAMPLE_DATA") == "1";
 
-    public DesktopHomePage(
-        ILogger<DesktopHomePage> logger,
+    public LinuxHomePage(
+        ILogger<LinuxHomePage> logger,
         HomeViewModel viewModel,
         IEnrichedGameService gameService,
         IStreamResolutionOrchestrator orchestrator,
@@ -129,24 +129,24 @@ public partial class DesktopHomePage : ContentPage
         // Yield the UI-sound device while video is up; recover it on Close.
         _videoPlayer.PlaybackVisibilityChanged += OnPlaybackVisibilityChanged;
 
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
         WireEmbeddedVideoHost();
 #endif
     }
 
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
     private Controls.VideoHostView? _videoHost;
 
     /// <summary>
     /// Hosted-surface wiring for in-window playback: the service asks this
-    /// page (via <see cref="DesktopVideoPlayerService.EmbedSurfaceAsync"/>) to
+    /// page (via <see cref="LinuxVideoPlayerService.EmbedSurfaceAsync"/>) to
     /// assign the MediaPlayer to a hosted VideoHostView BEFORE Play, and tells
     /// it when the surface may be safely detached (clean stop) or must never
     /// be touched again (a wedged libvlc pair was abandoned).
     /// </summary>
     private void WireEmbeddedVideoHost()
     {
-        if (_videoPlayer is not DesktopVideoPlayerService service)
+        if (_videoPlayer is not LinuxVideoPlayerService service)
         {
             return;
         }
@@ -291,7 +291,7 @@ public partial class DesktopHomePage : ContentPage
         }
 
         var pos = e.GetPosition(top);
-        if (DesktopCloseChipReveal.IsNearRestingPlace(pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed))
+        if (LinuxCloseChipReveal.IsNearRestingPlace(pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed))
         {
             ApplyCloseChip(_closeChip.OnHoverEnter());
         }
@@ -338,15 +338,15 @@ public partial class DesktopHomePage : ContentPage
         }
     }
 
-    private void ApplyCloseChip(DesktopCloseChipAction action)
+    private void ApplyCloseChip(LinuxCloseChipAction action)
     {
         ApplyCloseChipVisuals();
         switch (action)
         {
-            case DesktopCloseChipAction.StartAutoHide:
+            case LinuxCloseChipAction.StartAutoHide:
                 ArmCloseChipHideTimer();
                 break;
-            case DesktopCloseChipAction.CancelAutoHide:
+            case LinuxCloseChipAction.CancelAutoHide:
                 _closeChipHideTimer?.Stop();
                 break;
         }
@@ -364,7 +364,7 @@ public partial class DesktopHomePage : ContentPage
         {
             PlaybackChromeRow.HeightRequest = -1;
             PlaybackChromeRow.MinimumHeightRequest = revealed
-                ? DesktopCloseChipReveal.RevealedReserveHeight
+                ? LinuxCloseChipReveal.RevealedReserveHeight
                 : 0;
         }
         else
@@ -374,7 +374,7 @@ public partial class DesktopHomePage : ContentPage
         }
 
         CloseHitZone.HeightRequest = _closeChip.HitZoneHeight;
-        CloseHitZone.WidthRequest = DesktopCloseChipReveal.HitZoneWidth;
+        CloseHitZone.WidthRequest = LinuxCloseChipReveal.HitZoneWidth;
     }
 
     private void ArmCloseChipHideTimer()
@@ -387,7 +387,7 @@ public partial class DesktopHomePage : ContentPage
     private IDispatcherTimer CreateCloseChipHideTimer()
     {
         var timer = Dispatcher.CreateTimer();
-        timer.Interval = DesktopCloseChipReveal.AutoHideDelay;
+        timer.Interval = LinuxCloseChipReveal.AutoHideDelay;
         timer.Tick += (_, _) =>
         {
             _closeChipHideTimer?.Stop();
@@ -501,7 +501,7 @@ public partial class DesktopHomePage : ContentPage
             // The desktop RedirectUri is the custom vardyparty:// scheme (not
             // loopback), so the device-code flow with QR is the standard path;
             // a loopback redirect would enable the browser PKCE flow instead
-            // (DesktopAuthService handles both).
+            // (LinuxAuthService handles both).
             if (Auth0Pkce.TryGetLoopbackRedirectUri(_auth0Settings.RedirectUri, out _))
             {
                 var result = await _authLogin.LoginInteractiveAsync();
@@ -698,16 +698,16 @@ public partial class DesktopHomePage : ContentPage
 
     /// <summary>
     /// TEST-ONLY hook (headless verification of the in-window playback path):
-    /// VARDYPARTY_DESKTOP_TEST_MEDIA=&lt;path-or-url&gt; makes a card pick play
+    /// VARDYPARTY_LINUX_TEST_MEDIA=&lt;path-or-url&gt; makes a card pick play
     /// that media directly through the real player service instead of
     /// resolving streams. Never set in production; pairs with
-    /// VARDYPARTY_DESKTOP_SAMPLE_DATA=1 for the xvfb evidence runs.
+    /// VARDYPARTY_LINUX_SAMPLE_DATA=1 for the xvfb evidence runs.
     /// </summary>
     private static string? TestMediaPath
     {
         get
         {
-            var value = Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_TEST_MEDIA");
+            var value = Environment.GetEnvironmentVariable("VARDYPARTY_LINUX_TEST_MEDIA");
             return string.IsNullOrWhiteSpace(value) ? null : value;
         }
     }
@@ -911,7 +911,7 @@ public partial class DesktopHomePage : ContentPage
         try
         {
             _resolutionCts?.Cancel();
-            (_videoPlayer as DesktopVideoPlayerService)?.StopPlayback();
+            (_videoPlayer as LinuxVideoPlayerService)?.StopPlayback();
         }
         catch (Exception ex)
         {

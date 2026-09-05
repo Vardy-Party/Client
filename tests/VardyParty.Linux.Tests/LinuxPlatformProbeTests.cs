@@ -1,18 +1,18 @@
 using System;
 using System.Linq;
-using VardyParty.Desktop.Services;
+using VardyParty.Linux.Services;
 using Xunit;
 
-namespace VardyParty.Desktop.Tests;
+namespace VardyParty.Linux.Tests;
 
-public class DesktopPlatformProbeTests
+public class LinuxPlatformProbeTests
 {
     [Fact]
     public void BuildLibVlcOptions_Conservative_PinsSoftwareDecodeX11AndPulse()
     {
         // Arrange
         // Act
-        var options = DesktopPlatformProbe.BuildLibVlcOptions(conservative: true);
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(conservative: true);
 
         // Assert
         Assert.Contains("--avcodec-hw=none", options);
@@ -27,7 +27,7 @@ public class DesktopPlatformProbeTests
     {
         // Arrange
         // Act
-        var options = DesktopPlatformProbe.BuildLibVlcOptions(conservative: false);
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(conservative: false);
 
         // Assert
         Assert.Contains("--avcodec-hw=any", options);
@@ -42,8 +42,8 @@ public class DesktopPlatformProbeTests
     {
         // Arrange
         // Act
-        var conservative = DesktopPlatformProbe.BuildLibVlcOptions(conservative: true);
-        var native = DesktopPlatformProbe.BuildLibVlcOptions(conservative: false);
+        var conservative = LinuxPlatformProbe.BuildLibVlcOptions(conservative: true);
+        var native = LinuxPlatformProbe.BuildLibVlcOptions(conservative: false);
 
         // Assert
         foreach (var options in new[] { conservative, native })
@@ -67,10 +67,10 @@ public class DesktopPlatformProbeTests
     {
         // Arrange
         // Act
-        var options = DesktopPlatformProbe.BuildLibVlcOptions(conservative: true, overrideModule);
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(conservative: true, overrideModule);
 
         // Assert
-        Assert.True(DesktopPlatformProbe.TryNormalizeAudioOutput(overrideModule, out var normalized));
+        Assert.True(LinuxPlatformProbe.TryNormalizeAudioOutput(overrideModule, out var normalized));
         Assert.Contains($"--aout={normalized}", options);
         Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
     }
@@ -86,12 +86,12 @@ public class DesktopPlatformProbeTests
     {
         // Arrange
         // Act
-        var conservative = DesktopPlatformProbe.ResolveAudioOutputModule(conservative: true, overrideModule);
-        var native = DesktopPlatformProbe.ResolveAudioOutputModule(conservative: false, overrideModule);
+        var conservative = LinuxPlatformProbe.ResolveAudioOutputModule(conservative: true, overrideModule);
+        var native = LinuxPlatformProbe.ResolveAudioOutputModule(conservative: false, overrideModule);
 
         // Assert
-        Assert.Equal(DesktopPlatformProbe.PulseAudioOutput, conservative);
-        Assert.Equal(DesktopPlatformProbe.AnyAudioOutput, native);
+        Assert.Equal(LinuxPlatformProbe.PulseAudioOutput, conservative);
+        Assert.Equal(LinuxPlatformProbe.AnyAudioOutput, native);
     }
 
     [Fact]
@@ -99,10 +99,10 @@ public class DesktopPlatformProbeTests
     {
         // Arrange
         // Act
-        var pulse = DesktopPlatformProbe.IsPinnedAudioOutput("pulse");
-        var alsa = DesktopPlatformProbe.IsPinnedAudioOutput("ALSA");
-        var any = DesktopPlatformProbe.IsPinnedAudioOutput("any");
-        var dummy = DesktopPlatformProbe.IsPinnedAudioOutput("dummy");
+        var pulse = LinuxPlatformProbe.IsPinnedAudioOutput("pulse");
+        var alsa = LinuxPlatformProbe.IsPinnedAudioOutput("ALSA");
+        var any = LinuxPlatformProbe.IsPinnedAudioOutput("any");
+        var dummy = LinuxPlatformProbe.IsPinnedAudioOutput("dummy");
 
         // Assert
         Assert.True(pulse);
@@ -117,7 +117,7 @@ public class DesktopPlatformProbeTests
         const string referer = "https://hamis.romponalis.st/";
         const string userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
 
-        var options = DesktopPlatformProbe.BuildPlaybackMediaOptions(
+        var options = LinuxPlatformProbe.BuildPlaybackMediaOptions(
             conservative: true, referer, userAgent);
 
         Assert.Contains($":http-referrer={referer}", options);

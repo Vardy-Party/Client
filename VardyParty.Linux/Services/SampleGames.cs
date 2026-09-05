@@ -1,10 +1,10 @@
 using VardyParty.Kernel;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// Fabricated catalog for demos and headless smoke tests
-/// (VARDYPARTY_DESKTOP_SAMPLE_DATA=1). Fictional teams; covers the status
+/// (VARDYPARTY_LINUX_SAMPLE_DATA=1). Fictional teams; covers the status
 /// spectrum the card renders: live minutes with stoppage time, half time,
 /// extra time, penalties, aggregates, upcoming today/tomorrow, postponed.
 /// </summary>

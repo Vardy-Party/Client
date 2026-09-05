@@ -79,7 +79,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                 VideoCodec = null,
                 AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
                 Title = current.Stream?.Channel
             };
             _overlayInfoSubject.OnNext(overlay);
@@ -132,7 +132,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                 VideoCodec = null,
                 AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
                 Title = current.Stream?.Channel
             };
             _overlayInfoSubject.OnNext(overlay);
@@ -235,7 +235,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                 VideoCodec = null,
                 AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
                 Title = current.Stream?.Channel
             };
             _overlayInfoSubject.OnNext(overlay);
@@ -249,17 +249,5 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         _healthyStreamsSubject?.Dispose();
         _currentIndexSubject?.Dispose();
         _currentStreamSubject?.Dispose();
-    }
-
-    private static string? BuildAspect(string? resolution)
-    {
-        if (string.IsNullOrEmpty(resolution)) return null;
-        var parts = resolution.Split('x');
-        if (parts.Length != 2) return null;
-        if (!int.TryParse(parts[0], out var w)) return null;
-        if (!int.TryParse(parts[1], out var h)) return null;
-        int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
-        var g = gcd(w, h);
-        return $"{w / g}:{h / g}";
     }
 }

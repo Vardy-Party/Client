@@ -46,9 +46,9 @@ namespace VardyParty.Platforms.Android
                     RefererUrl = _refererUrl,
                     BufferPercent = _player?.BufferedPercentage,
                     FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                    VideoCodec = MapCodecToFriendlyName(current.Health?.VideoCodec),
-                    AudioCodec = MapCodecToFriendlyName(current.Health?.AudioCodec),
-                    AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                    VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
+                    AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
+                    AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
                     Title = current.Stream?.Channel
                 };
             }
@@ -66,37 +66,17 @@ namespace VardyParty.Platforms.Android
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(label))
+            var style = SourceBadgeStyle.ForLabel(label);
+            if (style is null)
             {
                 _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
                 return;
             }
 
             _sourceBadgeView.Text = label;
-            if (string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase))
-            {
-                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#1e3a5f"));
-                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#93c5fd"));
-            }
-            else
-            {
-                _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#3b0764"));
-                _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor("#d8b4fe"));
-            }
-
+            _sourceBadgeView.SetBackgroundColor(global::Android.Graphics.Color.ParseColor(style.Value.BackgroundHex));
+            _sourceBadgeView.SetTextColor(global::Android.Graphics.Color.ParseColor(style.Value.ForegroundHex));
             _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Visible;
-        }
-
-        private static string? BuildAspect(string? resolution)
-        {
-            if (string.IsNullOrEmpty(resolution)) return null;
-            var parts = resolution.Split('x');
-            if (parts.Length != 2) return null;
-            if (!int.TryParse(parts[0], out var w)) return null;
-            if (!int.TryParse(parts[1], out var h)) return null;
-            int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
-            var g = gcd(w, h);
-            return $"{w / g}:{h / g}";
         }
 
         private void UpdateOverlayText(VardyParty.Kernel.PlayerOverlayInfo? info)
@@ -138,28 +118,8 @@ namespace VardyParty.Platforms.Android
             var buf = info.BufferPercent.HasValue ? $"Buffer {info.BufferPercent}%" : string.Empty;
             var m3u8 = info.M3u8Url ?? string.Empty;
             var referer = info.RefererUrl ?? string.Empty;
-            string StripQuery(string url)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-                try
-                {
-                    var uri = new Uri(url);
-                    var builder = new UriBuilder(uri) { Query = string.Empty };
-                    return builder.Uri.ToString();
-                }
-                catch
-                {
-                    var idx = url.IndexOf('?', StringComparison.Ordinal);
-                    return idx >= 0 ? url.Substring(0, idx) : url;
-                }
-            }
-            string RefererHost(string url)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-                return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
-            }
-            if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {StripQuery(m3u8)}";
-            if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {RefererHost(referer)}";
+            if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {PlayerOverlayFormatter.StripQuery(m3u8)}";
+            if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {PlayerOverlayFormatter.RefererHost(referer)}";
             // If video surface size is available, include resolution/framerate placeholder
             var resDetails = string.Empty;
             try
@@ -338,83 +298,58 @@ namespace VardyParty.Platforms.Android
 
         private void ShowMenu()
         {
-            _isMenuVisible = true;
-            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Visible;
-            _videoInfoButton?.Post(() => _videoInfoButton.RequestFocus());
-            UpdateBackdropVisibility();
+            var chrome = EnsureChrome();
+            if (!chrome.IsMenuVisible) chrome.ToggleMenu();
+            else ApplyChromeState();
         }
 
-        private void HideMenu()
-        {
-            _isMenuVisible = false;
-            if (_menuPanel != null) _menuPanel.Visibility = global::Android.Views.ViewStates.Gone;
-            UpdateBackdropVisibility();
-        }
+        private void HideMenu() => EnsureChrome().HideMenu();
 
-        private void ShowInfoOverlay()
-        {
-            _isInfoVisible = true;
-            _overlayLocked = true;
-            // Dismiss the brief stream toast — the full overlay supersedes it.
-            try
-            {
-                RemoveCallback(_streamToastHandler, _streamToastRunnable);
-                if (_streamToastView != null)
-                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
-            }
-            catch (Exception ex) { LogIgnored("DismissStreamToast", ex); }
-            ShowOverlayAnimated();
-            UpdateBackdropVisibility();
-        }
+        private void ShowInfoOverlay() => EnsureChrome().ShowVideoInfo();
 
-        private void HideInfoOverlay()
-        {
-            _isInfoVisible = false;
-            _overlayLocked = false;
-            HideOverlayAnimated();
-            UpdateBackdropVisibility();
-        }
+        private void HideInfoOverlay() => EnsureChrome().HideVideoInfo();
 
         private void ShowStreamToastIfNeeded()
         {
             if (_streamToastView == null || _streamToastHandler == null || _streamToastRunnable == null) return;
             if (_switching == null) return;
 
-            // Don't show the toast if the detailed info overlay is already open.
-            if (_isInfoVisible) return;
+            var chrome = EnsureChrome();
+            if (chrome.IsVideoInfoVisible) return;
 
             var index = _switching.GetCurrentStreamIndex();
             var total = _switching.GetHealthyStreams().Count;
             if (total <= 0) return;
 
-            // Only flash when something meaningful changed.
             if (index == _lastToastIndex && total == _lastToastTotal) return;
             _lastToastIndex = index;
             _lastToastTotal = total;
 
-            // Build text — match Windows: "Stream: x/y (res)" where resolution is optional.
             var current = _switching.GetCurrentStream();
             string? vertRes = null;
             try
             {
                 var res = current?.Health?.Resolution ?? current?.Stream?.Resolution;
-                if (!string.IsNullOrEmpty(res))
-                {
-                    var m = System.Text.RegularExpressions.Regex.Match(res, @"\d{3,4}[xX](\d{3,4})");
-                    if (m.Success) vertRes = $"{m.Groups[1].Value}p";
-                }
+                vertRes = PlayerOverlayFormatter.ExtractVerticalResolutionLabel(res);
                 if (vertRes == null && _videoHeight.HasValue)
                     vertRes = $"{_videoHeight}p";
             }
             catch (Exception ex) { LogIgnored("ParseToastResolution", ex); }
 
-            _streamToastView.Text = string.IsNullOrEmpty(vertRes)
-                ? $"Stream: {index}/{total}"
-                : $"Stream: {index}/{total} ({vertRes})";
+            chrome.ApplyOverlayInfo(new PlayerOverlayInfo
+            {
+                Index = index,
+                Total = total,
+                Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? vertRes,
+                Channel = current?.Stream?.Channel,
+                Title = current?.Stream?.Channel
+            });
 
+            _streamToastView.Text = chrome.StreamToast?.Text
+                ?? PlayerOverlayFormatter.FormatStreamToast(index, total, vertRes);
             _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
             RemoveCallback(_streamToastHandler, _streamToastRunnable);
-            PostDelayedCallback(_streamToastHandler, _streamToastRunnable, 10_000);
+            PostDelayedCallback(_streamToastHandler, _streamToastRunnable, (int)PlaybackChromePresenter.StreamToastAutoHide.TotalMilliseconds);
         }
 
         private void UpdateBackdropVisibility()

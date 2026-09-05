@@ -1,6 +1,6 @@
 using System;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// In-window Close chip reveal/hide policy. The chip stays hidden so video
@@ -13,14 +13,14 @@ namespace VardyParty.Desktop.Services;
 /// thin invisible hit-zone so hover still works. Putting the chip on top
 /// of the video would make it unclickable. Never a "Now Playing" banner.
 /// </summary>
-public enum DesktopCloseChipAction
+public enum LinuxCloseChipAction
 {
     None,
     StartAutoHide,
     CancelAutoHide,
 }
 
-public sealed class DesktopCloseChipReveal
+public sealed class LinuxCloseChipReveal
 {
     /// <summary>Idle hide after pointer leaves or a tap-to-reveal.</summary>
     public static readonly TimeSpan AutoHideDelay = TimeSpan.FromSeconds(2.5);
@@ -67,38 +67,38 @@ public sealed class DesktopCloseChipReveal
         Hovering = false;
     }
 
-    public DesktopCloseChipAction OnHoverEnter()
+    public LinuxCloseChipAction OnHoverEnter()
     {
         Hovering = true;
         IsRevealed = true;
-        return DesktopCloseChipAction.CancelAutoHide;
+        return LinuxCloseChipAction.CancelAutoHide;
     }
 
-    public DesktopCloseChipAction OnHoverLeave()
+    public LinuxCloseChipAction OnHoverLeave()
     {
         Hovering = false;
-        return IsRevealed ? DesktopCloseChipAction.StartAutoHide : DesktopCloseChipAction.None;
+        return IsRevealed ? LinuxCloseChipAction.StartAutoHide : LinuxCloseChipAction.None;
     }
 
     /// <summary>
     /// Any tap/touch on the playback surface. Reveals the chip; does not
     /// close. A later tap on the chip itself is the close path.
     /// </summary>
-    public DesktopCloseChipAction OnTouched()
+    public LinuxCloseChipAction OnTouched()
     {
         IsRevealed = true;
-        return Hovering ? DesktopCloseChipAction.CancelAutoHide : DesktopCloseChipAction.StartAutoHide;
+        return Hovering ? LinuxCloseChipAction.CancelAutoHide : LinuxCloseChipAction.StartAutoHide;
     }
 
-    public DesktopCloseChipAction OnAutoHideElapsed()
+    public LinuxCloseChipAction OnAutoHideElapsed()
     {
         if (Hovering)
         {
-            return DesktopCloseChipAction.CancelAutoHide;
+            return LinuxCloseChipAction.CancelAutoHide;
         }
 
         IsRevealed = false;
-        return DesktopCloseChipAction.None;
+        return LinuxCloseChipAction.None;
     }
 
     /// <summary>

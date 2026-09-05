@@ -6,7 +6,7 @@ using SoundFlow.Providers;
 using SoundFlow.Structs;
 using VardyParty.Ports;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// SoundFlow (miniaudio) implementation for the desktop head: one engine and

@@ -5,14 +5,14 @@ using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// LibVLC playback for the Linux/desktop head, ported from the retired
 /// VardyParty.Linux head's LinuxVideoPlayerService.
 ///
-/// Rendering surface: with the EmbeddedDesktopVideo build switch ON (the
-/// default), playback renders INSIDE the app window — DesktopHomePage hosts a
+/// Rendering surface: with the EmbeddedLinuxVideo build switch ON (the
+/// default), playback renders INSIDE the app window — LinuxHomePage hosts a
 /// VideoHostView (LibVLCSharp.Avalonia's VideoView bridged through the
 /// MAUI-Avalonia AvaloniaControlHandler) and hands this service an
 /// <see cref="EmbedSurfaceAsync"/> delegate that attaches the MediaPlayer to
@@ -35,24 +35,24 @@ namespace VardyParty.Desktop.Services;
 /// so the Close control stays responsive even mid-wedge.
 ///
 /// WSL hardening: under WSL (/proc/version contains "microsoft") — or with
-/// VARDYPARTY_DESKTOP_VLC_SAFE=1 — libvlc gets conservative options:
+/// VARDYPARTY_LINUX_VLC_SAFE=1 — libvlc gets conservative options:
 /// software decode, plain X11 vout, Pulse aout (WSLg), no hardware probing.
 /// Safe under xvfb too. Audio is never disabled (<c>--no-audio</c> is not
-/// an option); see <see cref="DesktopPlatformProbe.BuildLibVlcOptions"/>.
+/// an option); see <see cref="LinuxPlatformProbe.BuildLibVlcOptions"/>.
 /// SoundFlow yields the Pulse device before Play so libvlc can own it.
 ///
 /// LibVLC initialisation is lazy (first PlayVideoAsync), never in the startup
 /// path: machines without libvlc installed (or headless CI) get a logged
 /// playback error instead of a startup crash.
 /// </summary>
-public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
+public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 {
     private static readonly TimeSpan InitTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly ILogger<DesktopVideoPlayerService> _logger;
+    private readonly ILogger<LinuxVideoPlayerService> _logger;
     private readonly IStreamSwitchingService _switching;
     private readonly IStreamHealthReporter _healthReporter;
     private readonly PlaybackSessionController _session = new();
@@ -91,8 +91,8 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         public EventHandler<LogEventArgs>? LogHandler;
     }
 
-    public DesktopVideoPlayerService(
-        ILogger<DesktopVideoPlayerService> logger,
+    public LinuxVideoPlayerService(
+        ILogger<LinuxVideoPlayerService> logger,
         IStreamSwitchingService switching,
         ResolveFreshPlaybackUrlAsync resolveFresh,
         IStreamHealthReporter healthReporter)
@@ -111,14 +111,14 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         _engine.AttachHandler = AttachLibVlcAsync;
     }
 
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
     private int _embedFailedPlaybackSession = -1;
     private int _embeddedVlcGeneration = -1;
     private bool _embedFailureLogged;
     private bool _isEmbedded;
 
     /// <summary>
-    /// Set by DesktopHomePage: shows the playback panel and assigns the given
+    /// Set by LinuxHomePage: shows the playback panel and assigns the given
     /// MediaPlayer to the hosted VideoHostView (on the UI thread) so the
     /// drawable is attached before Play. Null (or a failed/timed-out call)
     /// means no hosted surface — standalone-window fallback.
@@ -156,7 +156,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopVideoPlayerService] EmbeddingStateChanged handler failed");
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] EmbeddingStateChanged handler failed");
         }
     }
 
@@ -202,7 +202,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 {
                     _embeddedVlcGeneration = vlc.Generation;
                     _logger.LogInformation(
-                        "[DesktopVideoPlayerService] In-window surface attached (X drawable 0x{XWindow:X})",
+                        "[LinuxVideoPlayerService] In-window surface attached (X drawable 0x{XWindow:X})",
                         vlc.Player.XWindow);
                     SetEmbeddingActive(true);
                     return;
@@ -221,13 +221,13 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _embedFailureLogged = true;
             _logger.LogWarning(
-                "[DesktopVideoPlayerService] In-window playback unavailable ({Reason}); falling back to the standalone libvlc window for this session",
+                "[LinuxVideoPlayerService] In-window playback unavailable ({Reason}); falling back to the standalone libvlc window for this session",
                 failure);
         }
         else
         {
             _logger.LogDebug(
-                "[DesktopVideoPlayerService] In-window playback unavailable ({Reason}); standalone-window fallback",
+                "[LinuxVideoPlayerService] In-window playback unavailable ({Reason}); standalone-window fallback",
                 failure);
         }
 
@@ -243,7 +243,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// </summary>
     public void StopPlayback()
     {
-        _logger.LogInformation("[DesktopVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
+        _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
         StopMetricsLoop();
         PlaybackVisibilityChanged?.Invoke(this, false);
         _playbackTcs?.TrySetResult(new PlaybackResult
@@ -262,9 +262,9 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             var stopped = await RunVlcOpAsync(vlc, "stop", StopTimeout, () => vlc.Player.Stop());
             _logger.LogInformation(
-                "[DesktopVideoPlayerService] Close teardown {Outcome} (t={Timestamp:HH:mm:ss.fff})",
+                "[LinuxVideoPlayerService] Close teardown {Outcome} (t={Timestamp:HH:mm:ss.fff})",
                 stopped ? "completed" : "abandoned (libvlc wedged)", DateTime.UtcNow);
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
             _embeddedVlcGeneration = -1;
             if (stopped)
             {
@@ -274,7 +274,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "[DesktopVideoPlayerService] DetachSurfaceRequested handler failed");
+                    _logger.LogDebug(ex, "[LinuxVideoPlayerService] DetachSurfaceRequested handler failed");
                 }
             }
 #endif
@@ -323,7 +323,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             AbandonSession(vlc, opName, timeout);
             _ = work.ContinueWith(
                 t => _logger.LogWarning(
-                    "[DesktopVideoPlayerService] Abandoned libvlc op '{Op}' eventually completed ({Status})",
+                    "[LinuxVideoPlayerService] Abandoned libvlc op '{Op}' eventually completed ({Status})",
                     opName, t.Status),
                 TaskContinuationOptions.ExecuteSynchronously);
             return false;
@@ -345,7 +345,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopVideoPlayerService] libvlc op '{Op}' failed", opName);
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] libvlc op '{Op}' failed", opName);
             return false;
         }
     }
@@ -359,7 +359,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         vlc.Abandoned = true;
         _logger.LogError(
-            "[DesktopVideoPlayerService] libvlc op '{Op}' did not complete within {TimeoutSeconds}s — abandoning this libvlc instance (generation {Generation}); the next play builds a fresh one",
+            "[LinuxVideoPlayerService] libvlc op '{Op}' did not complete within {TimeoutSeconds}s — abandoning this libvlc instance (generation {Generation}); the next play builds a fresh one",
             opName, timeout.TotalSeconds, vlc.Generation);
 
         if (ReferenceEquals(_current, vlc))
@@ -367,7 +367,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             _current = null;
         }
 
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
         if (_embeddedVlcGeneration == vlc.Generation)
         {
             _embeddedVlcGeneration = -1;
@@ -379,7 +379,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "[DesktopVideoPlayerService] SurfacePoisoned handler failed");
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] SurfacePoisoned handler failed");
         }
 #endif
     }
@@ -387,25 +387,25 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// <summary>
     /// Conservative libvlc options are the WSL default (field failure: a
     /// wedged hardware/vout probe froze playback) and the
-    /// VARDYPARTY_DESKTOP_VLC_SAFE=1 override; also safe under xvfb.
+    /// VARDYPARTY_LINUX_VLC_SAFE=1 override; also safe under xvfb.
     /// </summary>
-    private static bool UseConservativeVlcOptions => DesktopPlatformProbe.UseConservativeVlcOptions;
+    private static bool UseConservativeVlcOptions => LinuxPlatformProbe.UseConservativeVlcOptions;
 
     private string[] BuildVlcOptions()
     {
-        var options = DesktopPlatformProbe.BuildLibVlcOptions();
+        var options = LinuxPlatformProbe.BuildLibVlcOptions();
         if (UseConservativeVlcOptions)
         {
             _logger.LogInformation(
-                "[DesktopVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}",
-                DesktopPlatformProbe.IsWsl, DesktopPlatformProbe.ForceSafeVlcOptions,
-                DesktopPlatformProbe.ResolveAudioOutputModule());
+                "[LinuxVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}",
+                LinuxPlatformProbe.IsWsl, LinuxPlatformProbe.ForceSafeVlcOptions,
+                LinuxPlatformProbe.ResolveAudioOutputModule());
         }
         else
         {
             _logger.LogInformation(
-                "[DesktopVideoPlayerService] libvlc aout={Aout}",
-                DesktopPlatformProbe.ResolveAudioOutputModule());
+                "[LinuxVideoPlayerService] libvlc aout={Aout}",
+                LinuxPlatformProbe.ResolveAudioOutputModule());
         }
 
         return options;
@@ -478,7 +478,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _initFailed = true;
                 _logger.LogError(
-                    "[DesktopVideoPlayerService] LibVLC initialisation did not complete within {TimeoutSeconds}s — abandoning it (playback disabled for this run)",
+                    "[LinuxVideoPlayerService] LibVLC initialisation did not complete within {TimeoutSeconds}s — abandoning it (playback disabled for this run)",
                     InitTimeout.TotalSeconds);
                 return null;
             }
@@ -491,7 +491,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _initFailed = true;
                 _logger.LogError(ex,
-                    "[DesktopVideoPlayerService] Failed to initialize LibVLC — is the system libvlc installed (e.g. apt install vlc)?");
+                    "[LinuxVideoPlayerService] Failed to initialize LibVLC — is the system libvlc installed (e.g. apt install vlc)?");
                 return null;
             }
 
@@ -504,7 +504,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             _current = vlc;
             _logger.LogInformation(
-                "[DesktopVideoPlayerService] LibVLC initialized successfully (generation {Generation})", generation);
+                "[LinuxVideoPlayerService] LibVLC initialized successfully (generation {Generation})", generation);
             return vlc;
         }
         finally
@@ -524,9 +524,9 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         string? awayTeam = null,
         IReadOnlyDictionary<string, string>? requestHeaders = null)
     {
-        _logger.LogInformation("[DesktopVideoPlayerService] Playing video: {Title}", title);
-        _logger.LogInformation("[DesktopVideoPlayerService] URL: {Url}", m3u8Url);
-        _logger.LogInformation("[DesktopVideoPlayerService] Referer: {Referer}", refererUrl);
+        _logger.LogInformation("[LinuxVideoPlayerService] Playing video: {Title}", title);
+        _logger.LogInformation("[LinuxVideoPlayerService] URL: {Url}", m3u8Url);
+        _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", refererUrl);
 
         _playbackSessionId++;
 
@@ -553,7 +553,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[DesktopVideoPlayerService] Error during playback");
+            _logger.LogError(ex, "[LinuxVideoPlayerService] Error during playback");
             PlaybackVisibilityChanged?.Invoke(this, false);
             return new PlaybackResult
             {
@@ -571,7 +571,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopVideoPlayerService] DispatchEngine failed ({Kind})", engineEvent.Kind);
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] DispatchEngine failed ({Kind})", engineEvent.Kind);
         }
     }
 
@@ -583,10 +583,10 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
     {
-        PlaybackCommandExecutor.Apply(cmd, new DesktopPlaybackCommandHost(this));
+        PlaybackCommandExecutor.Apply(cmd, new LinuxPlaybackCommandHost(this));
     }
 
-    private sealed class DesktopPlaybackCommandHost(DesktopVideoPlayerService player) : IPlaybackCommandHost
+    private sealed class LinuxPlaybackCommandHost(LinuxVideoPlayerService player) : IPlaybackCommandHost
     {
         public void BeginIndexSwitchSuppression()
         {
@@ -604,21 +604,21 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         public void ReportFailed(string? reason)
         {
-            player._logger.LogWarning("[DesktopVideoPlayerService] Stream failed: {Reason}", reason);
+            player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
                 player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
         }
 
         public void ReportDeclined(string? reason)
         {
-            player._logger.LogWarning("[DesktopVideoPlayerService] Stream declined: {Reason}", reason);
+            player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
                 player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
         }
 
         public void ReportWorking()
         {
-            player._logger.LogInformation("[DesktopVideoPlayerService] Stream established");
+            player._logger.LogInformation("[LinuxVideoPlayerService] Stream established");
             _ = player._healthReporter.ReportPlaybackStartedAsync(
                 player._session.Snapshot.CurrentUrl,
                 player._refererUrl,
@@ -645,7 +645,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         public void Attach(string url, bool isRevert)
         {
             if (isRevert)
-                player._logger.LogWarning("[DesktopVideoPlayerService] Reverting to last good stream: {Url}", url);
+                player._logger.LogWarning("[LinuxVideoPlayerService] Reverting to last good stream: {Url}", url);
             _ = player._engine.AttachAsync(url, player._requestHeaders);
         }
 
@@ -681,7 +681,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         public void NotifyApplyFailed(Exception exception)
-            => player._logger.LogWarning(exception, "[DesktopVideoPlayerService] ApplyPlaybackCommand failed");
+            => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
     }
 
     private async Task AttachLibVlcAsync(
@@ -701,7 +701,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         // then attach the drawable, then play — the drawable must be set
         // before the vout is created or libvlc opens its own window anyway.
         PlaybackVisibilityChanged?.Invoke(this, true);
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
@@ -728,7 +728,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             previousMedia?.Dispose();
 
             var media = new Media(vlc.LibVlc, new Uri(m3u8Url));
-            foreach (var option in DesktopPlatformProbe.BuildPlaybackMediaOptions(
+            foreach (var option in LinuxPlatformProbe.BuildPlaybackMediaOptions(
                          UseConservativeVlcOptions, referer, userAgent))
             {
                 media.AddOption(option);
@@ -745,7 +745,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogInformation("[DesktopVideoPlayerService] Requested LibVLC attach for {Url}", m3u8Url);
+        _logger.LogInformation("[LinuxVideoPlayerService] Requested LibVLC attach for {Url}", m3u8Url);
     }
 
     private static string? ResolveHeader(IReadOnlyDictionary<string, string>? headers, string name)
@@ -778,7 +778,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogInformation("[DesktopVideoPlayerService] Playback started");
+        _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
         try
         {
             if (sender is MediaPlayer player)
@@ -805,7 +805,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         var isBuffering = e.Cache < 100f;
-        _logger.LogDebug("[DesktopVideoPlayerService] Buffering: {Percentage}%", e.Cache);
+        _logger.LogDebug("[LinuxVideoPlayerService] Buffering: {Percentage}%", e.Cache);
         SetBufferingState(isBuffering);
         _engine.Raise(MediaEngineEvent.Buffering(_session.Snapshot.AttachGeneration, isBuffering));
     }
@@ -817,7 +817,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogError("[DesktopVideoPlayerService] Playback error encountered");
+        _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Error(_session.Snapshot.AttachGeneration, "Stream playback failed"));
     }
@@ -829,7 +829,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogInformation("[DesktopVideoPlayerService] Playback ended");
+        _logger.LogInformation("[LinuxVideoPlayerService] Playback ended");
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Ended(_session.Snapshot.AttachGeneration));
         PlaybackVisibilityChanged?.Invoke(this, false);
@@ -879,7 +879,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[DesktopVideoPlayerService] Error getting playback metrics");
+            _logger.LogWarning(ex, "[LinuxVideoPlayerService] Error getting playback metrics");
             return null;
         }
     }
@@ -899,7 +899,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "[DesktopVideoPlayerService] Metrics raise failed");
+                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Metrics raise failed");
             }
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
@@ -917,7 +917,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// </summary>
     public void Dispose()
     {
-        _logger.LogInformation("[DesktopVideoPlayerService] Disposing");
+        _logger.LogInformation("[LinuxVideoPlayerService] Disposing");
         StopMetricsLoop();
 
         var vlc = _current;
@@ -948,7 +948,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[DesktopVideoPlayerService] Error during disposal");
+                _logger.LogWarning(ex, "[LinuxVideoPlayerService] Error during disposal");
             }
         }
 
@@ -981,7 +981,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
                 if (IsLibVlcErrorLevel(level))
                 {
-                    _logger.LogError("[DesktopVideoPlayerService] {Message}", renderedMessage);
+                    _logger.LogError("[LinuxVideoPlayerService] {Message}", renderedMessage);
                     if (LibVlcPlaybackFailure.IsFatalAdaptiveDemux(module, message))
                     {
                         RaisePlaybackFailureOnce("LibVLC adaptive demux failed (segment not playable)");
@@ -996,13 +996,13 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
                 if (IsLibVlcWarningLevel(level))
                 {
-                    _logger.LogWarning("[DesktopVideoPlayerService] {Message}", renderedMessage);
+                    _logger.LogWarning("[LinuxVideoPlayerService] {Message}", renderedMessage);
                     return;
                 }
 
                 if (IsRenderDiagnosticInteresting(message))
                 {
-                    _logger.LogInformation("[DesktopVideoPlayerService] {Message}", renderedMessage);
+                    _logger.LogInformation("[LinuxVideoPlayerService] {Message}", renderedMessage);
                 }
             }
             catch
@@ -1011,7 +1011,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         };
 
         vlc.LibVlc.Log += vlc.LogHandler;
-        _logger.LogInformation("[DesktopVideoPlayerService] LibVLC native diagnostics enabled");
+        _logger.LogInformation("[LinuxVideoPlayerService] LibVLC native diagnostics enabled");
     }
 
     private static void DetachLibVlcDiagnostics(VlcSession vlc)
@@ -1067,7 +1067,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
             return;
         }
 
-        _logger.LogWarning("[DesktopVideoPlayerService] Treating LibVLC failure as stream error: {Reason}", reason);
+        _logger.LogWarning("[LinuxVideoPlayerService] Treating LibVLC failure as stream error: {Reason}", reason);
         _engine.Raise(MediaEngineEvent.Error(generation, reason));
     }
 }

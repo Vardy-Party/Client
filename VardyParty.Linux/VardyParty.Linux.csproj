@@ -4,7 +4,7 @@
 
 	<PropertyGroup>
 		<!--
-			Linux/desktop head: the shared .NET MAUI homepage drawn by Avalonia
+			Linux head: the shared .NET MAUI homepage drawn by Avalonia
 			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11 preview
 			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
 			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
@@ -15,15 +15,15 @@
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<RootNamespace>VardyParty.Desktop</RootNamespace>
-		<AssemblyName>VardyPartyDesktop</AssemblyName>
+		<RootNamespace>VardyParty.Linux</RootNamespace>
+		<AssemblyName>VardyPartyLinux</AssemblyName>
 
 		<ApplicationTitle>Vardy Party</ApplicationTitle>
-		<ApplicationId>uk.jonbreen.vardyparty.desktop</ApplicationId>
+		<ApplicationId>uk.jonbreen.vardyparty.linux</ApplicationId>
 
 		<!--
 			Same UserSecretsId as the MAUI head so one local secrets store
-			feeds Android packaging and Desktop/Linux (-p:PatchAppSettings=true).
+			feeds Android packaging and Linux (-p:PatchAppSettings=true).
 		-->
 		<UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
 
@@ -38,22 +38,22 @@
 		<!--
 			Build-time feature switch: in-window video playback (default ON).
 
-			  dotnet build ... -p:EmbeddedDesktopVideo=false
+			  dotnet build ... -p:EmbeddedLinuxVideo=false
 
 			compiles the embedded-playback feature OUT entirely: no
 			LibVLCSharp.Avalonia package reference, no VideoHostView/handler,
-			no hosted-surface code in DesktopHomePage/DesktopVideoPlayerService
+			no hosted-surface code in LinuxHomePage/LinuxVideoPlayerService
 			— playback opens libvlc's own native video window (the pre-feature
 			behaviour), with the reserved-airspace Close chip still in-app.
 			Everything the switch controls is guarded by the
-			EMBEDDED_DESKTOP_VIDEO define derived below. Independent of the
+			EMBEDDED_LINUX_VIDEO define derived below. Independent of the
 			switch, the embedded path also auto-falls back to the standalone
 			window at RUNTIME if the hosted surface cannot be attached (see
-			DesktopVideoPlayerService). Documented in
+			LinuxVideoPlayerService). Documented in
 			docs/architecture/homepage-maui-avalonia.md.
 		-->
-		<EmbeddedDesktopVideo Condition="'$(EmbeddedDesktopVideo)' == ''">true</EmbeddedDesktopVideo>
-		<DefineConstants Condition="'$(EmbeddedDesktopVideo)' == 'true'">$(DefineConstants);EMBEDDED_DESKTOP_VIDEO</DefineConstants>
+		<EmbeddedLinuxVideo Condition="'$(EmbeddedLinuxVideo)' == ''">true</EmbeddedLinuxVideo>
+		<DefineConstants Condition="'$(EmbeddedLinuxVideo)' == 'true'">$(DefineConstants);EMBEDDED_LINUX_VIDEO</DefineConstants>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -80,10 +80,10 @@
 			declares Avalonia >= 11.3.13 and detects 12 at runtime), matching
 			the Avalonia 12.1 the Avalonia.Controls.Maui.Desktop backend pulls
 			in transitively. The Avalonia package is only referenced when the
-			EmbeddedDesktopVideo switch is ON (see the PropertyGroup above).
+			EmbeddedLinuxVideo switch is ON (see the PropertyGroup above).
 		-->
 		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
-		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.1" Condition="'$(EmbeddedDesktopVideo)' == 'true'" />
+		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.1" Condition="'$(EmbeddedLinuxVideo)' == 'true'" />
 		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
 		<PackageReference Include="QRCoder" Version="1.7.0" />
 	</ItemGroup>
@@ -124,7 +124,7 @@
 		Local Desktop/Linux: patch SOURCE appsettings.json from user-secrets before build
 		so CopyToOutputDirectory / publish embed real Auth0 + API values.
 		Usage: dotnet build/run ... -p:PatchAppSettings=true
-		WARNING: modifies source — revert with git restore VardyParty.Desktop/appsettings.json
+		WARNING: modifies source — revert with git restore VardyParty.Linux/appsettings.json
 	-->
 	<Target Name="PatchAppSettingsForLocalDesktop" BeforeTargets="BeforeBuild" Condition="'$(PatchAppSettings)' == 'true'">
 		<PropertyGroup>
