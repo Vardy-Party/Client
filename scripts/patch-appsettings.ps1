@@ -64,12 +64,16 @@ if (-not $appsettings.PSObject.Properties['Api']) {
     $appsettings | Add-Member -NotePropertyName Api -NotePropertyValue ([PSCustomObject]@{})
 }
 
+$auth0KeysMerged = 0
+$apiKeysMerged = 0
 foreach ($p in $secrets.PSObject.Properties) {
     if ($p.Name -match '^Auth0:(.+)$') {
         $appsettings.Auth0 | Add-Member -NotePropertyName $Matches[1] -NotePropertyValue $p.Value -Force
+        $auth0KeysMerged++
     }
     elseif ($p.Name -match '^Api:(.+)$') {
         $appsettings.Api | Add-Member -NotePropertyName $Matches[1] -NotePropertyValue $p.Value -Force
+        $apiKeysMerged++
     }
 }
 
@@ -80,6 +84,18 @@ if ($appsettings.PSObject.Properties['AllowUserSecrets']) {
     $appsettings.PSObject.Properties.Remove('AllowUserSecrets')
 }
 
+# Fail closed: an "successful" patch that leaves Auth0 empty produces a signed-in-broken APK.
+$clientId = [string]$appsettings.Auth0.ClientId
+$domain = [string]$appsettings.Auth0.Domain
+if ([string]::IsNullOrWhiteSpace($clientId) -or [string]::IsNullOrWhiteSpace($domain)) {
+    throw @"
+Patched appsettings would still have empty Auth0 ClientId/Domain (Auth0 keys merged: $auth0KeysMerged, Api keys merged: $apiKeysMerged).
+Set non-empty secrets, then re-run:
+  dotnet user-secrets set "Auth0:Domain" "<tenant>.auth0.com" --project VardyParty/VardyParty.csproj
+  dotnet user-secrets set "Auth0:ClientId" "<client-id>" --project VardyParty/VardyParty.csproj
+"@
+}
+
 $json = $appsettings | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($AppSettingsPath, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-Write-Host "[BUILD] Patched $AppSettingsPath from $secretsPath" -ForegroundColor Green
+Write-Host "[BUILD] Patched $AppSettingsPath from user-secrets ($auth0KeysMerged Auth0 keys, $apiKeysMerged Api keys; Auth0 ClientId/Domain present)" -ForegroundColor Green

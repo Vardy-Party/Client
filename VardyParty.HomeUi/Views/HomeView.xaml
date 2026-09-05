@@ -274,6 +274,17 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="DNS over HTTPS fallback"
+                               TextColor="#E5E7EB"
+                               FontSize="15"
+                               VerticalOptions="Center" />
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding DnsOverHttpsFallbackEnabled, Mode=TwoWay}"
+                                Focused="OnMenuItemFocused"
+                                OnColor="#34D399"
+                                VerticalOptions="Center" />
+                    </Grid>
                     <Button Text="{Binding UpdateButtonLabel}"
                             Clicked="OnUpdateClicked"
                             Focused="OnMenuItemFocused"

@@ -308,6 +308,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// Settings: DNS over HTTPS fallback (default ON). When system DNS cannot
+    /// resolve a host, Cloudflare 1.1.1.1 is tried.
+    /// </summary>
+    public bool DnsOverHttpsFallbackEnabled
+    {
+        get => _menu.DnsOverHttpsFallbackEnabled;
+        set
+        {
+            if (_menu.DnsOverHttpsFallbackEnabled == value) return;
+            _menu.ToggleDnsOverHttpsFallback();
+            Raise(nameof(DnsOverHttpsFallbackEnabled));
+        }
+    }
+
     private bool _canSignOut;
 
     /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>

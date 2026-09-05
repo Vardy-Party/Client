@@ -377,3 +377,7 @@ FodyWeavers.xsd
 
 # Build-generated (GenerateBuildInfo now writes to obj/, but older branches still write here)
 VardyParty/Resources/Raw/buildinfo.txt
+
+# Local Auth0/API merge for -p:PatchAppSettings=true (never commit)
+VardyParty/appsettings.local.json
+VardyParty.Desktop/appsettings.local.json
