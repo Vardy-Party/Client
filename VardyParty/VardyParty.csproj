@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <Import Project="..\Version.props" />
 
@@ -317,7 +317,7 @@
 
   <ItemGroup>
     <!--
-        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Desktop,
+        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Linux,
         net11.0-android/-windows compiled natively into this head).
         Directory.Build.targets strips TargetFramework off every
         ProjectReference, which breaks the cross-targeting reference protocol

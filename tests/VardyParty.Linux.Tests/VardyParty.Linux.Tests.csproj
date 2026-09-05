@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Linked Linux policy files assume implicit usings (File, List). -->
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Ports\VardyParty.Ports.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
+    <ProjectReference Include="..\..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+    <!--
+      Policy-only sources: the Linux head is a MAUI/Avalonia exe and is
+      not referenced from unit tests. These files have no LibVLC / SoundFlow
+      / MAUI dependencies.
+    -->
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlatformProbe.cs" Link="LinuxPlatformProbe.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxCloseChipReveal.cs" Link="LinuxCloseChipReveal.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LibVlcPlaybackFailure.cs" Link="LibVlcPlaybackFailure.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackChromeInfoText.cs" Link="LinuxPlaybackChromeInfoText.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackChromePlacement.cs" Link="LinuxPlaybackChromePlacement.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackFullscreenSession.cs" Link="LinuxPlaybackFullscreenSession.cs" />
+  </ItemGroup>
+</Project>

@@ -2,7 +2,7 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:hv="clr-namespace:VardyParty.HomeUi.Views;assembly=VardyParty.HomeUi"
-             x:Class="VardyParty.Desktop.Pages.DesktopHomePage"
+             x:Class="VardyParty.Linux.Pages.LinuxHomePage"
              NavigationPage.HasNavigationBar="False"
              BackgroundColor="#0B0F1A">
 
@@ -120,10 +120,10 @@
         </Grid>
 
         <!--
-            Playback panel. With the EmbeddedDesktopVideo build switch ON
+            Playback panel. With the EmbeddedLinuxVideo build switch ON
             (default) the video renders IN-WINDOW: code-behind injects a
             VideoHostView into VideoHostContainer and the service attaches
-            the MediaPlayer drawable to it (see DesktopVideoPlayerService).
+            the MediaPlayer drawable to it (see LinuxVideoPlayerService).
 
             AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
             stacked above the Avalonia-drawn scene. Any MAUI control that
@@ -132,13 +132,22 @@
             few pixels": it will look right in the designer and fail in the
             field (the original WSL Close wedge).
 
+            Playback chrome (menu / video info / stream toast / scores /
+            next) is a separate transparent Avalonia window
+            (LinuxPlaybackChromeWindow) positioned over the video row and
+            driven by PlaybackChromePresenter — same state machine as
+            Android/Windows. Close + match-event toasts stay in this
+            reserved MAUI airspace row.
+
             The Close chip is HIDDEN during playback. Collapsing the chrome
             entirely would put the hit target on the native child, so a thin
             invisible top reserve stays (black, not a banner; see
-            DesktopCloseChipReveal). Hover near the top-right / a tap on
+            LinuxCloseChipReveal). Hover near the top-right / a tap on
             Avalonia-owned playback chrome reveals the chip and expands that
-            row just enough for the 36px control. Escape still closes
-            without the chip. Match-event toasts use the same reserved row
+            row just enough for the 36px control. Escape dismisses chrome layers, then exits host-window
+            fullscreen, then closes (without needing the chip). F11 / menu /
+            double-click chrome toggles fullscreen; reserved Close/match-toast
+            row is kept. Match-event toasts use the same reserved row
             when they appear. No "Now Playing" title.
 
             Standalone fallback (switch OFF, or the hosted surface failed at
@@ -185,7 +194,7 @@
             </Grid>
 
             <!-- In-window video surface (VideoHostView injected in code-behind
-                 under EMBEDDED_DESKTOP_VIDEO; hidden in standalone fallback). -->
+                 under EMBEDDED_LINUX_VIDEO; hidden in standalone fallback). -->
             <Grid Grid.Row="1" x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
 
             <!-- Standalone-window fallback card (pre-feature behaviour). -->

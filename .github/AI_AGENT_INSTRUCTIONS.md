@@ -5,7 +5,7 @@ Welcome, AI Agent! Follow these guidelines for the VardyParty Client repo.
 ## Project Context
 
 **Project Name:** VardyParty  
-**Tech Stack:** .NET 11 (preview), MAUI (Android/iOS/Mac Catalyst/Windows), Avalonia MAUI backend on Linux (`VardyParty.Desktop`), native players (Exo / WinUI / AVPlayer / LibVLC)  
+**Tech Stack:** .NET 11 (preview), MAUI (Android/iOS/Mac Catalyst/Windows), Avalonia MAUI backend on Linux (`VardyParty.Linux`), native players (Exo / WinUI / AVPlayer / LibVLC)  
 **Repository:** https://github.com/Vardy-Party/Client  
 **Purpose:** Multi-platform live football streaming with score aggregation  
 
@@ -41,7 +41,7 @@ docs/
 
 VardyParty/           ← MAUI head (Android/iOS/Mac Catalyst/Windows)
 VardyParty.HomeUi/    ← shared XAML homepage
-VardyParty.Desktop/   ← Linux/WSL head (Avalonia draw + LibVLC)
+VardyParty.Linux/   ← Linux/WSL head (Avalonia draw + LibVLC)
 VardyParty.*/         ← Kernel, Ports, Auth, Catalog, Streaming, Playback, Presentation, Hosting
 tests/
 Version.props         ← single version source
@@ -54,14 +54,14 @@ Version.props         ← single version source
 - **`Version.props`** - Single source of truth for versions (ApplicationVersion, ApplicationDisplayVersion)
   - ⚠️ **DO NOT EDIT MANUALLY** during development
   - GitHub Actions workflows manage it automatically
-  - VardyParty, VardyParty.HomeUi and VardyParty.Desktop import this file
+  - VardyParty, VardyParty.HomeUi and VardyParty.Linux import this file
 
 ### Project Files
 - **`VardyParty/VardyParty.csproj`** - MAUI app (Windows/Android/iOS/macOS)
   - Contains: `<Import Project="..\Version.props" />`
   - Targets: net11.0-android, net11.0-ios, net11.0-maccatalyst, net11.0-windows
 
-- **`VardyParty.Desktop/VardyParty.Desktop.csproj`** - Linux desktop head (MAUI-Avalonia)
+- **`VardyParty.Linux/VardyParty.Linux.csproj`** - Linux head (MAUI-Avalonia)
   - Contains: `<Import Project="..\Version.props" />`
   - Target: net11.0 with linux-x64, linux-arm64 runtimes
 
@@ -98,8 +98,8 @@ dotnet test
 # Build MAUI app
 dotnet build VardyParty/VardyParty.csproj -c Release -f net11.0-android
 
-# Build Linux desktop head
-dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
+# Build Linux head
+dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
 ```
 
 ### Version Management (Automated)
@@ -240,7 +240,7 @@ Tag created (v1.8.0) → release.yml starts
 ### Task: Add a new feature
 ```
 1. Create feature branch: git checkout -b feature/my-feature
-2. Make changes in appropriate project (VardyParty, VardyParty.HomeUi, VardyParty.Desktop, or the domain libraries)
+2. Make changes in appropriate project (VardyParty, VardyParty.HomeUi, VardyParty.Linux, or the domain libraries)
 3. Add/update tests
 4. Commit: git commit -m "feat: add my feature"
 5. Push: git push origin feature/my-feature
@@ -279,7 +279,7 @@ $asm.Version  # Should show: 1.7.2.0
 ```bash
 # Build and check
 dotnet build VardyParty/VardyParty.csproj -c Release
-dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
+dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release
 # Right-click DLL > Properties > Details tab to see version
 ```
 
@@ -346,7 +346,7 @@ dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj -c Release
 | Where are workflows? | `.github/workflows/` |
 | How to run tests? | `dotnet test` |
 | How to build MAUI? | `dotnet build VardyParty/VardyParty.csproj` |
-| How to build Linux? | `dotnet build VardyParty.Desktop/VardyParty.Desktop.csproj` |
+| How to build Linux? | `dotnet build VardyParty.Linux/VardyParty.Linux.csproj` |
 | Who manages versions? | GitHub Actions (don't edit manually) |
 
 ---

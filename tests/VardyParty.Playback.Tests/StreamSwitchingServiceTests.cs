@@ -282,6 +282,44 @@ namespace VardyParty.Playback.Tests
         }
 
         [Fact]
+        public void AddHealthyStream_MapsCodecsFromHealth()
+        {
+            // Arrange
+            var svc = new StreamSwitchingService();
+            PlayerOverlayInfo? lastOverlay = null;
+            svc.OverlayInfoChanged.Subscribe(info => lastOverlay = info);
+            svc.Initialize("L", "H", "A");
+            var stream = _fixture.Build<Stream>()
+                .With(s => s.Url, "https://streams.example.com/a")
+                .With(s => s.Channel, "Channel North")
+                .With(s => s.BitrateKbps, 2500)
+                .With(s => s.Resolution, "640x360")
+                .Create();
+            var health = _fixture.Build<StreamHealth>()
+                .With(h => h.Resolution, "1280x720")
+                .With(h => h.VideoCodec, "avc1.4d401f")
+                .With(h => h.AudioCodec, "mp4a.40.2")
+                .With(h => h.Bitrate, 2500)
+                .Create();
+            var enriched = _fixture.Build<EnrichedStream>()
+                .With(e => e.Stream, stream)
+                .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/a.m3u8")
+                .With(e => e.Status, StreamResolutionStatus.Healthy)
+                .With(e => e.Health, health)
+                .Create();
+
+            // Act
+            svc.AddHealthyStream(enriched);
+
+            // Assert
+            Assert.NotNull(lastOverlay);
+            Assert.Equal("1280x720", lastOverlay!.Resolution);
+            Assert.Equal("H.264", lastOverlay.VideoCodec);
+            Assert.Equal("AAC", lastOverlay.AudioCodec);
+            Assert.Equal("16:9", lastOverlay.AspectRatio);
+        }
+
+        [Fact]
         public void GetNextHealthyStream_DoesNotChangeCurrent()
         {
             // Arrange

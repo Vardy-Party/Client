@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       linux_only:
-        description: Only the Linux Desktop publish (no GitHub Release). Uncheck to dry-run every platform.
+        description: Only the Linux publish (no GitHub Release). Uncheck to dry-run every platform.
         type: boolean
         default: true
 
@@ -235,8 +235,8 @@ jobs:
       - name: Install MAUI workloads
         run: dotnet workload install maui-tizen --ignore-failed-sources
       
-      - name: Restore desktop head
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
+      - name: Restore Linux head
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
 
       - name: Generate appsettings.json for Linux
         env:
@@ -253,8 +253,8 @@ jobs:
           API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
           chmod +x scripts/merge-appsettings-secrets.sh
-          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
-          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
+          scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Linux/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
@@ -264,10 +264,10 @@ jobs:
         run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net11.0
       
       - name: Publish Linux app (x64)
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64
       
       - name: Publish Linux app (ARM64)
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64
       
       - name: Package Linux x64
         run: |

@@ -4,13 +4,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Desktop.Services;
+using VardyParty.Linux.Services;
 using VardyParty.Hosting;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Presentation;
 
-namespace VardyParty.Desktop;
+namespace VardyParty.Linux;
 
 public static class MauiProgram
 {
@@ -22,11 +22,11 @@ public static class MauiProgram
             .UseMauiApp<App>()
             .UseAvaloniaApp();
 
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
         // In-window video playback: VideoHostView renders libvlc's output
         // inside the app window via LibVLCSharp.Avalonia's VideoView (see
         // Controls/VideoHostViewHandler). Compiled out (and the standalone
-        // libvlc window used instead) with -p:EmbeddedDesktopVideo=false.
+        // libvlc window used instead) with -p:EmbeddedLinuxVideo=false.
         builder.ConfigureMauiHandlers(handlers =>
             handlers.AddHandler<Controls.VideoHostView, Controls.VideoHostViewHandler>());
 #endif
@@ -52,18 +52,18 @@ public static class MauiProgram
 
         // Real Auth0 session (device-code flow with QR, encrypted token cache),
         // ported from the retired VardyParty.Linux head.
-        builder.Services.AddSingleton<DesktopAuthService>();
-        builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<DesktopAuthService>());
-        builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<DesktopAuthService>());
+        builder.Services.AddSingleton<LinuxAuthService>();
+        builder.Services.AddSingleton<IAuthTokenProvider>(sp => sp.GetRequiredService<LinuxAuthService>());
+        builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
 
         var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
-        builder.Services.AddSingleton<IHomeAssetLocator, DesktopHomeAssetLocator>();
+        builder.Services.AddSingleton<IHomeAssetLocator, LinuxHomeAssetLocator>();
 
         // LibVLC playback in a dedicated native window (lazy init; see
-        // DesktopVideoPlayerService for the Avalonia-12 surface rationale).
-        builder.Services.AddSingleton<VardyParty.Playback.INativeVideoPlayerService, DesktopVideoPlayerService>();
+        // LinuxVideoPlayerService for the Avalonia-12 surface rationale).
+        builder.Services.AddSingleton<VardyParty.Playback.INativeVideoPlayerService, LinuxVideoPlayerService>();
 
         // UI sounds: registered per composition root (not in AddVardyParty).
         // Must precede AddVardyPartyHomeUi so its Null/in-memory TryAdd
@@ -90,7 +90,7 @@ public static class MauiProgram
             builder.Services.AddSingleton<IDesktopPackageApplier, LinuxSnapSideloadApplier>();
             builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
         }
-        builder.Services.AddSingleton<Pages.DesktopHomePage>();
+        builder.Services.AddSingleton<Pages.LinuxHomePage>();
 
         return builder.Build();
     }
@@ -103,8 +103,8 @@ public static class MauiProgram
             .AddEnvironmentVariables();
 
         // Point the head at another API deployment without editing appsettings:
-        // VARDYPARTY_DESKTOP_API=local|preview|production
-        var target = Environment.GetEnvironmentVariable("VARDYPARTY_DESKTOP_API")?.Trim().ToLowerInvariant();
+        // VARDYPARTY_LINUX_API=local|preview|production
+        var target = Environment.GetEnvironmentVariable("VARDYPARTY_LINUX_API")?.Trim().ToLowerInvariant();
         if (!string.IsNullOrEmpty(target))
         {
             var baseConfig = configurationBuilder.Build();

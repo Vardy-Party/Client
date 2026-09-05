@@ -1,32 +1,32 @@
 using System;
-using VardyParty.Desktop.Services;
+using VardyParty.Linux.Services;
 using Xunit;
 
-namespace VardyParty.Desktop.Tests;
+namespace VardyParty.Linux.Tests;
 
-public class DesktopCloseChipRevealTests
+public class LinuxCloseChipRevealTests
 {
     [Fact]
     public void StartsHidden_WithThinReserve_NotABanner()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
 
         // Act
         var height = sut.ReserveHeight(toastVisible: false);
 
         // Assert
         Assert.False(sut.ChipVisible);
-        Assert.Equal(DesktopCloseChipReveal.HiddenReserveHeight, height);
+        Assert.Equal(LinuxCloseChipReveal.HiddenReserveHeight, height);
         Assert.True(height < 40);
-        Assert.True(DesktopCloseChipReveal.HitZoneWidth > 36);
+        Assert.True(LinuxCloseChipReveal.HitZoneWidth > 36);
     }
 
     [Fact]
     public void OnHoverEnter_RevealsAndCancelsAutoHide()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
 
         // Act
         var action = sut.OnHoverEnter();
@@ -34,15 +34,15 @@ public class DesktopCloseChipRevealTests
         // Assert
         Assert.True(sut.ChipVisible);
         Assert.True(sut.Hovering);
-        Assert.Equal(DesktopCloseChipAction.CancelAutoHide, action);
-        Assert.Equal(DesktopCloseChipReveal.RevealedReserveHeight, sut.ReserveHeight(toastVisible: false));
+        Assert.Equal(LinuxCloseChipAction.CancelAutoHide, action);
+        Assert.Equal(LinuxCloseChipReveal.RevealedReserveHeight, sut.ReserveHeight(toastVisible: false));
     }
 
     [Fact]
     public void OnHoverLeave_WhileRevealed_StartsAutoHideButKeepsChip()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
         sut.OnHoverEnter();
 
         // Act
@@ -51,14 +51,14 @@ public class DesktopCloseChipRevealTests
         // Assert
         Assert.True(sut.ChipVisible);
         Assert.False(sut.Hovering);
-        Assert.Equal(DesktopCloseChipAction.StartAutoHide, action);
+        Assert.Equal(LinuxCloseChipAction.StartAutoHide, action);
     }
 
     [Fact]
     public void OnAutoHideElapsed_HidesWhenNotHovering()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
         sut.OnTouched();
 
         // Act
@@ -66,15 +66,15 @@ public class DesktopCloseChipRevealTests
 
         // Assert
         Assert.False(sut.ChipVisible);
-        Assert.Equal(DesktopCloseChipAction.None, action);
-        Assert.Equal(DesktopCloseChipReveal.HiddenReserveHeight, sut.ReserveHeight(toastVisible: false));
+        Assert.Equal(LinuxCloseChipAction.None, action);
+        Assert.Equal(LinuxCloseChipReveal.HiddenReserveHeight, sut.ReserveHeight(toastVisible: false));
     }
 
     [Fact]
     public void OnAutoHideElapsed_WhileHovering_StaysRevealed()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
         sut.OnHoverEnter();
 
         // Act
@@ -82,28 +82,28 @@ public class DesktopCloseChipRevealTests
 
         // Assert
         Assert.True(sut.ChipVisible);
-        Assert.Equal(DesktopCloseChipAction.CancelAutoHide, action);
+        Assert.Equal(LinuxCloseChipAction.CancelAutoHide, action);
     }
 
     [Fact]
     public void OnTouched_RevealsWithoutClosing_AndArmsIdleHide()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
 
         // Act
         var action = sut.OnTouched();
 
         // Assert
         Assert.True(sut.ChipVisible);
-        Assert.Equal(DesktopCloseChipAction.StartAutoHide, action);
+        Assert.Equal(LinuxCloseChipAction.StartAutoHide, action);
     }
 
     [Fact]
     public void OnTouched_WhileHovering_DoesNotArmIdleHide()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
         sut.OnHoverEnter();
 
         // Act
@@ -111,14 +111,14 @@ public class DesktopCloseChipRevealTests
 
         // Assert
         Assert.True(sut.ChipVisible);
-        Assert.Equal(DesktopCloseChipAction.CancelAutoHide, action);
+        Assert.Equal(LinuxCloseChipAction.CancelAutoHide, action);
     }
 
     [Fact]
     public void ReserveHeight_WhenToastVisible_IsAutoRegardlessOfChip()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
 
         // Act
         var hidden = sut.ReserveHeight(toastVisible: true);
@@ -134,7 +134,7 @@ public class DesktopCloseChipRevealTests
     public void Reset_HidesAndClearsHover()
     {
         // Arrange
-        var sut = new DesktopCloseChipReveal();
+        var sut = new LinuxCloseChipReveal();
         sut.OnHoverEnter();
 
         // Act
@@ -152,15 +152,15 @@ public class DesktopCloseChipRevealTests
         const double width = 1280;
 
         // Act
-        var nearHidden = DesktopCloseChipReveal.IsNearRestingPlace(
+        var nearHidden = LinuxCloseChipReveal.IsNearRestingPlace(
             width - 10, 8, width, revealed: false);
-        var nearRevealed = DesktopCloseChipReveal.IsNearRestingPlace(
+        var nearRevealed = LinuxCloseChipReveal.IsNearRestingPlace(
             width - 10, 30, width, revealed: true);
-        var tooLowWhenHidden = DesktopCloseChipReveal.IsNearRestingPlace(
+        var tooLowWhenHidden = LinuxCloseChipReveal.IsNearRestingPlace(
             width - 10, 30, width, revealed: false);
-        var center = DesktopCloseChipReveal.IsNearRestingPlace(
+        var center = LinuxCloseChipReveal.IsNearRestingPlace(
             width / 2, 8, width, revealed: false);
-        var offWindow = DesktopCloseChipReveal.IsNearRestingPlace(
+        var offWindow = LinuxCloseChipReveal.IsNearRestingPlace(
             -1, 0, width, revealed: false);
 
         // Assert
@@ -176,7 +176,7 @@ public class DesktopCloseChipRevealTests
     {
         // Arrange
         // Act
-        var delay = DesktopCloseChipReveal.AutoHideDelay;
+        var delay = LinuxCloseChipReveal.AutoHideDelay;
 
         // Assert
         Assert.InRange(delay.TotalSeconds, 2, 3);

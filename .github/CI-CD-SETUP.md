@@ -119,7 +119,7 @@ Installers will be automatically created and attached to the GitHub Release.
 - Framework: `net10.0-maccatalyst`
 - Output: macOS application
 
-### Linux / WSL (`VardyParty.Desktop`)
+### Linux / WSL (`VardyParty.Linux`)
 - Builds on: `ubuntu-latest`
 - Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
 - Architectures: x64, ARM64
@@ -132,7 +132,7 @@ Installers will be automatically created and attached to the GitHub Release.
 ```
 VardyParty/                 # MAUI head (Android/iOS/Mac Catalyst/Windows)
 VardyParty.HomeUi/          # Shared XAML homepage
-VardyParty.Desktop/         # Linux/WSL head
+VardyParty.Linux/         # Linux/WSL head
 VardyParty.*/               # Kernel, Ports, Auth, Catalog, Streaming, Playback, Presentation, Hosting
 tests/
 Version.props               # ApplicationDisplayVersion + ApplicationVersion

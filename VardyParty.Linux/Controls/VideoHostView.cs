@@ -1,7 +1,7 @@
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
 using LibVLCSharp.Shared;
 
-namespace VardyParty.Desktop.Controls;
+namespace VardyParty.Linux.Controls;
 
 /// <summary>
 /// MAUI view that hosts libvlc's video output INSIDE the app window. Its
@@ -14,11 +14,11 @@ namespace VardyParty.Desktop.Controls;
 ///
 /// Airspace caveat: the video is a NATIVE child window stacked above the
 /// Avalonia-drawn scene, so MAUI content overlapping this view's bounds is
-/// covered by the video. DesktopHomePage therefore reserves a chrome strip
+/// covered by the video. LinuxHomePage therefore reserves a chrome strip
 /// (title / Close / toasts) that never overlaps the host.
 ///
-/// The whole type compiles out with <c>-p:EmbeddedDesktopVideo=false</c>
-/// (see VardyParty.Desktop.csproj).
+/// The whole type compiles out with <c>-p:EmbeddedLinuxVideo=false</c>
+/// (see VardyParty.Linux.csproj).
 /// </summary>
 public sealed class VideoHostView : View
 {
@@ -33,7 +33,7 @@ public sealed class VideoHostView : View
     /// set null to detach. Assignments must happen on the UI thread (they
     /// flow into the Avalonia control); the underlying drawable set/unset is
     /// a non-blocking libvlc setter, but never assign a player whose session
-    /// has been abandoned as wedged (see DesktopVideoPlayerService — a wedged
+    /// has been abandoned as wedged (see LinuxVideoPlayerService — a wedged
     /// player can hold its object lock and stall the caller).
     /// </summary>
     public MediaPlayer? MediaPlayer

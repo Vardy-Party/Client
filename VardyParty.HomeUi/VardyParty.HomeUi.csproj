@@ -5,7 +5,7 @@
 	<PropertyGroup>
 		<!--
 			Shared .NET MAUI XAML homepage: net11.0 is drawn by Avalonia
-			(VardyParty.Desktop); net11.0-android/-windows compile the exact same
+			(VardyParty.Linux); net11.0-android/-windows compile the exact same
 			XAML natively into the VardyParty MAUI head.
 
 			This project cross-targets, and Directory.Build.targets strips the
@@ -14,7 +14,7 @@
 			compiled output back). Heads referencing this project therefore override
 			GlobalPropertiesToRemove on their ProjectReference to keep
 			TargetFramework negotiation intact (see VardyParty.csproj and
-			VardyParty.Desktop.csproj).
+			VardyParty.Linux.csproj).
 		-->
 		<!-- Linux: both TFMs so the MAUI head restore has net11.0-android.
 		     Unit tests set HomeUiTargetFrameworks=net11.0 (job env / -p:) so

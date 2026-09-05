@@ -27,12 +27,12 @@ hardware QA.
    pairings / player profiles” contradicted the product. Branch tip has been
    fixing README highlights / Apple untested / chess line — confirm tip.
 3. **Linux: “Finding streams” overlay hides on first pick** —
-   `DesktopHomePage` subscribes to the orchestrator `BehaviorSubject` and
+   `LinuxHomePage` subscribes to the orchestrator `BehaviorSubject` and
    treats the initial `IsResolving=false` as hide. MAUI `HomeHostPage`
    documents `_resolveOverlayOpen` specifically to avoid this; Desktop lacks
    that guard → overlay flashes then vanishes until a later progress emission.
 4. **Homepage XAML is shared once; host orchestration is copy-pasted twice** —
-   `HomeHostPage.xaml.cs` ≈ `DesktopHomePage.xaml.cs` (~26 same-named private
+   `HomeHostPage.xaml.cs` ≈ `LinuxHomePage.xaml.cs` (~26 same-named private
    methods). Divergence already produced blocker #3. Prefer a
    `HomeHostController` (or similar) in `Presentation` with heads as thin
    overlay renderers.
