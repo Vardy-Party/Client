@@ -213,6 +213,7 @@ namespace VardyParty.Platforms.Windows
                     reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                 }
 
+                SyncScoresTickerFromChrome();
                 RefreshDismissSurface();
             }
 

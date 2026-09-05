@@ -52,6 +52,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>Pulse/PipeWire settle after SoundFlow yield before LibVLC opens pulse.</summary>
+    private static readonly TimeSpan UiSoundHandoffSettle = TimeSpan.FromMilliseconds(75);
 
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private readonly IStreamSwitchingService _switching;
@@ -765,6 +767,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         // Yield SoundFlow before LibVLC session create/Play so Pulse is free
         // when --aout=pulse opens (PlaybackAudioSession + probe docs).
         PlaybackVisibilityChanged?.Invoke(this, true);
+
+        // Pulse/PipeWire can still hold the sink briefly after miniaudio
+        // Dispose. Settle here (async, attach path) — never inside
+        // IUiSoundPlayer.YieldDevice, which visibility handlers may call on UI.
+        await Task.Delay(UiSoundHandoffSettle, cancellationToken);
 
         var vlc = await EnsureSessionAsync();
         if (vlc == null)

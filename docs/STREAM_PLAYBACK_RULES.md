@@ -299,7 +299,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy`; shared `PlaybackChromePresenter` binds Android/Windows; Linux uses Avalonia transparent overlay window (`LinuxPlaybackChromeWindow`) over LibVLC airspace |
 | Linux Avalonia playback chrome | Done — `LinuxHomePage` + `LinuxPlaybackChromeWindow` driven by `PlaybackChromePresenter`; Close/match toast stay in reserved MAUI airspace row |
 | Linux host-window fullscreen | Done — Avalonia `WindowState.FullScreen` (or Maximized via `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED`); Escape: dismiss chrome → exit fullscreen → close; reserved Close/match-toast row kept |
-| Linux stream audio (WSL + Ubuntu) | Hardened — default `--aout=pulse`, live/network caching 3000, SoundFlow yield-before-session + 75 ms handoff settle, audio-track ensure + env diagnostics. **Field verify on WSL/Ubuntu still required** (see `LINUX_SUPPORT.md`). |
+| Linux stream audio (WSL + Ubuntu) | Hardened — default `--aout=pulse`, live/network caching 3000, SoundFlow yield-before-session + 75 ms attach-path handoff settle (`Task.Delay`), audio-track ensure + env diagnostics. **Field verify on WSL/Ubuntu still required** (see `LINUX_SUPPORT.md`). |
 
 ---
 

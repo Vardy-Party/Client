@@ -204,12 +204,7 @@ namespace VardyParty.Platforms.Android
 
         private void CycleScoresTickerMode()
         {
-            _scoresTickerMode = ScoresTickerPolicy.Next(_scoresTickerMode);
-
-            if (_isScoresTickerVisible)
-            {
-                UpdateScoresTickerText(armStartHold: true);
-            }
+            EnsureChrome().CycleScoresMode();
         }
 
         private void UpdateScoresTickerText(bool armStartHold = false)
@@ -270,31 +265,41 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private void ToggleSameLeagueScoresTicker()
+        private void SyncScoresTickerFromChrome()
         {
+            if (_chrome is null) return;
+
             try
             {
-                _isScoresTickerVisible = !_isScoresTickerVisible;
-                if (_scoresTickerContainer != null)
-                {
-                    _scoresTickerContainer.Visibility = _isScoresTickerVisible
-                        ? global::Android.Views.ViewStates.Visible
-                        : global::Android.Views.ViewStates.Gone;
-                }
+                var wantVisible = _chrome.IsScoresVisible;
+                var mode = _chrome.ScoresMode;
+                var visibilityChanged = wantVisible != _isScoresTickerVisible;
+                var modeChanged = mode != _scoresTickerMode;
+                _scoresTickerMode = mode;
 
-                if (_isScoresTickerVisible)
+                if (visibilityChanged)
                 {
-                    _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                    UpdateScoresTickerText(armStartHold: true);
+                    _isScoresTickerVisible = wantVisible;
+                    if (_scoresTickerContainer != null)
+                    {
+                        _scoresTickerContainer.Visibility = wantVisible
+                            ? global::Android.Views.ViewStates.Visible
+                            : global::Android.Views.ViewStates.Gone;
+                    }
+
+                    if (wantVisible)
+                        UpdateScoresTickerText(armStartHold: true);
+                    else
+                        RemoveCallback(_tickerHandler, _tickerRunnable);
                 }
-                else
+                else if (wantVisible && modeChanged)
                 {
-                    RemoveCallback(_tickerHandler, _tickerRunnable);
+                    UpdateScoresTickerText(armStartHold: true);
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to toggle same-league ticker");
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Failed to sync scores ticker from chrome");
             }
         }
     }

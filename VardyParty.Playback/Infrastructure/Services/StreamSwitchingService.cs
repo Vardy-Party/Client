@@ -68,21 +68,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
 
             // Always update overlay info so UI sees new totals and current stream metadata
-            var current = GetCurrentStream();
-            var overlay = current == null ? null : new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
         }
     }
 
@@ -122,20 +111,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _currentStreamSubject.OnNext(current);
 
             // Publish overlay info for UI/platform consumers
-            var overlay = new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                current,
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
 
             // No platform-specific actions here - consumers can subscribe to CurrentStreamIndexChanged
             // and HealthyStreamsUpdated to update UI or platform overlays as needed.
@@ -224,21 +203,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
 
             // Publish updated overlay info
-            var current = GetCurrentStream();
-            var overlay = current == null ? null : new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
 
             return true;
         }

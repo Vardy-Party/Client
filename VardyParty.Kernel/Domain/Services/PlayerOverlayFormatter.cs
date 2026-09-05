@@ -99,6 +99,39 @@ public static class PlayerOverlayFormatter
         return codec;
     }
 
+    /// <summary>
+    /// Shared overlay payload for stream switching and host chrome. Prefers
+    /// health resolution/codecs; maps codec tokens via
+    /// <see cref="MapCodecToFriendlyName"/>.
+    /// </summary>
+    public static PlayerOverlayInfo? BuildOverlayInfo(
+        EnrichedStream? current,
+        int index,
+        int total,
+        string? refererUrl = null,
+        string? fallbackM3u8Url = null)
+    {
+        if (current is null && total <= 0)
+            return null;
+
+        var resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution;
+        return new PlayerOverlayInfo
+        {
+            Index = index,
+            Total = total,
+            Channel = current?.Stream?.Channel,
+            BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
+            Resolution = resolution,
+            FrameRate = current?.Health?.FrameRate,
+            VideoCodec = MapCodecToFriendlyName(current?.Health?.VideoCodec),
+            AudioCodec = MapCodecToFriendlyName(current?.Health?.AudioCodec),
+            AspectRatio = BuildAspect(resolution),
+            M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
+            RefererUrl = refererUrl,
+            Title = current?.Stream?.Channel
+        };
+    }
+
     private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
 }
 

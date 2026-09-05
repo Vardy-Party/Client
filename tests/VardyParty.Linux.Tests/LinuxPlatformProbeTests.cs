@@ -144,19 +144,22 @@ public class LinuxPlatformProbeTests
     [Fact]
     public void BuildPlaybackMediaOptions_PassesUnquotedRefererAndAvformatHeaders()
     {
-        const string referer = "https://hamis.romponalis.st/";
+        // Arrange
+        const string referer = "https://referer.example.com/";
         const string userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
 
+        // Act
         var options = LinuxPlatformProbe.BuildPlaybackMediaOptions(
             conservative: true, referer, userAgent);
 
+        // Assert
         Assert.Contains($":http-referrer={referer}", options);
         Assert.Contains($":http-user-agent={userAgent}", options);
         Assert.DoesNotContain(options, o => o.Contains(":http-referrer=\"", StringComparison.Ordinal));
         Assert.Contains(options, o =>
             o.StartsWith(":avformat-options=headers=", StringComparison.Ordinal) &&
             o.Contains($"Referer: {referer}", StringComparison.Ordinal) &&
-            o.Contains("Origin: https://hamis.romponalis.st", StringComparison.Ordinal));
+            o.Contains("Origin: https://referer.example.com", StringComparison.Ordinal));
         Assert.DoesNotContain(options, o => o.Equals(":demux=avformat", StringComparison.Ordinal));
     }
 }

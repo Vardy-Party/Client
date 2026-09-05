@@ -64,28 +64,8 @@ public static class LinuxPlaybackChromeInfoText
         int index,
         int total,
         string? refererUrl,
-        string? fallbackM3u8Url = null)
-    {
-        if (current is null && total <= 0)
-            return null;
-
-        var resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution;
-        return new PlayerOverlayInfo
-        {
-            Index = index,
-            Total = total,
-            Channel = current?.Stream?.Channel,
-            BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
-            Resolution = resolution,
-            FrameRate = current?.Health?.FrameRate is int fps ? fps : null,
-            VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current?.Health?.VideoCodec),
-            AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current?.Health?.AudioCodec),
-            AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution),
-            M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
-            RefererUrl = refererUrl,
-            Title = current?.Stream?.Channel
-        };
-    }
+        string? fallbackM3u8Url = null) =>
+        PlayerOverlayFormatter.BuildOverlayInfo(current, index, total, refererUrl, fallbackM3u8Url);
 
     public static string FormatScoresTicker(
         IEnumerable<Game> games,

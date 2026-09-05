@@ -24,12 +24,6 @@ namespace VardyParty.Linux.Services;
 /// </summary>
 public sealed class SoundFlowUiSoundPlayer : IUiSoundPlayer, IDisposable
 {
-    /// <summary>
-    /// Pause after tearing down miniaudio so Pulse/PipeWire finishes releasing
-    /// the sink before libvlc opens <c>--aout=pulse</c>.
-    /// </summary>
-    private static readonly TimeSpan DeviceHandoffSettle = TimeSpan.FromMilliseconds(75);
-
     private static readonly (UiSound Sound, string File)[] Files =
     [
         (UiSound.FocusMove, "focus_tick.wav"),
@@ -65,12 +59,10 @@ public sealed class SoundFlowUiSoundPlayer : IUiSoundPlayer, IDisposable
             TearDownUnlocked();
         }
 
-        // Pulse/PipeWire can still hold the sink for a beat after miniaudio
-        // Dispose returns. LibVLC opening pulse immediately then races into
-        // crackle / one-shot silence on WSL and Ubuntu. Brief settle only —
-        // Yield is already off the UI thread when called from attach-play.
-        Thread.Sleep(DeviceHandoffSettle);
-
+        // Do not Thread.Sleep here — YieldDevice is also called from
+        // PlaybackAudioSession on visibility handlers that may be UI-thread.
+        // Pulse/PipeWire settle lives on the LibVLC attach path
+        // (LinuxVideoPlayerService.AttachLibVlcAsync) via Task.Delay.
         _logger.LogInformation("UI sound device yielded for video playback");
     }
 

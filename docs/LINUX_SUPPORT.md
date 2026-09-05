@@ -103,7 +103,7 @@ LibVLC and SoundFlow (UI sounds) share Pulse/ALSA. Policy:
 |------------------|--------|
 | `--aout` | Default **`pulse`** on both WSL and native Ubuntu (PipeWire-as-Pulse). Override with `VARDYPARTY_LINUX_VLC_AOUT=pulse\|alsa\|any`. Never `--no-audio`. Prefer `alsa` only when Pulse is absent; `any` is diagnostic (can pick exclusive ALSA / wrong module → crackle or one-shot silence). |
 | Caching | Instance `--network-caching=3000` + `--live-caching=3000`, per-media `:network-caching=3000` (live HLS underrun cushion). |
-| SoundFlow yield | `PlaybackAudioSession` yields the UI device **before** LibVLC session create/Play (75 ms Pulse handoff settle) and recovers after Close. |
+| SoundFlow yield | `PlaybackAudioSession` yields the UI device **before** LibVLC session create/Play; `AttachLibVlcAsync` then awaits a 75 ms Pulse handoff settle (`Task.Delay`, not `Thread.Sleep` in `YieldDevice`) and recovers after Close. |
 | `SetAudioOutput` | Not called before Play (early pulse load raced Stop/demux on WSL). |
 | Track ensure | On `Playing`, unmute/volume 100 and select the first real audio track if LibVLC started with track `-1`. |
 | Diagnostics | Startup logs `LinuxPlatformProbe.DescribeAudioEnvironment()` (`aout`, WSL, `PULSE_SERVER`, `XDG_RUNTIME_DIR`). Filter logs for `aout` / `pulse` / `audio`. |

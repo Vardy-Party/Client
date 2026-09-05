@@ -21,22 +21,32 @@ public class PlaybackChromePresenterTests
         sut.ToggleScores();
         sut.ShowVideoInfo();
         sut.ToggleMenu();
-
-        // Act / Assert
         Assert.True(sut.IsMenuVisible);
         Assert.True(sut.IsVideoInfoVisible);
         Assert.True(sut.IsScoresVisible);
 
-        Assert.True(sut.TryDismissLayer());
+        // Act
+        var dismissedMenu = sut.TryDismissLayer();
+        // Assert
+        Assert.True(dismissedMenu);
         Assert.False(sut.IsMenuVisible);
 
-        Assert.True(sut.TryDismissLayer());
+        // Act
+        var dismissedInfo = sut.TryDismissLayer();
+        // Assert
+        Assert.True(dismissedInfo);
         Assert.False(sut.IsVideoInfoVisible);
 
-        Assert.True(sut.TryDismissLayer());
+        // Act
+        var dismissedScores = sut.TryDismissLayer();
+        // Assert
+        Assert.True(dismissedScores);
         Assert.False(sut.IsScoresVisible);
 
-        Assert.False(sut.TryDismissLayer());
+        // Act
+        var dismissedNothing = sut.TryDismissLayer();
+        // Assert
+        Assert.False(dismissedNothing);
     }
 
     [Fact]

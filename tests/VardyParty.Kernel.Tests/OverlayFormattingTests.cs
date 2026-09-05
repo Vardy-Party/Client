@@ -176,5 +176,57 @@ namespace VardyParty.Kernel.Tests
             // Assert
             Assert.Equal(expected, actual);
         }
+
+        [Fact]
+        public void BuildOverlayInfo_PrefersHealthResolutionAndMapsCodecs()
+        {
+            // Arrange
+            var stream = _fixture.Build<Stream>()
+                .With(s => s.Channel, "Channel North")
+                .With(s => s.Resolution, "640x360")
+                .With(s => s.BitrateKbps, 800)
+                .Create();
+            var health = _fixture.Build<StreamHealth>()
+                .With(h => h.Resolution, "1920x1080")
+                .With(h => h.FrameRate, 50)
+                .With(h => h.VideoCodec, "avc1.4d401f")
+                .With(h => h.AudioCodec, "mp4a.40.2")
+                .With(h => h.Bitrate, 4500)
+                .Create();
+            var enriched = _fixture.Build<EnrichedStream>()
+                .With(e => e.Stream, stream)
+                .With(e => e.Health, health)
+                .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live.m3u8")
+                .With(e => e.Referer, "https://referer.example.com/")
+                .Create();
+
+            // Act
+            var info = PlayerOverlayFormatter.BuildOverlayInfo(
+                enriched, index: 2, total: 4, refererUrl: enriched.Referer);
+
+            // Assert
+            Assert.NotNull(info);
+            Assert.Equal(2, info!.Index);
+            Assert.Equal(4, info.Total);
+            Assert.Equal("Channel North", info.Channel);
+            Assert.Equal("1920x1080", info.Resolution);
+            Assert.Equal(50, info.FrameRate);
+            Assert.Equal("H.264", info.VideoCodec);
+            Assert.Equal("AAC", info.AudioCodec);
+            Assert.Equal("16:9", info.AspectRatio);
+            Assert.Equal("https://cdn.example.com/live.m3u8", info.M3u8Url);
+            Assert.Equal("https://referer.example.com/", info.RefererUrl);
+        }
+
+        [Fact]
+        public void BuildOverlayInfo_NullCurrentWithEmptyTotal_ReturnsNull()
+        {
+            // Arrange
+            // Act
+            var info = PlayerOverlayFormatter.BuildOverlayInfo(null, index: 0, total: 0);
+
+            // Assert
+            Assert.Null(info);
+        }
     }
 }

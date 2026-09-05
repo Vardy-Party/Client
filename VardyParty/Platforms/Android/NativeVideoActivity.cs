@@ -141,6 +141,7 @@ namespace VardyParty.Platforms.Android
             if (_streamToastView != null && !_chrome.IsStreamToastVisible)
                 _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
 
+            SyncScoresTickerFromChrome();
             UpdateBackdropVisibility();
         }
 
@@ -533,11 +534,7 @@ namespace VardyParty.Platforms.Android
 
             videoInfoButton.Click += (_, __) => EnsureChrome().ShowVideoInfo();
 
-            inPlayScoresButton.Click += (_, __) =>
-            {
-                EnsureChrome().ToggleScores();
-                ToggleSameLeagueScoresTicker();
-            };
+            inPlayScoresButton.Click += (_, __) => EnsureChrome().ToggleScores();
 
             reportButton.Click += async (_, __) =>
             {

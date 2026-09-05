@@ -1,28 +1,34 @@
+using AutoFixture;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
 using VardyParty.Linux.Services;
+using VardyParty.TestSupport;
 using Xunit;
 
 namespace VardyParty.Linux.Tests;
 
 public class LinuxPlaybackChromeInfoTextTests
 {
+    private readonly IFixture _fixture = AutoMoqFixture.Create();
+
     [Fact]
     public void FormatVideoInfo_IncludesStreamChannelAndSource()
     {
         // Arrange
-        var info = new PlayerOverlayInfo
-        {
-            Index = 2,
-            Total = 5,
-            Channel = "Channel North",
-            Resolution = "1920x1080",
-            AspectRatio = "16:9",
-            BitrateKbps = 4500,
-            VideoCodec = "H.264",
-            M3u8Url = "https://streams.example.com/live.m3u8?token=abc",
-            RefererUrl = "https://referer.example.com/page"
-        };
+        var info = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 2)
+            .With(i => i.Total, 5)
+            .With(i => i.Channel, "Channel North")
+            .With(i => i.Resolution, "1920x1080")
+            .With(i => i.AspectRatio, "16:9")
+            .With(i => i.BitrateKbps, 4500)
+            .With(i => i.VideoCodec, "H.264")
+            .With(i => i.AudioCodec, (string?)null)
+            .With(i => i.M3u8Url, "https://streams.example.com/live.m3u8?token=abc")
+            .With(i => i.RefererUrl, "https://referer.example.com/page")
+            .With(i => i.Title, "Channel North")
+            .With(i => i.BufferPercent, (int?)null)
+            .Create();
 
         // Act
         var text = LinuxPlaybackChromeInfoText.FormatVideoInfo(info, "Playing");
@@ -44,27 +50,25 @@ public class LinuxPlaybackChromeInfoTextTests
     public void BuildOverlayInfo_MapsPoolFields()
     {
         // Arrange
-        var stream = new Kernel.Stream
-        {
-            Channel = "Channel North",
-            Resolution = "1280x720",
-            BitrateKbps = 2500,
-            Url = "https://streams.example.com/a"
-        };
-        var enriched = new EnrichedStream
-        {
-            Stream = stream,
-            ResolvedM3U8Url = "https://cdn.example.com/a.m3u8",
-            Referer = "https://referer.example.com",
-            Health = new StreamHealth
-            {
-                Resolution = "1280x720",
-                FrameRate = 60,
-                VideoCodec = "avc1.4d401f",
-                AudioCodec = "mp4a.40.2",
-                Bitrate = 2500
-            }
-        };
+        var stream = _fixture.Build<Kernel.Stream>()
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.Resolution, "1280x720")
+            .With(s => s.BitrateKbps, 2500)
+            .With(s => s.Url, "https://streams.example.com/a")
+            .Create();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Resolution, "1280x720")
+            .With(h => h.FrameRate, 60)
+            .With(h => h.VideoCodec, "avc1.4d401f")
+            .With(h => h.AudioCodec, "mp4a.40.2")
+            .With(h => h.Bitrate, 2500)
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, stream)
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/a.m3u8")
+            .With(e => e.Referer, "https://referer.example.com")
+            .With(e => e.Health, health)
+            .Create();
 
         // Act
         var info = LinuxPlaybackChromeInfoText.BuildOverlayInfo(enriched, index: 1, total: 3, refererUrl: enriched.Referer);
@@ -86,38 +90,48 @@ public class LinuxPlaybackChromeInfoTextTests
     public void FormatScoresTicker_FiltersSameLeagueInPlay()
     {
         // Arrange
-        var games = new[]
-        {
-            new Game
-            {
-                Home = "Home United",
-                Away = "Away City",
-                League = "League Alpha",
-                HomeScore = 1,
-                AwayScore = 0,
-                IsInProgress = true,
-                Minute = 67
-            },
-            new Game
-            {
-                Home = "North FC",
-                Away = "South FC",
-                League = "League Beta",
-                HomeScore = 2,
-                AwayScore = 2,
-                IsInProgress = true,
-                Minute = 12
-            },
-            new Game
-            {
-                Home = "East Town",
-                Away = "West Town",
-                League = "League Alpha",
-                HomeScore = 0,
-                AwayScore = 0,
-                IsFinished = true
-            }
-        };
+        var sameLeagueLive = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, string.Empty)
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.StatusText, string.Empty)
+            .With(g => g.HomeScore, 1)
+            .With(g => g.AwayScore, 0)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsFinished, false)
+            .With(g => g.Minute, 67)
+            .Create();
+        var otherLeagueLive = _fixture.Build<Game>()
+            .With(g => g.Home, "North FC")
+            .With(g => g.Away, "South FC")
+            .With(g => g.League, "League Beta")
+            .With(g => g.BBCLeague, string.Empty)
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.StatusText, string.Empty)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 2)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsFinished, false)
+            .With(g => g.Minute, 12)
+            .Create();
+        var sameLeagueFinished = _fixture.Build<Game>()
+            .With(g => g.Home, "East Town")
+            .With(g => g.Away, "West Town")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, string.Empty)
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.StatusText, "FT")
+            .With(g => g.HomeScore, 0)
+            .With(g => g.AwayScore, 0)
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .Create();
+        var games = new[] { sameLeagueLive, otherLeagueLive, sameLeagueFinished };
 
         // Act
         var text = LinuxPlaybackChromeInfoText.FormatScoresTicker(

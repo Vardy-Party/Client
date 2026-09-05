@@ -488,11 +488,7 @@ namespace VardyParty.Platforms.Windows
 
                     menuButton.Click += (_, __) => chrome.ToggleMenu();
 
-                    sameLeagueTickerButton.Click += (_, __) =>
-                    {
-                        chrome.ToggleScores();
-                        ToggleScoresTicker();
-                    };
+                    sameLeagueTickerButton.Click += (_, __) => chrome.ToggleScores();
 
                     alwaysOnTopButton.Click += (_, __) =>
                     {
