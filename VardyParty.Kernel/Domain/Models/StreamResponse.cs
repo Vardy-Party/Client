@@ -141,7 +141,11 @@ public class Stream
             return false;
         }
 
-        return url.Contains("mpoutqn", StringComparison.OrdinalIgnoreCase);
+        return url.Contains("mpoutqn", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("fctv33hd", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("mpgreatest", StringComparison.OrdinalIgnoreCase)
+            || (url.Contains("jack", StringComparison.OrdinalIgnoreCase)
+                && url.Contains(".mp", StringComparison.OrdinalIgnoreCase));
     }
 
 }

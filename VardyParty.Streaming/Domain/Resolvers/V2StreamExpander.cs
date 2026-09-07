@@ -4,8 +4,8 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Expands v2 API stream entries (one page URL, many player labels) into per-label candidates.
-/// v2 rows with no player-stream labels are dropped — an empty MP page shell is not testable.
+/// Expands v2 API stream entries. Legacy rows with player labels become
+/// per-label candidates. Slim MP rows (url + v2 strategy only) stay as one candidate.
 /// </summary>
 public static class V2StreamExpander
 {
@@ -22,9 +22,9 @@ public static class V2StreamExpander
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                // No labels => not a real MP candidate (matches API isV2StreamPlayable).
                 if (labels.Count == 0)
                 {
+                    expanded.Add(stream);
                     continue;
                 }
 

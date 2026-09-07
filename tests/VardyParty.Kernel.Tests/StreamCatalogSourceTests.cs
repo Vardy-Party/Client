@@ -63,4 +63,22 @@ public class StreamCatalogSourceTests
         // Assert
         Assert.Equal("fb", source);
     }
+
+    [Fact]
+    public void ResolveCatalogSource_TagsFctvMatchPageAsMp()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://www.fctv33hd.example/football/league-match-12345/home-united-vs-away-city.html")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, "v2")
+            .Create();
+
+        // Act
+        var source = stream.ResolveCatalogSource();
+
+        // Assert
+        Assert.Equal("mp", source);
+        Assert.Equal("V2", stream.CatalogSourceBadgeLabel);
+    }
 }
