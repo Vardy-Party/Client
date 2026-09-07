@@ -51,7 +51,8 @@ public sealed class HomeViewModelTests : IDisposable
         var preferences = new InMemorySoundPreferencesStore();
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         _notifications = new MatchEventNotificationPolicy(preferences);
-        var menu = new MenuViewModel(_filter.Object, sounds, _notifications);
+        var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
