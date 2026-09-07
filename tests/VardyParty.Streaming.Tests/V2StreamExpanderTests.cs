@@ -57,7 +57,7 @@ public class V2StreamExpanderTests
     }
 
     [Fact]
-    public void Expand_V2WithEmptyPlayerStreams_DropsEntry()
+    public void Expand_V2WithEmptyPlayerStreams_KeepsSingleCandidate()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
@@ -71,11 +71,12 @@ public class V2StreamExpanderTests
         var result = V2StreamExpander.Expand([stream]);
 
         // Assert
-        Assert.Empty(result);
+        Assert.Single(result);
+        Assert.Same(stream, result[0]);
     }
 
     [Fact]
-    public void Expand_MixedFbAndEmptyMp_OnlyKeepsFb()
+    public void Expand_MixedFbAndEmptyMp_KeepsBoth()
     {
         // Arrange
         var fb = _fixture.Build<Stream>()
@@ -93,8 +94,9 @@ public class V2StreamExpanderTests
         var result = V2StreamExpander.Expand([fb, mp]);
 
         // Assert
-        Assert.Single(result);
+        Assert.Equal(2, result.Count);
         Assert.Same(fb, result[0]);
+        Assert.Same(mp, result[1]);
     }
 
     [Fact]
