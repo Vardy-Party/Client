@@ -10,7 +10,7 @@
     - ApplicationDisplayVersion: User-facing Major.Minor.Patch (manual "Bump Display Version" workflow)
   -->
   <PropertyGroup>
-    <!-- Internal build counter - bumped on the PR branch before merge to main -->
+    <!-- Internal build counter — bumped on the PR branch before merge to main -->
     <ApplicationVersion>173</ApplicationVersion>
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->

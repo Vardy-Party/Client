@@ -25,33 +25,55 @@ public class StreamResolver(
         // Report the total stream count upfront
         onTotalStreamsKnown?.Invoke(streams.Count);
 
+        var concurrency = Math.Max(1, batchSize);
         logger.LogInformation(
-            "[StreamResolver] Starting incremental resolution of {Count} streams in batches of {BatchSize}",
-            streams.Count, batchSize);
+            "[StreamResolver] Starting incremental resolution of {Count} streams with concurrency {Concurrency}",
+            streams.Count, concurrency);
 
-        // Process streams in batches
-        for (var i = 0; i < streams.Count; i += batchSize)
+        // Keep up to `concurrency` resolves in flight. Yield each result as it
+        // finishes so the UI can count 1, 2, 3… instead of waiting on a pair.
+        var gate = new SemaphoreSlim(concurrency, concurrency);
+        var inFlight = new List<Task<EnrichedStream>>();
+        var nextIndex = 0;
+
+        async Task<EnrichedStream> StartAsync(Stream stream)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await ResolveAndTestStreamAsync(stream, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        void FillWindow()
+        {
+            while (nextIndex < streams.Count && inFlight.Count < concurrency)
+            {
+                var stream = streams[nextIndex++];
+                logger.LogInformation(
+                    "[StreamResolver] Starting resolve {Index}/{Count} for {Channel}",
+                    nextIndex, streams.Count, stream.Channel);
+                inFlight.Add(StartAsync(stream));
+            }
+        }
+
+        FillWindow();
+
+        while (inFlight.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var batch = streams
-                .Skip(i)
-                .Take(batchSize)
-                .ToList();
-
-            logger.LogInformation("[StreamResolver] Processing batch {BatchNumber} with {Count} streams",
-                i / batchSize + 1, batch.Count);
-
-            // Resolve streams in parallel but yield in input order so catalog priority is preserved.
-            var tasks = batch.Select(stream => ResolveAndTestStreamAsync(stream, cancellationToken)).ToList();
-            var results = await Task.WhenAll(tasks);
-
-            foreach (var enriched in results)
-            {
-                logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
-                    enriched.Stream.Channel, enriched.Status);
-                yield return enriched;
-            }
+            var completed = await Task.WhenAny(inFlight).ConfigureAwait(false);
+            inFlight.Remove(completed);
+            var enriched = await completed.ConfigureAwait(false);
+            logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
+                enriched.Stream.Channel, enriched.Status);
+            yield return enriched;
+            FillWindow();
         }
 
         logger.LogInformation("[StreamResolver] Completed incremental resolution of all streams");
