@@ -36,8 +36,8 @@ public sealed class CloudflareDnsOverHttpsClient : IDnsOverHttpsClient, IDisposa
         var aTask = QueryAsync(host, DnsRecordType.A, cancellationToken);
         var aaaaTask = QueryAsync(host, DnsRecordType.AAAA, cancellationToken);
 
-        var aAddresses = await CollectQueryAsync(aTask).ConfigureAwait(false);
-        var aaaaAddresses = await CollectQueryAsync(aaaaTask).ConfigureAwait(false);
+        var aAddresses = await CollectQueryAsync(aTask, cancellationToken).ConfigureAwait(false);
+        var aaaaAddresses = await CollectQueryAsync(aaaaTask, cancellationToken).ConfigureAwait(false);
 
         var addresses = new List<IPAddress>();
         if (aAddresses.Addresses is { Length: > 0 })
@@ -64,11 +64,18 @@ public sealed class CloudflareDnsOverHttpsClient : IDnsOverHttpsClient, IDisposa
         return [];
     }
 
-    private static async Task<QueryOutcome> CollectQueryAsync(Task<IPAddress[]> query)
+    private static async Task<QueryOutcome> CollectQueryAsync(
+        Task<IPAddress[]> query,
+        CancellationToken cancellationToken)
     {
         try
         {
             return new QueryOutcome(await query.ConfigureAwait(false), null);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // HttpClient.Timeout / per-query stall — keep the other record type.
+            return new QueryOutcome([], ex);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
