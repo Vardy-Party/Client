@@ -19,8 +19,65 @@ public sealed class CloudflareDnsOverHttpsClient : IDnsOverHttpsClient, IDisposa
     private readonly ILogger<CloudflareDnsOverHttpsClient>? _logger;
 
     public CloudflareDnsOverHttpsClient(ILogger<CloudflareDnsOverHttpsClient>? logger = null)
+        : this(CreateResolverHttpClient(), logger)
     {
+    }
+
+    internal CloudflareDnsOverHttpsClient(HttpClient http, ILogger<CloudflareDnsOverHttpsClient>? logger = null)
+    {
+        _http = http ?? throw new ArgumentNullException(nameof(http));
         _logger = logger;
+    }
+
+    public async Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
+
+        var aTask = QueryAsync(host, DnsRecordType.A, cancellationToken);
+        var aaaaTask = QueryAsync(host, DnsRecordType.AAAA, cancellationToken);
+
+        var aAddresses = await CollectQueryAsync(aTask).ConfigureAwait(false);
+        var aaaaAddresses = await CollectQueryAsync(aaaaTask).ConfigureAwait(false);
+
+        var addresses = new List<IPAddress>();
+        if (aAddresses.Addresses is { Length: > 0 })
+        {
+            addresses.AddRange(aAddresses.Addresses);
+        }
+
+        if (aaaaAddresses.Addresses is { Length: > 0 })
+        {
+            addresses.AddRange(aaaaAddresses.Addresses);
+        }
+
+        if (addresses.Count > 0)
+        {
+            return addresses.ToArray();
+        }
+
+        if (aAddresses.Error is not null && aaaaAddresses.Error is not null)
+            throw new AggregateException(
+                "Cloudflare DoH A and AAAA queries failed.",
+                aAddresses.Error,
+                aaaaAddresses.Error);
+
+        return [];
+    }
+
+    private static async Task<QueryOutcome> CollectQueryAsync(Task<IPAddress[]> query)
+    {
+        try
+        {
+            return new QueryOutcome(await query.ConfigureAwait(false), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new QueryOutcome([], ex);
+        }
+    }
+
+    private static HttpClient CreateResolverHttpClient()
+    {
         var handler = new SocketsHttpHandler
         {
             ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -44,27 +101,16 @@ public sealed class CloudflareDnsOverHttpsClient : IDnsOverHttpsClient, IDisposa
             }
         };
 
-        _http = new HttpClient(handler)
+        var http = new HttpClient(handler)
         {
             BaseAddress = new Uri($"https://{ResolverHostName}/"),
             Timeout = TimeSpan.FromSeconds(8)
         };
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/dns-json");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/dns-json");
+        return http;
     }
 
-    public async Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(host);
-
-        var aTask = QueryAsync(host, DnsRecordType.A, cancellationToken);
-        var aaaaTask = QueryAsync(host, DnsRecordType.AAAA, cancellationToken);
-        await Task.WhenAll(aTask, aaaaTask).ConfigureAwait(false);
-
-        var addresses = new List<IPAddress>();
-        addresses.AddRange(aTask.Result);
-        addresses.AddRange(aaaaTask.Result);
-        return addresses.ToArray();
-    }
+    private readonly record struct QueryOutcome(IPAddress[] Addresses, Exception? Error);
 
     private async Task<IPAddress[]> QueryAsync(
         string host,

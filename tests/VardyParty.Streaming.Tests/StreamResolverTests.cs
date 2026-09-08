@@ -351,6 +351,41 @@ public class StreamResolverTests
     }
 
     [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_UnlabeledV2_PassesNullLabelToLocalService()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.PlayerStreams, new List<string>())
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(m3u8.Url, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        _localLanPlay.Verify(
+            s => s.ResolveM3U8UrlAsync(stream.Url, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task ResolveStreamsIncrementallyAsync_HealthProbeUnreachable_MarksFailed()
     {
         // Arrange

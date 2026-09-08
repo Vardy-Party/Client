@@ -190,12 +190,7 @@ public class StreamResolver(
             return null;
         }
 
-        if (!string.IsNullOrWhiteSpace(stream.PlayerStream))
-        {
-            return stream.PlayerStream.Trim();
-        }
-
-        return string.IsNullOrWhiteSpace(stream.Channel) ? null : stream.Channel.Trim();
+        return string.IsNullOrWhiteSpace(stream.PlayerStream) ? null : stream.PlayerStream.Trim();
     }
 
     private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)

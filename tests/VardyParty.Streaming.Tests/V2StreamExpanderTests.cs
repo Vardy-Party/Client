@@ -62,7 +62,8 @@ public class V2StreamExpanderTests
         // Arrange
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match")
-            .With(s => s.Channel, "Channel South")
+            .With(s => s.Channel, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
             .With(s => s.ResolutionStrategy, "v2")
             .With(s => s.PlayerStreams, new List<string>())
             .Create();
@@ -72,7 +73,31 @@ public class V2StreamExpanderTests
 
         // Assert
         Assert.Single(result);
-        Assert.Same(stream, result[0]);
+        Assert.Equal(stream.Url, result[0].Url);
+        Assert.True(string.IsNullOrWhiteSpace(result[0].PlayerStream));
+        Assert.True(string.IsNullOrWhiteSpace(result[0].Channel));
+    }
+
+    [Fact]
+    public void Expand_UnlabeledV2_ClearsLeftoverChannelAsLanLabel()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.PlayerStreams, new List<string>())
+            .Create();
+
+        // Act
+        var result = V2StreamExpander.Expand([stream]);
+
+        // Assert
+        Assert.Single(result);
+        Assert.NotSame(stream, result[0]);
+        Assert.True(string.IsNullOrWhiteSpace(result[0].PlayerStream));
+        Assert.True(string.IsNullOrWhiteSpace(result[0].Channel));
     }
 
     [Fact]
@@ -86,6 +111,8 @@ public class V2StreamExpanderTests
             .Create();
         var mp = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Channel, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
             .With(s => s.ResolutionStrategy, "v2")
             .With(s => s.PlayerStreams, new List<string>())
             .Create();
@@ -96,7 +123,8 @@ public class V2StreamExpanderTests
         // Assert
         Assert.Equal(2, result.Count);
         Assert.Same(fb, result[0]);
-        Assert.Same(mp, result[1]);
+        Assert.Equal(mp.Url, result[1].Url);
+        Assert.True(string.IsNullOrWhiteSpace(result[1].PlayerStream));
     }
 
     [Fact]

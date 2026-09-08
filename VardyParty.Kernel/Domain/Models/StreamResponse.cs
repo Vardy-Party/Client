@@ -106,6 +106,7 @@ public class Stream
     public string ResolveCatalogSource()
     {
         // URL host is authoritative — never trust sticky Source/strategy on FB URLs.
+        // IsMpStreamUrl is badge/order only; LAN play is RequiresV2StreamSelection.
         if (IsMpStreamUrl(Url))
         {
             return "mp";
@@ -136,16 +137,28 @@ public class Stream
 
     private static bool IsMpStreamUrl(string? url)
     {
-        if (string.IsNullOrWhiteSpace(url))
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
             return false;
         }
 
-        return url.Contains("mpoutqn", StringComparison.OrdinalIgnoreCase)
-            || url.Contains("fctv33hd", StringComparison.OrdinalIgnoreCase)
-            || url.Contains("mpgreatest", StringComparison.OrdinalIgnoreCase)
-            || (url.Contains("jack", StringComparison.OrdinalIgnoreCase)
-                && url.Contains(".mp", StringComparison.OrdinalIgnoreCase));
+        var host = uri.Host;
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        // Player CDNs persisted by the API (hostname only).
+        if (host.Contains("mpoutqn", StringComparison.OrdinalIgnoreCase)
+            || host.Contains("mpgreatest", StringComparison.OrdinalIgnoreCase)
+            || (host.StartsWith("jack", StringComparison.OrdinalIgnoreCase)
+                && host.Contains(".mp", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // Schedule-catalog brand — badge/order only, not a persisted player URL.
+        return host.Contains("fctv33hd", StringComparison.OrdinalIgnoreCase);
     }
 
 }

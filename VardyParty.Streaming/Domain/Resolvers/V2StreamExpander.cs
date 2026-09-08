@@ -24,7 +24,8 @@ public static class V2StreamExpander
 
                 if (labels.Count == 0)
                 {
-                    expanded.Add(stream);
+                    // Slim API rows omit playerStream/channel — do not invent a LAN label.
+                    expanded.Add(CloneWithPlayerStream(stream, string.Empty));
                     continue;
                 }
 

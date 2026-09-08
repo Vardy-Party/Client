@@ -58,10 +58,12 @@ public class NonDisposingDelegatingHandlerTests
 
         // Act
         using var probe = factory.CreateClient(PlaybackHttpClients.Probe);
+        using var media = factory.CreateClient(PlaybackHttpClients.Media);
         using var auth0 = factory.CreateClient(Auth0HttpClients.Name);
 
         // Assert
         Assert.Equal(PlaybackHttpClients.ProbeTimeout, probe.Timeout);
+        Assert.Equal(PlaybackHttpClients.MediaTimeout, media.Timeout);
         Assert.NotNull(auth0);
     }
 

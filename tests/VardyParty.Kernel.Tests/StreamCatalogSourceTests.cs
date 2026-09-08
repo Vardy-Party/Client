@@ -81,4 +81,28 @@ public class StreamCatalogSourceTests
         Assert.Equal("mp", source);
         Assert.Equal("V2", stream.CatalogSourceBadgeLabel);
     }
+
+    [Theory]
+    [InlineData("https://jack12.mp.example/player", "mp", "V2")]
+    [InlineData("https://jack23eo.mpgreatest.example/player", "mp", "V2")]
+    [InlineData("https://cdn.mpgreatest.example/watch", "mp", "V2")]
+    [InlineData("https://mpoutqn.example.com/northgate", "mp", "V2")]
+    [InlineData("https://streams.example.com/blackjack/clip.mp4", "fb", "FB")]
+    [InlineData("https://streams.example.com/game?ref=jackpot.mp", "fb", "FB")]
+    public void ResolveCatalogSource_UsesHostNotPath(string url, string expectedSource, string expectedBadge)
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, url)
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, "v2")
+            .Create();
+
+        // Act
+        var source = stream.ResolveCatalogSource();
+
+        // Assert
+        Assert.Equal(expectedSource, source);
+        Assert.Equal(expectedBadge, stream.CatalogSourceBadgeLabel);
+    }
 }
