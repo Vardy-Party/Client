@@ -93,17 +93,20 @@ public class LocalLanPlayService(
         }
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        var useMp = MpPageUrl.UseMpEndpoint(streamUrl, _cachedCapabilities);
         var effectiveStreamName = SupportsPlayStreamQuery(_cachedCapabilities)
             ? playerStreamName
             : null;
-        if (!string.IsNullOrWhiteSpace(playerStreamName) && effectiveStreamName is null)
+        if (!string.IsNullOrWhiteSpace(playerStreamName) && effectiveStreamName is null && !useMp)
         {
             logger.LogDebug(
                 "[LocalLanPlay] Local service does not advertise play.stream; resolving without stream query param for {Url}",
                 streamUrl);
         }
 
-        var resolved = await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+        var resolved = useMp
+            ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+            : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
         if (resolved != null)
             return resolved;
 
@@ -112,7 +115,11 @@ public class LocalLanPlayService(
         if (string.IsNullOrWhiteSpace(baseUrl))
             return null;
 
-        return await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        useMp = MpPageUrl.UseMpEndpoint(streamUrl, _cachedCapabilities);
+        return useMp
+            ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+            : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
     }
 
     private async Task RefreshCapabilitiesIfNeededAsync(CancellationToken cancellationToken)
@@ -209,6 +216,55 @@ public class LocalLanPlayService(
                 "Unable to connect to discovered local service endpoint.",
                 healthUrl);
             return false;
+        }
+    }
+
+    private static readonly TimeSpan MpCallTimeout = TimeSpan.FromSeconds(60);
+
+    private async Task<M3U8Response?> CallMpEndpointAsync(
+        string baseUrl,
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{baseUrl.TrimEnd('/')}/mp";
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(MpCallTimeout);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                pageUrl = streamUrl,
+                stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
+            });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            logger.LogInformation("[LocalLanPlay] Resolving MP stream via POST {Url}", url);
+            var response = await httpClient.PostAsync(url, content, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}",
+                    response.StatusCode, streamUrl);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cts.Token);
+            var result = JsonSerializer.Deserialize<M3U8Response>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (result == null || string.IsNullOrWhiteSpace(result.Url))
+            {
+                logger.LogWarning("[LocalLanPlay] POST /mp returned success but no m3u8 URL");
+                return null;
+            }
+
+            logger.LogInformation("[LocalLanPlay] Resolved MP m3u8 via local service for {StreamUrl}", streamUrl);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
+                baseUrl, streamUrl);
+            return null;
         }
     }
 

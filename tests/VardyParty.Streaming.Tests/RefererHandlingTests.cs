@@ -163,5 +163,12 @@ public class RefererHandlingTests
             var h = new StreamHealth { Url = m3u8Url, Status = StreamHealthStatus.Healthy };
             return Task.FromResult(h);
         }
+
+        public Task<StreamHealth> CheckStreamHealthAsync(
+            string m3u8Url,
+            string refererUrl,
+            StreamHealthProbe? probe,
+            CancellationToken cancellationToken = default) =>
+            CheckStreamHealthAsync(m3u8Url, refererUrl, cancellationToken);
     }
 }

@@ -383,6 +383,48 @@ public class StreamResolverTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_RewrittenSegments_UsesProbeHealthOverload()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://www.fctv-example.test/football/match-1.html")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+        var m3u8 = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "http://streams.example.com/playlist.m3u8")
+            .With(r => r.RewrittenSegments, ["http://media.example.com/cfall/seg.exe?_s2=1"])
+            .Create();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(
+                m3u8.Url,
+                It.IsAny<string>(),
+                It.Is<StreamHealthProbe?>(p => p != null && p.RewrittenSegmentUrls!.Contains("http://media.example.com/cfall/seg.exe?_s2=1")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                m3u8.Url,
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     private static async Task<List<EnrichedStream>> CollectAsync(IAsyncEnumerable<EnrichedStream> source)
     {
         var results = new List<EnrichedStream>();

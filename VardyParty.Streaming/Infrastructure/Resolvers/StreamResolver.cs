@@ -131,7 +131,16 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
                 stream.Channel);
             logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-            var health = await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken);
+            var probe = m3u8Response?.RewrittenSegments is { Count: > 0 }
+                ? new StreamHealthProbe
+                {
+                    RewrittenSegmentUrls = m3u8Response.RewrittenSegments,
+                    RequestHeaders = m3u8Response.RequestHeaders
+                }
+                : null;
+            var health = probe is null
+                ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
+                : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
             enriched.Health = health;
             if (health.Status == StreamHealthStatus.Healthy)
             {
