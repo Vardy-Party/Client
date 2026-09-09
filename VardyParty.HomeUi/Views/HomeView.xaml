@@ -65,78 +65,70 @@
     </ContentView.Resources>
 
     <Grid BackgroundColor="#0B0F1A">
-        <Grid RowDefinitions="Auto,Auto,*" Padding="{Binding Layout.PagePaddingThickness}">
+        <Grid RowDefinitions="Auto,*" Padding="{Binding Layout.PagePaddingThickness}">
 
-            <!-- Header: brand row (3D metallic crest + wordmark) and menu -->
-            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,18">
-                <views:BrandLogoView x:Name="BrandLogo"
-                                     Margin="0,0,14,0"
-                                     VerticalOptions="Center" />
-                <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                    <Label Text="Vardy Party"
-                           FontSize="{Binding Layout.PageTitleFontSize}"
-                           FontAttributes="Bold"
-                           TextColor="White">
-                        <Label.Shadow>
-                            <Shadow Brush="Black" Opacity="0.55" Radius="6" Offset="0,2" />
-                        </Label.Shadow>
-                    </Label>
-                    <Label Text="{Binding Subtitle}"
-                           FontSize="{Binding Layout.PageSubtitleFontSize}"
-                           TextColor="#8A93A6" />
-                </VerticalStackLayout>
-                <Grid Grid.Column="2" VerticalOptions="Center">
-                    <Button x:Name="MenuButton"
-                            Text="Menu"
-                            Clicked="OnMenuClicked"
-                            Focused="OnMenuItemFocused"
-                            Unfocused="OnHeaderUnfocused"
-                            BackgroundColor="#1C2333"
-                            TextColor="#E5E7EB"
-                            CornerRadius="10"
-                            Padding="18,10"
-                            VerticalOptions="Center" />
-                    <Border HorizontalOptions="End"
-                            VerticalOptions="Start"
-                            Margin="0,-6,-6,0"
-                            Padding="0"
-                            WidthRequest="18"
-                            HeightRequest="18"
-                            BackgroundColor="#34D399"
-                            StrokeThickness="0"
-                            StrokeShape="RoundRectangle 9"
-                            IsVisible="{Binding HasUpdateAvailable}"
-                            InputTransparent="True">
-                        <Label Text="★"
-                               FontSize="10"
-                               TextColor="#0B0F1A"
-                               HorizontalOptions="Center"
-                               VerticalOptions="Center"
-                               HorizontalTextAlignment="Center"
-                               VerticalTextAlignment="Center" />
-                    </Border>
+            <!-- Brand + menu + service/LAN banner share the Auto row. -->
+            <VerticalStackLayout Spacing="0">
+                <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,18">
+                    <views:BrandLogoView x:Name="BrandLogo"
+                                         Margin="0,0,14,0"
+                                         VerticalOptions="Center" />
+                    <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                        <Label Text="Vardy Party"
+                               FontSize="{Binding Layout.PageTitleFontSize}"
+                               FontAttributes="Bold"
+                               TextColor="White">
+                            <Label.Shadow>
+                                <Shadow Brush="Black" Opacity="0.55" Radius="6" Offset="0,2" />
+                            </Label.Shadow>
+                        </Label>
+                        <Label Text="{Binding Subtitle}"
+                               FontSize="{Binding Layout.PageSubtitleFontSize}"
+                               TextColor="#8A93A6" />
+                    </VerticalStackLayout>
+                    <Grid Grid.Column="2" VerticalOptions="Center">
+                        <Button x:Name="MenuButton"
+                                Text="Menu"
+                                Clicked="OnMenuClicked"
+                                Focused="OnMenuItemFocused"
+                                Unfocused="OnHeaderUnfocused"
+                                BackgroundColor="#1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="10"
+                                Padding="18,10"
+                                VerticalOptions="Center" />
+                        <Border HorizontalOptions="End"
+                                VerticalOptions="Start"
+                                Margin="0,-6,-6,0"
+                                Padding="0"
+                                WidthRequest="18"
+                                HeightRequest="18"
+                                BackgroundColor="#34D399"
+                                StrokeThickness="0"
+                                StrokeShape="RoundRectangle 9"
+                                IsVisible="{Binding HasUpdateAvailable}"
+                                InputTransparent="True">
+                            <Label Text="★"
+                                   FontSize="10"
+                                   TextColor="#0B0F1A"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center"
+                                   HorizontalTextAlignment="Center"
+                                   VerticalTextAlignment="Center" />
+                        </Border>
+                    </Grid>
                 </Grid>
-            </Grid>
 
-            <!-- Service error banner -->
-            <Border Grid.Row="1"
-                    Margin="0,0,0,14"
-                    Padding="14,10"
-                    BackgroundColor="#33BE1233"
-                    Stroke="#59FF6B7C"
-                    StrokeThickness="1"
-                    StrokeShape="RoundRectangle 10"
-                    IsVisible="{Binding HasError}">
-                <Label Text="{Binding ErrorMessage}" TextColor="#FECACA"
-                       FontSize="{Binding Layout.PageSubtitleFontSize}" />
-            </Border>
+                <views:ErrorBannerView Text="{Binding ErrorMessage}"
+                                       Margin="0,0,0,14" />
+            </VerticalStackLayout>
 
             <!-- Android: CollectionView (RecyclerView + TvDpadFocusRouter).
                  Desktop/Windows: ScrollView — WinUI/Avalonia CollectionView
                  stretched items even with VerticalOptions=Start; those heads
                  use BindableLayout. Android keeps CollectionView for D-pad;
                  LeagueRowHeight pins each item so the black slab is zero. -->
-            <Grid Grid.Row="2" x:Name="RowsHost" IsVisible="{Binding ShowGameRows}">
+            <Grid Grid.Row="1" x:Name="RowsHost" IsVisible="{Binding ShowGameRows}">
                 <CollectionView x:Name="RowsList"
                                 ItemTemplate="{StaticResource LeagueRowTemplate}"
                                 BackgroundColor="#0B0F1A"
@@ -156,7 +148,7 @@
             </Grid>
 
             <!-- Empty state -->
-            <VerticalStackLayout Grid.Row="2"
+            <VerticalStackLayout Grid.Row="1"
                                  Spacing="8"
                                  HorizontalOptions="Center"
                                  VerticalOptions="Center"
