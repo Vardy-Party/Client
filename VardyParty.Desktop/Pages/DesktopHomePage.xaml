@@ -121,32 +121,48 @@
 
         <!--
             Playback panel. With the EmbeddedDesktopVideo build switch ON
-            (default) the video renders IN-WINDOW: code-behind injects a
-            VideoHostView into VideoHostContainer and the service attaches
-            the MediaPlayer drawable to it (see DesktopVideoPlayerService).
+            (default) LibVLC software frames composite into an Avalonia Image
+            (VideoHostView) that fills this grid. Chrome — Close, toast,
+            next/prev, menu, video info, scores ticker — is stacked on the
+            SAME cell so it paints and hit-tests on top of the picture
+            (Windows/Android parity). No reserved strips around the video.
 
-            AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
-            stacked above the Avalonia-drawn scene. Any MAUI control that
-            overlaps the video row is covered by that child — invisible and
-            unclickable. Do NOT move Close / info / next / scores on top of
-            the video: they live in reserved rows/columns around the child
-            (same Close-chip airspace rule). Windows/Android overlay on the
-            video surface; Linux keeps the same behaviour in reserved chrome.
-
-            Top reserve: Close chip (hover/tap reveal), stream-count toast,
-            next/prev, hamburger (Video Info / Scores / Report). Side column:
-            video-info panel (shrinks the picture). Bottom reserve: scores
-            ticker. Escape dismisses menu/info first, then closes. No
-            "Now Playing" title.
-
-            Standalone fallback (switch OFF, or the hosted surface failed at
+            Standalone fallback (switch OFF, or compositing failed at
             runtime): libvlc opens its own native video window; the same
-            chrome stays in the app window as companion UI.
+            chrome stays in this overlay as companion UI.
         -->
-        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False" RowDefinitions="Auto,*,Auto">
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False">
+            <!-- In-window composited video (VideoHostView injected in code-behind). -->
+            <Grid x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
+
+            <!-- Standalone-window fallback card (pre-feature behaviour). -->
+            <Grid x:Name="StandalonePlaybackPanel">
+                <Border BackgroundColor="#111726"
+                        Stroke="#26FFFFFF"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 14"
+                        Padding="28,22"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center"
+                        MinimumWidthRequest="360">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Video is playing in its own window."
+                               FontSize="14"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="Stream count, next/previous, video info and scores stay in this window as companion chrome — the same controls Windows and Android draw over the picture."
+                               FontSize="12"
+                               TextColor="#5B6478"
+                               HorizontalTextAlignment="Center"
+                               MaximumWidthRequest="420" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+
             <Grid x:Name="PlaybackChromeRow"
-                  BackgroundColor="Black"
-                  HeightRequest="24"
+                  BackgroundColor="Transparent"
+                  VerticalOptions="Start"
+                  HorizontalOptions="Fill"
                   RowDefinitions="Auto,Auto"
                   ColumnDefinitions="*,Auto">
                 <hv:MatchEventToastView x:Name="PlaybackToast"
@@ -308,78 +324,51 @@
                 </Border>
             </Grid>
 
-            <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
-                <!-- In-window video surface (VideoHostView injected in code-behind
-                     under EMBEDDED_DESKTOP_VIDEO; hidden in standalone fallback). -->
-                <Grid x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
-
-                <!-- Standalone-window fallback card (pre-feature behaviour). -->
-                <Grid x:Name="StandalonePlaybackPanel">
-                    <Border BackgroundColor="#111726"
-                            Stroke="#26FFFFFF"
-                            StrokeThickness="1"
-                            StrokeShape="RoundRectangle 14"
-                            Padding="28,22"
-                            HorizontalOptions="Center"
-                            VerticalOptions="Center"
-                            MinimumWidthRequest="360">
-                        <VerticalStackLayout Spacing="12">
-                            <Label Text="Video is playing in its own window."
-                                   FontSize="14"
-                                   TextColor="#8A93A6"
-                                   HorizontalTextAlignment="Center" />
-                            <Label Text="Stream count, next/previous, video info and scores live in this window's reserved bars — the same chrome Windows and Android draw over the picture."
-                                   FontSize="12"
-                                   TextColor="#5B6478"
-                                   HorizontalTextAlignment="Center"
-                                   MaximumWidthRequest="420" />
-                        </VerticalStackLayout>
-                    </Border>
-                </Grid>
-
-                <Border x:Name="VideoInfoPanel"
-                        Grid.Column="1"
-                        IsVisible="False"
-                        WidthRequest="360"
-                        BackgroundColor="#D9000000"
-                        Stroke="#55FFFFFF"
-                        StrokeThickness="1"
-                        Padding="10"
-                        VerticalOptions="Fill">
-                    <Grid RowDefinitions="Auto,*">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <Label Text="Video Info"
-                                   TextColor="White"
-                                   FontAttributes="Bold"
-                                   FontSize="13"
-                                   VerticalOptions="Center" />
-                            <Button x:Name="VideoInfoCloseButton"
-                                    Grid.Column="1"
-                                    Text="✕"
-                                    Clicked="OnVideoInfoCloseClicked"
-                                    WidthRequest="28"
-                                    HeightRequest="24"
-                                    Padding="0"
-                                    BackgroundColor="Transparent"
-                                    TextColor="White"
-                                    FontSize="12"
-                                    SemanticProperties.Description="Close video info" />
-                        </Grid>
-                        <ScrollView Grid.Row="1">
-                            <Label x:Name="VideoInfoText"
-                                   TextColor="White"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   LineBreakMode="WordWrap" />
-                        </ScrollView>
+            <Border x:Name="VideoInfoPanel"
+                    IsVisible="False"
+                    WidthRequest="360"
+                    MaximumHeightRequest="420"
+                    HorizontalOptions="End"
+                    VerticalOptions="Start"
+                    Margin="0,56,8,8"
+                    BackgroundColor="#D9000000"
+                    Stroke="#55FFFFFF"
+                    StrokeThickness="1"
+                    Padding="10">
+                <Grid RowDefinitions="Auto,*">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="Video Info"
+                               TextColor="White"
+                               FontAttributes="Bold"
+                               FontSize="13"
+                               VerticalOptions="Center" />
+                        <Button x:Name="VideoInfoCloseButton"
+                                Grid.Column="1"
+                                Text="✕"
+                                Clicked="OnVideoInfoCloseClicked"
+                                WidthRequest="28"
+                                HeightRequest="24"
+                                Padding="0"
+                                BackgroundColor="Transparent"
+                                TextColor="White"
+                                FontSize="12"
+                                SemanticProperties.Description="Close video info" />
                     </Grid>
-                </Border>
-            </Grid>
+                    <ScrollView Grid.Row="1">
+                        <Label x:Name="VideoInfoText"
+                               TextColor="White"
+                               FontFamily="Consolas"
+                               FontSize="12"
+                               LineBreakMode="WordWrap" />
+                    </ScrollView>
+                </Grid>
+            </Border>
 
             <Grid x:Name="ScoresTickerRow"
-                  Grid.Row="2"
                   IsVisible="False"
                   HeightRequest="36"
+                  VerticalOptions="End"
+                  HorizontalOptions="Fill"
                   BackgroundColor="#CC101010"
                   ColumnDefinitions="*,Auto"
                   Padding="12,6,0,6">

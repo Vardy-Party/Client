@@ -2,15 +2,17 @@
 
 Linux is served by **`VardyParty.Desktop`**: the shared .NET MAUI XAML homepage
 (`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
-device-code/QR sign-in and **LibVLC playback** (in-window via a hosted native
-surface, or libvlc's own window as fallback). In-player chrome — scores
-ticker, video info, stream count, next/prev — sits in reserved airspace
-around the native video child so it stays clickable.
+device-code/QR sign-in and **LibVLC playback**. In-window play composites
+software frames (RV32) into an Avalonia `Image` so scores ticker, video info,
+stream count, next/prev, menu, and Close sit **on top of the picture**
+(Windows/Android parity). If compositing cannot attach, libvlc opens its own
+window and the same chrome stays in-app as companion UI.
 
 ```mermaid
 flowchart LR
-  XAML["HomeUi XAML"] --> Avalonia["Avalonia MAUI backend"]
-  XAML -.->|"not in tree"| VLC["LibVLC video window"]
+  XAML["HomeUi XAML + overlay chrome"] --> Avalonia["Avalonia MAUI backend"]
+  VLC["LibVLC RV32 callbacks"] --> Image["Avalonia Image"]
+  Image --> Avalonia
   Avalonia --> Skia["Skia on Linux / WSL"]
 ```
 

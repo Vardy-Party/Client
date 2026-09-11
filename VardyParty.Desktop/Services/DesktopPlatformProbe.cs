@@ -10,8 +10,11 @@ namespace VardyParty.Desktop.Services;
 /// WSL matters to playback: WSLg's compositor and GPU paths have wedged
 /// libvlc in the field (a stuck hardware-decode/vout probe froze the whole
 /// app), so conservative options are the WSL default — software decode,
-/// plain X11 vout, no hardware probing. The same set is forced by
-/// <c>VARDYPARTY_DESKTOP_VLC_SAFE=1</c> and is also safe under xvfb.
+/// no hardware probing. Standalone-window fallback still pins plain X11
+/// vout; the in-window compositing path uses callback/vmem instead
+/// (<c>--vout=x11</c> would steal frames from the Avalonia Image). The
+/// same conservative set is forced by <c>VARDYPARTY_DESKTOP_VLC_SAFE=1</c>
+/// and is also safe under xvfb.
 ///
 /// Audio: SoundFlow (miniaudio) and libvlc share Pulse/ALSA. Leaving aout
 /// unspecified lets VLC probe into a dummy output under WSLg (silent
@@ -76,10 +79,19 @@ public static class DesktopPlatformProbe
             Environment.GetEnvironmentVariable(AudioOutputVariableName));
 
     /// <summary>
+    /// <summary>
     /// Full libvlc argv for a new <c>LibVLC</c> instance. Pure: no process
     /// I/O besides the optional aout override already resolved by the caller.
     /// </summary>
-    public static string[] BuildLibVlcOptions(bool conservative, string? audioOutputModule = null)
+    /// <param name="callbackVout">
+    /// True when frames are pulled via <c>SetVideoCallbacks</c> into Avalonia.
+    /// Pins <c>--vout=vmem</c> and omits <c>--vout=x11</c> (X11 output and
+    /// software callbacks cannot share one MediaPlayer).
+    /// </param>
+    public static string[] BuildLibVlcOptions(
+        bool conservative,
+        string? audioOutputModule = null,
+        bool callbackVout = false)
     {
         var aout = ResolveAudioOutputModule(conservative, audioOutputModule);
         var vlcOptions = new List<string>
@@ -92,10 +104,19 @@ public static class DesktopPlatformProbe
             $"--aout={aout}",
         };
 
+        if (callbackVout)
+        {
+            vlcOptions.Add("--vout=vmem");
+        }
+
         if (conservative)
         {
             vlcOptions.Add("--avcodec-hw=none"); // software decode, no VA-API/VDPAU probing
-            vlcOptions.Add("--vout=x11");        // plain X11 output, no GL/compositor probing
+            if (!callbackVout)
+            {
+                vlcOptions.Add("--vout=x11"); // standalone window only — fights vmem/callbacks
+            }
+
             // Do not pin --demux=avformat: libavformat's HTTP stack ignores
             // :http-referrer, so hotlink CDNs 403 after HttpClient health passed.
         }

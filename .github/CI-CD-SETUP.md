@@ -124,7 +124,7 @@ Installers will be automatically created and attached to the GitHub Release.
 - Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
 - Architectures: x64, ARM64
 - Output: Desktop publish artifacts / snaps (see `cd.yml` package-linux jobs)
-- Video: LibVLC in a native window (not Avalonia `VideoView`)
+- Video: LibVLC software frames composited into Avalonia (standalone window fallback)
 - Status: first-class head (see `docs/LINUX_SUPPORT.md`)
 
 ## Project Structure

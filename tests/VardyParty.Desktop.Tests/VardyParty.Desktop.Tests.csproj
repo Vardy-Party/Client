@@ -15,5 +15,6 @@
     <Compile Include="..\..\VardyParty.Desktop\Services\DesktopCloseChipReveal.cs" Link="DesktopCloseChipReveal.cs" />
     <Compile Include="..\..\VardyParty.Desktop\Services\DesktopPlayerChrome.cs" Link="DesktopPlayerChrome.cs" />
     <Compile Include="..\..\VardyParty.Desktop\Services\LibVlcPlaybackFailure.cs" Link="LibVlcPlaybackFailure.cs" />
+    <Compile Include="..\..\VardyParty.Desktop\Services\LibVlcFrameGeometry.cs" Link="LibVlcFrameGeometry.cs" />
   </ItemGroup>
 </Project>

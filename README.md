@@ -73,7 +73,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
   - **Android**: ExoPlayer with HLS support
   - **iOS / macOS**: AVPlayer
   - **Windows**: MediaPlayerElement
-  - **Linux / WSL**: LibVLC (separate native video window — not Avalonia `VideoView`)
+  - **Linux / WSL**: LibVLC software frames composited into Avalonia (chrome overlays the picture; standalone window fallback)
 
 ## Supported Platforms
 

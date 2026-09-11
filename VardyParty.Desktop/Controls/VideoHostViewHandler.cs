@@ -1,53 +1,44 @@
 #if EMBEDDED_DESKTOP_VIDEO
 using Avalonia.Controls.Maui.Handlers;
-using LibVLCSharp.Avalonia;
 
 namespace VardyParty.Desktop.Controls;
 
 /// <summary>
-/// Bridges <see cref="VideoHostView"/> to LibVLCSharp.Avalonia's
-/// <see cref="VideoView"/> through the MAUI-Avalonia backend's generic
-/// <see cref="AvaloniaControlHandler{TVirtualView, TControl}"/> (the
-/// supported way to host a custom Avalonia control inside this head's MAUI
-/// visual tree). Maps the MediaPlayer property; VideoView itself owns the
-/// drawable attach/detach on its visual-tree/native-handle lifecycle
-/// (OnAttachedToVisualTree / DestroyNativeControlCore).
+/// Bridges <see cref="VideoHostView"/> to an Avalonia Image through the
+/// MAUI-Avalonia backend's
+/// <see cref="AvaloniaControlHandler{TVirtualView, TControl}"/>. LibVLC
+/// software frames land on this Image so in-player chrome can overlay the
+/// picture in the same scene graph (no native-child airspace).
 ///
 /// Compiles out with -p:EmbeddedDesktopVideo=false.
 /// </summary>
-public sealed class VideoHostViewHandler : AvaloniaControlHandler<VideoHostView, VideoView>
+public sealed class VideoHostViewHandler : AvaloniaControlHandler<VideoHostView, Avalonia.Controls.Image>
 {
-    /// <summary>Chains the base view mapper and adds the MediaPlayer mapping.</summary>
-    public static readonly IPropertyMapper<VideoHostView, VideoHostViewHandler> HostMapper =
-        new PropertyMapper<VideoHostView, VideoHostViewHandler>(Mapper)
-        {
-            [nameof(VideoHostView.MediaPlayer)] = MapMediaPlayer,
-        };
-
     public VideoHostViewHandler()
-        : base(HostMapper)
     {
+    }
+
+    protected override void OnAvaloniaControlCreated(Avalonia.Controls.Image control)
+    {
+        control.Stretch = Avalonia.Media.Stretch.Uniform;
+        VirtualView?.AttachPlatformImage(control);
+        base.OnAvaloniaControlCreated(control);
     }
 
     /// <summary>
-    /// Deliberately does NOT clear <c>control.MediaPlayer</c>: VideoView's
-    /// own native-handle teardown (DestroyNativeControlCore) already detaches
-    /// the drawable, and an extra property write here would be a redundant
-    /// libvlc setter on a player that may already be torn down. Hosts that
-    /// abandon a wedged player never destroy the host view at all (they park
-    /// it invisible — see DesktopHomePage) precisely so no detach path can
-    /// touch the wedged instance.
+    /// Image has no LibVLC drawable to detach. Clearing the source is enough;
+    /// a wedged libvlc pair is abandoned on the service side without touching
+    /// this control.
     /// </summary>
-    protected override void OnAvaloniaControlDestroying(VideoView? control)
+    protected override void OnAvaloniaControlDestroying(Avalonia.Controls.Image? control)
     {
-    }
-
-    private static void MapMediaPlayer(VideoHostViewHandler handler, VideoHostView view)
-    {
-        if (handler.AvaloniaControl is { } videoView)
+        VirtualView?.DetachPlatformImage();
+        if (control != null)
         {
-            videoView.MediaPlayer = view.MediaPlayer;
+            control.Source = null;
         }
+
+        base.OnAvaloniaControlDestroying(control);
     }
 }
 #endif

@@ -112,6 +112,37 @@ public class DesktopPlatformProbeTests
     }
 
     [Fact]
+    public void BuildLibVlcOptions_CallbackVout_OmitsX11AndPinsVmem()
+    {
+        // Arrange
+        // Act
+        var conservative = DesktopPlatformProbe.BuildLibVlcOptions(
+            conservative: true, audioOutputModule: null, callbackVout: true);
+        var native = DesktopPlatformProbe.BuildLibVlcOptions(
+            conservative: false, audioOutputModule: null, callbackVout: true);
+
+        // Assert
+        Assert.Contains("--vout=vmem", conservative);
+        Assert.Contains("--avcodec-hw=none", conservative);
+        Assert.DoesNotContain("--vout=x11", conservative);
+        Assert.Contains("--vout=vmem", native);
+        Assert.DoesNotContain("--vout=x11", native);
+    }
+
+    [Fact]
+    public void BuildLibVlcOptions_StandaloneConservative_StillPinsX11()
+    {
+        // Arrange
+        // Act
+        var options = DesktopPlatformProbe.BuildLibVlcOptions(
+            conservative: true, audioOutputModule: null, callbackVout: false);
+
+        // Assert
+        Assert.Contains("--vout=x11", options);
+        Assert.DoesNotContain("--vout=vmem", options);
+    }
+
+    [Fact]
     public void BuildPlaybackMediaOptions_PassesUnquotedRefererAndAvformatHeaders()
     {
         const string referer = "https://hamis.romponalis.st/";

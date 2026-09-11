@@ -8,10 +8,11 @@ namespace VardyParty.Desktop.Services;
 /// resting place or the playback surface is tapped. Auto-hides after
 /// <see cref="AutoHideDelay"/> once the pointer leaves / touch goes idle.
 ///
-/// AIRSPACE: the reserved height is a separate grid row ABOVE the native
-/// libvlc child — collapsing to <see cref="HiddenReserveHeight"/> keeps a
-/// thin invisible hit-zone so hover still works. Putting the chip on top
-/// of the video would make it unclickable. Never a "Now Playing" banner.
+/// Overlay mode (<see cref="OverlayOnVideo"/>): the chip floats on the
+/// composited picture and <see cref="ReserveHeight"/> returns NaN so the
+/// page does not steal a strip. Legacy reserved-strip mode remains for
+/// tests and the standalone-window companion panel if a host still wants
+/// it. Never a "Now Playing" banner.
 /// </summary>
 public enum DesktopCloseChipAction
 {
@@ -38,6 +39,17 @@ public sealed class DesktopCloseChipReveal
     /// <summary>Generous top-right hit-zone (wider than the 36px chip).</summary>
     public const double HitZoneWidth = 168;
 
+    /// <summary>
+    /// Hover/tap zone height when the chip sits on the picture. Taller than
+    /// the reserved-strip hit-zone so the pointer can find it over video.
+    /// </summary>
+    public const double OverlayHitZoneHeight = 80;
+
+    /// <summary>
+    /// True when chrome floats on the composited picture (no stolen strip).
+    /// </summary>
+    public bool OverlayOnVideo { get; set; }
+
     public bool IsRevealed { get; private set; }
 
     public bool Hovering { get; private set; }
@@ -45,12 +57,13 @@ public sealed class DesktopCloseChipReveal
     public bool ChipVisible => IsRevealed;
 
     /// <summary>
-    /// Forced chrome-row height. <see cref="double.NaN"/> means Auto (toast
-    /// is up — let the row size to the toast, still no title banner).
+    /// Forced chrome-row height. <see cref="double.NaN"/> means Auto: overlay
+    /// mode never steals a strip; reserved-strip mode also uses Auto when a
+    /// toast is up so the row sizes to content (still no title banner).
     /// </summary>
     public double ReserveHeight(bool toastVisible)
     {
-        if (toastVisible)
+        if (OverlayOnVideo || toastVisible)
         {
             return double.NaN;
         }
@@ -59,7 +72,9 @@ public sealed class DesktopCloseChipReveal
     }
 
     public double HitZoneHeight =>
-        IsRevealed ? RevealedReserveHeight : HiddenReserveHeight;
+        OverlayOnVideo
+            ? OverlayHitZoneHeight
+            : (IsRevealed ? RevealedReserveHeight : HiddenReserveHeight);
 
     public void Reset()
     {
@@ -103,17 +118,25 @@ public sealed class DesktopCloseChipReveal
 
     /// <summary>
     /// Top-right rectangle in window coordinates (origin top-left).
-    /// Generous in X (<see cref="HitZoneWidth"/>); Y follows the reserved
-    /// strip so we never claim a hit on the native video child.
+    /// Generous in X (<see cref="HitZoneWidth"/>). Overlay mode uses
+    /// <see cref="OverlayHitZoneHeight"/> so hover works over the picture;
+    /// reserved-strip mode keeps Y inside the stolen bar.
     /// </summary>
-    public static bool IsNearRestingPlace(double x, double y, double windowWidth, bool revealed)
+    public static bool IsNearRestingPlace(
+        double x,
+        double y,
+        double windowWidth,
+        bool revealed,
+        bool overlayOnVideo = false)
     {
         if (windowWidth <= 0 || x < 0 || y < 0)
         {
             return false;
         }
 
-        var zoneHeight = revealed ? RevealedReserveHeight : HiddenReserveHeight;
+        var zoneHeight = overlayOnVideo
+            ? OverlayHitZoneHeight
+            : (revealed ? RevealedReserveHeight : HiddenReserveHeight);
         return x >= windowWidth - HitZoneWidth && x <= windowWidth && y <= zoneHeight;
     }
 }

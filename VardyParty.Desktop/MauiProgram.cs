@@ -23,9 +23,9 @@ public static class MauiProgram
             .UseAvaloniaApp();
 
 #if EMBEDDED_DESKTOP_VIDEO
-        // In-window video playback: VideoHostView renders libvlc's output
-        // inside the app window via LibVLCSharp.Avalonia's VideoView (see
-        // Controls/VideoHostViewHandler). Compiled out (and the standalone
+        // In-window video playback: VideoHostView composites libvlc software
+        // frames onto an Avalonia Image (see Controls/VideoHostViewHandler)
+        // so chrome can overlay the picture. Compiled out (and the standalone
         // libvlc window used instead) with -p:EmbeddedDesktopVideo=false.
         builder.ConfigureMauiHandlers(handlers =>
             handlers.AddHandler<Controls.VideoHostView, Controls.VideoHostViewHandler>());

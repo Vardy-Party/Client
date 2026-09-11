@@ -83,7 +83,7 @@ VardyParty.Desktop/           Linux/desktop head (net11.0, UseAvaloniaApp)
   MauiProgram.cs              AddVardyParty + AddVardyPartyHttpClients + HomeUi DI
   Pages/DesktopHomePage.xaml  hosts HomeView + device-code QR sign-in + playback overlays
   Services/DesktopAuthService.cs        Auth0 PKCE loopback / device-code flow (from VardyParty.Linux)
-  Services/DesktopVideoPlayerService.cs LibVLC playback in a native video window (see below)
+  Services/DesktopVideoPlayerService.cs LibVLC playback composited into Avalonia (see below)
   Services/SoundFlowUiSoundPlayer.cs    UI sounds (miniaudio); degrades gracefully headless
   Services/SampleGames.cs     VARDYPARTY_DESKTOP_SAMPLE_DATA=1 offline data
 
@@ -520,16 +520,18 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
    `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
    SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at
    startup with "native libSkiaSharp (119.0) incompatible".
-3. **LibVLC in a MAUI-Avalonia window**: in-window playback hosts
-   `LibVLCSharp.Avalonia`'s `VideoView` through `VideoHostView` (native
-   child above the Avalonia scene). Controls must not overlap that child —
-   they are invisible and unclickable (airspace). In-player chrome that
-   Windows/Android draw **on** the video (scores ticker, video-info panel,
-   stream-count toast, next/prev, hamburger) therefore lives in **reserved
-   rows/columns** around the child (`DesktopPlayerChrome` +
-   `DesktopHomePage` top/side/bottom reserves). Standalone fallback (embed
-   failed or `-p:EmbeddedDesktopVideo=false`) still uses those reserved
-   bars as companion UI next to libvlc's own window. Shared copy lives in
+3. **LibVLC in a MAUI-Avalonia window**: in-window playback composites
+   LibVLC software frames (`SetVideoCallbacks` / RV32 / `--vout=vmem`)
+   onto an Avalonia `Image` via `VideoHostView`. Chrome that Windows/Android
+   draw **on** the video (scores ticker, video-info panel, stream-count
+   toast, next/prev, hamburger, Close) is stacked in the same grid cell
+   and is visible and hit-testable. Do **not** pin `--vout=x11` on this
+   path — X11 output and callbacks cannot share a MediaPlayer. Cost: one
+   CPU copy per frame (WSL already forces software decode). Wayland vs
+   X11/WSL: compositing avoids a second transparent overlay window and
+   its focus/position bugs. Standalone fallback (presenter attach failed
+   or `-p:EmbeddedDesktopVideo=false`) still uses the same overlay chrome
+   as companion UI next to libvlc's own window. Shared copy lives in
    `PlayerChromeText` / `ScoresTickerText`; the pool attach on
    `CurrentStreamIndexChanged` matches Windows/Android. libvlc is
    initialised lazily on first play so machines without VLC still run the

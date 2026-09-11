@@ -19,9 +19,9 @@ namespace VardyParty.Desktop.Pages;
 /// Desktop-head host for the shared XAML homepage: the same auth +
 /// stream-resolution glue as the MAUI head's HomeHostPage, with two
 /// desktop-specific twists — sign-in uses the Auth0 device-code flow with a QR
-/// code (ported from the retired VardyParty.Linux head), and playback runs
-/// in-window (or libvlc's own window as fallback) with a reserved-airspace
-/// Close chip (see <see cref="DesktopVideoPlayerService"/>).
+/// code (ported from the retired VardyParty.Linux head), and playback composites
+/// in-window (or libvlc's own window as fallback) with chrome overlaid on the
+/// picture (see <see cref="DesktopVideoPlayerService"/>).
 /// Set VARDYPARTY_DESKTOP_SAMPLE_DATA=1 to skip auth and render a fabricated
 /// catalog (demos and the headless CI smoke test).
 /// </summary>
@@ -116,14 +116,15 @@ public partial class DesktopHomePage : ContentPage
         InitializeComponent();
         BindingContext = _viewModel;
 
-        // In-playback match-event toast: lives in the reserved airspace row
-        // next to Close (never over the native video child — airspace). Same
-        // queue/dismiss machine as the homepage toast. Audio stays suppressed
-        // during playback via ShouldPlayAudio — toast-yes/audio-no.
+        // In-playback match-event toast: stacked over the composited picture
+        // next to Close. Same queue/dismiss machine as the homepage toast.
+        // Audio stays suppressed during playback via ShouldPlayAudio —
+        // toast-yes/audio-no.
         _playbackToast = new MatchEventToastViewModel(_viewModel.Layout);
         PlaybackToast.BindingContext = _playbackToast;
         _playbackToast.PropertyChanged += OnPlaybackToastPropertyChanged;
         _matchEvents.Published += OnMatchEventPublished;
+        _closeChip.OverlayOnVideo = true;
         WireCloseChipGestures();
         WirePlayerChrome();
 
@@ -142,11 +143,10 @@ public partial class DesktopHomePage : ContentPage
     private Controls.VideoHostView? _videoHost;
 
     /// <summary>
-    /// Hosted-surface wiring for in-window playback: the service asks this
-    /// page (via <see cref="DesktopVideoPlayerService.EmbedSurfaceAsync"/>) to
-    /// assign the MediaPlayer to a hosted VideoHostView BEFORE Play, and tells
-    /// it when the surface may be safely detached (clean stop) or must never
-    /// be touched again (a wedged libvlc pair was abandoned).
+    /// Hosted-surface wiring for in-window compositing: the service asks this
+    /// page (via <see cref="DesktopVideoPlayerService.AcquireFramePresenterAsync"/>)
+    /// for the VideoHostView presenter BEFORE Play, then attaches software
+    /// callbacks. Clean stop clears the frame; a wedged pair parks the host.
     /// </summary>
     private void WireEmbeddedVideoHost()
     {
@@ -155,23 +155,22 @@ public partial class DesktopHomePage : ContentPage
             return;
         }
 
-        service.EmbedSurfaceAsync = EmbedSurfaceOnUiAsync;
+        service.AcquireFramePresenterAsync = AcquireFramePresenterOnUiAsync;
         service.DetachSurfaceRequested += OnDetachSurfaceRequested;
         service.SurfacePoisoned += OnSurfacePoisoned;
         service.EmbeddingStateChanged += OnEmbeddingStateChanged;
     }
 
     /// <summary>
-    /// UI-thread half of the embed handshake: make the video row host a
-    /// (fresh or reused) VideoHostView and assign the player so VideoView
-    /// attaches the drawable. The service polls the drawable and decides
-    /// embedded vs standalone-fallback; this method must never block its
-    /// caller (always dispatches) and never touches libvlc beyond the
-    /// non-blocking MediaPlayer property assignment.
+    /// UI-thread half of the embed handshake: show a (fresh or reused)
+    /// VideoHostView and return it as the frame presenter. The service
+    /// attaches LibVLC callbacks on a worker; this method must never block
+    /// its caller (always dispatches) and never calls into libvlc.
     /// </summary>
-    private Task EmbedSurfaceOnUiAsync(LibVLCSharp.Shared.MediaPlayer player)
+    private Task<IVideoFramePresenter?> AcquireFramePresenterOnUiAsync()
     {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<IVideoFramePresenter?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.Dispatch(() =>
         {
             try
@@ -182,12 +181,9 @@ public partial class DesktopHomePage : ContentPage
                     VideoHostContainer.Children.Add(_videoHost);
                 }
 
-                // The native child window only realizes while the host is in
-                // the visible tree — show the video row before assigning.
                 VideoHostContainer.IsVisible = true;
                 StandalonePlaybackPanel.IsVisible = false;
-                _videoHost.MediaPlayer = player;
-                tcs.TrySetResult();
+                tcs.TrySetResult(_videoHost);
             }
             catch (Exception ex)
             {
@@ -197,21 +193,16 @@ public partial class DesktopHomePage : ContentPage
         return tcs.Task;
     }
 
-    /// <summary>Clean stop: the player is idle, clearing the binding is a safe no-op detach.</summary>
+    /// <summary>Clean stop: drop the last composited frame (player is idle).</summary>
     private void OnDetachSurfaceRequested() => Dispatcher.Dispatch(() =>
     {
-        if (_videoHost != null)
-        {
-            _videoHost.MediaPlayer = null;
-        }
+        _videoHost?.ClearFrame();
     });
 
     /// <summary>
-    /// A libvlc pair was abandoned as wedged: park the current host invisible
-    /// and forget it — removing it (or clearing its MediaPlayer) would run
-    /// VideoView's drawable-detach against the wedged player, which can hold
-    /// its object lock and stall the UI thread. The next session builds a
-    /// fresh host; the parked one leaks with its abandoned player by design.
+    /// A libvlc pair was abandoned as wedged: park the current host and
+    /// forget it. The next session builds a fresh presenter so in-flight
+    /// frames cannot land on a poisoned generation.
     /// </summary>
     private void OnSurfacePoisoned() => Dispatcher.Dispatch(() =>
     {
@@ -294,7 +285,8 @@ public partial class DesktopHomePage : ContentPage
         }
 
         var pos = e.GetPosition(top);
-        if (DesktopCloseChipReveal.IsNearRestingPlace(pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed))
+        if (DesktopCloseChipReveal.IsNearRestingPlace(
+                pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed, _closeChip.OverlayOnVideo))
         {
             ApplyCloseChip(_closeChip.OnHoverEnter());
         }
@@ -311,9 +303,8 @@ public partial class DesktopHomePage : ContentPage
             return;
         }
 
-        // A press we can see (reserved chrome / standalone card). Presses on
-        // the native video child never reach Avalonia — the thin hit-zone
-        // is the in-window path. Does not close; the chip click does.
+        // Presses on the composited picture and overlay chrome reach Avalonia.
+        // Does not close; the chip click does.
         ApplyCloseChip(_closeChip.OnTouched());
     }
 
@@ -331,6 +322,10 @@ public partial class DesktopHomePage : ContentPage
         var standaloneTap = new TapGestureRecognizer();
         standaloneTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
         StandalonePlaybackPanel.GestureRecognizers.Add(standaloneTap);
+
+        var videoTap = new TapGestureRecognizer();
+        videoTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
+        VideoHostContainer.GestureRecognizers.Add(videoTap);
     }
 
     private void OnPlaybackToastPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

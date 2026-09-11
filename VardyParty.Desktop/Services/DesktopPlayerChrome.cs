@@ -6,8 +6,8 @@ namespace VardyParty.Desktop.Services;
 /// <summary>
 /// In-player chrome state for the Linux/desktop head. Same capabilities as
 /// the Windows/Android overlays (stream count toast, video info, scores
-/// ticker, next/prev, hamburger menu) but the page paints them in reserved
-/// airspace around the native LibVLC child — never on top of it.
+/// ticker, next/prev, hamburger menu). The page overlays them on the
+/// composited LibVLC picture (same feel as Windows/Android).
 /// </summary>
 public enum DesktopPlayerChromeTimerAction
 {
