@@ -32,6 +32,7 @@ public partial class DesktopHomePage : ContentPage
     private readonly IEnrichedGameService _gameService;
     private readonly IStreamResolutionOrchestrator _orchestrator;
     private readonly INativeVideoPlayerService _videoPlayer;
+    private readonly IStreamSwitchingService _switching;
     private readonly IAuthTokenProvider _authTokens;
     private readonly IAuthLoginService _authLogin;
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
@@ -85,6 +86,7 @@ public partial class DesktopHomePage : ContentPage
         IEnrichedGameService gameService,
         IStreamResolutionOrchestrator orchestrator,
         INativeVideoPlayerService videoPlayer,
+        IStreamSwitchingService switching,
         IAuthTokenProvider authTokens,
         IAuthLoginService authLogin,
         ILocalLanServiceAvailabilityMonitor lanMonitor,
@@ -100,6 +102,7 @@ public partial class DesktopHomePage : ContentPage
         _gameService = gameService;
         _orchestrator = orchestrator;
         _videoPlayer = videoPlayer;
+        _switching = switching;
         _authTokens = authTokens;
         _authLogin = authLogin;
         _lanMonitor = lanMonitor;
@@ -122,6 +125,7 @@ public partial class DesktopHomePage : ContentPage
         _playbackToast.PropertyChanged += OnPlaybackToastPropertyChanged;
         _matchEvents.Published += OnMatchEventPublished;
         WireCloseChipGestures();
+        WirePlayerChrome();
 
         _viewModel.GamePicked += OnGamePicked;
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
@@ -274,13 +278,12 @@ public partial class DesktopHomePage : ContentPage
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || !PlaybackOverlay.IsVisible)
+        if (!PlaybackOverlay.IsVisible)
         {
             return;
         }
 
-        OnClosePlaybackClicked(this, EventArgs.Empty);
-        e.Handled = true;
+        HandlePlaybackKey(e);
     }
 
     private void OnTopLevelPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
@@ -340,7 +343,7 @@ public partial class DesktopHomePage : ContentPage
 
     private void ApplyCloseChip(DesktopCloseChipAction action)
     {
-        ApplyCloseChipVisuals();
+        ApplyPlayerChromeVisuals();
         switch (action)
         {
             case DesktopCloseChipAction.StartAutoHide:
@@ -359,7 +362,8 @@ public partial class DesktopHomePage : ContentPage
         ClosePlaybackButton.InputTransparent = !revealed;
         ClosePlaybackButton.IsEnabled = revealed;
 
-        var height = _closeChip.ReserveHeight(_playbackToast.IsToastVisible);
+        var height = _closeChip.ReserveHeight(
+            _playbackToast.IsToastVisible || _playerChrome.NeedsExpandedChromeRow);
         if (double.IsNaN(height))
         {
             PlaybackChromeRow.HeightRequest = -1;
@@ -423,7 +427,9 @@ public partial class DesktopHomePage : ContentPage
         if (UseSampleData)
         {
             _logger.LogInformation("[DesktopHome] Sample data mode: skipping auth");
-            _viewModel.UpdateGames(SampleGames.Build());
+            var sample = SampleGames.Build();
+            RememberGamesSnapshot(sample);
+            _viewModel.UpdateGames(sample);
 
             // Exercise the in-place diff path (goal, minute ticks, add/remove,
             // live-set re-tier) on the real UI a few seconds in — the headless
@@ -433,7 +439,9 @@ public partial class DesktopHomePage : ContentPage
             {
                 await Task.Delay(TimeSpan.FromSeconds(4));
                 _logger.LogInformation("[DesktopHome] Sample data mode: applying refreshed board");
-                _viewModel.UpdateGames(SampleGames.BuildRefreshed());
+                var refreshed = SampleGames.BuildRefreshed();
+                RememberGamesSnapshot(refreshed);
+                _viewModel.UpdateGames(refreshed);
             });
             return;
         }
@@ -462,7 +470,11 @@ public partial class DesktopHomePage : ContentPage
 
     private void StartGamesFeed()
     {
-        _subscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
+        _subscriptions.Add(_gameService.GamesStream.Subscribe(dict =>
+        {
+            RememberGamesSnapshot(dict);
+            _viewModel.UpdateGames(dict);
+        }));
         _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
@@ -898,6 +910,13 @@ public partial class DesktopHomePage : ContentPage
     {
         if (PlaybackOverlay.IsVisible)
         {
+            var escape = _playerChrome.OnEscape();
+            if (escape is DesktopPlayerEscapeAction.DismissMenu or DesktopPlayerEscapeAction.DismissInfo)
+            {
+                ApplyPlayerChromeVisuals();
+                return true;
+            }
+
             OnClosePlaybackClicked(this, EventArgs.Empty);
             return true;
         }
@@ -921,6 +940,7 @@ public partial class DesktopHomePage : ContentPage
         Dispatcher.Dispatch(() =>
         {
             ResetCloseChip();
+            ResetPlayerChrome();
             PlaybackOverlay.IsVisible = false;
         });
     }
@@ -955,10 +975,12 @@ public partial class DesktopHomePage : ContentPage
             if (visible)
             {
                 ResetCloseChip();
+                RefreshPlayerChromeFromSwitching();
             }
             else
             {
                 ResetCloseChip();
+                ResetPlayerChrome();
                 TryResumeAfterPlayer();
             }
         });

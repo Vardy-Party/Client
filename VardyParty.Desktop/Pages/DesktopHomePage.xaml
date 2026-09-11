@@ -128,49 +128,108 @@
             AIRSPACE CONSTRAINT: the embedded video is a NATIVE child window
             stacked above the Avalonia-drawn scene. Any MAUI control that
             overlaps the video row is covered by that child — invisible and
-            unclickable. Do NOT move Close on top of the video to "save a
-            few pixels": it will look right in the designer and fail in the
-            field (the original WSL Close wedge).
+            unclickable. Do NOT move Close / info / next / scores on top of
+            the video: they live in reserved rows/columns around the child
+            (same Close-chip airspace rule). Windows/Android overlay on the
+            video surface; Linux keeps the same behaviour in reserved chrome.
 
-            The Close chip is HIDDEN during playback. Collapsing the chrome
-            entirely would put the hit target on the native child, so a thin
-            invisible top reserve stays (black, not a banner; see
-            DesktopCloseChipReveal). Hover near the top-right / a tap on
-            Avalonia-owned playback chrome reveals the chip and expands that
-            row just enough for the 36px control. Escape still closes
-            without the chip. Match-event toasts use the same reserved row
-            when they appear. No "Now Playing" title.
+            Top reserve: Close chip (hover/tap reveal), stream-count toast,
+            next/prev, hamburger (Video Info / Scores / Report). Side column:
+            video-info panel (shrinks the picture). Bottom reserve: scores
+            ticker. Escape dismisses menu/info first, then closes. No
+            "Now Playing" title.
 
             Standalone fallback (switch OFF, or the hosted surface failed at
             runtime): libvlc opens its own native video window; the same
-            reveal/hide Close chip lives in the app window.
+            chrome stays in the app window as companion UI.
         -->
-        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False" RowDefinitions="Auto,*">
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False" RowDefinitions="Auto,*,Auto">
             <Grid x:Name="PlaybackChromeRow"
                   BackgroundColor="Black"
                   HeightRequest="24"
+                  RowDefinitions="Auto,Auto"
                   ColumnDefinitions="*,Auto">
                 <hv:MatchEventToastView x:Name="PlaybackToast"
                                         InputTransparent="True"
                                         HorizontalOptions="Start"
                                         VerticalOptions="Start" />
 
-                <!-- Generous top-right hit-zone (wider than the chip). The
-                     button itself is shown only after reveal; the zone stays
-                     so hover works while the chip is hidden. -->
-                <Grid x:Name="CloseHitZone"
-                      Grid.Column="1"
-                      WidthRequest="168"
-                      HeightRequest="24"
-                      VerticalOptions="Start"
-                      HorizontalOptions="End"
-                      BackgroundColor="Transparent">
-                    <Button x:Name="ClosePlaybackButton"
-                            Text="✕"
-                            Clicked="OnClosePlaybackClicked"
-                            VerticalOptions="Start"
-                            HorizontalOptions="End"
-                            Margin="0,4,8,0"
+                <HorizontalStackLayout Grid.Column="1"
+                                       Spacing="8"
+                                       Padding="0,4,8,0"
+                                       VerticalOptions="Start"
+                                       HorizontalOptions="End">
+                    <ActivityIndicator x:Name="PlaybackBufferingIndicator"
+                                       Color="#2563EB"
+                                       HeightRequest="22"
+                                       WidthRequest="22"
+                                       IsVisible="False"
+                                       IsRunning="False"
+                                       VerticalOptions="Center" />
+
+                    <Border x:Name="StreamToastPanel"
+                            IsVisible="False"
+                            BackgroundColor="#B3000000"
+                            Stroke="#55FFFFFF"
+                            StrokeThickness="1"
+                            StrokeShape="RoundRectangle 4"
+                            Padding="10,6"
+                            VerticalOptions="Center">
+                        <HorizontalStackLayout Spacing="8">
+                            <Label x:Name="StreamToastLabel"
+                                   TextColor="White"
+                                   FontSize="14"
+                                   FontAttributes="Bold"
+                                   VerticalOptions="Center" />
+                            <Border x:Name="StreamSourceBadge"
+                                    IsVisible="False"
+                                    StrokeShape="RoundRectangle 999"
+                                    Padding="6,1">
+                                <Label x:Name="StreamSourceBadgeLabel"
+                                       FontSize="10"
+                                       FontAttributes="Bold" />
+                            </Border>
+                        </HorizontalStackLayout>
+                    </Border>
+
+                    <Button x:Name="PreviousStreamButton"
+                            Text="⏮"
+                            Clicked="OnPreviousStreamClicked"
+                            IsVisible="False"
+                            WidthRequest="36"
+                            HeightRequest="36"
+                            Padding="0"
+                            BackgroundColor="#CC1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="8"
+                            FontSize="14"
+                            SemanticProperties.Description="Previous stream" />
+
+                    <HorizontalStackLayout x:Name="NextStreamCluster"
+                                           IsVisible="False"
+                                           Spacing="4"
+                                           VerticalOptions="Center">
+                        <Button x:Name="NextStreamButton"
+                                Text="⏭"
+                                Clicked="OnNextStreamClicked"
+                                WidthRequest="36"
+                                HeightRequest="36"
+                                Padding="0"
+                                BackgroundColor="#CC1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="8"
+                                FontSize="14"
+                                SemanticProperties.Description="Next stream" />
+                        <Label x:Name="NextStreamHintLabel"
+                               TextColor="White"
+                               FontSize="11"
+                               FontAttributes="Bold"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+
+                    <Button x:Name="PlayerMenuButton"
+                            Text="☰"
+                            Clicked="OnPlayerMenuClicked"
                             WidthRequest="36"
                             HeightRequest="36"
                             Padding="0"
@@ -178,38 +237,181 @@
                             InputTransparent="True"
                             BackgroundColor="#CC1C2333"
                             TextColor="#E5E7EB"
-                            CornerRadius="18"
+                            CornerRadius="8"
                             FontSize="16"
-                            SemanticProperties.Description="Close playback" />
-                </Grid>
-            </Grid>
+                            SemanticProperties.Description="Player menu" />
 
-            <!-- In-window video surface (VideoHostView injected in code-behind
-                 under EMBEDDED_DESKTOP_VIDEO; hidden in standalone fallback). -->
-            <Grid Grid.Row="1" x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
+                    <!-- Generous top-right hit-zone (wider than the chip). The
+                         button itself is shown only after reveal; the zone stays
+                         so hover works while the chip is hidden. -->
+                    <Grid x:Name="CloseHitZone"
+                          WidthRequest="44"
+                          HeightRequest="24"
+                          VerticalOptions="Start"
+                          BackgroundColor="Transparent">
+                        <Button x:Name="ClosePlaybackButton"
+                                Text="✕"
+                                Clicked="OnClosePlaybackClicked"
+                                VerticalOptions="Start"
+                                HorizontalOptions="End"
+                                WidthRequest="36"
+                                HeightRequest="36"
+                                Padding="0"
+                                Opacity="0"
+                                InputTransparent="True"
+                                BackgroundColor="#CC1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="18"
+                                FontSize="16"
+                                SemanticProperties.Description="Close playback" />
+                    </Grid>
+                </HorizontalStackLayout>
 
-            <!-- Standalone-window fallback card (pre-feature behaviour). -->
-            <Grid Grid.Row="1" x:Name="StandalonePlaybackPanel">
-                <Border BackgroundColor="#111726"
-                        Stroke="#26FFFFFF"
+                <Border x:Name="PlayerMenuPanel"
+                        Grid.Row="1"
+                        Grid.ColumnSpan="2"
+                        IsVisible="False"
+                        HorizontalOptions="End"
+                        Margin="0,4,8,8"
+                        BackgroundColor="#CC101010"
+                        Stroke="#55FFFFFF"
                         StrokeThickness="1"
-                        StrokeShape="RoundRectangle 14"
-                        Padding="28,22"
-                        HorizontalOptions="Center"
-                        VerticalOptions="Center"
-                        MinimumWidthRequest="360">
-                    <VerticalStackLayout Spacing="12">
-                        <Label Text="Video is playing in its own window."
-                               FontSize="14"
-                               TextColor="#8A93A6"
-                               HorizontalTextAlignment="Center" />
-                        <Label Text="In-window playback is unavailable on this setup — the standalone libvlc window is being used instead."
-                               FontSize="12"
-                               TextColor="#5B6478"
-                               HorizontalTextAlignment="Center"
-                               MaximumWidthRequest="420" />
+                        StrokeShape="RoundRectangle 8"
+                        Padding="12">
+                    <VerticalStackLayout Spacing="8">
+                        <Button x:Name="VideoInfoMenuButton"
+                                Text="Video Info"
+                                Clicked="OnVideoInfoMenuClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="ScoresMenuButton"
+                                Text="Scores"
+                                Clicked="OnScoresMenuClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="ReportStreamMenuButton"
+                                Text="Report stream"
+                                Clicked="OnReportStreamClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Label x:Name="ReportStreamStatusLabel"
+                               IsVisible="False"
+                               TextColor="#FFB300"
+                               FontSize="12" />
                     </VerticalStackLayout>
                 </Border>
+            </Grid>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+                <!-- In-window video surface (VideoHostView injected in code-behind
+                     under EMBEDDED_DESKTOP_VIDEO; hidden in standalone fallback). -->
+                <Grid x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
+
+                <!-- Standalone-window fallback card (pre-feature behaviour). -->
+                <Grid x:Name="StandalonePlaybackPanel">
+                    <Border BackgroundColor="#111726"
+                            Stroke="#26FFFFFF"
+                            StrokeThickness="1"
+                            StrokeShape="RoundRectangle 14"
+                            Padding="28,22"
+                            HorizontalOptions="Center"
+                            VerticalOptions="Center"
+                            MinimumWidthRequest="360">
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="Video is playing in its own window."
+                                   FontSize="14"
+                                   TextColor="#8A93A6"
+                                   HorizontalTextAlignment="Center" />
+                            <Label Text="Stream count, next/previous, video info and scores live in this window's reserved bars — the same chrome Windows and Android draw over the picture."
+                                   FontSize="12"
+                                   TextColor="#5B6478"
+                                   HorizontalTextAlignment="Center"
+                                   MaximumWidthRequest="420" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Border x:Name="VideoInfoPanel"
+                        Grid.Column="1"
+                        IsVisible="False"
+                        WidthRequest="360"
+                        BackgroundColor="#D9000000"
+                        Stroke="#55FFFFFF"
+                        StrokeThickness="1"
+                        Padding="10"
+                        VerticalOptions="Fill">
+                    <Grid RowDefinitions="Auto,*">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="Video Info"
+                                   TextColor="White"
+                                   FontAttributes="Bold"
+                                   FontSize="13"
+                                   VerticalOptions="Center" />
+                            <Button x:Name="VideoInfoCloseButton"
+                                    Grid.Column="1"
+                                    Text="✕"
+                                    Clicked="OnVideoInfoCloseClicked"
+                                    WidthRequest="28"
+                                    HeightRequest="24"
+                                    Padding="0"
+                                    BackgroundColor="Transparent"
+                                    TextColor="White"
+                                    FontSize="12"
+                                    SemanticProperties.Description="Close video info" />
+                        </Grid>
+                        <ScrollView Grid.Row="1">
+                            <Label x:Name="VideoInfoText"
+                                   TextColor="White"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   LineBreakMode="WordWrap" />
+                        </ScrollView>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid x:Name="ScoresTickerRow"
+                  Grid.Row="2"
+                  IsVisible="False"
+                  HeightRequest="36"
+                  BackgroundColor="#CC101010"
+                  ColumnDefinitions="*,Auto"
+                  Padding="12,6,0,6">
+                <Grid x:Name="TickerViewport" IsClippedToBounds="True">
+                    <HorizontalStackLayout x:Name="TickerTrack" Spacing="0">
+                        <Label x:Name="TickerText1"
+                               TextColor="White"
+                               FontSize="13"
+                               LineBreakMode="NoWrap"
+                               VerticalOptions="Center" />
+                        <BoxView x:Name="TickerGap"
+                                 WidthRequest="64"
+                                 Color="Transparent" />
+                        <Label x:Name="TickerText2"
+                               TextColor="White"
+                               FontSize="13"
+                               LineBreakMode="NoWrap"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                </Grid>
+                <Button x:Name="TickerCycleButton"
+                        Grid.Column="1"
+                        Text="⟳"
+                        Clicked="OnTickerCycleClicked"
+                        WidthRequest="40"
+                        HeightRequest="28"
+                        Padding="0"
+                        Margin="8,0,8,0"
+                        BackgroundColor="#66FFFFFF"
+                        TextColor="White"
+                        FontSize="16"
+                        SemanticProperties.Description="Next scores view" />
             </Grid>
         </Grid>
     </Grid>

@@ -1,5 +1,6 @@
 using LibVLCSharp.Shared;
 using Microsoft.Extensions.Logging;
+using System.Reactive.Linq;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
@@ -71,6 +72,13 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     private IReadOnlyDictionary<string, string>? _requestHeaders;
     private Timer? _metricsTimer;
     private int _playbackSessionId;
+    private bool _suppressIndexDrivenSwitch;
+    private bool _isNextStreamRequestInProgress;
+    private readonly List<IDisposable> _switchingSubscriptions = new();
+    private string? _playbackTitle;
+    private string? _playbackLeague;
+    private string? _playbackHomeTeam;
+    private string? _playbackAwayTeam;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
@@ -109,6 +117,87 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
         _engine.MetricsHandler = GetCurrentMetrics;
         _engine.AttachHandler = AttachLibVlcAsync;
+
+        // Windows/Android attach the current pool URL when the index changes
+        // (user Next or policy advance). Without this, onNextStreamRequested
+        // only rotates the pool and LibVLC keeps playing the old stream.
+        _switchingSubscriptions.Add(_switching.CurrentStreamIndexChanged.Subscribe(_ =>
+        {
+            try
+            {
+                TrySwitchToCurrentStream();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DesktopVideoPlayerService] CurrentStreamIndexChanged attach failed");
+            }
+        }));
+    }
+
+    /// <summary>Game title shown in the video-info panel (Home vs Away).</summary>
+    public string? PlaybackTitle => _playbackTitle;
+
+    public string? PlaybackLeague => _playbackLeague;
+
+    public string? PlaybackHomeTeam => _playbackHomeTeam;
+
+    public string? PlaybackAwayTeam => _playbackAwayTeam;
+
+    /// <summary>User Next — same callback Windows/Android fire (resolves + SwitchToNextStream).</summary>
+    public async Task RequestNextStreamAsync()
+    {
+        if (_onNextStreamRequested == null || _isNextStreamRequestInProgress)
+        {
+            return;
+        }
+
+        _isNextStreamRequestInProgress = true;
+        try
+        {
+            await _onNextStreamRequested();
+        }
+        finally
+        {
+            _isNextStreamRequestInProgress = false;
+        }
+    }
+
+    /// <summary>User Previous — pool rotate; index subscription attaches the URL.</summary>
+    public void RequestPreviousStream()
+    {
+        if (_switching.GetHealthyStreams().Count <= 1)
+        {
+            return;
+        }
+
+        _pool.SwitchPoolToPrevious();
+    }
+
+    /// <summary>
+    /// Attach the pool's current URL when the index changes, unless a
+    /// PlaybackCommand is mid-apply (RemoveCurrent already owns attach).
+    /// </summary>
+    private void TrySwitchToCurrentStream()
+    {
+        if (_suppressIndexDrivenSwitch || _playbackTcs is not { Task.IsCompleted: false })
+        {
+            return;
+        }
+
+        var current = _switching.GetCurrentStream();
+        var url = current?.ResolvedM3U8Url;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+        if (string.Equals(_session.Snapshot.CurrentUrl, url, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _logger.LogInformation("[DesktopVideoPlayerService] Switching LibVLC to current pool URL");
+        AttachViaSession(url, usedCachedUrl: true);
     }
 
 #if EMBEDDED_DESKTOP_VIDEO
@@ -543,6 +632,10 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
         _playbackTcs = new TaskCompletionSource<PlaybackResult>();
         _refererUrl = refererUrl;
         _requestHeaders = requestHeaders;
+        _playbackTitle = title;
+        _playbackLeague = league;
+        _playbackHomeTeam = homeTeam;
+        _playbackAwayTeam = awayTeam;
 
         try
         {
@@ -588,13 +681,9 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private sealed class DesktopPlaybackCommandHost(DesktopVideoPlayerService player) : IPlaybackCommandHost
     {
-        public void BeginIndexSwitchSuppression()
-        {
-        }
+        public void BeginIndexSwitchSuppression() => player._suppressIndexDrivenSwitch = true;
 
-        public void EndIndexSwitchSuppression()
-        {
-        }
+        public void EndIndexSwitchSuppression() => player._suppressIndexDrivenSwitch = false;
 
         public void ClearCurrentResolvedUrl() => player._pool.ClearCurrentResolvedUrl();
 
@@ -674,11 +763,7 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
                 _ = player._onNextStreamRequested();
         }
 
-        public void SwitchPoolToPrevious()
-        {
-            player._pool.SwitchPoolToPrevious();
-            _ = player._pool.AttachCurrentFromPoolAsync();
-        }
+        public void SwitchPoolToPrevious() => player._pool.SwitchPoolToPrevious();
 
         public void NotifyApplyFailed(Exception exception)
             => player._logger.LogWarning(exception, "[DesktopVideoPlayerService] ApplyPlaybackCommand failed");
@@ -919,6 +1004,12 @@ public class DesktopVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         _logger.LogInformation("[DesktopVideoPlayerService] Disposing");
         StopMetricsLoop();
+        foreach (var subscription in _switchingSubscriptions)
+        {
+            subscription.Dispose();
+        }
+
+        _switchingSubscriptions.Clear();
 
         var vlc = _current;
         _current = null;

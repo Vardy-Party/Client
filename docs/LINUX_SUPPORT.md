@@ -2,8 +2,10 @@
 
 Linux is served by **`VardyParty.Desktop`**: the shared .NET MAUI XAML homepage
 (`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
-device-code/QR sign-in and **LibVLC playback in a native window** (not hosted
-inside Avalonia controls).
+device-code/QR sign-in and **LibVLC playback** (in-window via a hosted native
+surface, or libvlc's own window as fallback). In-player chrome — scores
+ticker, video info, stream count, next/prev — sits in reserved airspace
+around the native video child so it stays clickable.
 
 ```mermaid
 flowchart LR
