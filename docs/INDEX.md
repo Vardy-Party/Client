@@ -17,7 +17,7 @@ superseded phase plans were removed.
 
 | Doc | What it is |
 |-----|------------|
-| [LINUX_SUPPORT.md](LINUX_SUPPORT.md) | .NET 11 preview SDK + `VardyParty.Desktop` / WSL |
+| [LINUX_SUPPORT.md](LINUX_SUPPORT.md) | .NET 11 preview SDK + `VardyParty.Linux` / WSL |
 | [LOCAL_ANDROID_BUILD.md](LOCAL_ANDROID_BUILD.md) | Local APK with user-secrets (`package-android.ps1`) |
 | [WINDOWS_INSTALL.md](WINDOWS_INSTALL.md) | Windows sideload / install notes |
 

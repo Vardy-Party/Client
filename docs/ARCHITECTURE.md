@@ -18,7 +18,7 @@ flowchart LR
 
   subgraph Heads["App heads"]
     Maui["VardyParty<br/>Android / iOS / Mac Catalyst / Windows"]
-    Desktop["VardyParty.Desktop<br/>Linux / WSL"]
+    Desktop["VardyParty.Linux<br/>Linux / WSL"]
   end
 
   subgraph Draw["How HomeUi is drawn"]
@@ -54,7 +54,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  Heads["VardyParty / VardyParty.Desktop / HomeUi"]
+  Heads["VardyParty / VardyParty.Linux / HomeUi"]
   Hosting["VardyParty.Hosting"]
   Presentation["VardyParty.Presentation<br/>board differ, layout, events, back policy"]
   Playback["VardyParty.Playback"]

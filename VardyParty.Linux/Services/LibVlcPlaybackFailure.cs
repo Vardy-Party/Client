@@ -1,4 +1,4 @@
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// Classifies LibVLC log lines that mean the current URL cannot play.

@@ -1,8 +1,8 @@
-#if EMBEDDED_DESKTOP_VIDEO
+#if EMBEDDED_LINUX_VIDEO
 using Avalonia.Controls.Maui.Handlers;
 using LibVLCSharp.Avalonia;
 
-namespace VardyParty.Desktop.Controls;
+namespace VardyParty.Linux.Controls;
 
 /// <summary>
 /// Bridges <see cref="VideoHostView"/> to LibVLCSharp.Avalonia's
@@ -13,7 +13,7 @@ namespace VardyParty.Desktop.Controls;
 /// drawable attach/detach on its visual-tree/native-handle lifecycle
 /// (OnAttachedToVisualTree / DestroyNativeControlCore).
 ///
-/// Compiles out with -p:EmbeddedDesktopVideo=false.
+/// Compiles out with -p:EmbeddedLinuxVideo=false.
 /// </summary>
 public sealed class VideoHostViewHandler : AvaloniaControlHandler<VideoHostView, VideoView>
 {
@@ -35,7 +35,7 @@ public sealed class VideoHostViewHandler : AvaloniaControlHandler<VideoHostView,
     /// the drawable, and an extra property write here would be a redundant
     /// libvlc setter on a player that may already be torn down. Hosts that
     /// abandon a wedged player never destroy the host view at all (they park
-    /// it invisible — see DesktopHomePage) precisely so no detach path can
+    /// it invisible — see LinuxHomePage) precisely so no detach path can
     /// touch the wedged instance.
     /// </summary>
     protected override void OnAvaloniaControlDestroying(VideoView? control)

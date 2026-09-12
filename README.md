@@ -20,7 +20,7 @@ Architecture, playback, versioning, and the merge playbook stay in the
 
 ## Highlights
 
-- **.NET 11** — MAUI and the Linux desktop head both target `net11.0` / `net11.0-*`.
+- **.NET 11** — MAUI and the Linux head both target `net11.0` / `net11.0-*`.
   Install the preview SDK first (see [Install](#install)).
 - **Avalonia MAUI backend** — on Linux, the same `VardyParty.HomeUi` XAML is drawn by
   Avalonia (`UseAvaloniaApp` / `Avalonia.Controls.Maui.Desktop`), not a second UI stack.
@@ -65,7 +65,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 - **.NET 11** (preview) — shared libraries + MAUI hosts + Linux desktop
 - **.NET MAUI** with a shared **MAUI XAML homepage** (`VardyParty.HomeUi`)
 - **Avalonia MAUI backend** (Avalonia 12 preview) draws that homepage on Linux
-  (`VardyParty.Desktop`)
+  (`VardyParty.Linux`)
 - **C#** with nullable reference types
 - **Auth0** for authentication (including QR-code device flow for TV)
 - **System.Reactive** for reactive/observable patterns around stream updates
@@ -79,7 +79,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 
 - ✅ **Android (mobile)** + **Android TV** (`arm64-v8a` phones + `armeabi-v7a` TV)
 - ✅ **Windows** 10/11
-- ✅ **Linux** (x64 and ARM64), including **WSL**, via `VardyParty.Desktop`
+- ✅ **Linux** (x64 and ARM64), including **WSL**, via `VardyParty.Linux`
 - ⏳ **iOS** — CI builds; **untested** pending Apple Developer Account
 - ⏳ **macOS (Mac Catalyst)** — CI builds; **untested** pending Apple Developer Account
 
@@ -107,8 +107,8 @@ VardyParty/                  # Main MAUI application (Android/iOS/macOS/Windows)
 
 VardyParty.HomeUi/           # Shared MAUI XAML homepage (rows, cards, brand logo)
 
-VardyParty.Desktop/          # Linux desktop head (MAUI drawn by Avalonia)
-├── Pages/                   # DesktopHomePage (device-code QR sign-in, playback)
+VardyParty.Linux/          # Linux head (MAUI drawn by Avalonia)
+├── Pages/                   # LinuxHomePage (device-code QR sign-in, playback)
 └── Services/                # Auth0 device flow, LibVLC playback, UI sounds
 
 VardyParty.Kernel/           # Shared models + config POCOs

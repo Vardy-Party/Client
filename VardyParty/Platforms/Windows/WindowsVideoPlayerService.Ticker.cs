@@ -631,29 +631,41 @@ namespace VardyParty.Platforms.Windows
                 }
             }
 
-            private void ToggleScoresTicker()
+            private void SyncScoresTickerFromChrome()
             {
                 try
                 {
-                    isScoresTickerVisible = !isScoresTickerVisible;
-                    scoresTickerBorder.Visibility = isScoresTickerVisible
-                        ? Microsoft.UI.Xaml.Visibility.Visible
-                        : Microsoft.UI.Xaml.Visibility.Collapsed;
+                    var wantVisible = chrome.IsScoresVisible;
+                    var mode = chrome.ScoresMode;
+                    var visibilityChanged = wantVisible != isScoresTickerVisible;
+                    var modeChanged = mode != scoresTickerMode;
+                    scoresTickerMode = mode;
 
-                    if (isScoresTickerVisible)
+                    if (visibilityChanged)
                     {
-                        RefreshGamesSnapshot();
-                        scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
-                        RefreshTickerText(resetOffset: true);
+                        isScoresTickerVisible = wantVisible;
+                        scoresTickerBorder.Visibility = wantVisible
+                            ? Microsoft.UI.Xaml.Visibility.Visible
+                            : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                        if (wantVisible)
+                        {
+                            RefreshGamesSnapshot();
+                            RefreshTickerText(resetOffset: true);
+                        }
+                        else
+                        {
+                            StopTickerScroll();
+                        }
                     }
-                    else
+                    else if (wantVisible && modeChanged)
                     {
-                        StopTickerScroll();
+                        RefreshTickerText(resetOffset: true);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _host._logger.LogWarning(ex, "ToggleScoresTicker failed");
+                    _host._logger.LogWarning(ex, "SyncScoresTickerFromChrome failed");
                     isScoresTickerVisible = false;
                     scoresTickerBorder.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     scoresTickerScrollTimer?.Stop();
@@ -662,12 +674,7 @@ namespace VardyParty.Platforms.Windows
 
             private void CycleScoresTickerMode()
             {
-                scoresTickerMode = ScoresTickerPolicy.Next(scoresTickerMode);
-
-                if (isScoresTickerVisible)
-                {
-                    RefreshTickerText(resetOffset: true);
-                }
+                chrome.CycleScoresMode();
             }
         }
     }

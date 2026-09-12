@@ -2,14 +2,14 @@ using VardyParty.Catalog;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// League logos ship in wwwroot/images/leagues next to the binary (same layout
 /// as VardyParty.Linux). <see cref="LeagueLogoMapper"/> returns web-style
 /// "/images/leagues/x.svg" paths; this maps them onto disk.
 /// </summary>
-public sealed class DesktopHomeAssetLocator : IHomeAssetLocator
+public sealed class LinuxHomeAssetLocator : IHomeAssetLocator
 {
     public Task<string?> ResolveLeagueLogoPathAsync(Game game)
     {

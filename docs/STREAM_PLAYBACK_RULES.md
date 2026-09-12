@@ -1,7 +1,7 @@
 # Stream Playback Rules
 
 **STATUS:** Android, Windows, Linux, and Apple hosts execute `PlaybackSessionController` effects through `DelegatingMediaEngine` (`IMediaEngine`). OS players attach/stop/raise facts only.  
-**AUDIENCE:** Developers and AI assistants working on MAUI/Desktop stream handling (Android, Android TV, Windows, Linux/WSL)  
+**AUDIENCE:** Developers and AI assistants working on MAUI stream handling (Android, Android TV, Windows, Linux/WSL)  
 **RELATED:** [STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)
 
 ### Implementation
@@ -18,7 +18,7 @@
 | `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
 | Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
-| Linux host | `VardyParty.Desktop/Services/DesktopVideoPlayerService.cs` | LibVLC facts → same loop (native window, not Avalonia `VideoView`) |
+| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop; chrome via Avalonia `LinuxPlaybackChromeWindow` over native child airspace; host-window fullscreen keeps overlay placeable |
 | iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
 | MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
@@ -52,14 +52,14 @@ Health reports key on the catalog/page URL via `StreamHealthIdentity.ResolveRepo
 One set of business rules for stream **selection → start → survive → switch → recover**.  
 OS code should only attach/detach media and surface metrics/errors. Shared domain owns decisions.
 
-Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux/Desktop, and Apple. Hosts only attach/stop and raise engine facts.
+Today: selection/pre-play is shared; **runtime recovery is Playback** (`PlaybackSessionController`) on Android, Windows, Linux, and Apple. Hosts only attach/stop and raise engine facts.
 
 ---
 
 ## As-is architecture
 
 ```
-HomeHostPage / DesktopHomePage
+HomeHostPage / LinuxHomePage
   └─ StreamResolutionOrchestrator          ← shared select / start / post-PlayVideoAsync failure
        ├─ StreamSelectionCoordinator
        ├─ StreamResolver + StreamHealthChecker
@@ -67,7 +67,7 @@ HomeHostPage / DesktopHomePage
             └─ INativeVideoPlayerService.PlayVideoAsync(...)
                  ├─ Android (+ TV): NativeVideoActivity + DelegatingMediaEngine (ExoPlayer)
                  ├─ Windows: WindowsVideoPlayerService + DelegatingMediaEngine (WinUI)
-                 ├─ Linux/WSL: DesktopVideoPlayerService + DelegatingMediaEngine (LibVLC window)
+                 ├─ Linux/WSL: LinuxVideoPlayerService + DelegatingMediaEngine (LibVLC window)
                  ├─ iOS: Platforms/iOS + AppleVideoPlayerServiceBase (AVPlayer)
                  └─ MacCatalyst: Platforms/MacCatalyst + AppleVideoPlayerServiceBase (AVPlayer)
                       all: engine facts → PlaybackSessionController → PlaybackCommandExecutor
@@ -296,7 +296,10 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | Soft decline / download-failure threshold | Session; Windows/Linux now raise Metrics |
 | Health URL key (page vs M3U8) | Reporter prefers page via `ResolveReportUrl` |
 | Dual entry Home vs `/player` | Removed with Blazor UI — single host path uses orchestrator pool |
-| God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy` |
+| God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy`; shared `PlaybackChromePresenter` binds Android/Windows; Linux uses Avalonia transparent overlay window (`LinuxPlaybackChromeWindow`) over LibVLC airspace |
+| Linux Avalonia playback chrome | Done — `LinuxHomePage` + `LinuxPlaybackChromeWindow` driven by `PlaybackChromePresenter`; Close/match toast stay in reserved MAUI airspace row |
+| Linux host-window fullscreen | Done — Avalonia `WindowState.FullScreen` (or Maximized via `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED`); Escape: dismiss chrome → exit fullscreen → close; reserved Close/match-toast row kept |
+| Linux stream audio (WSL + Ubuntu) | Hardened — default `--aout=pulse`, live/network caching 3000, SoundFlow yield-before-session + 75 ms attach-path handoff settle (`Task.Delay`), audio-track ensure + env diagnostics. **Field verify on WSL/Ubuntu still required** (see `LINUX_SUPPORT.md`). |
 
 ---
 
@@ -306,9 +309,11 @@ Until that exists, agents should reconstruct the timeline from the markers above
 2. ~~Shared session controller; Android calls it from ExoPlayer listener.~~
 3. ~~Windows/Linux call same controller; delete duplicated Recover* locals.~~
 4. ~~Health reporter prefers catalog/page URL over M3U8.~~
-5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys).
+5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys). Linux Avalonia overlay chrome landed (`LinuxPlaybackChromeWindow`).
 6. ~~Align or retire `VideoPlayer.razor` failover behavior.~~ (deleted with Blazor)
 7. Optional: dump session event JSON next to logcat for agent observation.
+8. ~~Linux stream audio reliability (WSL + Ubuntu) — aout / SoundFlow yield / Pulse-PipeWire (Phase 3b).~~ Code hardened; field verify checklist in `LINUX_SUPPORT.md`.
+9. ~~Linux fullscreen enter/exit with chrome overlays usable (Phase 3c).~~
 
 ---
 

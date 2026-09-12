@@ -1,7 +1,7 @@
 using System.Text.Json;
 using VardyParty.Ports;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// JSON-file store in the per-user app-data directory. MAUI Preferences on the
@@ -16,7 +16,7 @@ public sealed class FileSoundPreferencesStore : ISoundPreferencesStore
     public FileSoundPreferencesStore()
         : this(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VardyParty.Desktop",
+            "VardyParty.Linux",
             "sound-preferences.json"))
     {
     }

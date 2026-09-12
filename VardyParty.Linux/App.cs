@@ -1,6 +1,6 @@
 using VardyParty.Streaming;
 
-namespace VardyParty.Desktop;
+namespace VardyParty.Linux;
 
 public class App : Application
 {
@@ -15,8 +15,8 @@ public class App : Application
     protected override Window CreateWindow(IActivationState? activationState)
     {
         // Auth, games feed, stream resolution and playback are all wired
-        // inside DesktopHomePage (mirrors HomeHostPage on the MAUI head).
-        var page = _services.GetRequiredService<Pages.DesktopHomePage>();
+        // inside LinuxHomePage (mirrors HomeHostPage on the MAUI head).
+        var page = _services.GetRequiredService<Pages.LinuxHomePage>();
 
         // LAN local-service availability monitoring runs for the app lifetime.
         _services.GetService<ILocalLanServiceAvailabilityMonitor>()?.Start();

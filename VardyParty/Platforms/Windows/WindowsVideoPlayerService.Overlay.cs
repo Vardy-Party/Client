@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using VardyParty.Kernel;
+using VardyParty.Presentation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
@@ -72,9 +74,8 @@ namespace VardyParty.Platforms.Windows
                     if (width > 0 && height > 0)
                     {
                         double r = (double)width / height;
-                        int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
-                        int g = gcd((int)width, (int)height);
-                        sb.AppendLine($"Aspect ratio: {(int)width / g}:{(int)height / g} ({r:0.00})");
+                        var aspect = PlayerOverlayFormatter.BuildAspect(width, height) ?? "pending";
+                        sb.AppendLine($"Aspect ratio: {aspect} ({r:0.00})");
                     }
                     else
                     {
@@ -101,26 +102,9 @@ namespace VardyParty.Platforms.Windows
                     catch (Exception ex) { _host.LogIgnored("ReadBufferingProgress", ex); }
                     sb.AppendLine($"Buffer: {bufferingProgress * 100:0}%");
 
-                    string StripQuery(string url)
-                    {
-                        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-                        try
-                        {
-                            var uri = new Uri(url);
-                            var builder = new UriBuilder(uri) { Query = string.Empty };
-                            return builder.Uri.ToString();
-                        }
-                        catch
-                        {
-                            var idx = url.IndexOf('?', StringComparison.Ordinal);
-                            return idx >= 0 ? url.Substring(0, idx) : url;
-                        }
-                    }
+                    string refHost = PlayerOverlayFormatter.RefererHost(_refererUrl);
 
-                    string refHost = _refererUrl;
-                    if (Uri.TryCreate(_refererUrl, UriKind.Absolute, out var rUri)) refHost = rUri.Host;
-
-                    var source = StripQuery(currentPlaybackUrl);
+                    var source = PlayerOverlayFormatter.StripQuery(currentPlaybackUrl);
                     if (!string.IsNullOrEmpty(source))
                         sb.AppendLine($"Source: {source}");
                     if (!string.IsNullOrEmpty(refHost))
@@ -203,6 +187,36 @@ namespace VardyParty.Platforms.Windows
                 try { playerGrid.Focus(Microsoft.UI.Xaml.FocusState.Programmatic); } catch { }
             }
 
+            private void ApplyChromeState()
+            {
+                menuPanel.Visibility = chrome.IsMenuVisible
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                if (chrome.IsVideoInfoVisible)
+                {
+                    if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible)
+                        ShowVideoInfoPanel();
+                }
+                else if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                {
+                    HideVideoInfoPanel();
+                }
+
+                if (chrome.ReportState == PlaybackReportUiState.Idle)
+                {
+                    reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                }
+                else
+                {
+                    reportStatusText.Text = chrome.ReportStatusText;
+                    reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                }
+
+                SyncScoresTickerFromChrome();
+                RefreshDismissSurface();
+            }
+
             private void ShowNextButtonChrome()
             {
                 if (nextButtonHotZone.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
@@ -225,21 +239,21 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    string? ExtractVerticalResolution(string? resolution)
-                    {
-                        if (string.IsNullOrWhiteSpace(resolution)) return null;
-                        var match = System.Text.RegularExpressions.Regex.Match(resolution, @"(\d{3,4})\s*[xX]\s*(\d{3,4})");
-                        if (match.Success)
-                        {
-                            return $"{match.Groups[2].Value}p";
-                        }
-                        return null;
-                    }
-
                     var verticalResolution =
-                        ExtractVerticalResolution(current?.Health?.Resolution)
-                        ?? ExtractVerticalResolution(current?.Stream?.Resolution)
+                        PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Health?.Resolution)
+                        ?? PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Stream?.Resolution)
                         ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
+
+                    var overlay = new PlayerOverlayInfo
+                    {
+                        Index = index,
+                        Total = total,
+                        Channel = current?.Stream?.Channel,
+                        Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? verticalResolution,
+                        Title = current?.Stream?.Channel
+                    };
+                    chrome.ApplyOverlayInfo(overlay);
+                    chrome.NotifyHealthyCount(total);
 
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
                     var hasResolutionChanged = !string.Equals(lastStreamVerticalResolution ?? string.Empty, verticalResolution ?? string.Empty, StringComparison.Ordinal);
@@ -248,40 +262,23 @@ namespace VardyParty.Platforms.Windows
                     lastStreamVerticalResolution = verticalResolution;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
-                        if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                        if (chrome.IsVideoInfoVisible)
                         {
                             return;
                         }
 
-                        if (total > 0)
-                        {
-                            streamCountText.Text = string.IsNullOrWhiteSpace(verticalResolution)
-                                ? $"Stream: {index}/{total}"
-                                : $"Stream: {index}/{total} ({verticalResolution})";
-                        }
-                        else
-                        {
-                            streamCountText.Text = "Streams: 0";
-                        }
+                        streamCountText.Text = chrome.StreamToast?.Text
+                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, verticalResolution);
 
                         var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
-                        if (!string.IsNullOrWhiteSpace(sourceLabel))
+                        var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
+                        if (badgeStyle is { } style && !string.IsNullOrWhiteSpace(sourceLabel))
                         {
                             streamSourceBadgeText.Text = sourceLabel;
-                            if (string.Equals(sourceLabel, "FB", StringComparison.OrdinalIgnoreCase))
-                            {
-                                streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    global::Windows.UI.Color.FromArgb(0xFF, 0x1E, 0x3A, 0x5F));
-                                streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    global::Windows.UI.Color.FromArgb(0xFF, 0x93, 0xC5, 0xFD));
-                            }
-                            else
-                            {
-                                streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    global::Windows.UI.Color.FromArgb(0xFF, 0x3B, 0x07, 0x64));
-                                streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                    global::Windows.UI.Color.FromArgb(0xFF, 0xD8, 0xB4, 0xFE));
-                            }
+                            streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
+                            streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
                             streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                         }
                         else
@@ -289,7 +286,7 @@ namespace VardyParty.Platforms.Windows
                             streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         }
 
-                        var canSwitchToAnother = _onNextStreamRequested != null && total > 1;
+                        var canSwitchToAnother = chrome.CanGoNext && _onNextStreamRequested != null;
                         nextButtonHotZone.Visibility = canSwitchToAnother
                             ? Microsoft.UI.Xaml.Visibility.Visible
                             : Microsoft.UI.Xaml.Visibility.Collapsed;

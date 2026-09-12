@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Auth;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// Auth0 session for the Linux/desktop head, ported from the retired
@@ -16,13 +16,13 @@ namespace VardyParty.Desktop.Services;
 /// otherwise, with the token cache encrypted at rest (AES-GCM, key file
 /// chmod 600) under ~/.config/VardyParty.
 /// </summary>
-public class DesktopAuthService : Auth0TokenSession
+public class LinuxAuthService : Auth0TokenSession
 {
     private readonly string _tokenFilePath;
     private readonly string _tokenKeyPath;
 
-    public DesktopAuthService(
-        ILogger<DesktopAuthService> logger,
+    public LinuxAuthService(
+        ILogger<LinuxAuthService> logger,
         IOptions<Auth0Settings> auth0Settings,
         IAuth0OAuthClient oauth)
         : base(logger, auth0Settings, oauth)

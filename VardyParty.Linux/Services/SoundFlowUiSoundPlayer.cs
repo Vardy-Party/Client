@@ -6,7 +6,7 @@ using SoundFlow.Providers;
 using SoundFlow.Structs;
 using VardyParty.Ports;
 
-namespace VardyParty.Desktop.Services;
+namespace VardyParty.Linux.Services;
 
 /// <summary>
 /// SoundFlow (miniaudio) implementation for the desktop head: one engine and
@@ -59,6 +59,10 @@ public sealed class SoundFlowUiSoundPlayer : IUiSoundPlayer, IDisposable
             TearDownUnlocked();
         }
 
+        // Do not Thread.Sleep here — YieldDevice is also called from
+        // PlaybackAudioSession on visibility handlers that may be UI-thread.
+        // Pulse/PipeWire settle lives on the LibVLC attach path
+        // (LinuxVideoPlayerService.AttachLibVlcAsync) via Task.Delay.
         _logger.LogInformation("UI sound device yielded for video playback");
     }
 
