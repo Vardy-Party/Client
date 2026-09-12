@@ -417,7 +417,7 @@ public partial class DesktopHomePage : ContentPage
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
 
         if (UseSampleData)
@@ -466,15 +466,18 @@ public partial class DesktopHomePage : ContentPage
         _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
-            PushErrorBanner();
+            _viewModel.SetServiceError(error);
         }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
     }
 
-    /// <summary>Service errors outrank the LAN warning; one shared banner.</summary>
-    private void PushErrorBanner() =>
-        _viewModel.SetError(!string.IsNullOrWhiteSpace(_serviceError) ? _serviceError : _lanWarning);
+    /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
+    private void PushErrorBanner()
+    {
+        _viewModel.SetServiceError(_serviceError);
+        _viewModel.SetLanWarning(_lanWarning);
+    }
 
     // ---------------------------------------------------------------- auth --
 
@@ -624,7 +627,7 @@ public partial class DesktopHomePage : ContentPage
             _viewModel.CanSignOut = false;
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
-            _viewModel.SetError(null);
+            _viewModel.ClearErrors();
             _viewModel.ResetScoreObservations();
             SetAuthOverlayVisible(true);
         });
@@ -633,7 +636,7 @@ public partial class DesktopHomePage : ContentPage
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
     }
 

@@ -316,6 +316,22 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void FlushPendingApply_CatalogBoard_DoesNotBlankExistingBanner()
+    {
+        _sut.SetLanWarning("Local service unavailable. Ensure VardyParty Local Service is running on your LAN.");
+        _sut.FlushPendingApply();
+        Assert.True(_sut.HasError);
+
+        _sut.UpdateGames(CatalogWithOneGame());
+        _sut.SetServiceError(null);
+        _sut.FlushPendingApply();
+
+        Assert.True(_sut.HasError);
+        Assert.Contains("Local service unavailable", _sut.ErrorMessage, StringComparison.Ordinal);
+        Assert.True(_sut.HasGames);
+    }
+
+    [Fact]
     public void OnStreamResolutionEnded_ClearsResolvingOnFlush()
     {
         _sut.UpdateGames(CatalogWithOneGame());

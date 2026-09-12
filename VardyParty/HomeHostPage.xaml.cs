@@ -158,8 +158,13 @@ public partial class HomeHostPage : ContentPage
 
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
+            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                return;
+            }
+
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
 
         // Yield past the first layout pass before Keystore + catalog start —
@@ -236,15 +241,18 @@ public partial class HomeHostPage : ContentPage
         _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
-            PushErrorBanner();
+            _viewModel.SetServiceError(error);
         }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
     }
 
-    /// <summary>Service errors outrank the LAN warning; one shared banner.</summary>
-    private void PushErrorBanner() =>
-        _viewModel.SetError(!string.IsNullOrWhiteSpace(_serviceError) ? _serviceError : _lanWarning);
+    /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
+    private void PushErrorBanner()
+    {
+        _viewModel.SetServiceError(_serviceError);
+        _viewModel.SetLanWarning(_lanWarning);
+    }
 
     // ---------------------------------------------------------------- auth --
 
@@ -409,7 +417,7 @@ public partial class HomeHostPage : ContentPage
             _viewModel.CanSignOut = false;
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
-            _viewModel.SetError(null);
+            _viewModel.ClearErrors();
             _viewModel.ResetScoreObservations();
             SetAuthOverlayVisible(true);
         });
@@ -417,8 +425,13 @@ public partial class HomeHostPage : ContentPage
         // The LAN warning stream keeps running across sign-in sessions.
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
+            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                return;
+            }
+
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
     }
 

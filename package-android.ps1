@@ -16,18 +16,19 @@
 # command line (INSTALL_FAILED_NO_MATCHING_ABIS / NETSDK1083 / MSB1006):
 # the csproj selects the RID set from AndroidArmOnly.
 #
-# The build embeds your user secrets into the APK by patching the SOURCE
-# VardyParty/appsettings.json before build (-p:PatchAppSettings=true ->
-# PatchAppSettingsForLocalAndroid target -> scripts/patch-appsettings-android.ps1).
-# The patched file is git-restored when the script finishes unless you pass
-# -KeepPatchedAppSettings.
+# The build embeds your user secrets into the APK by patching SOURCE
+# VardyParty/appsettings.json before CoreCompile/MauiAssets
+# (-p:PatchAppSettings=true -> PatchAppSettingsForLocalAndroid).
+# This script does NOT git-restore afterward (that used to race with compile
+# when something else checked out the template mid-build). Restore yourself:
+#   git restore VardyParty/appsettings.json
 
 param(
     [ValidateSet('device', 'all')]
     [string]$Mode = 'device',
 
-    # Keep the locally patched VardyParty/appsettings.json in the working tree
-    # (skip the post-build `git restore`), e.g. to inspect what got embedded.
+    # After a successful build, leave secrets in source appsettings.json.
+    # Default is also leave them (no auto git restore). Kept for compat.
     [switch]$KeepPatchedAppSettings
 )
 
@@ -113,37 +114,29 @@ $buildArgs = @(
 
 $buildFailed = $false
 $buildLog = New-Object System.Collections.Generic.List[string]
+# Relax EAP around the merged-stream pipeline: Windows PowerShell 5.1 turns
+# native stderr lines into ErrorRecords, which would abort under 'Stop'.
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try {
-    # Relax EAP around the merged-stream pipeline: Windows PowerShell 5.1 turns
-    # native stderr lines into ErrorRecords, which would abort under 'Stop'.
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & dotnet @buildArgs 2>&1 | ForEach-Object {
-            $line = "$_"
-            $buildLog.Add($line)
-            Write-Host $line
-        }
+    & dotnet @buildArgs 2>&1 | ForEach-Object {
+        $line = "$_"
+        $buildLog.Add($line)
+        Write-Host $line
     }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
-    if ($LASTEXITCODE -ne 0) { $buildFailed = $true }
 }
 finally {
-    if ($KeepPatchedAppSettings) {
-        Write-Host ''
-        Write-Host '-KeepPatchedAppSettings: leaving the patched VardyParty/appsettings.json in the working tree.'
-        Write-Host 'Revert it later with: git restore VardyParty/appsettings.json'
-    }
-    else {
-        Write-Host ''
-        Write-Host 'Reverting the secrets-patched VardyParty/appsettings.json (git restore); pass -KeepPatchedAppSettings to skip.'
-        & git restore 'VardyParty/appsettings.json'
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning 'git restore VardyParty/appsettings.json failed — revert it manually before committing.'
-        }
-    }
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($LASTEXITCODE -ne 0) { $buildFailed = $true }
+
+if ($KeepPatchedAppSettings) {
+    Write-Host ''
+    Write-Host '-KeepPatchedAppSettings: source appsettings.json was patched and is left dirty (default now). Restore with: git restore VardyParty/appsettings.json'
+} else {
+    Write-Host ''
+    Write-Host 'NOTE: VardyParty/appsettings.json may contain local secrets after this build. Restore before committing:'
+    Write-Host '  git restore VardyParty/appsettings.json'
 }
 
 if ($buildFailed) {
@@ -169,6 +162,10 @@ if (-not (Test-Path $canonical)) {
 }
 
 & "$PSScriptRoot/scripts/assert-android-apk-abis.ps1" -Apk $canonical
+
+# Fail closed if the embedded/MauiAsset appsettings still has empty Auth0
+# (catches mid-build git restore of the template after the patch target).
+& "$PSScriptRoot/scripts/assert-android-apk-auth0.ps1" -Apk $canonical
 
 Write-Host ''
 Write-Host 'Install on the TV and the phone with:'

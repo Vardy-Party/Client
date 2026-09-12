@@ -271,7 +271,18 @@ namespace VardyParty.Platforms.Android
                             }
                             catch (Exception ex) { LogIgnored("LogPlaybackHeaders", ex); }
 
-                            var customFactory = new HeaderInjectingDataSourceFactory(headers);
+                            var dohEnabled = true;
+                            try
+                            {
+                                var dnsPrefs = VardyParty.AppServiceProvider.ServiceProvider
+                                    ?.GetService(typeof(VardyParty.Ports.IDnsPreferencesStore))
+                                    as VardyParty.Ports.IDnsPreferencesStore;
+                                if (dnsPrefs is not null)
+                                    dohEnabled = dnsPrefs.LoadDnsOverHttpsFallbackEnabled();
+                            }
+                            catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
+
+                            var customFactory = ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
