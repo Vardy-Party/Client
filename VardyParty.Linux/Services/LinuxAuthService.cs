@@ -10,16 +10,23 @@ using VardyParty.Auth;
 namespace VardyParty.Linux.Services;
 
 /// <summary>
-/// Auth0 session for the Linux/desktop head, ported from the retired
-/// VardyParty.Linux head's LinuxAuthService: interactive PKCE over a loopback
-/// listener when the configured redirect is loopback, device-code flow
-/// otherwise, with the token cache encrypted at rest (AES-GCM, key file
-/// chmod 600) under ~/.config/VardyParty.
+/// Auth0 session for the Linux head: browser PKCE over a loopback HttpListener
+/// whenever a system browser can open (even if shared secrets still use the MAUI
+/// <c>vardyparty://</c> scheme), with device-code as the UI fallback. Token cache
+/// is encrypted at rest (AES-GCM, key file chmod 600) under the per-user
+/// VardyParty config directory.
 /// </summary>
 public class LinuxAuthService : Auth0TokenSession
 {
     private readonly string _tokenFilePath;
     private readonly string _tokenKeyPath;
+
+    /// <summary>
+    /// Returned when no system browser could be launched. The homepage treats this as
+    /// a signal to fall back to the Auth0 device-code + QR path.
+    /// </summary>
+    public const string BrowserUnavailableError =
+        "Could not open a browser for Auth0 login.";
 
     public LinuxAuthService(
         ILogger<LinuxAuthService> logger,
@@ -34,7 +41,7 @@ public class LinuxAuthService : Auth0TokenSession
         _tokenKeyPath = Path.Combine(configDir, ".token-key");
     }
 
-    protected override bool ThrowOnMissingDeviceConfig => false;
+    protected override bool ThrowOnMissingDeviceConfig => true;
 
     public override async Task<AuthLoginResult> LoginInteractiveAsync(CancellationToken cancellationToken = default)
     {
@@ -42,21 +49,9 @@ public class LinuxAuthService : Auth0TokenSession
         if (HasValidToken)
             return new AuthLoginResult(true, AccessToken, null);
 
-        if (!Auth0Pkce.TryGetLoopbackRedirectUri(Settings.RedirectUri, out var redirectUri))
-        {
-            Logger.LogWarning("[Auth0/Desktop] RedirectUri is not loopback; falling back to device login");
-            var deviceLogin = await StartDeviceLoginAsync(cancellationToken);
-            if (deviceLogin?.DeviceCode == null)
-            {
-                return new AuthLoginResult(false, null,
-                    "Unable to start interactive login (invalid redirect URI) or device login.");
-            }
-
-            Logger.LogInformation("[Auth0/Desktop] Complete sign-in at {Uri} with code {Code}",
-                deviceLogin.DeviceCode.VerificationUri, deviceLogin.DeviceCode.UserCode);
-            return await PollDeviceLoginAsync(deviceLogin.DeviceCode, cancellationToken);
-        }
-
+        var redirectUri = Auth0Pkce.ResolveLinuxBrowserRedirectUri(
+            Settings.RedirectUri,
+            Settings.LoopbackRedirectUri);
         var pkce = Auth0Pkce.Start(Settings, redirectUri);
 
         try
@@ -68,9 +63,13 @@ public class LinuxAuthService : Auth0TokenSession
             if (!OpenBrowser(pkce.AuthorizeUrl))
             {
                 listener.Stop();
-                return new AuthLoginResult(false, null,
-                    "Could not open browser for Auth0 login. Please install xdg-open/gio or use device login.");
+                Logger.LogWarning("[Auth0/Linux] No browser available for loopback PKCE at {Redirect}", redirectUri);
+                return new AuthLoginResult(false, null, BrowserUnavailableError);
             }
+
+            Logger.LogInformation(
+                "[Auth0/Linux] Browser sign-in started; waiting for loopback callback at {Redirect}",
+                redirectUri);
 
             var callback = await WaitForCallbackAsync(listener, TimeSpan.FromMinutes(3), cancellationToken);
             if (callback == null)
@@ -84,9 +83,13 @@ public class LinuxAuthService : Auth0TokenSession
             return await CompleteAuthorizationCodeAsync(
                 callback.Code!, redirectUri.ToString(), pkce.CodeVerifier, cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "[Auth0/Desktop] Interactive login failed");
+            Logger.LogError(ex, "[Auth0/Linux] Interactive login failed");
             return new AuthLoginResult(false, null, ex.Message);
         }
     }
@@ -94,7 +97,7 @@ public class LinuxAuthService : Auth0TokenSession
     public override async Task LogoutAsync()
     {
         await base.LogoutAsync();
-        Logger.LogInformation("[Auth0/Desktop] Logged out and cleared local tokens");
+        Logger.LogInformation("[Auth0/Linux] Logged out and cleared local tokens");
     }
 
     protected override async Task LoadPersistedTokensAsync()
@@ -120,7 +123,7 @@ public class LinuxAuthService : Auth0TokenSession
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "[Auth0/Desktop] Failed to load token cache from disk");
+            Logger.LogWarning(ex, "[Auth0/Linux] Failed to load token cache from disk");
         }
     }
 
@@ -140,7 +143,7 @@ public class LinuxAuthService : Auth0TokenSession
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "[Auth0/Desktop] Failed to persist token cache to disk");
+            Logger.LogWarning(ex, "[Auth0/Linux] Failed to persist token cache to disk");
         }
     }
 
@@ -153,7 +156,7 @@ public class LinuxAuthService : Auth0TokenSession
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "[Auth0/Desktop] Failed to delete token cache file");
+            Logger.LogWarning(ex, "[Auth0/Linux] Failed to delete token cache file");
         }
 
         return Task.CompletedTask;
@@ -181,7 +184,7 @@ public class LinuxAuthService : Auth0TokenSession
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "[Auth0/Desktop] Failed to migrate plaintext token cache");
+            Logger.LogWarning(ex, "[Auth0/Linux] Failed to migrate plaintext token cache");
         }
 
         return json;
@@ -264,20 +267,33 @@ public class LinuxAuthService : Auth0TokenSession
 
     private bool OpenBrowser(string url)
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo("xdg-open", url)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            return true;
-        }
-        catch
+        if (OperatingSystem.IsWindows())
         {
             try
             {
-                Process.Start(new ProcessStartInfo("gio", $"open {url}")
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "[Auth0/Linux] Failed to open Windows browser for interactive login");
+                return false;
+            }
+        }
+
+        foreach (var (fileName, args) in new[]
+                 {
+                     ("xdg-open", url),
+                     ("gio", $"open {url}")
+                 })
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(fileName, args)
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true
@@ -286,10 +302,12 @@ public class LinuxAuthService : Auth0TokenSession
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "[Auth0/Desktop] Failed to open browser for interactive login");
-                return false;
+                Logger.LogDebug(ex, "[Auth0/Linux] {Launcher} failed to open browser", fileName);
             }
         }
+
+        Logger.LogWarning("[Auth0/Linux] No browser launcher succeeded for interactive login");
+        return false;
     }
 
     private async Task<AuthCallbackResult?> WaitForCallbackAsync(

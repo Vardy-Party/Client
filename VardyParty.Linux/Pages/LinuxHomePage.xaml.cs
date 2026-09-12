@@ -522,6 +522,8 @@ public partial class LinuxHomePage : ContentPage
         _logger.LogInformation("[LinuxHome] Sign in pressed");
         _isAuthenticating = true;
         _deviceCode = null;
+        _authCts?.Cancel();
+        _authCts = new CancellationTokenSource();
         Dispatcher.Dispatch(() =>
         {
             SignInButton.IsEnabled = false;
@@ -531,46 +533,45 @@ public partial class LinuxHomePage : ContentPage
 
         try
         {
-            // The desktop RedirectUri is the custom vardyparty:// scheme (not
-            // loopback), so the device-code flow with QR is the standard path;
-            // a loopback redirect would enable the browser PKCE flow instead
-            // (LinuxAuthService handles both).
-            if (Auth0Pkce.TryGetLoopbackRedirectUri(_auth0Settings.RedirectUri, out _))
+            // Prefer system-browser PKCE (loopback) whenever a browser can open —
+            // including when shared secrets still use the MAUI vardyparty:// scheme.
+            // Device-code + QR is the fallback for headless / no-browser hosts.
+            ShowBrowserSignInWaiting();
+            var interactive = await _authLogin.LoginInteractiveAsync(_authCts.Token);
+            if (interactive.IsSuccess && !string.IsNullOrWhiteSpace(interactive.AccessToken))
             {
-                var result = await _authLogin.LoginInteractiveAsync();
-                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
-                {
-                    OnSignedIn();
-                }
-                else if (!string.IsNullOrWhiteSpace(result.Error))
-                {
-                    SetAuthStatus(result.Error);
-                }
+                OnSignedIn();
+                return;
             }
-            else
+
+            if (!string.Equals(interactive.Error, LinuxAuthService.BrowserUnavailableError, StringComparison.Ordinal))
             {
-                var deviceLogin = await _authLogin.StartDeviceLoginAsync();
-                if (deviceLogin == null)
-                {
-                    SetAuthStatus("Unable to start device sign-in.");
-                    return;
-                }
+                if (!string.IsNullOrWhiteSpace(interactive.Error))
+                    SetAuthStatus(interactive.Error);
+                return;
+            }
 
-                _deviceCode = deviceLogin.DeviceCode;
-                ShowDeviceCode(_deviceCode);
+            _logger.LogInformation("[LinuxHome] Browser unavailable; falling back to device-code sign-in");
+            SetAuthStatus("No browser available — use the code below on another device.");
 
-                _authCts?.Cancel();
-                _authCts = new CancellationTokenSource();
+            var deviceLogin = await _authLogin.StartDeviceLoginAsync(_authCts.Token);
+            if (deviceLogin == null)
+            {
+                SetAuthStatus(DescribeDeviceSignInUnavailable());
+                return;
+            }
 
-                var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
-                if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
-                {
-                    OnSignedIn();
-                }
-                else if (!string.IsNullOrWhiteSpace(result.Error))
-                {
-                    SetAuthStatus(result.Error);
-                }
+            _deviceCode = deviceLogin.DeviceCode;
+            ShowDeviceCode(_deviceCode);
+
+            var result = await _authLogin.PollDeviceLoginAsync(deviceLogin.DeviceCode, _authCts.Token);
+            if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
+            {
+                OnSignedIn();
+            }
+            else if (!string.IsNullOrWhiteSpace(result.Error))
+            {
+                SetAuthStatus(result.Error);
             }
         }
         catch (OperationCanceledException)
@@ -593,6 +594,37 @@ public partial class LinuxHomePage : ContentPage
                 SignInButton.Text = "Sign in — Continue";
             });
         }
+    }
+
+    private void ShowBrowserSignInWaiting()
+    {
+        Dispatcher.Dispatch(() =>
+        {
+            DeviceCodeLabel.Text = "Complete sign-in in your browser";
+            DeviceUriLabel.Text = "A browser window should open. Use Cancel to abort.";
+            DeviceQrImage.Source = null;
+            DeviceQrImage.IsVisible = false;
+            DeviceCodePanel.IsVisible = true;
+            SetAuthStatus("Opening browser for sign-in…");
+        });
+    }
+
+    private string DescribeDeviceSignInUnavailable()
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(_auth0Settings.Domain))
+            missing.Add("Domain");
+        if (string.IsNullOrWhiteSpace(_auth0Settings.ClientId))
+            missing.Add("ClientId");
+
+        if (missing.Count > 0)
+        {
+            return
+                $"Sign-in unavailable: Auth0 {string.Join(" and ", missing)} empty in this build. " +
+                "Relaunch with secrets merged (scripts/launch-linux-app.ps1 or -p:PatchAppSettings=true).";
+        }
+
+        return "Unable to start device sign-in. Check Auth0 configuration and network, then try again.";
     }
 
     private void OnSignedIn()

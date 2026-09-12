@@ -23,8 +23,12 @@ tr -d '\r' < scripts/merge-appsettings-secrets.sh | bash -s -- "$APPSETTINGS"
 {
   "$HOME/.dotnet/dotnet" restore VardyParty.Linux/VardyParty.Linux.csproj \
     --ignore-failed-sources -p:HomeUiTargetFrameworks=net11.0 \
+  && "$HOME/.dotnet/dotnet" build VardyParty.Linux/VardyParty.Linux.csproj \
+    -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0 \
+  && pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/assert-linux-appsettings-auth0.ps1 \
+    -AppSettingsPath "VardyParty.Linux/bin/Release/net11.0/appsettings.json" \
   && "$HOME/.dotnet/dotnet" run --project VardyParty.Linux/VardyParty.Linux.csproj \
-    -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0
+    -c Release --no-build -p:HomeUiTargetFrameworks=net11.0
 } 2>&1 | tee "$LOG"
 RC="${PIPESTATUS[0]}"
 
