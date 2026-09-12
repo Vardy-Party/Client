@@ -17,9 +17,39 @@ public class LinuxPlatformProbeTests
         // Assert
         Assert.Contains("--avcodec-hw=none", options);
         Assert.Contains("--vout=x11", options);
+        Assert.DoesNotContain("--vout=vmem", options);
         Assert.DoesNotContain("--demux=avformat", options);
         Assert.Contains("--aout=pulse", options);
         Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void BuildLibVlcOptions_ConservativeCallbackVout_PinsVmemNotX11()
+    {
+        // Arrange
+        // Act
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(
+            conservative: true, audioOutputModule: null, callbackVout: true);
+
+        // Assert
+        Assert.Contains("--avcodec-hw=none", options);
+        Assert.Contains("--vout=vmem", options);
+        Assert.DoesNotContain("--vout=x11", options);
+        Assert.Contains("--aout=pulse", options);
+    }
+
+    [Fact]
+    public void BuildLibVlcOptions_NativeCallbackVout_PinsVmem()
+    {
+        // Arrange
+        // Act
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(
+            conservative: false, audioOutputModule: null, callbackVout: true);
+
+        // Assert
+        Assert.Contains("--vout=vmem", options);
+        Assert.DoesNotContain("--vout=x11", options);
+        Assert.Contains("--avcodec-hw=any", options);
     }
 
     [Fact]

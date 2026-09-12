@@ -23,10 +23,9 @@ public static class MauiProgram
             .UseAvaloniaApp();
 
 #if EMBEDDED_LINUX_VIDEO
-        // In-window video playback: VideoHostView renders libvlc's output
-        // inside the app window via LibVLCSharp.Avalonia's VideoView (see
-        // Controls/VideoHostViewHandler). Compiled out (and the standalone
-        // libvlc window used instead) with -p:EmbeddedLinuxVideo=false.
+        // In-window compositing: VideoHostView is an Avalonia Image fed by
+        // LibVLC software callbacks (see Controls/VideoHostViewHandler).
+        // Compiled out (standalone libvlc window) with -p:EmbeddedLinuxVideo=false.
         builder.ConfigureMauiHandlers(handlers =>
             handlers.AddHandler<Controls.VideoHostView, Controls.VideoHostViewHandler>());
 #endif

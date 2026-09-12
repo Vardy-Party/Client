@@ -15,6 +15,7 @@
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<RootNamespace>VardyParty.Linux</RootNamespace>
 		<AssemblyName>VardyPartyLinux</AssemblyName>
 
@@ -41,15 +42,15 @@
 			  dotnet build ... -p:EmbeddedLinuxVideo=false
 
 			compiles the embedded-playback feature OUT entirely: no
-			LibVLCSharp.Avalonia package reference, no VideoHostView/handler,
-			no hosted-surface code in LinuxHomePage/LinuxVideoPlayerService
-			— playback opens libvlc's own native video window (the pre-feature
-			behaviour), with the reserved-airspace Close chip still in-app.
+			VideoHostView/handler, no hosted-surface code in
+			LinuxHomePage/LinuxVideoPlayerService — playback opens
+			libvlc's own native video window (the pre-feature behaviour),
+			with overlay chrome still in-app as companion UI.
 			Everything the switch controls is guarded by the
 			EMBEDDED_LINUX_VIDEO define derived below. Independent of the
 			switch, the embedded path also auto-falls back to the standalone
-			window at RUNTIME if the hosted surface cannot be attached (see
-			LinuxVideoPlayerService). Documented in
+			window at RUNTIME if the composited surface cannot be attached
+			(see LinuxVideoPlayerService). Documented in
 			docs/architecture/homepage-maui-avalonia.md.
 		-->
 		<EmbeddedLinuxVideo Condition="'$(EmbeddedLinuxVideo)' == ''">true</EmbeddedLinuxVideo>
@@ -72,18 +73,11 @@
 		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
 		<PackageReference Include="SoundFlow" Version="1.4.1" />
 		<!--
-			LibVLC playback (system libvlc, initialised lazily). LibVLCSharp is
-			the core binding; LibVLCSharp.Avalonia adds the VideoView control
-			the in-window playback feature hosts through the MAUI-Avalonia
-			AvaloniaControlHandler bridge (Controls/VideoHostView*). 3.10.x is
-			the first LibVLCSharp.Avalonia line that supports Avalonia 12 (it
-			declares Avalonia >= 11.3.13 and detects 12 at runtime), matching
-			the Avalonia 12.1 the Avalonia.Controls.Maui.Desktop backend pulls
-			in transitively. The Avalonia package is only referenced when the
-			EmbeddedLinuxVideo switch is ON (see the PropertyGroup above).
+			LibVLC playback (system libvlc, initialised lazily). In-window
+			compositing uses SetVideoCallbacks → Avalonia Image (no VideoView /
+			native child). LibVLCSharp.Avalonia is intentionally not referenced.
 		-->
 		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
-		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.1" Condition="'$(EmbeddedLinuxVideo)' == 'true'" />
 		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
 		<PackageReference Include="QRCoder" Version="1.7.0" />
 	</ItemGroup>

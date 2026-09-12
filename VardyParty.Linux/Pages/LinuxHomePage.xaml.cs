@@ -6,7 +6,6 @@ using Microsoft.Extensions.Options;
 using QRCoder;
 using VardyParty.Auth;
 using VardyParty.Catalog;
-using VardyParty.Linux.Controls;
 using VardyParty.Linux.Services;
 using VardyParty.HomeUi;
 using VardyParty.Kernel;
@@ -18,12 +17,12 @@ using VardyParty.Streaming;
 namespace VardyParty.Linux.Pages;
 
 /// <summary>
-/// Desktop-head host for the shared XAML homepage: the same auth +
+/// Linux-head host for the shared XAML homepage: the same auth +
 /// stream-resolution glue as the MAUI head's HomeHostPage, with two
-/// desktop-specific twists — sign-in uses the Auth0 device-code flow with a QR
-/// code (ported from the retired VardyParty.Linux head), and playback runs
-/// in-window (or libvlc's own window as fallback) with a reserved-airspace
-/// Close chip (see <see cref="LinuxVideoPlayerService"/>).
+/// Linux-specific twists — sign-in uses the Auth0 device-code flow with a QR
+/// code, and playback composites in-window (or libvlc's own window as
+/// fallback) with chrome overlaid on the picture (see
+/// <see cref="LinuxVideoPlayerService"/>).
 /// Set VARDYPARTY_LINUX_SAMPLE_DATA=1 to skip auth and render a fabricated
 /// catalog (demos and the headless CI smoke test).
 /// </summary>
@@ -60,8 +59,6 @@ public partial class LinuxHomePage : ContentPage
     private string? _lanWarning;
 
     private PlaybackChromePresenter? _playbackChrome;
-    private LinuxPlaybackChromeWindow? _playbackChromeWindow;
-    private IDispatcherTimer? _chromePlacementTimer;
     private List<Game> _gamesSnapshot = new();
     private bool _chromeVisible;
     private readonly LinuxPlaybackFullscreenSession _fullscreenSession = new();
@@ -126,15 +123,17 @@ public partial class LinuxHomePage : ContentPage
         InitializeComponent();
         BindingContext = _viewModel;
 
-        // In-playback match-event toast: lives in the reserved airspace row
-        // next to Close (never over the native video child — airspace). Same
-        // queue/dismiss machine as the homepage toast. Audio stays suppressed
-        // during playback via ShouldPlayAudio — toast-yes/audio-no.
+        // In-playback match-event toast: stacked over the composited picture
+        // next to Close. Same queue/dismiss machine as the homepage toast.
+        // Audio stays suppressed during playback via ShouldPlayAudio —
+        // toast-yes/audio-no.
         _playbackToast = new MatchEventToastViewModel(_viewModel.Layout);
         PlaybackToast.BindingContext = _playbackToast;
         _playbackToast.PropertyChanged += OnPlaybackToastPropertyChanged;
         _matchEvents.Published += OnMatchEventPublished;
+        _closeChip.OverlayOnVideo = true;
         WireCloseChipGestures();
+        WirePlayerChrome();
 
         _viewModel.GamePicked += OnGamePicked;
         _viewModel.SignOutRequested += () => _ = SignOutAsync();
@@ -151,11 +150,10 @@ public partial class LinuxHomePage : ContentPage
     private Controls.VideoHostView? _videoHost;
 
     /// <summary>
-    /// Hosted-surface wiring for in-window playback: the service asks this
-    /// page (via <see cref="LinuxVideoPlayerService.EmbedSurfaceAsync"/>) to
-    /// assign the MediaPlayer to a hosted VideoHostView BEFORE Play, and tells
-    /// it when the surface may be safely detached (clean stop) or must never
-    /// be touched again (a wedged libvlc pair was abandoned).
+    /// Hosted-surface wiring for in-window compositing: the service asks this
+    /// page (via <see cref="LinuxVideoPlayerService.AcquireFramePresenterAsync"/>)
+    /// for the VideoHostView presenter BEFORE Play, then attaches software
+    /// callbacks. Clean stop clears the frame; a wedged pair parks the host.
     /// </summary>
     private void WireEmbeddedVideoHost()
     {
@@ -164,23 +162,22 @@ public partial class LinuxHomePage : ContentPage
             return;
         }
 
-        service.EmbedSurfaceAsync = EmbedSurfaceOnUiAsync;
+        service.AcquireFramePresenterAsync = AcquireFramePresenterOnUiAsync;
         service.DetachSurfaceRequested += OnDetachSurfaceRequested;
         service.SurfacePoisoned += OnSurfacePoisoned;
         service.EmbeddingStateChanged += OnEmbeddingStateChanged;
     }
 
     /// <summary>
-    /// UI-thread half of the embed handshake: make the video row host a
-    /// (fresh or reused) VideoHostView and assign the player so VideoView
-    /// attaches the drawable. The service polls the drawable and decides
-    /// embedded vs standalone-fallback; this method must never block its
-    /// caller (always dispatches) and never touches libvlc beyond the
-    /// non-blocking MediaPlayer property assignment.
+    /// UI-thread half of the embed handshake: show a (fresh or reused)
+    /// VideoHostView and return it as the frame presenter. The service
+    /// attaches LibVLC callbacks on a worker; this method must never block
+    /// its caller (always dispatches) and never calls into libvlc.
     /// </summary>
-    private Task EmbedSurfaceOnUiAsync(LibVLCSharp.Shared.MediaPlayer player)
+    private Task<IVideoFramePresenter?> AcquireFramePresenterOnUiAsync()
     {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<IVideoFramePresenter?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.Dispatch(() =>
         {
             try
@@ -191,12 +188,9 @@ public partial class LinuxHomePage : ContentPage
                     VideoHostContainer.Children.Add(_videoHost);
                 }
 
-                // The native child window only realizes while the host is in
-                // the visible tree — show the video row before assigning.
                 VideoHostContainer.IsVisible = true;
                 StandalonePlaybackPanel.IsVisible = false;
-                _videoHost.MediaPlayer = player;
-                tcs.TrySetResult();
+                tcs.TrySetResult(_videoHost);
             }
             catch (Exception ex)
             {
@@ -206,21 +200,16 @@ public partial class LinuxHomePage : ContentPage
         return tcs.Task;
     }
 
-    /// <summary>Clean stop: the player is idle, clearing the binding is a safe no-op detach.</summary>
+    /// <summary>Clean stop: drop the last composited frame (player is idle).</summary>
     private void OnDetachSurfaceRequested() => Dispatcher.Dispatch(() =>
     {
-        if (_videoHost != null)
-        {
-            _videoHost.MediaPlayer = null;
-        }
+        _videoHost?.ClearFrame();
     });
 
     /// <summary>
-    /// A libvlc pair was abandoned as wedged: park the current host invisible
-    /// and forget it — removing it (or clearing its MediaPlayer) would run
-    /// VideoView's drawable-detach against the wedged player, which can hold
-    /// its object lock and stall the UI thread. The next session builds a
-    /// fresh host; the parked one leaks with its abandoned player by design.
+    /// A libvlc pair was abandoned as wedged: park the current host and
+    /// forget it. The next session builds a fresh presenter so in-flight
+    /// frames cannot land on a poisoned generation.
     /// </summary>
     private void OnSurfacePoisoned() => Dispatcher.Dispatch(() =>
     {
@@ -299,19 +288,21 @@ public partial class LinuxHomePage : ContentPage
             return;
         }
 
-        if (e.Key != Key.Escape)
+        if (e.Key == Key.Escape)
         {
-            return;
-        }
+            if (_playbackChrome?.TryDismissLayer() == true)
+            {
+                ApplyPlayerChromeVisuals();
+                e.Handled = true;
+                return;
+            }
 
-        if (_playbackChrome?.TryDismissLayer() == true)
-        {
+            HandleEscapeBeyondChrome();
             e.Handled = true;
             return;
         }
 
-        HandleEscapeBeyondChrome();
-        e.Handled = true;
+        HandlePlaybackChromeKey(e);
     }
 
     private void OnTopLevelPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
@@ -322,7 +313,8 @@ public partial class LinuxHomePage : ContentPage
         }
 
         var pos = e.GetPosition(top);
-        if (LinuxCloseChipReveal.IsNearRestingPlace(pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed))
+        if (LinuxCloseChipReveal.IsNearRestingPlace(
+                pos.X, pos.Y, top.Bounds.Width, _closeChip.IsRevealed, _closeChip.OverlayOnVideo))
         {
             ApplyCloseChip(_closeChip.OnHoverEnter());
         }
@@ -339,9 +331,8 @@ public partial class LinuxHomePage : ContentPage
             return;
         }
 
-        // A press we can see (reserved chrome / standalone card). Presses on
-        // the native video child never reach Avalonia — the thin hit-zone
-        // is the in-window path. Does not close; the chip click does.
+        // Presses on the composited picture and overlay chrome reach Avalonia.
+        // Does not close; the chip click does.
         ApplyCloseChip(_closeChip.OnTouched());
     }
 
@@ -359,6 +350,12 @@ public partial class LinuxHomePage : ContentPage
         var standaloneTap = new TapGestureRecognizer();
         standaloneTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
         StandalonePlaybackPanel.GestureRecognizers.Add(standaloneTap);
+
+#if EMBEDDED_LINUX_VIDEO
+        var videoTap = new TapGestureRecognizer();
+        videoTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
+        VideoHostContainer.GestureRecognizers.Add(videoTap);
+#endif
     }
 
     private void OnPlaybackToastPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -371,7 +368,11 @@ public partial class LinuxHomePage : ContentPage
 
     private void ApplyCloseChip(LinuxCloseChipAction action)
     {
-        ApplyCloseChipVisuals();
+        if (_chromeVisible)
+            ApplyPlayerChromeVisuals();
+        else
+            ApplyCloseChipVisuals();
+
         switch (action)
         {
             case LinuxCloseChipAction.StartAutoHide:
@@ -394,9 +395,7 @@ public partial class LinuxHomePage : ContentPage
         if (double.IsNaN(height))
         {
             PlaybackChromeRow.HeightRequest = -1;
-            PlaybackChromeRow.MinimumHeightRequest = revealed
-                ? LinuxCloseChipReveal.RevealedReserveHeight
-                : 0;
+            PlaybackChromeRow.MinimumHeightRequest = 0;
         }
         else
         {
@@ -933,7 +932,10 @@ public partial class LinuxHomePage : ContentPage
         if (PlaybackOverlay.IsVisible)
         {
             if (_playbackChrome?.TryDismissLayer() == true)
+            {
+                ApplyPlayerChromeVisuals();
                 return true;
+            }
 
             HandleEscapeBeyondChrome();
             return true;
@@ -1019,6 +1021,7 @@ public partial class LinuxHomePage : ContentPage
             else
             {
                 HidePlaybackChrome();
+                ResetPlayerChrome();
                 ResetCloseChip();
                 TryResumeAfterPlayer();
             }
@@ -1039,6 +1042,15 @@ public partial class LinuxHomePage : ContentPage
                     return linux.RequestNextStreamAsync();
                 return Task.CompletedTask;
             },
+            requestPrevious: () =>
+            {
+                if (_videoPlayer is LinuxVideoPlayerService linux)
+                {
+                    linux.RequestPreviousStream();
+                }
+
+                return Task.CompletedTask;
+            },
             cleanupPool: () =>
             {
                 try { _switching.Cleanup(); }
@@ -1051,7 +1063,11 @@ public partial class LinuxHomePage : ContentPage
         _playbackChrome.ExitRequested += (_, _) =>
             Dispatcher.Dispatch(CompletePlaybackClose);
         _playbackChrome.StateChanged += (_, _) =>
-            Dispatcher.Dispatch(RefreshChromeScoresText);
+            Dispatcher.Dispatch(ApplyPlayerChromeVisuals);
+        _playbackChrome.StreamToastRequested += (_, _) =>
+            Dispatcher.Dispatch(() => ApplyStreamToastTimer(start: true));
+        _playbackChrome.StreamToastDismissed += (_, _) =>
+            Dispatcher.Dispatch(() => ApplyStreamToastTimer(start: false));
 
         return _playbackChrome;
     }
@@ -1060,77 +1076,21 @@ public partial class LinuxHomePage : ContentPage
     {
         try
         {
-            var chrome = EnsurePlaybackChrome();
-            if (_playbackChromeWindow is null)
-            {
-                _playbackChromeWindow = new LinuxPlaybackChromeWindow(chrome);
-                _playbackChromeWindow.FullscreenToggleRequested += (_, _) =>
-                    Dispatcher.Dispatch(TogglePlaybackFullscreen);
-                _playbackChromeWindow.EscapeBeyondChromeRequested += (_, _) =>
-                    Dispatcher.Dispatch(HandleEscapeBeyondChrome);
-            }
-
-            if (_playbackTopLevel is Avalonia.Controls.Window owner)
-                _playbackChromeWindow.Show(owner);
-            else
-                _playbackChromeWindow.Show();
-
+            EnsurePlaybackChrome();
+            WirePlayerChrome();
             _chromeVisible = true;
-            _playbackChromeWindow.SetFullscreenLabel(_fullscreenSession.IsFullscreen);
-            WireChromeDataFeeds();
             PushOverlayInfoFromSwitching();
-            RefreshChromeScoresText();
-            SyncChromePlacement();
-            ArmChromePlacementTimer();
+            ApplyPlayerChromeVisuals();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[LinuxHome] Failed to show Avalonia playback chrome");
+            _logger.LogWarning(ex, "[LinuxHome] Failed to show playback chrome");
         }
     }
 
     private void HidePlaybackChrome()
     {
         _chromeVisible = false;
-        _chromePlacementTimer?.Stop();
-
-        foreach (var sub in _chromeSubscriptions)
-        {
-            try { sub.Dispose(); }
-            catch { /* ignore */ }
-        }
-        _chromeSubscriptions.Clear();
-
-        try
-        {
-            _playbackChromeWindow?.Hide();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[LinuxHome] Hide playback chrome failed");
-        }
-    }
-
-    private void WireChromeDataFeeds()
-    {
-        if (_chromeSubscriptions.Count > 0)
-            return;
-
-        _chromeSubscriptions.Add(_switching.OverlayInfoChanged.Subscribe(info =>
-            Dispatcher.Dispatch(() => ApplyOverlayInfo(info))));
-
-        _chromeSubscriptions.Add(_switching.HealthyStreamsUpdated.Subscribe(list =>
-            Dispatcher.Dispatch(() =>
-            {
-                _playbackChrome?.NotifyHealthyCount(list.Count);
-                PushOverlayInfoFromSwitching();
-            })));
-
-        _chromeSubscriptions.Add(_gameService.GamesStream.Subscribe(dict =>
-        {
-            _gamesSnapshot = FlattenGames(dict);
-            Dispatcher.Dispatch(RefreshChromeScoresText);
-        }));
     }
 
     private void PushOverlayInfoFromSwitching()
@@ -1140,7 +1100,7 @@ public partial class LinuxHomePage : ContentPage
             var current = _switching.GetCurrentStream();
             var total = _switching.GetHealthyStreams().Count;
             var index = _switching.GetCurrentStreamIndex();
-            var info = LinuxPlaybackChromeInfoText.BuildOverlayInfo(
+            var info = PlayerOverlayFormatter.BuildOverlayInfo(
                 current, index, total, current?.Referer);
             ApplyOverlayInfo(info);
         }
@@ -1158,56 +1118,10 @@ public partial class LinuxHomePage : ContentPage
         _playbackChrome.ApplyOverlayInfo(info);
         if (info is not null)
             _playbackChrome.NotifyHealthyCount(info.Total);
-
-        if (_playbackChromeWindow is null)
-            return;
-
-        _playbackChromeWindow.SetVideoInfoBody(
-            info is null ? string.Empty : LinuxPlaybackChromeInfoText.FormatVideoInfo(info));
-        _playbackChromeWindow.SetSourceBadge(
-            _switching.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
-    }
-
-    private void RefreshChromeScoresText()
-    {
-        if (_playbackChromeWindow is null || _playbackChrome is null)
-            return;
-
-        var league = _selection.CurrentGame?.DisplayLeague
-            ?? _homeShell.SelectedGame?.DisplayLeague;
-        _playbackChromeWindow.SetScoresText(
-            LinuxPlaybackChromeInfoText.FormatScoresTicker(
-                _gamesSnapshot, _playbackChrome.ScoresMode, league));
-    }
-
-    private void ArmChromePlacementTimer()
-    {
-        _chromePlacementTimer ??= CreateChromePlacementTimer();
-        _chromePlacementTimer.Stop();
-        _chromePlacementTimer.Start();
-    }
-
-    private IDispatcherTimer CreateChromePlacementTimer()
-    {
-        var timer = Dispatcher.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(250);
-        timer.Tick += (_, _) =>
-        {
-            if (!_chromeVisible)
-            {
-                timer.Stop();
-                return;
-            }
-
-            SyncChromePlacement();
-        };
-        return timer;
     }
 
     /// <summary>
     /// Escape after chrome layers are gone: exit host fullscreen first, then close.
-    /// Close chip + match toast stay in the reserved MAUI airspace row in fullscreen
-    /// (preferred option); Escape / menu Exit remain fallbacks.
     /// </summary>
     private void HandleEscapeBeyondChrome()
     {
@@ -1235,9 +1149,7 @@ public partial class LinuxHomePage : ContentPage
             var current = ToHostWindowMode(window.WindowState);
             var next = _fullscreenSession.Toggle(current);
             window.WindowState = ToAvaloniaWindowState(next);
-            _playbackChromeWindow?.SetFullscreenLabel(_fullscreenSession.IsFullscreen);
-            SyncChromePlacement();
-            ArmChromePlacementTimer();
+            ApplyPlayerChromeVisuals();
             _logger.LogInformation(
                 "[LinuxHome] Playback host window -> {State} (fullscreenSession={IsFs})",
                 next, _fullscreenSession.IsFullscreen);
@@ -1256,7 +1168,7 @@ public partial class LinuxHomePage : ContentPage
         if (_playbackTopLevel is not Avalonia.Controls.Window window)
         {
             _fullscreenSession.Reset();
-            _playbackChromeWindow?.SetFullscreenLabel(false);
+            ApplyPlayerChromeVisuals();
             return;
         }
 
@@ -1264,9 +1176,7 @@ public partial class LinuxHomePage : ContentPage
         {
             var restore = _fullscreenSession.Exit();
             window.WindowState = ToAvaloniaWindowState(restore);
-            _playbackChromeWindow?.SetFullscreenLabel(false);
-            SyncChromePlacement();
-            ArmChromePlacementTimer();
+            ApplyPlayerChromeVisuals();
         }
         catch (Exception ex)
         {
@@ -1292,87 +1202,6 @@ public partial class LinuxHomePage : ContentPage
             LinuxHostWindowMode.Minimized => Avalonia.Controls.WindowState.Minimized,
             _ => Avalonia.Controls.WindowState.Normal,
         };
-
-    private void SyncChromePlacement()
-    {
-        if (_playbackChromeWindow is null || _playbackTopLevel is null)
-            return;
-
-        try
-        {
-            var hostVisual = ResolvePlaybackHostVisual();
-            if (hostVisual is null)
-                return;
-
-            var chromeRowHeight = Math.Max(0, PlaybackChromeRow.Height);
-            if (chromeRowHeight <= 0)
-                chromeRowHeight = PlaybackChromeRow.MinimumHeightRequest > 0
-                    ? PlaybackChromeRow.MinimumHeightRequest
-                    : LinuxCloseChipReveal.HiddenReserveHeight;
-
-            // When the overlay covers the full page, subtract the reserved row.
-            // VideoHostContainer / Standalone panel share the video row; prefer
-            // the visible one's platform visual when available.
-            var topLeft = hostVisual.PointToScreen(new Avalonia.Point(0, 0));
-            if (!LinuxPlaybackChromePlacement.TryComputeVideoRowBounds(
-                    topLeft.X,
-                    topLeft.Y,
-                    hostVisual.Bounds.Width,
-                    hostVisual.Bounds.Height,
-                    IsVideoRowVisual(hostVisual) ? 0 : chromeRowHeight,
-                    out var x,
-                    out var y,
-                    out var width,
-                    out var height))
-            {
-                return;
-            }
-
-            _playbackChromeWindow.PlaceOver(new Avalonia.PixelRect(
-                (int)Math.Round(x),
-                (int)Math.Round(y),
-                (int)Math.Round(width),
-                (int)Math.Round(height)));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[LinuxHome] SyncChromePlacement failed");
-        }
-    }
-
-    private Avalonia.Visual? ResolvePlaybackHostVisual()
-    {
-#if EMBEDDED_LINUX_VIDEO
-        if (VideoHostContainer.IsVisible &&
-            VideoHostContainer.Handler?.PlatformView is Avalonia.Visual videoVisual)
-        {
-            return videoVisual;
-        }
-#endif
-        if (StandalonePlaybackPanel.IsVisible &&
-            StandalonePlaybackPanel.Handler?.PlatformView is Avalonia.Visual standaloneVisual)
-        {
-            return standaloneVisual;
-        }
-
-        if (PlaybackOverlay.Handler?.PlatformView is Avalonia.Visual overlayVisual)
-            return overlayVisual;
-
-        return null;
-    }
-
-    private bool IsVideoRowVisual(Avalonia.Visual visual)
-    {
-#if EMBEDDED_LINUX_VIDEO
-        if (VideoHostContainer.Handler?.PlatformView is Avalonia.Visual video &&
-            ReferenceEquals(video, visual))
-        {
-            return true;
-        }
-#endif
-        return StandalonePlaybackPanel.Handler?.PlatformView is Avalonia.Visual standalone
-            && ReferenceEquals(standalone, visual);
-    }
 
     private static List<Game> FlattenGames(Dictionary<string, List<Game>>? dict)
     {

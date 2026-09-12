@@ -9,21 +9,17 @@ using VardyParty.Streaming;
 namespace VardyParty.Linux.Services;
 
 /// <summary>
-/// LibVLC playback for the Linux/desktop head, ported from the retired
-/// VardyParty.Linux head's LinuxVideoPlayerService.
+/// LibVLC playback for the Linux head.
 ///
 /// Rendering surface: with the EmbeddedLinuxVideo build switch ON (the
-/// default), playback renders INSIDE the app window — LinuxHomePage hosts a
-/// VideoHostView (LibVLCSharp.Avalonia's VideoView bridged through the
-/// MAUI-Avalonia AvaloniaControlHandler) and hands this service an
-/// <see cref="EmbedSurfaceAsync"/> delegate that attaches the MediaPlayer to
-/// that hosted native child window before Play. If the hosted surface cannot
-/// be attached at runtime (handler gap, compositor refusal, drawable never
-/// realized) the service logs once and falls back — for that playback session
-/// — to the pre-feature behaviour: no drawable attached, libvlc opens its own
-/// native video window (the same "playback happens on a dedicated native
-/// surface" model the Android head uses with NativeVideoActivity). With the
-/// switch OFF the standalone-window path is the only one compiled in.
+/// default), playback composites INSIDE the app window — LinuxHomePage
+/// hosts a VideoHostView (Avalonia Image) and hands this service an
+/// <see cref="AcquireFramePresenterAsync"/> delegate. LibVLC software
+/// callbacks (RV32) paint that Image so MAUI chrome can overlay the
+/// picture. If the presenter cannot be acquired the service logs once and
+/// falls back — for that playback session — to the pre-feature behaviour:
+/// no callbacks attached, libvlc opens its own native video window. With
+/// the switch OFF the standalone-window path is the only one compiled in.
 ///
 /// UI-thread invariant (field failure: under WSL a wedged libvlc froze the
 /// whole app — the Close button was unclickable): NO libvlc call ever runs on
@@ -37,7 +33,9 @@ namespace VardyParty.Linux.Services;
 ///
 /// WSL hardening: under WSL (/proc/version contains "microsoft") — or with
 /// VARDYPARTY_LINUX_VLC_SAFE=1 — libvlc gets conservative options:
-/// software decode, plain X11 vout, Pulse aout (WSLg), no hardware probing.
+/// software decode, Pulse aout (WSLg), no hardware probing. In-window
+/// compositing uses <c>--vout=vmem</c> (never <c>--vout=x11</c>, which
+/// fights the callback path). Standalone fallback still pins X11 vout.
 /// Safe under xvfb too. Audio is never disabled (<c>--no-audio</c> is not
 /// an option); see <see cref="LinuxPlatformProbe.BuildLibVlcOptions"/>.
 /// SoundFlow yields the Pulse device before Play so libvlc can own it.
@@ -74,6 +72,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private IReadOnlyDictionary<string, string>? _requestHeaders;
     private Timer? _metricsTimer;
     private int _playbackSessionId;
+    private string? _playbackTitle;
+    private string? _playbackLeague;
+    private string? _playbackHomeTeam;
+    private string? _playbackAwayTeam;
+    private bool _isNextStreamRequestInProgress;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
@@ -92,6 +95,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         public SemaphoreSlim OpGate { get; } = new(1, 1);
         public volatile bool Abandoned;
         public EventHandler<LogEventArgs>? LogHandler;
+        public LibVlcSoftwareFrameSink? FrameSink;
     }
 
     public LinuxVideoPlayerService(
@@ -121,28 +125,27 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private bool _isEmbedded;
 
     /// <summary>
-    /// Set by LinuxHomePage: shows the playback panel and assigns the given
-    /// MediaPlayer to the hosted VideoHostView (on the UI thread) so the
-    /// drawable is attached before Play. Null (or a failed/timed-out call)
-    /// means no hosted surface — standalone-window fallback.
+    /// Set by LinuxHomePage: shows the playback panel and returns the
+    /// hosted <see cref="IVideoFramePresenter"/> (UI thread) so software
+    /// callbacks can be attached before Play. Null (or a failed/timed-out
+    /// call) means no composited surface — standalone-window fallback.
     /// </summary>
-    public Func<MediaPlayer, Task>? EmbedSurfaceAsync { get; set; }
+    public Func<Task<IVideoFramePresenter?>>? AcquireFramePresenterAsync { get; set; }
 
     /// <summary>
-    /// Raised after a clean stop: the host may now safely clear the
-    /// VideoHostView.MediaPlayer binding (the player is idle, not wedged).
+    /// Raised after a clean stop: the host may clear the composited frame.
     /// </summary>
     public event Action? DetachSurfaceRequested;
 
     /// <summary>
-    /// Raised when a libvlc pair is abandoned as wedged: the host must never
-    /// touch that MediaPlayer again — it parks the current VideoHostView
-    /// invisible (removing it would run VideoView's drawable-detach against
-    /// the wedged player) and builds a fresh host for the next session.
+    /// Raised when a libvlc pair is abandoned as wedged: the host parks the
+    /// current VideoHostView and builds a fresh host for the next session.
+    /// The Image path does not detach a native drawable, but a new presenter
+    /// still avoids presenting into a poisoned generation.
     /// </summary>
     public event Action? SurfacePoisoned;
 
-    /// <summary>True = video renders in-window; false = standalone libvlc window.</summary>
+    /// <summary>True = video composites in-window; false = standalone libvlc window.</summary>
     public event EventHandler<bool>? EmbeddingStateChanged;
 
     private void SetEmbeddingActive(bool active)
@@ -164,23 +167,25 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     }
 
     /// <summary>
-    /// Attach the hosted in-window surface for this play, or fall back to the
-    /// standalone window for the rest of this playback session. Never throws;
-    /// never blocks the UI thread (the host delegate dispatches internally).
+    /// Acquire the composited Avalonia presenter and attach software-frame
+    /// callbacks, or fall back to the standalone window for the rest of this
+    /// playback session. Never throws; never blocks the UI thread (the host
+    /// delegate dispatches internally). Does not poll XWindow — callback
+    /// vout has no native drawable.
     /// </summary>
     private async Task TryEmbedSurfaceAsync(VlcSession vlc)
     {
         if (_embeddedVlcGeneration == vlc.Generation)
         {
             SetEmbeddingActive(true);
-            return; // drawable already attached for this player (stream switch)
+            return; // callbacks already attached for this player (stream switch)
         }
 
         var playbackSession = _playbackSessionId;
         string? failure = null;
-        if (EmbedSurfaceAsync is not { } embed)
+        if (AcquireFramePresenterAsync is not { } acquire)
         {
-            failure = "no host surface delegate is wired (page not loaded?)";
+            failure = "no frame presenter delegate is wired (page not loaded?)";
         }
         else if (_embedFailedPlaybackSession == playbackSession)
         {
@@ -191,27 +196,35 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             try
             {
-                await embed(vlc.Player).WaitAsync(TimeSpan.FromSeconds(3));
-
-                // The native child window is realized on a layout pass after
-                // the UI-thread assignment; poll the drawable briefly.
-                // (XWindow is a trivial stored-value getter.)
-                for (var i = 0; i < 20 && vlc.Player.XWindow == 0 && !vlc.Abandoned; i++)
+                var presenter = await acquire().WaitAsync(TimeSpan.FromSeconds(3));
+                if (presenter == null)
                 {
-                    await Task.Delay(100);
+                    failure = "the host did not return a frame presenter";
                 }
-
-                if (!vlc.Abandoned && vlc.Player.XWindow != 0)
+                else
                 {
-                    _embeddedVlcGeneration = vlc.Generation;
-                    _logger.LogInformation(
-                        "[LinuxVideoPlayerService] In-window surface attached (X drawable 0x{XWindow:X})",
-                        vlc.Player.XWindow);
-                    SetEmbeddingActive(true);
-                    return;
-                }
+                    var attached = await RunVlcOpAsync(vlc, "attach-frame-sink", AttachTimeout, () =>
+                    {
+                        vlc.FrameSink?.Dispose();
+                        var sink = new LibVlcSoftwareFrameSink(presenter);
+                        sink.Attach(vlc.Player);
+                        vlc.FrameSink = sink;
+                    });
 
-                failure = "the drawable was never attached (handler gap or compositor refusal)";
+                    if (attached && !vlc.Abandoned)
+                    {
+                        _embeddedVlcGeneration = vlc.Generation;
+                        _logger.LogInformation(
+                            "[LinuxVideoPlayerService] Composited frame sink attached (generation {Generation})",
+                            vlc.Generation);
+                        SetEmbeddingActive(true);
+                        return;
+                    }
+
+                    failure = attached
+                        ? "the libvlc session was abandoned while attaching the frame sink"
+                        : "attaching the software-frame sink did not complete";
+                }
             }
             catch (Exception ex)
             {
@@ -224,13 +237,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _embedFailureLogged = true;
             _logger.LogWarning(
-                "[LinuxVideoPlayerService] In-window playback unavailable ({Reason}); falling back to the standalone libvlc window for this session",
+                "[LinuxVideoPlayerService] In-window compositing unavailable ({Reason}); falling back to the standalone libvlc window for this session",
                 failure);
         }
         else
         {
             _logger.LogDebug(
-                "[LinuxVideoPlayerService] In-window playback unavailable ({Reason}); standalone-window fallback",
+                "[LinuxVideoPlayerService] In-window compositing unavailable ({Reason}); standalone-window fallback",
                 failure);
         }
 
@@ -238,23 +251,52 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     }
 #endif
 
+    /// <summary>Game title shown in the video-info panel (Home vs Away).</summary>
+    public string? PlaybackTitle => _playbackTitle;
+
+    public string? PlaybackLeague => _playbackLeague;
+
+    public string? PlaybackHomeTeam => _playbackHomeTeam;
+
+    public string? PlaybackAwayTeam => _playbackAwayTeam;
+
+    /// <summary>
+    /// Invokes the orchestrator-supplied next-stream callback (same path as
+    /// session SwitchPoolToNext). Used by the Avalonia playback chrome.
+    /// </summary>
+    public async Task RequestNextStreamAsync()
+    {
+        if (_onNextStreamRequested is null || _isNextStreamRequestInProgress)
+            return;
+
+        _isNextStreamRequestInProgress = true;
+        try
+        {
+            await _onNextStreamRequested();
+        }
+        finally
+        {
+            _isNextStreamRequestInProgress = false;
+        }
+    }
+
+    /// <summary>User Previous — pool rotate; index subscription attaches the URL.</summary>
+    public void RequestPreviousStream()
+    {
+        if (_switching.GetHealthyStreams().Count <= 1)
+        {
+            return;
+        }
+
+        _pool.SwitchPoolToPrevious();
+    }
+
     /// <summary>
     /// Close control. UI-thread safe by construction: completes the playback
     /// session immediately (overlay hides, orchestrator unblocks) and tears
     /// libvlc down on a worker with a timeout — a stop that wedges is
     /// abandoned, never awaited, so Close is always prompt.
     /// </summary>
-    /// <summary>
-    /// Invokes the orchestrator-supplied next-stream callback (same path as
-    /// session SwitchPoolToNext). Used by the Avalonia playback chrome.
-    /// </summary>
-    public Task RequestNextStreamAsync()
-    {
-        if (_onNextStreamRequested is null)
-            return Task.CompletedTask;
-        return _onNextStreamRequested();
-    }
-
     public void StopPlayback()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
@@ -407,20 +449,38 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private string[] BuildVlcOptions()
     {
+#if EMBEDDED_LINUX_VIDEO
+        var options = LinuxPlatformProbe.BuildLibVlcOptions(
+            UseConservativeVlcOptions,
+            Environment.GetEnvironmentVariable(LinuxPlatformProbe.AudioOutputVariableName),
+            callbackVout: true);
+#else
         var options = LinuxPlatformProbe.BuildLibVlcOptions();
+#endif
         var aout = LinuxPlatformProbe.ResolveAudioOutputModule();
         if (UseConservativeVlcOptions)
         {
             _logger.LogInformation(
-                "[LinuxVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, plain X11 vout, aout={Aout}; {AudioEnv}",
+                "[LinuxVideoPlayerService] Conservative libvlc options active (WSL={IsWsl}, forced={Forced}): software decode, vout={Vout}, aout={Aout}; {AudioEnv}",
                 LinuxPlatformProbe.IsWsl, LinuxPlatformProbe.ForceSafeVlcOptions,
+#if EMBEDDED_LINUX_VIDEO
+                "vmem/callbacks",
+#else
+                "x11",
+#endif
                 aout, LinuxPlatformProbe.DescribeAudioEnvironment());
         }
         else
         {
             _logger.LogInformation(
-                "[LinuxVideoPlayerService] libvlc aout={Aout}; {AudioEnv}",
-                aout, LinuxPlatformProbe.DescribeAudioEnvironment());
+                "[LinuxVideoPlayerService] libvlc aout={Aout} vout={Vout}; {AudioEnv}",
+                aout,
+#if EMBEDDED_LINUX_VIDEO
+                "vmem/callbacks",
+#else
+                "default",
+#endif
+                LinuxPlatformProbe.DescribeAudioEnvironment());
         }
 
         return options;
@@ -602,6 +662,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         _logger.LogInformation("[LinuxVideoPlayerService] Referer: {Referer}", refererUrl);
 
         _playbackSessionId++;
+        _playbackTitle = title;
+        _playbackLeague = league;
+        _playbackHomeTeam = homeTeam;
+        _playbackAwayTeam = awayTeam;
 
         if (await EnsureSessionAsync() == null)
         {
@@ -782,8 +846,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
 #if EMBEDDED_LINUX_VIDEO
-        // Drawable must be set before the vout is created or libvlc opens
-        // its own window.
+        // Show the in-app surface first, attach software-frame callbacks, then
+        // play — callbacks must be set before the vout is created or libvlc
+        // opens its own window.
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
@@ -1006,6 +1071,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 vlc.Player.EncounteredError -= OnEncounteredError;
                 vlc.Player.EndReached -= OnEndReached;
                 vlc.Player.Stop();
+                vlc.FrameSink?.Dispose();
+                vlc.FrameSink = null;
                 vlc.Player.Dispose();
 
                 _currentMedia?.Dispose();

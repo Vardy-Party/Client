@@ -172,6 +172,29 @@ public class LinuxCloseChipRevealTests
     }
 
     [Fact]
+    public void OverlayOnVideo_ReserveHeightIsAuto_AndHitZoneCoversPicture()
+    {
+        // Arrange
+        var sut = new LinuxCloseChipReveal { OverlayOnVideo = true };
+
+        // Act
+        var hidden = sut.ReserveHeight(toastVisible: false);
+        sut.OnHoverEnter();
+        var revealed = sut.ReserveHeight(toastVisible: false);
+        var nearOverPicture = LinuxCloseChipReveal.IsNearRestingPlace(
+            1270, 50, 1280, revealed: false, overlayOnVideo: true);
+        var tooLow = LinuxCloseChipReveal.IsNearRestingPlace(
+            1270, 90, 1280, revealed: false, overlayOnVideo: true);
+
+        // Assert
+        Assert.True(double.IsNaN(hidden));
+        Assert.True(double.IsNaN(revealed));
+        Assert.Equal(LinuxCloseChipReveal.OverlayHitZoneHeight, sut.HitZoneHeight);
+        Assert.True(nearOverPicture);
+        Assert.False(tooLow);
+    }
+
+    [Fact]
     public void AutoHideDelay_IsTwoToThreeSeconds()
     {
         // Arrange

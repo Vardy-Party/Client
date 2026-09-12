@@ -520,14 +520,13 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
    `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
    SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at
    startup with "native libSkiaSharp (119.0) incompatible".
-3. **LibVLC in a MAUI-Avalonia window**: `LibVLCSharp.Avalonia`'s
-   `VideoView` is an Avalonia control with no MAUI handler, so it cannot be
-   hosted inside the Linux head's MAUI XAML tree (and the Avalonia-12
-   preview backend exposes no supported native-surface embedding hook).
-   `LinuxVideoPlayerService` therefore uses plain `LibVLCSharp` and lets
-   libvlc open its own native video window; the in-app "Now Playing"
-   overlay owns the Close control. libvlc is initialised lazily on first
-   play so machines without VLC still run the homepage.
+3. **LibVLC in a MAUI-Avalonia window**: in-window playback composites
+   LibVLC software frames (RV32 / `SetVideoCallbacks`) into an Avalonia
+   `Image` hosted by `VideoHostView` — no `LibVLCSharp.Avalonia` VideoView
+   / native child, so MAUI chrome can overlay the picture. If the presenter
+   cannot attach, `LinuxVideoPlayerService` falls back to libvlc's own
+   native window; libvlc is initialised lazily on first play so machines
+   without VLC still run the homepage.
 4. **Catalog apply must not `Dispatcher.Dispatch` from Rx into WinUI**:
    queue on `HomeViewModel`, drain on the UI thread. Windows: idle
    `IDispatcherTimer`. Android/Desktop: `MainThread` (TV Choreographer

@@ -2,18 +2,19 @@
 
 Linux is served by **`VardyParty.Linux`**: the shared .NET MAUI XAML homepage
 (`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
-device-code/QR sign-in and **LibVLC playback** (in-window via hosted
-`VideoHostView` when `EmbeddedLinuxVideo` is on; otherwise libvlc's own
-native window). Playback chrome (menu / info / toast / scores / next) is a
-separate transparent Avalonia window over the video row — MAUI cannot draw
-on the native child airspace. Close + match-event toasts stay in the reserved
-MAUI chrome strip above the video.
+device-code/QR sign-in and **LibVLC playback**. With `EmbeddedLinuxVideo` on
+(default), LibVLC software frames (RV32 callbacks) composite into an Avalonia
+`Image` (`VideoHostView`) so MAUI chrome paints **on** the picture — same
+feel as Windows/Android. If compositing fails at runtime (or the switch is
+off), libvlc opens its own native window and the same chrome stays in-app as
+companion UI. Shared policy lives in `PlaybackChromePresenter` /
+`PlayerOverlayFormatter` / `PlayerChromeText` / `ScoresTickerText`.
 
 ```mermaid
 flowchart LR
   XAML["HomeUi XAML"] --> Avalonia["Avalonia MAUI backend"]
-  Avalonia --> Chrome["Avalonia chrome window"]
-  Avalonia --> Host["VideoHostView / LibVLC"]
+  Avalonia --> Chrome["In-page playback chrome"]
+  Avalonia --> Host["VideoHostView Image / LibVLC callbacks"]
   Avalonia --> Skia["Skia on Linux / WSL"]
 ```
 
@@ -119,13 +120,14 @@ Phase 3b code hardening is on the PR tip; **live WSL/Ubuntu acceptance still nee
 
 ### Fullscreen playback
 
-Host/window fullscreen (Avalonia `WindowState.FullScreen`) - not LibVLC-only - so the transparent `LinuxPlaybackChromeWindow` stays placeable over the video.
+Host/window fullscreen (Avalonia `WindowState.FullScreen`) - not LibVLC-only -
+so in-page chrome stays visible over the composited picture.
 
 | Action | How |
 |--------|-----|
-| Enter / exit | Menu **Fullscreen** / **Exit fullscreen**, **F11**, or double-click the chrome overlay (LibVLC native child does not receive Avalonia clicks) |
+| Enter / exit | Menu **Fullscreen** / **Exit fullscreen**, or **F11** |
 | Escape | Dismiss chrome layers (menu -> info -> scores) -> **exit fullscreen** -> close playback |
-| Close / match toast | Reserved MAUI airspace row is kept in fullscreen (preferred). Escape and menu Exit remain fallbacks |
+| Close / match toast | Float on the composited picture (no reserved strip). Escape and menu Exit remain fallbacks |
 
 WSLg: fullscreen can be flaky under Weston/RDP. Set `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED=1` to enter Maximized instead. Standalone libvlc-own-window fallback still supports host fullscreen for the app window; the separate video window is unchanged.
 

@@ -18,7 +18,7 @@
 | `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
 | Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
-| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop; chrome via Avalonia `LinuxPlaybackChromeWindow` over native child airspace; host-window fullscreen keeps overlay placeable |
+| Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop; software-frame compositing into Avalonia Image so chrome overlays video; standalone libvlc window fallback |
 | iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
 | MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
 | Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
@@ -296,8 +296,8 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | Soft decline / download-failure threshold | Session; Windows/Linux now raise Metrics |
 | Health URL key (page vs M3U8) | Reporter prefers page via `ResolveReportUrl` |
 | Dual entry Home vs `/player` | Removed with Blazor UI — single host path uses orchestrator pool |
-| God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy`; shared `PlaybackChromePresenter` binds Android/Windows; Linux uses Avalonia transparent overlay window (`LinuxPlaybackChromeWindow`) over LibVLC airspace |
-| Linux Avalonia playback chrome | Done — `LinuxHomePage` + `LinuxPlaybackChromeWindow` driven by `PlaybackChromePresenter`; Close/match toast stay in reserved MAUI airspace row |
+| God-file chrome (overlay/ticker/keys) | Partial sheen; ticker filter/cycle is Core `ScoresTickerPolicy`; shared `PlaybackChromePresenter` binds Android/Windows/Linux; Linux composites LibVLC frames into Avalonia Image so MAUI chrome paints on the picture |
+| Linux Avalonia playback chrome | Done — `LinuxHomePage` + `PlaybackChromePresenter` over composited `VideoHostView`; Close/match toast float on the picture |
 | Linux host-window fullscreen | Done — Avalonia `WindowState.FullScreen` (or Maximized via `VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED`); Escape: dismiss chrome → exit fullscreen → close; reserved Close/match-toast row kept |
 | Linux stream audio (WSL + Ubuntu) | Hardened — default `--aout=pulse`, live/network caching 3000, SoundFlow yield-before-session + 75 ms attach-path handoff settle (`Task.Delay`), audio-track ensure + env diagnostics. **Field verify on WSL/Ubuntu still required** (see `LINUX_SUPPORT.md`). |
 
@@ -309,7 +309,7 @@ Until that exists, agents should reconstruct the timeline from the markers above
 2. ~~Shared session controller; Android calls it from ExoPlayer listener.~~
 3. ~~Windows/Linux call same controller; delete duplicated Recover* locals.~~
 4. ~~Health reporter prefers catalog/page URL over M3U8.~~
-5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys). Linux Avalonia overlay chrome landed (`LinuxPlaybackChromeWindow`).
+5. Slim `NativeVideoActivity` / `WindowsVideoPlayerService` chrome into partials (overlay, ticker, keys). Linux composited chrome landed (`PlaybackChromePresenter` + LibVLC software frames).
 6. ~~Align or retire `VideoPlayer.razor` failover behavior.~~ (deleted with Blazor)
 7. Optional: dump session event JSON next to logcat for agent observation.
 8. ~~Linux stream audio reliability (WSL + Ubuntu) — aout / SoundFlow yield / Pulse-PipeWire (Phase 3b).~~ Code hardened; field verify checklist in `LINUX_SUPPORT.md`.
