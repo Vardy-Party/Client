@@ -125,6 +125,16 @@ namespace VardyParty
 
         private void OnUnhandledException(object? sender, RaiseThrowableEventArgs e)
         {
+            // Media3 IDataSource.Open/Read throw Java.IO.IOException across JNI.
+            // .NET Android still raises UnhandledExceptionRaiser for that even
+            // when ExoPlayer handles the error. Reloading the app turns every
+            // segment I/O hiccup into a crash loop.
+            if (IsMedia3JniIoException(e.Exception))
+            {
+                e.Handled = true;
+                return;
+            }
+
             e.Handled = true;
             Console.WriteLine($"[CRASH] Unhandled Exception: {e.Exception}");
 
@@ -147,6 +157,25 @@ namespace VardyParty
                     Console.WriteLine($"Error during crash handling: {ex}");
                 }
             });
+        }
+
+        private static bool IsMedia3JniIoException(Exception? ex)
+        {
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                if (current is Java.IO.IOException)
+                    return true;
+
+                var stack = current.StackTrace;
+                if (stack is not null
+                    && (stack.Contains("ManagedHttpDataSource", StringComparison.Ordinal)
+                        || stack.Contains("IDataReaderInvoker", StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

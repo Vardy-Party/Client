@@ -34,8 +34,10 @@ namespace VardyParty.Platforms.Android
             _logger = logger;
             _healthReporter = healthReporter ?? ResolveHealthReporter();
             _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
-            _engine.AttachHandler = (url, _, _) =>
+            _engine.AttachHandler = (url, requestHeaders, _) =>
             {
+                if (requestHeaders is { Count: > 0 })
+                    _requestHeaders = requestHeaders;
                 AttachEngine(url);
                 return Task.CompletedTask;
             };
@@ -219,6 +221,7 @@ namespace VardyParty.Platforms.Android
         private int? _videoHeight;
         private string _m3u8Url = string.Empty;
         private string? _refererUrl;
+        private IReadOnlyDictionary<string, string>? _requestHeaders;
         private IStreamSwitchingService? _switching;
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
@@ -293,6 +296,7 @@ namespace VardyParty.Platforms.Android
             // Game title (prefer BBC display names) passed from caller route
             _gameTitle = Intent?.GetStringExtra("TITLE") ?? string.Empty;
             _refererUrl = Intent?.GetStringExtra("REFERER_URL") ?? string.Empty;
+            _requestHeaders = AndroidVideoPlayerService.CurrentRequestHeaders;
             _currentLeague = Intent?.GetStringExtra("LEAGUE") ?? string.Empty;
             _currentHomeTeam = Intent?.GetStringExtra("HOME_TEAM") ?? string.Empty;
             _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;

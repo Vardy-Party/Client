@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using Android.Runtime;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.DataSource;
 using Java.IO;
@@ -22,9 +23,11 @@ namespace VardyParty.Platforms.Android
         private readonly HttpClient _http;
         private readonly IDictionary<string, string?> _headers;
         private HttpResponseMessage? _response;
+        private IDictionary<string, IList<string>>? _javaResponseHeaders;
         private Stream? _stream;
         private Uri? _uri;
         private long _bytesRemaining = C.LengthUnset;
+        private byte[] _scratch = new byte[16 * 1024];
 
         public ManagedHttpDataSource(HttpClient http, IDictionary<string, string?> headers)
         {
@@ -44,6 +47,7 @@ namespace VardyParty.Platforms.Android
             try
             {
                 _uri = dataSpec.Uri;
+                _javaResponseHeaders = null;
                 var request = new HttpRequestMessage(HttpMethod.Get, _uri.ToString());
                 foreach (var kv in _headers)
                 {
@@ -71,13 +75,19 @@ namespace VardyParty.Platforms.Android
                     var code = (int)_response.StatusCode;
                     _response.Dispose();
                     _response = null;
+                    _javaResponseHeaders = null;
                     throw new IOException($"HTTP {code}");
                 }
 
                 _stream = _response.Content.ReadAsStream();
-                var contentLength = _response.Content.Headers.ContentLength;
-                _bytesRemaining = contentLength ?? C.LengthUnset;
-                return _bytesRemaining;
+                if (dataSpec.Position > 0 && _response.StatusCode != System.Net.HttpStatusCode.PartialContent)
+                    SkipFully(_stream, dataSpec.Position);
+
+                // LENGTH_UNSET: Content-Length is the compressed size when
+                // AutomaticDecompression is on, and Media3 then over-reads.
+                _bytesRemaining = C.LengthUnset;
+                _javaResponseHeaders = ToJavaResponseHeaders(_response);
+                return C.LengthUnset;
             }
             catch (Exception ex) when (ex is not IOException)
             {
@@ -87,36 +97,66 @@ namespace VardyParty.Platforms.Android
 
         public int Read(byte[]? buffer, int offset, int length)
         {
+            if (length == 0)
+                return 0;
             if (buffer is null || _stream is null)
                 return C.ResultEndOfInput;
-
             if (_bytesRemaining == 0)
                 return C.ResultEndOfInput;
 
             try
             {
-                var toRead = length;
-                if (_bytesRemaining > 0)
-                    toRead = (int)System.Math.Min(length, _bytesRemaining);
+                // JNI sometimes copies a Java slice but still passes the Java
+                // offset. Stream.Read then throws ArgumentException, which we
+                // used to wrap as Java.IO.IOException — that raises
+                // UnhandledExceptionRaiser and MainApplication reloads the app.
+                if ((uint)offset > (uint)buffer.Length)
+                    offset = 0;
+                var max = buffer.Length - offset;
+                if (max <= 0)
+                    return C.ResultEndOfInput;
 
-                var read = _stream.Read(buffer, offset, toRead);
+                var toRead = System.Math.Min(length, max);
+                if (_bytesRemaining > 0)
+                    toRead = (int)System.Math.Min(toRead, _bytesRemaining);
+                if (toRead <= 0)
+                    return C.ResultEndOfInput;
+
+                if (_scratch.Length < toRead)
+                    _scratch = new byte[toRead];
+
+                var read = _stream.Read(_scratch, 0, toRead);
                 if (read <= 0)
                     return C.ResultEndOfInput;
 
+                System.Array.Copy(_scratch, 0, buffer, offset, read);
                 if (_bytesRemaining > 0)
                     _bytesRemaining -= read;
-
                 return read;
+            }
+            catch (ObjectDisposedException)
+            {
+                return C.ResultEndOfInput;
             }
             catch (Exception ex)
             {
-                throw new IOException(ex.ToString());
+                global::Android.Util.Log.Warn("VardyParty", $"ManagedHttpDataSource.Read: {ex.GetType().Name}: {ex.Message}");
+                return C.ResultEndOfInput;
             }
         }
 
         public Uri? Uri => _uri;
 
-        public IDictionary<string, IList<string>>? ResponseHeaders => null;
+        /// <summary>
+        /// Media3 HLS calls <c>FileTypes.inferFileTypeFromResponseHeaders</c> on this
+        /// map — returning null NPEs (MP segments often omit Content-Type and use
+        /// decoy extensions like .class/.ppt). Always return a non-null map.
+        /// Values must be real <c>java.util.List</c> instances: a C# <c>List&lt;string&gt;</c>
+        /// marshals as <c>mono.android.runtime.JavaObject</c> and Media3 then
+        /// ClassCastException-crashes in <c>FileTypes.java</c>.
+        /// </summary>
+        public IDictionary<string, IList<string>> ResponseHeaders =>
+            _javaResponseHeaders ?? new JavaDictionary<string, IList<string>>();
 
         public void Close()
         {
@@ -124,6 +164,37 @@ namespace VardyParty.Platforms.Android
             try { _response?.Dispose(); } catch { /* ignore */ }
             _stream = null;
             _response = null;
+        }
+
+        private static IDictionary<string, IList<string>> ToJavaResponseHeaders(HttpResponseMessage response)
+        {
+            var map = new JavaDictionary<string, IList<string>>();
+            foreach (var header in response.Headers)
+                map[header.Key] = ToJavaList(header.Value);
+            foreach (var header in response.Content.Headers)
+                map[header.Key] = ToJavaList(header.Value);
+            return map;
+        }
+
+        private static IList<string> ToJavaList(IEnumerable<string> values)
+        {
+            var list = new JavaList<string>();
+            foreach (var value in values)
+                list.Add(value);
+            return list;
+        }
+
+        private static void SkipFully(Stream stream, long count)
+        {
+            var remaining = count;
+            var skip = new byte[4096];
+            while (remaining > 0)
+            {
+                var n = stream.Read(skip, 0, (int)System.Math.Min(skip.Length, remaining));
+                if (n <= 0)
+                    break;
+                remaining -= n;
+            }
         }
     }
 
