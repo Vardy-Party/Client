@@ -324,7 +324,7 @@ public partial class LinuxHomePage : ContentPage
         }
     }
 
-    private void OnTopLevelPointerPressed(object? sender, Avalonia.Input.PointerEventArgs e)
+    private void OnTopLevelPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
         if (!PlaybackOverlay.IsVisible)
         {
@@ -334,6 +334,16 @@ public partial class LinuxHomePage : ContentPage
         // Presses on the composited picture and overlay chrome reach Avalonia.
         // Does not close; the chip click does.
         ApplyCloseChip(_closeChip.OnTouched());
+
+        // Double-click on the video surface toggles host fullscreen (same as F11 /
+        // menu). Skip when chrome layers are open so dismiss taps are not toggles.
+        if (e.ClickCount == 2
+            && _playbackChrome?.IsMenuVisible != true
+            && _playbackChrome?.IsVideoInfoVisible != true)
+        {
+            TogglePlaybackFullscreen();
+            e.Handled = true;
+        }
     }
 
     private void WireCloseChipGestures()

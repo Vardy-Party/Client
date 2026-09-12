@@ -62,7 +62,10 @@ namespace VardyParty.Platforms.Android
                     request.Headers.TryAddWithoutValidation("Range", range);
                 }
 
-                _response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+                // Media3 Open is sync; Send is CA1416-unsupported on Android.
+                _response = _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead)
+                    .GetAwaiter()
+                    .GetResult();
                 if (!_response.IsSuccessStatusCode && _response.StatusCode != System.Net.HttpStatusCode.PartialContent)
                 {
                     var code = (int)_response.StatusCode;

@@ -76,9 +76,11 @@ public class ApiService(
         try
         {
             logger.LogInformation("[Api] Resolving m3u8 for playback: {Channel}", stream.Channel);
-            var playerStreamName = stream.RequiresV2StreamSelection && !stream.IsCountdown
-                ? (string.IsNullOrWhiteSpace(stream.PlayerStream) ? stream.Channel : stream.PlayerStream)
-                : null;
+            var playerStreamName = stream.RequiresV2StreamSelection
+                && !stream.IsCountdown
+                && !string.IsNullOrWhiteSpace(stream.PlayerStream)
+                    ? stream.PlayerStream.Trim()
+                    : null;
             var m3u8Response = await GetM3U8UrlAsync(stream.Url, playerStreamName);
 
             if (m3u8Response != null && !string.IsNullOrEmpty(m3u8Response.Url))
