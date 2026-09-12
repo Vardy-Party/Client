@@ -98,6 +98,12 @@ public class StreamResolverTests
     {
         // Arrange
         var streams = _fixture.CreateMany<Stream>(5).ToList();
+        foreach (var stream in streams)
+        {
+            stream.ResolutionStrategy = "v1";
+            stream.Source = "fb";
+        }
+
         var m3u8 = _fixture.Create<M3U8Response>();
         var health = _fixture.Build<StreamHealth>()
             .With(h => h.Status, StreamHealthStatus.Healthy)
@@ -116,6 +122,122 @@ public class StreamResolverTests
         // Assert
         Assert.Equal(5, results.Count);
         Assert.All(results, r => Assert.Equal(StreamResolutionStatus.Healthy, r.Status));
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_YieldsFastStreamBeforeSlowPeerCompletes()
+    {
+        var slow = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://fb.example.test/slow")
+            .With(s => s.Channel, "slow")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+        var fast = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://fb.example.test/fast")
+            .With(s => s.Channel, "fast")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+
+        var slowGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstYield = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(slow.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await slowGate.Task;
+                return m3u8;
+            });
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(fast.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        var consume = Task.Run(async () =>
+        {
+            await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync([slow, fast], batchSize: 2))
+            {
+                firstYield.TrySetResult(enriched.Stream.Channel);
+            }
+        });
+
+        var firstChannel = await firstYield.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("fast", firstChannel);
+
+        slowGate.SetResult();
+        await consume.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_MpStreams_StaySingleFlight()
+    {
+        var first = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://mp.example.test/a")
+            .With(s => s.Channel, "mp-a")
+            .With(s => s.PlayerStream, "mp-a")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+        var second = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://mp.example.test/b")
+            .With(s => s.Channel, "mp-b")
+            .With(s => s.PlayerStream, "mp-b")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inFlight = 0;
+        var maxInFlight = 0;
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string url, string? _, string? __, string? ___, CancellationToken ____) =>
+            {
+                var now = Interlocked.Increment(ref inFlight);
+                Interlocked.Exchange(ref maxInFlight, Math.Max(maxInFlight, now));
+                try
+                {
+                    if (url == first.Url)
+                    {
+                        firstEntered.TrySetResult();
+                        await firstRelease.Task;
+                    }
+
+                    return m3u8;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref inFlight);
+                }
+            });
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        var consume = Task.Run(async () =>
+            await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([first, second], batchSize: 2)));
+
+        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(100);
+        Assert.Equal(1, Volatile.Read(ref inFlight));
+
+        firstRelease.SetResult();
+        await consume.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, maxInFlight);
     }
 
     [Fact]

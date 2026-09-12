@@ -33,55 +33,111 @@ public class StreamResolver(
 
         onTotalStreamsKnown?.Invoke(pending.Count);
 
+        var concurrency = Math.Max(1, batchSize);
         logger.LogInformation(
-            "[StreamResolver] Starting incremental resolution of {Count} streams in batches of {BatchSize}",
-            pending.Count, batchSize);
+            "[StreamResolver] Starting incremental resolution of {Count} streams (concurrency {Concurrency}; yield-as-ready; MP single-flight)",
+            pending.Count, concurrency);
 
-        var offset = 0;
-        var batchNumber = 0;
-        while (offset < pending.Count)
+        // Yield each finished resolve immediately. FB may run in parallel up to
+        // `concurrency`. At most one MP (/mp) is in flight — LocalService is
+        // single-threaded for POST /mp; parallel MP posts only burn the timeout.
+        // Chip siblings from /mp are appended to `pending` and picked up by FillWindow.
+        var gate = new SemaphoreSlim(concurrency, concurrency);
+        var inFlight = new List<(Task<ResolveOutcome> Task, bool IsMp)>();
+        var nextIndex = 0;
+        var activeMp = 0;
+
+        async Task<ResolveOutcome> StartAsync(Stream stream)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await ResolveAndTestStreamAsync(stream, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        void FillWindow()
+        {
+            while (nextIndex < pending.Count && inFlight.Count < concurrency)
+            {
+                var pick = nextIndex;
+                if (MpPageUrl.IsV2Stream(pending[pick]) && activeMp > 0)
+                {
+                    // Prefer a later FB candidate over queuing a second MP behind the gate.
+                    pick = -1;
+                    for (var i = nextIndex + 1; i < pending.Count; i++)
+                    {
+                        if (!MpPageUrl.IsV2Stream(pending[i]))
+                        {
+                            pick = i;
+                            break;
+                        }
+                    }
+
+                    if (pick < 0)
+                        break;
+
+                    var chosen = pending[pick];
+                    pending.RemoveAt(pick);
+                    pending.Insert(nextIndex, chosen);
+                    pick = nextIndex;
+                }
+
+                var stream = pending[nextIndex++];
+                var isMp = MpPageUrl.IsV2Stream(stream);
+                if (isMp)
+                    activeMp++;
+
+                logger.LogInformation(
+                    "[StreamResolver] Starting resolve {Index}/{Count} for {Channel} ({Kind})",
+                    nextIndex, pending.Count, stream.Channel, isMp ? "MP" : "FB");
+                inFlight.Add((StartAsync(stream), isMp));
+            }
+        }
+
+        FillWindow();
+
+        while (inFlight.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var batch = pending.Skip(offset).Take(batchSize).ToList();
-            offset += batch.Count;
-            batchNumber++;
+            var completedTask = await Task.WhenAny(inFlight.Select(x => x.Task)).ConfigureAwait(false);
+            var index = inFlight.FindIndex(x => ReferenceEquals(x.Task, completedTask));
+            var entry = inFlight[index];
+            inFlight.RemoveAt(index);
+            if (entry.IsMp)
+                activeMp--;
 
-            logger.LogInformation("[StreamResolver] Processing batch {BatchNumber} with {Count} streams",
-                batchNumber, batch.Count);
+            var outcome = await entry.Task.ConfigureAwait(false);
+            seen.Add(CandidateKey(outcome.Enriched.Stream));
 
-            // /mp is single-threaded on LocalService. Parallel POSTs just burn the 60s client timeout.
-            var results = await ResolveBatchAsync(batch, cancellationToken);
-
-            foreach (var outcome in results)
+            foreach (var sibling in outcome.Siblings)
             {
-                seen.Add(CandidateKey(outcome.Enriched.Stream));
+                if (!seen.Add(CandidateKey(sibling)))
+                    continue;
 
-                foreach (var sibling in outcome.Siblings)
-                {
-                    if (!seen.Add(CandidateKey(sibling)))
-                    {
-                        continue;
-                    }
-
-                    pending.Add(sibling);
-                }
-
-                if (outcome.Siblings.Count > 0)
-                {
-                    onTotalStreamsKnown?.Invoke(pending.Count);
-                    logger.LogInformation(
-                        "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
-                        outcome.Siblings.Count,
-                        string.Join(", ", outcome.Siblings.Select(s => s.PlayerStream)),
-                        outcome.Enriched.Stream.Url,
-                        pending.Count);
-                }
-
-                logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
-                    outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
-                yield return outcome.Enriched;
+                pending.Add(sibling);
             }
+
+            if (outcome.Siblings.Count > 0)
+            {
+                onTotalStreamsKnown?.Invoke(pending.Count);
+                logger.LogInformation(
+                    "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
+                    outcome.Siblings.Count,
+                    string.Join(", ", outcome.Siblings.Select(s => s.PlayerStream)),
+                    outcome.Enriched.Stream.Url,
+                    pending.Count);
+            }
+
+            logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
+                outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
+            yield return outcome.Enriched;
+            FillWindow();
         }
 
         logger.LogInformation("[StreamResolver] Completed incremental resolution of all streams");
@@ -119,42 +175,6 @@ public class StreamResolver(
 
     private static string CandidateKey(Stream stream) =>
         $"{stream.Url}\n{stream.PlayerStream?.Trim() ?? ""}";
-
-    private async Task<ResolveOutcome[]> ResolveBatchAsync(
-        List<Stream> batch,
-        CancellationToken cancellationToken)
-    {
-        var outcomes = new ResolveOutcome[batch.Count];
-        var parallel = new List<(int Index, Stream Stream)>();
-        var sequentialMp = new List<(int Index, Stream Stream)>();
-        for (var i = 0; i < batch.Count; i++)
-        {
-            var item = (i, batch[i]);
-            if (MpPageUrl.IsV2Stream(batch[i]))
-            {
-                sequentialMp.Add(item);
-            }
-            else
-            {
-                parallel.Add(item);
-            }
-        }
-
-        if (parallel.Count > 0)
-        {
-            await Task.WhenAll(parallel.Select(async item =>
-            {
-                outcomes[item.Index] = await ResolveAndTestStreamAsync(item.Stream, cancellationToken);
-            }));
-        }
-
-        foreach (var item in sequentialMp)
-        {
-            outcomes[item.Index] = await ResolveAndTestStreamAsync(item.Stream, cancellationToken);
-        }
-
-        return outcomes;
-    }
 
     private Task<ResolveOutcome> ResolveAndTestStreamAsync(
         Stream stream,
