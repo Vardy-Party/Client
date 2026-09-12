@@ -11,6 +11,13 @@ public interface ILocalLanPlayService
         string? playerStreamName,
         CancellationToken cancellationToken = default);
 
+    Task<M3U8Response?> ResolveM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        string? resolutionStrategy,
+        string? source,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Whether the discovered local service supports <c>/play?stream=</c> (newer builds only).
     /// </summary>

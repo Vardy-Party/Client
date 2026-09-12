@@ -1,32 +1,48 @@
-# Calling LocalService `POST /mp` from this app
+# Calling LocalService from this app (v1 / v2)
 
 The VardyParty client does **not** open Chrome. Phone, TV, and desktop call a
-LocalService instance on the LAN. MP / FCTV match pages need LocalService **1.1.0+**
-(`mp.chrome` on `GET /health`).
+LocalService instance on the LAN.
 
-Desktop bring-up (Chrome install, headed vs headless, `curl`) lives in the
-**m3u8-resolver** repo:
+**Strategy is catalog-driven** — use each stream’s `resolutionStrategy` / `source`
+(`v2`/`mp` → `POST /mp`, `v1`/`fb` → `GET /play`). Do not sniff page hosts.
 
-- `docs/MP_CHROME.md`
-- `docs/MP_PROTOCOL.md`
+Shared portable packages (from **Strategies**, GitHub Packages):
 
-## What this branch changes
+| PackageId | Strategy | Role |
+| --- | --- | --- |
+| `VardyParty.LocalService.Abstractions` | — | `IPlaybackTransportPlugin`, chip normalizer contracts |
+| `VardyParty.LocalService.V1` | v1 (= fb) | `AddV1TransportPlugin`, play endpoint id |
+| `VardyParty.LocalService.V2` | v2 (= mp) | `AddV2TransportPlugin`, CTU rewrite, chip labels |
 
-`LocalLanPlayService` sends MP page URLs to `POST /mp` when the discovered
-service advertises `mp.chrome`. Facebook URLs stay on `GET /play/{url}`.
+Do **not** PackageReference scrape packages from Client.
 
-The HTTP timeout for `/mp` is 60 seconds (Chrome launch + chip click). `/play`
-keeps the existing M3U8 timeout.
+LocalService host (M3U8-resolver) registers scrape plugins separately.
 
-After a 200:
+Desktop bring-up docs in m3u8-resolver: `docs/MP_CHROME.md`, `docs/MP_PROTOCOL.md`.
 
-- Use `url` + `requestHeaders` as today.
-- Health-check `rewrittenSegments` (not playlist-relative `*.json`).
-- `Origin` on the iframe player host is required for those media GETs.
+## Playback path (v2)
 
-## Local loop on your machine
+1. `AddVardyParty` registers `AddV1TransportPlugin` / `AddV2TransportPlugin`.
+2. `LocalLanPlayService` selects a transport plugin via `Matches`, then uses
+   `LocalServiceEndpoint` (`mp` vs `play`). `mp` still requires LocalService
+   capability `mp.chrome`.
+3. Client calls `POST /mp` with page URL (+ optional chip) when strategy is v2 and `mp.chrome` is advertised.
+4. LocalService returns playlist `url` + `requestHeaders` (+ optional `rewrittenSegments` from live capture).
+5. **Playlist CTU rewrite stays server-side on `/mp` today** — the client resolve
+   path has no playlist body, so `PostProcessPlaylist` is not applied client-side yet.
+6. Health-check prefers `rewrittenSegments` / rewritten absolute URLs (not playlist-relative `*.json`).
 
-1. Run LocalService from m3u8-resolver (`dotnet run` on the MP branch).
-2. `curl http://127.0.0.1:5019/health` — confirm `mp.chrome`.
-3. Run this client on the same LAN (or this PC).
-4. Play an MP game from the API. Logs should show `POST /mp`, not `/play`.
+`/mp` timeout is 90s; `/play` keeps the existing M3U8 timeout. Same-match `/mp` calls stay sequential.
+
+## Packages
+
+Client consumes Abstractions + V1 + V2 like `LocalService.Client` (GitHub Packages).
+`NuGet.config` points at `https://nuget.pkg.github.com/Vardy-Party/index.json`.
+
+Local fallback until a version is on the feed:
+
+```bash
+dotnet pack ../Strategies/VardyParty.LocalService.V1/VardyParty.LocalService.V1.csproj -c Release -o ../Strategies/artifacts/nuget
+dotnet pack ../Strategies/VardyParty.LocalService.V2/VardyParty.LocalService.V2.csproj -c Release -o ../Strategies/artifacts/nuget
+dotnet restore VardyParty.Streaming/VardyParty.Streaming.csproj --configfile NuGet.LocalShared.config
+```

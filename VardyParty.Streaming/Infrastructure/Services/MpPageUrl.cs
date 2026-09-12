@@ -1,38 +1,24 @@
+using VardyParty.LocalService.V2;
+using Stream = VardyParty.Kernel.Stream;
+
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Match-page URLs that must use LocalService <c>POST /mp</c> (system Chrome)
-/// instead of Facebook-style <c>GET /play</c>.
-/// Keep in sync with <c>VardyParty.LocalService.Client.MpPageUrl</c>.
+/// Catalog-driven V2 (= mp) helpers. Strategy comes from
+/// <see cref="Stream.ResolutionStrategy"/> / <see cref="Stream.Source"/> — not page hosts.
+/// Shared rewrite logic lives in NuGet <c>VardyParty.LocalService.V2</c>.
 /// </summary>
 public static class MpPageUrl
 {
-    public static bool IsMpPage(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return false;
+    public static bool IsV2Stream(Stream stream) =>
+        StreamStrategy.IsV2(stream.ResolutionStrategy, stream.Source);
 
-        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            return false;
+    public static bool IsV2(string? resolutionStrategy, string? source = null) =>
+        StreamStrategy.IsV2(resolutionStrategy, source);
 
-        var host = uri.Host;
-        if (ContainsIgnoreCase(host, "fctv"))
-            return true;
-        if (ContainsIgnoreCase(host, "mpoutqn4vebroad"))
-            return true;
-        if (ContainsIgnoreCase(host, "mpgreatest"))
-            return true;
-        if (host.StartsWith("jack", StringComparison.OrdinalIgnoreCase)
-            && host.EndsWith(".my", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return ContainsIgnoreCase(uri.AbsolutePath, "player.html");
-    }
-
-    public static bool UseMpEndpoint(string? streamUrl, IEnumerable<string>? capabilities) =>
-        capabilities?.Any(c => string.Equals(c, "mp.chrome", StringComparison.OrdinalIgnoreCase)) == true
-        && IsMpPage(streamUrl);
-
-    private static bool ContainsIgnoreCase(string value, string fragment) =>
-        value.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0;
+    public static bool UseMpEndpoint(
+        string? resolutionStrategy,
+        string? source,
+        IEnumerable<string>? capabilities) =>
+        StreamStrategy.UseMpEndpoint(resolutionStrategy, source, capabilities);
 }

@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
+using VardyParty.LocalService.Abstractions;
 using Stream = VardyParty.Kernel.Stream;
 
 namespace VardyParty.Streaming;
@@ -8,6 +9,7 @@ namespace VardyParty.Streaming;
 public class StreamResolver(
     IStreamHealthChecker healthChecker,
     ILocalLanPlayService localLanPlayService,
+    IDiscoveredChipNormalizer chipNormalizer,
     ILogger<StreamResolver> logger) : IStreamResolver
 {
     public async IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
@@ -22,35 +24,63 @@ public class StreamResolver(
             yield break;
         }
 
-        // Report the total stream count upfront
-        onTotalStreamsKnown?.Invoke(streams.Count);
+        var pending = streams.ToList();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var stream in pending)
+        {
+            seen.Add(CandidateKey(stream));
+        }
+
+        onTotalStreamsKnown?.Invoke(pending.Count);
 
         logger.LogInformation(
             "[StreamResolver] Starting incremental resolution of {Count} streams in batches of {BatchSize}",
-            streams.Count, batchSize);
+            pending.Count, batchSize);
 
-        // Process streams in batches
-        for (var i = 0; i < streams.Count; i += batchSize)
+        var offset = 0;
+        var batchNumber = 0;
+        while (offset < pending.Count)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var batch = streams
-                .Skip(i)
-                .Take(batchSize)
-                .ToList();
+            var batch = pending.Skip(offset).Take(batchSize).ToList();
+            offset += batch.Count;
+            batchNumber++;
 
             logger.LogInformation("[StreamResolver] Processing batch {BatchNumber} with {Count} streams",
-                i / batchSize + 1, batch.Count);
+                batchNumber, batch.Count);
 
-            // Resolve streams in parallel but yield in input order so catalog priority is preserved.
-            var tasks = batch.Select(stream => ResolveAndTestStreamAsync(stream, cancellationToken)).ToList();
-            var results = await Task.WhenAll(tasks);
+            // /mp is single-threaded on LocalService. Parallel POSTs just burn the 60s client timeout.
+            var results = await ResolveBatchAsync(batch, cancellationToken);
 
-            foreach (var enriched in results)
+            foreach (var outcome in results)
             {
+                seen.Add(CandidateKey(outcome.Enriched.Stream));
+
+                foreach (var sibling in outcome.Siblings)
+                {
+                    if (!seen.Add(CandidateKey(sibling)))
+                    {
+                        continue;
+                    }
+
+                    pending.Add(sibling);
+                }
+
+                if (outcome.Siblings.Count > 0)
+                {
+                    onTotalStreamsKnown?.Invoke(pending.Count);
+                    logger.LogInformation(
+                        "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
+                        outcome.Siblings.Count,
+                        string.Join(", ", outcome.Siblings.Select(s => s.PlayerStream)),
+                        outcome.Enriched.Stream.Url,
+                        pending.Count);
+                }
+
                 logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
-                    enriched.Stream.Channel, enriched.Status);
-                yield return enriched;
+                    outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
+                yield return outcome.Enriched;
             }
         }
 
@@ -85,14 +115,55 @@ public class StreamResolver(
         }
     }
 
-    private Task<EnrichedStream> ResolveAndTestStreamAsync(
+    private readonly record struct ResolveOutcome(EnrichedStream Enriched, IReadOnlyList<Stream> Siblings);
+
+    private static string CandidateKey(Stream stream) =>
+        $"{stream.Url}\n{stream.PlayerStream?.Trim() ?? ""}";
+
+    private async Task<ResolveOutcome[]> ResolveBatchAsync(
+        List<Stream> batch,
+        CancellationToken cancellationToken)
+    {
+        var outcomes = new ResolveOutcome[batch.Count];
+        var parallel = new List<(int Index, Stream Stream)>();
+        var sequentialMp = new List<(int Index, Stream Stream)>();
+        for (var i = 0; i < batch.Count; i++)
+        {
+            var item = (i, batch[i]);
+            if (MpPageUrl.IsV2Stream(batch[i]))
+            {
+                sequentialMp.Add(item);
+            }
+            else
+            {
+                parallel.Add(item);
+            }
+        }
+
+        if (parallel.Count > 0)
+        {
+            await Task.WhenAll(parallel.Select(async item =>
+            {
+                outcomes[item.Index] = await ResolveAndTestStreamAsync(item.Stream, cancellationToken);
+            }));
+        }
+
+        foreach (var item in sequentialMp)
+        {
+            outcomes[item.Index] = await ResolveAndTestStreamAsync(item.Stream, cancellationToken);
+        }
+
+        return outcomes;
+    }
+
+    private Task<ResolveOutcome> ResolveAndTestStreamAsync(
         Stream stream,
         CancellationToken cancellationToken)
     {
         return ResolveAndTestStreamInternalAsync(stream, cancellationToken);
     }
 
-    private async Task<EnrichedStream> ResolveAndTestStreamInternalAsync(Stream stream,
+    private async Task<ResolveOutcome> ResolveAndTestStreamInternalAsync(Stream stream,
         CancellationToken cancellationToken)
     {
         var enriched = new EnrichedStream { Stream = stream, Status = StreamResolutionStatus.Pending };
@@ -102,7 +173,7 @@ public class StreamResolver(
             enriched.Status = StreamResolutionStatus.Failed;
             enriched.ErrorMessage = "Stream page is in countdown (not started yet)";
             logger.LogInformation("[StreamResolver] Skipping {Channel}: countdown active on stream page", stream.Channel);
-            return enriched;
+            return new ResolveOutcome(enriched, []);
         }
 
         try
@@ -114,13 +185,15 @@ public class StreamResolver(
 
             if (string.IsNullOrEmpty(m3u8Url))
             {
+                V2StreamExpander.ApplySelectedChip(stream, m3u8Response?.SelectedStream);
                 enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = "No m3u8 URL returned from local LAN play service";
                 logger.LogWarning("[StreamResolver] Failed to get m3u8 URL for {Channel}: {Error}",
                     stream.Channel, enriched.ErrorMessage);
-                return enriched;
+                return new ResolveOutcome(enriched, SiblingsFrom(stream, m3u8Response));
             }
 
+            V2StreamExpander.ApplySelectedChip(stream, m3u8Response?.SelectedStream);
             enriched.ResolvedM3U8Url = m3u8Url;
             enriched.Status = StreamResolutionStatus.Resolved;
             enriched.RequestHeaders = m3u8Response?.RequestHeaders;
@@ -131,13 +204,7 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
                 stream.Channel);
             logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-            var probe = m3u8Response?.RewrittenSegments is { Count: > 0 }
-                ? new StreamHealthProbe
-                {
-                    RewrittenSegmentUrls = m3u8Response.RewrittenSegments,
-                    RequestHeaders = m3u8Response.RequestHeaders
-                }
-                : null;
+            var probe = TryMpHealthProbe(m3u8Response);
             var health = probe is null
                 ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
                 : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
@@ -158,7 +225,7 @@ public class StreamResolver(
                     stream.Channel, health.Status);
             }
 
-            return enriched;
+            return new ResolveOutcome(enriched, SiblingsFrom(stream, m3u8Response));
         }
         catch (Exception ex)
         {
@@ -166,8 +233,45 @@ public class StreamResolver(
             enriched.ErrorMessage = ex.Message;
             logger.LogError(ex, "[StreamResolver] Failed to resolve m3u8 URL for testing for {Channel} with {url}",
                 stream.Channel, stream.Url);
-            return enriched;
+            return new ResolveOutcome(enriched, []);
         }
+    }
+
+    private static StreamHealthProbe? TryMpHealthProbe(M3U8Response? response)
+    {
+        var rewritten = response?.RewrittenSegments?
+            .Where(url => !string.IsNullOrWhiteSpace(url) && LooksLikeRewrittenSegment(url))
+            .ToList();
+        if (rewritten is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return new StreamHealthProbe
+        {
+            RewrittenSegmentUrls = rewritten,
+            RequestHeaders = response!.RequestHeaders
+        };
+    }
+
+    private static bool LooksLikeRewrittenSegment(string url) =>
+        url.Contains("_s2=", StringComparison.OrdinalIgnoreCase)
+        || url.Contains("kdns.fr", StringComparison.OrdinalIgnoreCase)
+        || url.Contains("fhlsport", StringComparison.OrdinalIgnoreCase)
+        || url.Contains("isyjvux", StringComparison.OrdinalIgnoreCase);
+
+    private IReadOnlyList<Stream> SiblingsFrom(Stream source, M3U8Response? response)
+    {
+        if (response is null || !MpPageUrl.IsV2Stream(source))
+        {
+            return [];
+        }
+
+        return V2StreamExpander.RemainingFromLocalService(
+            source,
+            response.Streams,
+            response.SelectedStream,
+            chipNormalizer);
     }
 
     private static string? GetPlayerStreamName(Stream stream)
@@ -200,7 +304,12 @@ public class StreamResolver(
                 "[StreamResolver] Fetching M3U8 from local LAN service for source {Url}{StreamSuffix}",
                 stream.Url,
                 playerStreamName is null ? "" : $" (stream={playerStreamName})");
-            var result = await localLanPlayService.ResolveM3U8UrlAsync(stream.Url, playerStreamName, cancellationToken);
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(
+                stream.Url,
+                playerStreamName,
+                stream.ResolutionStrategy,
+                stream.Source,
+                cancellationToken);
             logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", stream.Url);
             return result;
         }

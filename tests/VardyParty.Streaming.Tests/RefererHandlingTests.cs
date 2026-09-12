@@ -33,10 +33,10 @@ public class RefererHandlingTests
         var handler = new FakeHttpHandler();
         var playUrl = $"https://api.test/play/{Uri.EscapeDataString(stream.Url)}";
         var m3u8Resp = _fixture.Build<M3U8Response>()
-            .With(r => r.Url, "https://cdn.test/playlist.m3u8")
+            .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
             .With(r => r.RequestHeaders, new Dictionary<string, string>
             {
-                ["referer"] = "https://player.example/player.html"
+                ["referer"] = "https://player.example.test/player.html"
             })
             .Create();
         handler.AddResponse(playUrl, new HttpResponseMessage(HttpStatusCode.OK)
@@ -47,10 +47,19 @@ public class RefererHandlingTests
         var healthChecker = new CapturingHealthChecker();
         var localLanPlayService = _fixture.GetMock<ILocalLanPlayService>();
         localLanPlayService
-            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ResolveM3U8UrlAsync(
+                stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(m3u8Resp);
 
-        var resolver = new StreamResolver(healthChecker, localLanPlayService.Object, NullLogger<StreamResolver>.Instance);
+        var resolver = new StreamResolver(
+            healthChecker,
+            localLanPlayService.Object,
+            new VardyParty.LocalService.V2.V2PlaybackTransportPlugin(),
+            NullLogger<StreamResolver>.Instance);
 
         // Act
         var list = new List<EnrichedStream>();
@@ -61,9 +70,9 @@ public class RefererHandlingTests
 
         // Assert
         Assert.Single(list);
-        Assert.Equal("https://player.example/player.html", healthChecker.CapturedReferer);
-        Assert.Equal("https://cdn.test/playlist.m3u8", healthChecker.CapturedM3U8);
-        Assert.Equal("https://player.example/player.html", list[0].Referer);
+        Assert.Equal("https://player.example.test/player.html", healthChecker.CapturedReferer);
+        Assert.Equal("https://cdn.example.test/playlist.m3u8", healthChecker.CapturedM3U8);
+        Assert.Equal("https://player.example.test/player.html", list[0].Referer);
     }
 
     [Fact]
@@ -74,8 +83,8 @@ public class RefererHandlingTests
         var http = new HttpClient(handler);
 
         // ReSharper disable once InconsistentNaming
-        var m3u8Url = "https://cdn.test/playlist.m3u8";
-        var segmentUrl = "https://cdn.test/segment.ts";
+        var m3u8Url = "https://cdn.example.test/playlist.m3u8";
+        var segmentUrl = "https://cdn.example.test/segment.ts";
 
         var manifest = "#EXTM3U\n#EXTINF:10,\n" + segmentUrl;
 

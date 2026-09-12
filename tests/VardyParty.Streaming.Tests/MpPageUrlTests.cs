@@ -1,53 +1,28 @@
 using Xunit;
-using VardyParty.Streaming;
 
 namespace VardyParty.Streaming.Tests;
 
-public class MpPageUrlTests
+public sealed class MpPageUrlTests
 {
     [Theory]
-    [InlineData("https://www.fctv-example.test/football/match-1.html")]
-    [InlineData("https://jack01.mpgreatest-example.my/football/match.html")]
-    [InlineData("https://cdn.mpoutqn4vebroad.example/match.html")]
-    [InlineData("https://player.example.test/player.html?mdata=abc")]
-    public void IsMpPage_AcceptsMpHosts(string url)
-    {
-        // Arrange / Act
-        var isMp = MpPageUrl.IsMpPage(url);
-
-        // Assert
-        Assert.True(isMp);
-    }
+    [InlineData("v2", "mp")]
+    [InlineData("v2", null)]
+    [InlineData(null, "mp")]
+    public void IsV2_WhenCatalogSaysV2(string? strategy, string? source) =>
+        Assert.True(MpPageUrl.IsV2(strategy, source));
 
     [Theory]
-    [InlineData("https://www.facebook.com/watch/?v=1")]
-    [InlineData("https://streams.example.com/match")]
-    [InlineData("not-a-url")]
-    [InlineData("")]
-    public void IsMpPage_RejectsNonMpPages(string url)
-    {
-        // Arrange / Act
-        var isMp = MpPageUrl.IsMpPage(url);
-
-        // Assert
-        Assert.False(isMp);
-    }
+    [InlineData("v1", "fb")]
+    [InlineData("", "fb")]
+    [InlineData(null, null)]
+    public void IsV2_FalseForV1(string? strategy, string? source) =>
+        Assert.False(MpPageUrl.IsV2(strategy, source));
 
     [Fact]
-    public void UseMpEndpoint_RequiresCapabilityAndMpUrl()
+    public void UseMpEndpoint_RequiresCapabilityAndV2Catalog()
     {
-        // Arrange
-        const string mpUrl = "https://www.fctv-example.test/football/match-1.html";
-        const string otherUrl = "https://streams.example.com/match";
-
-        // Act
-        var withCapability = MpPageUrl.UseMpEndpoint(mpUrl, ["play.stream", "mp.chrome"]);
-        var withoutCapability = MpPageUrl.UseMpEndpoint(mpUrl, ["play.stream"]);
-        var nonMp = MpPageUrl.UseMpEndpoint(otherUrl, ["mp.chrome"]);
-
-        // Assert
-        Assert.True(withCapability);
-        Assert.False(withoutCapability);
-        Assert.False(nonMp);
+        Assert.True(MpPageUrl.UseMpEndpoint("v2", "mp", ["play.stream", "mp.chrome"]));
+        Assert.False(MpPageUrl.UseMpEndpoint("v2", "mp", ["play.stream"]));
+        Assert.False(MpPageUrl.UseMpEndpoint("v1", "fb", ["mp.chrome"]));
     }
 }

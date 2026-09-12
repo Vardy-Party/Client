@@ -4,8 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.LocalService.Client.Discovery;
 using VardyParty.Kernel;
+using VardyParty.LocalService.Abstractions;
+using VardyParty.LocalService.Client.Discovery;
 
 namespace VardyParty.Streaming;
 
@@ -35,6 +36,7 @@ namespace VardyParty.Streaming;
 public class LocalLanPlayService(
     HttpClient httpClient,
     IOptions<GamesApiSettings> gamesApiSettings,
+    IEnumerable<IPlaybackTransportPlugin> transportPlugins,
     ILogger<LocalLanPlayService> logger) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
@@ -75,11 +77,19 @@ public class LocalLanPlayService(
     }
 
     public Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
-        ResolveM3U8UrlAsync(streamUrl, playerStreamName: null, cancellationToken);
+        ResolveM3U8UrlAsync(streamUrl, playerStreamName: null, resolutionStrategy: null, source: null, cancellationToken);
+
+    public Task<M3U8Response?> ResolveM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken = default) =>
+        ResolveM3U8UrlAsync(streamUrl, playerStreamName, resolutionStrategy: null, source: null, cancellationToken);
 
     public async Task<M3U8Response?> ResolveM3U8UrlAsync(
         string streamUrl,
         string? playerStreamName,
+        string? resolutionStrategy,
+        string? source,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(streamUrl))
@@ -93,7 +103,9 @@ public class LocalLanPlayService(
         }
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
-        var useMp = MpPageUrl.UseMpEndpoint(streamUrl, _cachedCapabilities);
+        // Catalog resolutionStrategy/source + transport plugins choose /mp vs /play — never URL host sniffing.
+        // Playlist CTU rewrite stays on LocalService (/mp); client has no playlist body on this path.
+        var useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
         var effectiveStreamName = SupportsPlayStreamQuery(_cachedCapabilities)
             ? playerStreamName
             : null;
@@ -116,10 +128,37 @@ public class LocalLanPlayService(
             return null;
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
-        useMp = MpPageUrl.UseMpEndpoint(streamUrl, _cachedCapabilities);
+        useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
         return useMp
             ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
-            : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+            : await CallPlayEndpointAsync(
+                baseUrl,
+                streamUrl,
+                SupportsPlayStreamQuery(_cachedCapabilities) ? playerStreamName : null,
+                cancellationToken);
+    }
+
+    /// <summary>
+    /// Prefer matching <see cref="IPlaybackTransportPlugin"/> endpoint; require <c>mp.chrome</c>
+    /// when the plugin (or fallback) selects <c>mp</c>.
+    /// </summary>
+    private bool ShouldUseMpEndpoint(
+        string? resolutionStrategy,
+        string? source,
+        IEnumerable<string> capabilities)
+    {
+        var plugin = transportPlugins.FirstOrDefault(p => p.Matches(resolutionStrategy, source));
+        if (plugin is not null)
+        {
+            var wantsMp = string.Equals(plugin.LocalServiceEndpoint, "mp", StringComparison.OrdinalIgnoreCase);
+            if (!wantsMp)
+                return false;
+
+            return capabilities.Any(c =>
+                string.Equals(c, "mp.chrome", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return MpPageUrl.UseMpEndpoint(resolutionStrategy, source, capabilities);
     }
 
     private async Task RefreshCapabilitiesIfNeededAsync(CancellationToken cancellationToken)
@@ -219,7 +258,10 @@ public class LocalLanPlayService(
         }
     }
 
-    private static readonly TimeSpan MpCallTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MpCallTimeout = TimeSpan.FromSeconds(90);
+
+    private static bool HasDiscoveredChips(M3U8Response? result) =>
+        result?.Streams is { Count: > 0 };
 
     private async Task<M3U8Response?> CallMpEndpointAsync(
         string baseUrl,
@@ -239,25 +281,43 @@ public class LocalLanPlayService(
                 stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
             });
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            logger.LogInformation("[LocalLanPlay] Resolving MP stream via POST {Url}", url);
+            logger.LogInformation(
+                "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix}",
+                url,
+                string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName.Trim()})");
             var response = await httpClient.PostAsync(url, content, cts.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                logger.LogInformation("[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}",
-                    response.StatusCode, streamUrl);
-                return null;
-            }
-
             var json = await response.Content.ReadAsStringAsync(cts.Token);
             var result = JsonSerializer.Deserialize<M3U8Response>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (result == null || string.IsNullOrWhiteSpace(result.Url))
+            var chips = result?.Streams is { Count: > 0 }
+                ? string.Join(", ", result.Streams)
+                : "(none)";
+
+            if (!response.IsSuccessStatusCode)
             {
-                logger.LogWarning("[LocalLanPlay] POST /mp returned success but no m3u8 URL");
+                logger.LogInformation(
+                    "[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}; chips={Chips}",
+                    response.StatusCode, streamUrl, chips);
+                return HasDiscoveredChips(result) ? result : null;
+            }
+
+            if (result == null)
+            {
+                logger.LogWarning("[LocalLanPlay] POST /mp returned success but no body");
                 return null;
             }
 
-            logger.LogInformation("[LocalLanPlay] Resolved MP m3u8 via local service for {StreamUrl}", streamUrl);
+            if (string.IsNullOrWhiteSpace(result.Url))
+            {
+                logger.LogWarning(
+                    "[LocalLanPlay] POST /mp returned success but no m3u8 URL; chips={Chips} selected={Selected}",
+                    chips, result.SelectedStream ?? "(none)");
+                return HasDiscoveredChips(result) ? result : null;
+            }
+
+            logger.LogInformation(
+                "[LocalLanPlay] Resolved MP m3u8 via local service for {StreamUrl} selected={Selected} chips={Chips}",
+                streamUrl, result.SelectedStream ?? "(none)", chips);
             return result;
         }
         catch (Exception ex)
