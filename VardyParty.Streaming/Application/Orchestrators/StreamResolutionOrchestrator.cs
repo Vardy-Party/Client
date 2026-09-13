@@ -311,7 +311,7 @@ public class StreamResolutionOrchestrator(
         };
         launcher.BufferingStateChanged += bufferingHandler;
 
-        var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream, launcher, playbackCts.Token);
+        var reportingTask = StartPlaybackHealthReportingAsync(game, enrichedStream.Stream, launcher, playbackCts.Token);
         PlaybackResult? result;
         try
         {
@@ -361,14 +361,15 @@ public class StreamResolutionOrchestrator(
     }
 
     private async Task StartPlaybackHealthReportingAsync(
+        Game game,
         StreamModel stream,
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken)
     {
         try
         {
-            var hasReportedMetadata = false;
             var streamName = StreamHealthIdentity.GetStreamName(stream);
+            var softRefreshTicks = 0;
 
             // Wait for player to initialize and extract metadata
             // Windows MediaPlayer fires NaturalVideoSizeChanged after video decodes (~1-2s)
@@ -378,7 +379,6 @@ public class StreamResolutionOrchestrator(
             var initialMetrics = launcher.GetCurrentMetrics();
             _ = streamHealthReporter.ReportPlaybackStartedAsync(stream.Url, null, streamName, initialMetrics,
                 cancellationToken);
-            hasReportedMetadata = initialMetrics?.Resolution.HasValue == true;
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -394,6 +394,13 @@ public class StreamResolutionOrchestrator(
                 // Report periodic metrics without duplicating metadata
                 _ = streamHealthReporter.ReportPlaybackMetricsAsync(stream.Url, null, streamName, metrics,
                     cancellationToken);
+
+                // Soft-refresh recommendations about every 60s (every other 30s tick).
+                softRefreshTicks++;
+                if (softRefreshTicks % 2 == 0)
+                {
+                    _ = EnsureFreshRecommendationsAsync(game, force: false, cancellationToken);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -403,6 +410,34 @@ public class StreamResolutionOrchestrator(
 
     private async Task HandleNextStreamRequestedAsync(Game game, CancellationToken cancellationToken)
     {
+        var wouldWrap = streamSwitchingService.WouldWrapOnNext();
+        var recommendations = await EnsureFreshRecommendationsAsync(
+            game,
+            force: wouldWrap,
+            cancellationToken);
+
+        if (wouldWrap && recommendations != null)
+        {
+            ApplyWraparoundReorder(recommendations);
+        }
+
+        var current = streamSwitchingService.GetCurrentStream();
+        var healthy = streamSwitchingService.GetHealthyStreams();
+        var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
+        if (preferred != null
+            && streamSwitchingService.SwitchToMatchingStream(
+                preferred.Stream.Url,
+                StreamHealthIdentity.GetStreamName(preferred.Stream)))
+        {
+            logger.LogInformation(
+                "[StreamResolution] Switched to preferred recommended stream {Channel}",
+                preferred.Stream.Channel);
+            _status = "Switched to recommended stream";
+            PublishProgress();
+            PrefetchUpcomingStreamUrl(game, cancellationToken);
+            return;
+        }
+
         var nextStream = streamSwitchingService.GetNextHealthyStream();
         if (nextStream == null)
         {
@@ -449,6 +484,76 @@ public class StreamResolutionOrchestrator(
             _status = "Switched to next stream";
             PublishProgress();
             PrefetchUpcomingStreamUrl(game, cancellationToken);
+        }
+    }
+
+    private async Task<RecommendationResponse?> EnsureFreshRecommendationsAsync(
+        Game game,
+        bool force,
+        CancellationToken cancellationToken)
+    {
+        var cached = selectionCoordinator.LatestRecommendations;
+        if (!force
+            && !StreamRecommendationPolicy.IsStale(
+                cached,
+                DateTimeOffset.UtcNow,
+                StreamRecommendationPolicy.HardRefreshMaxAge))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var fresh = await streamHealthService.GetRecommendationsAsync(
+                game.ApiLeague,
+                game.Home,
+                game.Away,
+                cancellationToken);
+            if (fresh != null)
+            {
+                selectionCoordinator.RememberRecommendations(fresh);
+                logger.LogInformation(
+                    "[StreamResolution] Refreshed recommendations (force={Force}, count={Count}, generatedAt={GeneratedAt})",
+                    force,
+                    fresh.Recommended?.Count ?? 0,
+                    fresh.GeneratedAt);
+            }
+
+            return fresh ?? cached;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamResolution] Recommendation refresh failed");
+            return cached;
+        }
+    }
+
+    private void ApplyWraparoundReorder(RecommendationResponse recommendations)
+    {
+        var healthy = streamSwitchingService.GetHealthyStreams();
+        if (healthy.Count <= 1 || recommendations.Recommended is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var preferred = new List<EnrichedStream>();
+        foreach (var item in recommendations.Recommended
+                     .OrderByDescending(r => StreamTestOrderPolicy.RankConfidence(r.Confidence)))
+        {
+            var match = healthy.FirstOrDefault(candidate =>
+                StreamHealthIdentity.MatchesRecommendation(candidate.Stream, item.Url, item.StreamName));
+            if (match != null && !preferred.Contains(match))
+            {
+                preferred.Add(match);
+            }
+        }
+
+        if (preferred.Count > 0)
+        {
+            streamSwitchingService.ReorderHealthyStreams(preferred);
+            logger.LogInformation(
+                "[StreamResolution] Wraparound reordered healthy pool by recommendations ({Count} preferred)",
+                preferred.Count);
         }
     }
 

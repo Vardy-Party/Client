@@ -119,8 +119,9 @@ public static class PlayerOverlayFormatter
         {
             Index = index,
             Total = total,
-            Channel = current?.Stream?.PlayerStream
-                ?? (IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel),
+            Channel = FirstNonEmpty(
+                current?.Stream?.PlayerStream,
+                IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel),
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
             Resolution = resolution,
             FrameRate = current?.Health?.FrameRate,
@@ -129,9 +130,23 @@ public static class PlayerOverlayFormatter
             AspectRatio = BuildAspect(resolution),
             M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
             RefererUrl = refererUrl,
-            Title = current?.Stream?.PlayerStream
-                ?? (IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel)
+            Title = FirstNonEmpty(
+                current?.Stream?.PlayerStream,
+                IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel)
         };
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
     }
 
     private static bool IsCatalogBadgeChannel(string? channel) =>

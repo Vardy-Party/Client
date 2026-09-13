@@ -110,6 +110,7 @@ public static class V2StreamExpander
             StreamStatus = source.StreamStatus,
             PlayerStreams = source.PlayerStreams,
             BitrateKbps = source.BitrateKbps,
-            Resolution = source.Resolution
+            Resolution = source.Resolution,
+            Source = source.Source
         };
 }

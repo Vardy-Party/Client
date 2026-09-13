@@ -146,6 +146,100 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         }
     }
 
+    public bool WouldWrapOnNext()
+    {
+        lock (_healthyStreams)
+        {
+            if (_healthyStreams.Count == 0 || _currentStreamIndex < 0)
+            {
+                return false;
+            }
+
+            return ((_currentStreamIndex + 1) % _healthyStreams.Count) == 0;
+        }
+    }
+
+    public void ReorderHealthyStreams(IReadOnlyList<EnrichedStream> preferredFirst)
+    {
+        lock (_healthyStreams)
+        {
+            if (_healthyStreams.Count <= 1 || preferredFirst.Count == 0)
+            {
+                return;
+            }
+
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+
+            var seen = new HashSet<EnrichedStream>();
+            var reordered = new List<EnrichedStream>(_healthyStreams.Count);
+            foreach (var preferred in preferredFirst)
+            {
+                if (_healthyStreams.Contains(preferred) && seen.Add(preferred))
+                {
+                    reordered.Add(preferred);
+                }
+            }
+
+            foreach (var existing in _healthyStreams)
+            {
+                if (seen.Add(existing))
+                {
+                    reordered.Add(existing);
+                }
+            }
+
+            _healthyStreams.Clear();
+            _healthyStreams.AddRange(reordered);
+            if (current != null)
+            {
+                _currentStreamIndex = _healthyStreams.IndexOf(current);
+            }
+
+            _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
+        }
+    }
+
+    public bool SwitchToMatchingStream(string streamUrl, string? streamName)
+    {
+        lock (_healthyStreams)
+        {
+            for (var i = 0; i < _healthyStreams.Count; i++)
+            {
+                if (MatchesCatalogIdentity(_healthyStreams[i].Stream, streamUrl, streamName))
+                {
+                    return SwitchToStream(i);
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool MatchesCatalogIdentity(Kernel.Stream stream, string streamUrl, string? streamName)
+    {
+        if (!string.Equals(stream.Url, streamUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(streamName))
+        {
+            return true;
+        }
+
+        var label = !string.IsNullOrWhiteSpace(stream.PlayerStream)
+            ? stream.PlayerStream.Trim()
+            : stream.Channel?.Trim();
+        return !string.IsNullOrWhiteSpace(label)
+               && string.Equals(label, streamName.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
     public IReadOnlyList<EnrichedStream> GetHealthyStreams()
     {
         lock (_healthyStreams)

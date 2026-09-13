@@ -18,6 +18,7 @@ namespace VardyParty.Playback.Tests
             var stream = _fixture.Build<Stream>()
                 .With(s => s.Url, url)
                 .With(s => s.Channel, channel)
+                .With(s => s.PlayerStream, string.Empty)
                 .With(s => s.BitrateKbps, bitrate ?? 0)
                 .With(s => s.Resolution, resolution)
                 .Create();
@@ -35,6 +36,7 @@ namespace VardyParty.Playback.Tests
             var stream = _fixture.Build<Stream>()
                 .With(s => s.Url, refererUrl)
                 .With(s => s.Channel, channel)
+                .With(s => s.PlayerStream, string.Empty)
                 .With(s => s.BitrateKbps, 0)
                 .Create();
 
