@@ -119,6 +119,24 @@ public class StreamRecommendationBusinessRulesTests
         Assert.Same(better, preferred);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void ShouldPreferRecommendedPeerOnNext_OnlyWhenWrapping(
+        bool wouldWrapAround,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrapAround));
+
+    [Fact]
+    public void MidCycleNext_MustNotTrapInRecommendedSubset()
+    {
+        // Regression: UI showed 6 healthy streams but Next bounced between the
+        // 2 recommended chips because preferred-next ran every press.
+        Assert.False(StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrapAround: false));
+    }
+
     [Fact]
     public void IsStale_MissingOrOldGeneratedAt_IsTrue()
     {

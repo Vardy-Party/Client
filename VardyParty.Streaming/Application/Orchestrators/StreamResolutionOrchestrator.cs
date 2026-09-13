@@ -423,19 +423,27 @@ public class StreamResolutionOrchestrator(
 
         var current = streamSwitchingService.GetCurrentStream();
         var healthy = streamSwitchingService.GetHealthyStreams();
-        var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
-        if (preferred != null
-            && streamSwitchingService.SwitchToMatchingStream(
-                preferred.Stream.Url,
-                StreamHealthIdentity.GetStreamName(preferred.Stream)))
+
+        // Only on wraparound: jump to a high-confidence recommended peer.
+        // Mid-cycle Next must walk every healthy stream (UI total), otherwise
+        // users bounce between the 2–3 recommended chips forever.
+        if (StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrap)
+            && recommendations != null)
         {
-            logger.LogInformation(
-                "[StreamResolution] Switched to preferred recommended stream {Channel}",
-                preferred.Stream.Channel);
-            _status = "Switched to recommended stream";
-            PublishProgress();
-            PrefetchUpcomingStreamUrl(game, cancellationToken);
-            return;
+            var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
+            if (preferred != null
+                && streamSwitchingService.SwitchToMatchingStream(
+                    preferred.Stream.Url,
+                    StreamHealthIdentity.GetStreamName(preferred.Stream)))
+            {
+                logger.LogInformation(
+                    "[StreamResolution] Wraparound switched to preferred recommended stream {Channel}",
+                    preferred.Stream.Channel);
+                _status = "Switched to recommended stream";
+                PublishProgress();
+                PrefetchUpcomingStreamUrl(game, cancellationToken);
+                return;
+            }
         }
 
         var nextStream = streamSwitchingService.GetNextHealthyStream();

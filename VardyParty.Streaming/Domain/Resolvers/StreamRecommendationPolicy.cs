@@ -145,6 +145,12 @@ public static class StreamRecommendationPolicy
     /// Prefer the highest-confidence recommended peer that is not the current
     /// stream and is present in the healthy pool.
     /// </summary>
+    /// <remarks>
+    /// Only use this on wraparound (after a full cycle). Using it on every Next
+    /// traps the user bouncing between the top recommended peers while other
+    /// healthy streams are never reached — Windows/TV showed 6 streams but
+    /// only cycled 2.
+    /// </remarks>
     public static EnrichedStream? PickPreferredNext(
         RecommendationResponse? recommendations,
         IReadOnlyList<EnrichedStream> healthy,
@@ -197,6 +203,13 @@ public static class StreamRecommendationPolicy
 
         return null;
     }
+
+    /// <summary>
+    /// Hardware/UI Next must walk the full healthy pool in order. Recommendation
+    /// preference is reserved for wraparound reordering.
+    /// </summary>
+    public static bool ShouldPreferRecommendedPeerOnNext(bool wouldWrapAround) =>
+        wouldWrapAround;
 
     public static bool WouldWrapAround(int currentIndex, int healthyCount) =>
         healthyCount > 0 && currentIndex >= 0 && ((currentIndex + 1) % healthyCount) == 0;
