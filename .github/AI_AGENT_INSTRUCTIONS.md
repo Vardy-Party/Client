@@ -5,7 +5,7 @@ Welcome, AI Agent! Follow these guidelines for the VardyParty Client repo.
 ## Project Context
 
 **Project Name:** VardyParty  
-**Tech Stack:** .NET 11 (preview), MAUI (Android/iOS/Mac Catalyst/Windows), Avalonia MAUI backend on Linux (`VardyParty.Linux`), native players (Exo / WinUI / AVPlayer / LibVLC)  
+**Tech Stack:** .NET 11 (RC1), MAUI (Android/iOS/Mac Catalyst/Windows), Avalonia MAUI backend on Linux (`VardyParty.Linux`), native players (Exo / WinUI / AVPlayer / LibVLC)  
 **Repository:** https://github.com/Vardy-Party/Client  
 **Purpose:** Multi-platform live football streaming with score aggregation  
 

@@ -55,13 +55,13 @@ dotnet user-secrets set "Api:HeadlessBaseUrl" "https://api.vardyparty.com" --pro
 Once secrets are configured, build Android with the `PatchAppSettings=true` parameter:
 
 ```bash
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net11.0-android -p:PatchAppSettings=true
 ```
 
 Or for Release builds:
 
 ```bash
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net11.0-android -c Release -p:PatchAppSettings=true
 ```
 
 ## How It Works
@@ -77,7 +77,7 @@ dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release -p:Pat
    - Merges secrets into the source file
    - Removes `AllowUserSecrets` flag (like CI/CD does)
    - The build then embeds the patched file into the APK
-   - Only affects Android builds (`net10.0-android`)
+   - Only affects Android builds (`net11.0-android`)
    - **⚠️ WARNING: This temporarily modifies your source file!**
 
 3. **After Building**: 

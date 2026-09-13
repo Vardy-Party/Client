@@ -1,4 +1,4 @@
-# Launch VardyParty.Linux inside WSL (WSLg). Needs the .NET 11 preview SDK
+# Launch VardyParty.Linux inside WSL (WSLg). Needs the .NET 11 RC1 SDK
 # in WSL and (for playback) libvlc: sudo apt install vlc libvlc-dev
 #
 # The Linux head must build WITHOUT the android workload. On Linux,

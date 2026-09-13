@@ -100,23 +100,23 @@ Installers will be automatically created and attached to the GitHub Release.
 
 ### Windows (APPX)
 - Builds on: `windows-latest`
-- Framework: `net10.0-windows10.0.19041.0`
+- Framework: `net11.0-windows10.0.19041.0`
 - Output: Self-contained Windows package
 
 ### Android (APK)
 - Builds on: `ubuntu-latest`
-- Framework: `net10.0-android`
+- Framework: `net11.0-android`
 - Requirements: Java 17
 - Output: Multi-architecture APK (arm, arm64, x86, x86_64)
 
 ### iOS (IPA)
 - Builds on: `macos-14`
-- Framework: `net10.0-ios`
+- Framework: `net11.0-ios`
 - Output: iOS app archive
 
 ### macOS
 - Builds on: `macos-14`
-- Framework: `net10.0-maccatalyst`
+- Framework: `net11.0-maccatalyst`
 - Output: macOS application
 
 ### Linux / WSL (`VardyParty.Linux`)
@@ -219,7 +219,7 @@ dotnet format --verify-no-changes
 
 # Build for a specific platform
 dotnet workload restore
-dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 -o ./artifacts/windows
+dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 -o ./artifacts/windows
 ```
 
 ## Accessing Build Artifacts

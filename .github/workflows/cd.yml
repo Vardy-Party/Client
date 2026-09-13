@@ -8,8 +8,8 @@ name: CD - Package & Release
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
-  # Everything targets net11.0(-*): one preview SDK pin for every job.
-  DOTNET_VERSION: "11.0.x"
+  # Everything targets net11.0(-*): one RC1 SDK pin for every job.
+  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"

@@ -43,10 +43,10 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '11.0.x'
+          dotnet-version: '11.0.100-rc.1.26425.128'
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -89,10 +89,10 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '11.0.x'
+          dotnet-version: '11.0.100-rc.1.26425.128'
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -135,10 +135,10 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '11.0.x'
+          dotnet-version: '11.0.100-rc.1.26425.128'
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -175,10 +175,10 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '11.0.x'
+          dotnet-version: '11.0.100-rc.1.26425.128'
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
@@ -223,10 +223,10 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '11.0.x'
+          dotnet-version: '11.0.100-rc.1.26425.128'
           dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:

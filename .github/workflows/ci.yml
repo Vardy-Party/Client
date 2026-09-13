@@ -2,11 +2,11 @@ name: CI - Build & Test
 
 env:
   # Everything targets net11.0(-*) now, so every job uses the same .NET 11
-  # preview SDK pin.
+  # RC1 SDK pin.
   # There is deliberately no repo global.json: with no pin, dotnet picks the
   # newest installed SDK (previews included), which is what the local build
   # scripts need, while CI jobs pin per-job via setup-dotnet.
-  DOTNET_VERSION: "11.0.x"
+  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"
@@ -459,7 +459,7 @@ jobs:
           retention-days: 5
 
   # Linux head (VardyParty.Linux): the shared MAUI XAML homepage
-  # (VardyParty.HomeUi) drawn by Avalonia on the .NET 11 preview SDK. See
+  # (VardyParty.HomeUi) drawn by Avalonia on the .NET 11 RC1 SDK. See
   # docs/architecture/homepage-maui-avalonia.md.
   build-linux:
     name: Build Linux (MAUI-Avalonia)

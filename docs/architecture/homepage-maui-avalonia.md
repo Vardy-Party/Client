@@ -122,7 +122,7 @@ net11.0, matching the MAUI/Linux heads. The
 `Configuration.Abstractions` packages are framework-provided on .NET 11 and
 their explicit `PackageReference`s were removed (they fired NU1510; the
 packaging flows are zero-warning again). CI/CD pins a single
-`DOTNET_VERSION: "11.0.x"` with `dotnet-quality: preview` for every job —
+`DOTNET_VERSION: "11.0.100-rc.1.26425.128"` with `dotnet-quality: preview` for every job —
 `DOTNET_PREVIEW_VERSION` is gone.
 
 ### The Netflix-style UI in XAML terms
@@ -494,12 +494,12 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 | Component | Version |
 |---|---|
-| .NET SDK | `11.0.100-preview.7.26381.103` (channel 11.0, quality preview) |
-| `Microsoft.Maui.Controls` | `11.0.0-preview.7.26406.9` (nuget.org) |
-| `Avalonia.Controls.Maui.Desktop` | `11.0.0-preview.7.26224.328` (nuget.org; Avalonia 12 preview underneath) |
+| .NET SDK | `11.0.100-rc.1.26425.128` (channel 11.0, quality rc.1) |
+| `Microsoft.Maui.Controls` | `11.0.0-rc.1.26451.6` (nuget.org) |
+| `Avalonia.Controls.Maui.Desktop` | `11.0.0-rc.1.26252.343` (nuget.org; Avalonia 12 preview underneath) |
 | MAUI workload on Linux | `maui-tizen` (the only workload that carries the plain-TFM MAUI SDK on Linux) |
 | `Svg.Skia` | `5.2.2` |
-| `SkiaSharp.NativeAssets.Linux` | `4.148.0` (explicit pin, see gotchas) |
+| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas; Avalonia RC1) |
 
 ### Repo-specific gotchas (hard-won, do not rediscover)
 
@@ -517,9 +517,9 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
    set `HomeUiTargetFrameworks=net11.0` (CI job env) so they never restore
    android.
 2. **SkiaSharp native mismatch**: `Svg.Skia` pins
-   `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
-   SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at
-   startup with "native libSkiaSharp (119.0) incompatible".
+   `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia MAUI RC1's managed
+   SkiaSharp needs native **4.151**. Without the explicit `4.151.0` pin you
+   get NU1605 on restore and/or a startup native `libSkiaSharp` mismatch.
 3. **LibVLC in a MAUI-Avalonia window**: in-window playback composites
    LibVLC software frames (RV32 / `SetVideoCallbacks`) into an Avalonia
    `Image` hosted by `VideoHostView` — no `LibVLCSharp.Avalonia` VideoView
@@ -537,8 +537,8 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 The `ci.yml` pipeline is ordered so **Code Quality gates every platform
 build**:
 
-1. `test` (SDK 11 preview, all `tests/*Tests` projects), then
-2. `code-quality` (SDK 11 preview: analyzers with warnings-as-errors +
+1. `test` (SDK 11 RC1, all `tests/*Tests` projects), then
+2. `code-quality` (SDK 11 RC1: analyzers with warnings-as-errors +
    `dotnet format --verify-no-changes`), then
 3. `build-android`, `build-windows`, `build-ios`, `build-macos` and
    `build-linux` — each with `needs: code-quality`, and finally
@@ -811,7 +811,7 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
 
 | Risk | Notes |
 |---|---|
-| .NET 11 **preview** SDK | GA expected November 2026; preview 7 used here. |
+| .NET 11 **RC1** SDK | GA expected November 2026; `11.0.100-rc.1.26425.128` used here. |
 | MAUI-Avalonia is **Preview 1** | APIs and package names may change; desktop-only today, WASM promised. |
 | Avalonia 12 is itself preview | The backend rides on it; the SkiaSharp pin will need revisiting each bump. |
 | Package drift | All packages come from nuget.org today; if previews move to a nightly feed, `NuGet.config` needs the feed added. |
