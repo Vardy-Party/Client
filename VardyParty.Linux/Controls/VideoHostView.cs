@@ -48,6 +48,8 @@ public sealed class VideoHostView : View, IVideoFramePresenter
 
     public void ApplyRv32(byte[] pixels, int width, int height, int stride)
     {
+        // Re-check _image after allocation: ClearFrame / DetachPlatformImage
+        // can run between dispatcher presents and must leave a clean no-op.
         if (_image == null || pixels == null || width <= 0 || height <= 0 || stride <= 0)
         {
             return;
@@ -62,7 +64,21 @@ public sealed class VideoHostView : View, IVideoFramePresenter
                 AlphaFormat.Opaque);
             _bitmapWidth = width;
             _bitmapHeight = height;
+
+            if (_image == null)
+            {
+                _bitmap = null;
+                _bitmapWidth = 0;
+                _bitmapHeight = 0;
+                return;
+            }
+
             _image.Source = _bitmap;
+        }
+
+        if (_image == null || _bitmap == null)
+        {
+            return;
         }
 
         var rowBytes = Math.Min(stride, width * 4);
@@ -74,6 +90,11 @@ public sealed class VideoHostView : View, IVideoFramePresenter
                 var copy = Math.Min(rowBytes, destStride);
                 Marshal.Copy(pixels, y * stride, fb.Address + (y * destStride), copy);
             }
+        }
+
+        if (_image == null)
+        {
+            return;
         }
 
         _image.InvalidateVisual();

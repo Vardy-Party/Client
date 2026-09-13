@@ -66,7 +66,22 @@ public sealed class SystemThenDohHostNameResolver : IHostNameResolver
             host,
             systemFailure?.Message ?? "no addresses");
 
-        var dohAddresses = await _doh.ResolveAsync(host, cancellationToken).ConfigureAwait(false);
+        IPAddress[] dohAddresses;
+        try
+        {
+            dohAddresses = await _doh.ResolveAsync(host, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Upstream socket handlers expect SocketException (or the original
+            // system DNS failure), not AggregateException from dual A/AAAA DoH.
+            _logger?.LogWarning(
+                ex,
+                "[DoH] Cloudflare lookup failed for {Host}; surfacing system DNS error",
+                host);
+            throw systemFailure ?? new SocketException((int)SocketError.HostNotFound);
+        }
+
         if (dohAddresses.Length == 0)
         {
             throw systemFailure ?? new SocketException((int)SocketError.HostNotFound);

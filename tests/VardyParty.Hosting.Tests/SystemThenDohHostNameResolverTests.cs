@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -85,5 +86,27 @@ public class SystemThenDohHostNameResolverTests
 
         // Assert
         Assert.Equal([IPAddress.Parse("192.0.2.10")], addresses);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenDohThrows_SurfacesSocketExceptionNotAggregate()
+    {
+        // Arrange
+        var prefs = new Mock<IDnsPreferencesStore>();
+        prefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
+        var doh = new Mock<IDnsOverHttpsClient>();
+        doh.Setup(d => d.ResolveAsync("no.such.host.vardyparty.test", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AggregateException(
+                new SocketException((int)SocketError.TimedOut),
+                new SocketException((int)SocketError.TimedOut)));
+        var sut = new SystemThenDohHostNameResolver(prefs.Object, doh.Object);
+
+        // Act
+        var ex = await Assert.ThrowsAnyAsync<SocketException>(
+            () => sut.ResolveAsync("no.such.host.vardyparty.test"));
+
+        // Assert — callers must see SocketException, not AggregateException
+        Assert.NotNull(ex);
+        Assert.IsNotType<AggregateException>(ex);
     }
 }

@@ -56,10 +56,12 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAuthLoginService>(sp => sp.GetRequiredService<LinuxAuthService>());
 
         var apiSettings = configuration.GetSection(APISettings.SectionName).Get<APISettings>();
+        // AppData folder matches FileDesktopPendingUpdateStore / LinuxAuthService
+        // ("VardyParty"), not the retired VardyParty.Desktop head name.
         builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore>(_ =>
             new VardyParty.Ports.FileDnsPreferencesStore(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "VardyParty.Desktop",
+                "VardyParty",
                 "dns-preferences.json")));
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
