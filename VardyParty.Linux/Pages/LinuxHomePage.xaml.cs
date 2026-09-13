@@ -1023,7 +1023,7 @@ public partial class LinuxHomePage : ContentPage
         await Task.CompletedTask;
     }
 
-    private void CancelStreamDiscoveryFromUser()
+    private void CancelStreamDiscoveryFromUser(bool playCancelSound = true)
     {
         try
         {
@@ -1053,7 +1053,8 @@ public partial class LinuxHomePage : ContentPage
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
-        _sounds.Play(UiSound.Back);
+        if (playCancelSound)
+            _sounds.Play(UiSound.Back);
         _logger.LogInformation("[LinuxHome] Stream discovery cancelled by user");
 
         Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
@@ -1063,10 +1064,18 @@ public partial class LinuxHomePage : ContentPage
 
     /// <summary>
     /// Escape / Android-back while the playback overlay is up dismisses chrome
-    /// layers first, then closes playback (same as the Close chip).
+    /// layers first, then closes playback (same as the Close chip). Finding-streams
+    /// Back matches Cancel.
     /// </summary>
     protected override bool OnBackButtonPressed()
     {
+        if (HomeFindingStreamsPolicy.HardwareBackShouldCancelFinding(
+                _resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible))
+        {
+            CancelStreamDiscoveryFromUser();
+            return true;
+        }
+
         if (PlaybackOverlay.IsVisible)
         {
             if (_playbackChrome?.TryDismissLayer() == true)
@@ -1108,7 +1117,7 @@ public partial class LinuxHomePage : ContentPage
         // Closing the player is a terminal outcome for this pick. Mark exhausted
         // + clear selection BEFORE cancelling the resolution CTS — otherwise the
         // cancel surfaces as OperationCanceledException with exhausted=false and
-        // TryResumeAfterPlayer restarts "Finding streams..." (0 tested).
+        // TryResumeAfterPlayer restarts "Finding streams...".
         _resolutionExhausted = true;
         _selection.CurrentGame = null;
         try
@@ -1125,11 +1134,32 @@ public partial class LinuxHomePage : ContentPage
             // Stop playback first so PlayVideoAsync completes with "User closed"
             // before the resolve CTS cancel races the await-foreach.
             (_videoPlayer as LinuxVideoPlayerService)?.StopPlayback();
-            _resolutionCts?.Cancel();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LinuxHome] Failed to close playback");
+        }
+
+        var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
+            _resolveOverlayOpen,
+            _isResolvingStreams,
+            _resolutionStartClaimed,
+            _resolutionTask is { IsCompleted: false })
+            || ResolveOverlay.IsVisible;
+        if (HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive))
+        {
+            CancelStreamDiscoveryFromUser(playCancelSound: false);
+        }
+        else
+        {
+            try
+            {
+                _resolutionCts?.Cancel();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxHome] Cancel of resolution CTS after close failed");
+            }
         }
 
         Dispatcher.Dispatch(() =>
@@ -1585,7 +1615,10 @@ public partial class LinuxHomePage : ContentPage
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
         ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
-        ResolveCountLabel.Text = "0 tested • 0 healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            streamsTested: 0, healthyStreams: 0, totalStreams: 0, indeterminate: true);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         ResolveOverlay.IsVisible = true;
         _resolveOverlayOpen = true;
         ResolveCancelButton.Focus();
@@ -1594,6 +1627,7 @@ public partial class LinuxHomePage : ContentPage
     private void UpdateResolveOverlay(StreamResolutionProgress progress) => Dispatcher.Dispatch(() =>
     {
         var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
+        var indeterminate = StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
 
         ResolveTitleLabel.Text = isNoHealthy
             ? string.Empty
@@ -1603,11 +1637,15 @@ public partial class LinuxHomePage : ContentPage
         ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
             && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
         ApplyResolveWaitVisual(
-            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
-        ResolveCountLabel.Text = progress.TotalStreams > 0
-            ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
-            : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            progress.StreamsTested,
+            progress.HealthyStreams,
+            progress.TotalStreams,
+            indeterminate);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false on first subscribe while we still owe the overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;

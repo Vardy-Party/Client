@@ -669,7 +669,7 @@ public partial class HomeHostPage : ContentPage
         await Task.CompletedTask;
     }
 
-    private void CancelStreamDiscoveryFromUser()
+    private void CancelStreamDiscoveryFromUser(bool playCancelSound = true)
     {
         try
         {
@@ -709,7 +709,8 @@ public partial class HomeHostPage : ContentPage
         {
         }
 #endif
-        _sounds.Play(UiSound.Back);
+        if (playCancelSound)
+            _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");
 
         PostUi(() =>
@@ -719,6 +720,47 @@ public partial class HomeHostPage : ContentPage
             // Overlay Cancel held focus — without this, Android TV lands on
             // the Menu button instead of the game that opened finding-streams.
             HomeSurface.RestoreFocusAfterOverlay();
+        });
+    }
+
+    /// <summary>
+    /// User left the native player — stop any in-flight finding-streams and
+    /// dismiss the modal (same end state as Cancel).
+    /// </summary>
+    private void StopFindingStreamsAfterPlaybackLeft()
+    {
+        var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
+            _resolveOverlayOpen,
+            _isResolvingStreams,
+            _resolutionStartClaimed,
+            _resolutionTask is { IsCompleted: false })
+            || ResolveOverlay.IsVisible;
+
+        // Always terminal for this pick so TryResumeAfterPlayer cannot restart.
+        _resolutionExhausted = true;
+
+        if (HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive)
+            || _homeShell.PlayerSessionStarted)
+        {
+            _logger.LogInformation("[HomeHost] Stopping finding-streams after playback left");
+            CancelStreamDiscoveryFromUser(playCancelSound: false);
+            return;
+        }
+
+        _selection.CurrentGame = null;
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[HomeHost] ClearSelection after playback left failed");
+        }
+
+        PostUi(() =>
+        {
+            ResolveOverlay.IsVisible = false;
+            UpdateBackSuppression();
         });
     }
 
@@ -734,6 +776,8 @@ public partial class HomeHostPage : ContentPage
         _notifications.IsPlaybackActive = visible;
         if (!visible)
         {
+            StopFindingStreamsAfterPlaybackLeft();
+
             var authenticated = false;
             try
             {
@@ -808,7 +852,10 @@ public partial class HomeHostPage : ContentPage
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
         ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
-        ResolveCountLabel.Text = "0 tested • 0 healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            streamsTested: 0, healthyStreams: 0, totalStreams: 0, indeterminate: true);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         ResolveOverlay.IsVisible = true;
         // Re-assert suppression on the UI thread with the overlay actually
         // visible — covers any race where a prior session's finally cleared
@@ -821,6 +868,7 @@ public partial class HomeHostPage : ContentPage
     private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
     {
         var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
+        var indeterminate = StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
 
         ResolveTitleLabel.Text = isNoHealthy
             ? string.Empty
@@ -830,11 +878,15 @@ public partial class HomeHostPage : ContentPage
         ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
             && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
         ApplyResolveWaitVisual(
-            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
-        ResolveCountLabel.Text = progress.TotalStreams > 0
-            ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
-            : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            progress.StreamsTested,
+            progress.HealthyStreams,
+            progress.TotalStreams,
+            indeterminate);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false while we still owe the user a cancelable overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
@@ -893,7 +945,8 @@ public partial class HomeHostPage : ContentPage
             return true;
         }
 
-        if (_resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible)
+        if (HomeFindingStreamsPolicy.HardwareBackShouldCancelFinding(
+                _resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible))
         {
             _logger.LogInformation("[HomeHost] Hardware back — canceling stream resolution");
             CancelStreamDiscoveryFromUser();

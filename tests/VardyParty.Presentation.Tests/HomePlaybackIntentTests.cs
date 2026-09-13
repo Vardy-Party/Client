@@ -145,7 +145,7 @@ public class HomePlaybackIntentTests
     }
 
     [Fact]
-    public void DecideResumeAfterPlayer_AfterClickAndSameInstance_Resumes()
+    public void DecideResumeAfterPlayer_AfterClickAndSameInstance_Clears_DoesNotRestartFinding()
     {
         // Arrange
         var sut = new HomePlaybackIntent();
@@ -163,8 +163,27 @@ public class HomePlaybackIntentTests
             currentGame: game,
             resolutionExhausted: false);
 
-        // Assert
-        Assert.Equal(ResumeAfterPlayerAction.Resume, action);
+        // Assert — leaving the player is terminal; never restart finding-streams.
+        Assert.Equal(ResumeAfterPlayerAction.Clear, action);
+    }
+
+    [Fact]
+    public void DecideResumeAfterPlayer_WhileFindingStillActive_Clears()
+    {
+        var sut = new HomePlaybackIntent();
+        sut.MarkUserInitiated();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+
+        var action = sut.DecideResumeAfterPlayer(
+            isResolvingStreams: true,
+            selectedGame: game,
+            currentGame: game,
+            resolutionExhausted: false);
+
+        Assert.Equal(ResumeAfterPlayerAction.Clear, action);
     }
 
     [Fact]

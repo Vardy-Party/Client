@@ -34,6 +34,42 @@ public class StreamResolveOverlayProgressTests
         Assert.False(StreamResolveOverlayProgress.IsIndeterminate(0, noHealthyFound: true));
     }
 
+    [Fact]
+    public void FormatCountLabel_WhileIndeterminate_IsEmpty()
+    {
+        Assert.Equal(
+            string.Empty,
+            StreamResolveOverlayProgress.FormatCountLabel(
+                streamsTested: 0,
+                healthyStreams: 0,
+                totalStreams: 0,
+                indeterminate: true));
+    }
+
+    [Fact]
+    public void FormatCountLabel_WhenTotalKnown_IncludesTotals()
+    {
+        Assert.Equal(
+            "10 total • 3 tested • 1 healthy",
+            StreamResolveOverlayProgress.FormatCountLabel(
+                streamsTested: 3,
+                healthyStreams: 1,
+                totalStreams: 10,
+                indeterminate: false));
+    }
+
+    [Fact]
+    public void FormatCountLabel_WithoutTotal_ShowsTestedHealthyOnly()
+    {
+        Assert.Equal(
+            "2 tested • 0 healthy",
+            StreamResolveOverlayProgress.FormatCountLabel(
+                streamsTested: 2,
+                healthyStreams: 0,
+                totalStreams: 0,
+                indeterminate: false));
+    }
+
     [Theory]
     [InlineData("No working streams found", true)]
     [InlineData("No streams found", true)]

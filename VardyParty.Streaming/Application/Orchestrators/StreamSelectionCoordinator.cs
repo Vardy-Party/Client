@@ -77,9 +77,9 @@ public class StreamSelectionCoordinator(
 
                 if (recommendations != null)
                 {
-                    logger.LogInformation("[StreamSelection] Recommendations received. Confidence={Confidence}, Recommended count={Count}",
-                        recommendations.Confidence,
-                        recommendations.Recommended?.Count ?? 0);
+                    logger.LogInformation(
+                        "[StreamSelection] Recommendations received: {Summary}",
+                        RecommendationLogFormatter.Format(recommendations));
                 }
                 else
                 {
@@ -105,19 +105,31 @@ public class StreamSelectionCoordinator(
                 testOrder = BuildTestOrder(recommendations, _totalStreams);
             }
 
+            string LabelForIndex(int index)
+            {
+                lock (_gate)
+                {
+                    var candidate = _candidates.FirstOrDefault(c => c.Index == index);
+                    if (candidate is null)
+                        return "?";
+                    var name = StreamHealthIdentity.GetStreamName(candidate.Stream);
+                    return string.IsNullOrWhiteSpace(name) ? "(unnamed)" : name;
+                }
+            }
+
             if (StreamTestOrderPolicy.ShouldPreferRecommendations(recommendations))
             {
                 logger.LogInformation(
                     "[StreamSelection] Using recommendation-based test order. OverallConfidence={Confidence}, Order={Order}",
                     recommendations?.Confidence,
-                    string.Join(",", testOrder));
+                    RecommendationLogFormatter.FormatTestOrder(testOrder, LabelForIndex));
             }
             else
             {
                 logger.LogInformation(
                     "[StreamSelection] Using session-spread discovery order (salt={Salt}): {Order}",
                     _discoverySalt,
-                    string.Join(",", testOrder));
+                    RecommendationLogFormatter.FormatTestOrder(testOrder, LabelForIndex));
             }
 
             lock (_gate)

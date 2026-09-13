@@ -35,4 +35,24 @@ public static class StreamResolveOverlayProgress
             || status.Contains("No streams found", StringComparison.OrdinalIgnoreCase)
             || status.Contains("No healthy streams", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Count line for the finding-streams modal. While the bar is indeterminate
+    /// (candidate total unknown), "0 tested • 0 healthy" is meaningless — return
+    /// empty so hosts hide the label.
+    /// </summary>
+    public static string FormatCountLabel(
+        int streamsTested,
+        int healthyStreams,
+        int totalStreams,
+        bool indeterminate)
+    {
+        if (indeterminate)
+            return string.Empty;
+
+        if (totalStreams > 0)
+            return $"{totalStreams} total • {streamsTested} tested • {healthyStreams} healthy";
+
+        return $"{streamsTested} tested • {healthyStreams} healthy";
+    }
 }

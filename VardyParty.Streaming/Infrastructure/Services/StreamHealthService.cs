@@ -49,11 +49,12 @@ public class StreamHealthService(
             var recommendations = response.Content != null
                 ? await response.Content.ReadFromJsonAsync<RecommendationResponse>(cts.Token)
                 : null;
-            logger.LogInformation("[StreamHealth] Recommendations for {League} {Home} vs {Away}: {@Recommendations}",
+            logger.LogInformation(
+                "[StreamHealth] Recommendations for {League} {Home} vs {Away}: {Summary}",
                 league,
                 homeTeam,
                 awayTeam,
-                recommendations);
+                RecommendationLogFormatter.Format(recommendations));
             return recommendations;
         }
         catch (Exception ex)

@@ -86,18 +86,18 @@ public sealed class HomePlaybackIntent
         if (!isAuthenticated)
             return ResumeAfterPlayerAction.Clear;
 
-        if (isResolvingStreams || selectedGame is null || !UserInitiatedResolution)
+        if (selectedGame is null || !UserInitiatedResolution)
             return ResumeAfterPlayerAction.None;
 
-        if (!PlayerSessionStarted)
-            return ResumeAfterPlayerAction.None;
-
-        if (resolutionExhausted)
+        // Leaving the player (or returning while discovery is still running) is
+        // terminal for this pick — never auto-restart "Finding streams...".
+        // Hosts cancel the CTS / hide the modal; Clear drops the latched card.
+        if (PlayerSessionStarted || isResolvingStreams || resolutionExhausted)
             return ResumeAfterPlayerAction.Clear;
 
-        if (currentGame != null && ReferenceEquals(currentGame, selectedGame))
-            return ResumeAfterPlayerAction.Resume;
+        if (currentGame != null && !ReferenceEquals(currentGame, selectedGame))
+            return ResumeAfterPlayerAction.Clear;
 
-        return ResumeAfterPlayerAction.Clear;
+        return ResumeAfterPlayerAction.None;
     }
 }
