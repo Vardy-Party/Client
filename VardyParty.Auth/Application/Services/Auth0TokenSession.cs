@@ -50,7 +50,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
 
         var fields = missing.Count > 0 ? string.Join(" and ", missing) : "ClientId/Domain";
         return
-            $"Sign-in unavailable: Auth0 {fields} empty in this build. " +
+            $"Sign-in unavailable: Auth0 {fields} not configured or empty in this build. " +
             "Merge user-secrets before launch " +
             "(scripts/patch-appsettings.ps1, run-windows-debug.ps1, or launch-linux-app.ps1 / -p:PatchAppSettings=true).";
     }

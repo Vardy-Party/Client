@@ -56,10 +56,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly ILogger<LinuxVideoPlayerService> _logger;
     private readonly IStreamSwitchingService _switching;
     private readonly IStreamHealthReporter _healthReporter;
+    private readonly LinuxHlsLocalProxy? _hlsProxy;
+    private readonly IPlaybackPlaylistProcessor? _playlistProcessor;
     private readonly PlaybackSessionController _session = new();
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
+    private readonly IDisposable _indexSubscription;
     private VlcSession? _current;
     private int _nextVlcGeneration;
     private Media? _currentMedia;
@@ -77,6 +80,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private string? _playbackHomeTeam;
     private string? _playbackAwayTeam;
     private bool _isNextStreamRequestInProgress;
+    /// <summary>
+    /// When true, <see cref="CurrentStreamIndexChanged"/> must not re-attach —
+    /// the session command path already owns Attach (same as Windows/Android).
+    /// </summary>
+    private bool _suppressIndexDrivenSwitch;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
@@ -102,11 +110,22 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         ILogger<LinuxVideoPlayerService> logger,
         IStreamSwitchingService switching,
         ResolveFreshPlaybackUrlAsync resolveFresh,
-        IStreamHealthReporter healthReporter)
+        IStreamHealthReporter healthReporter,
+        IHttpClientFactory? httpClientFactory = null,
+        IPlaybackPlaylistProcessor? playlistProcessor = null)
     {
         _logger = logger;
         _switching = switching;
         _healthReporter = healthReporter;
+        _playlistProcessor = playlistProcessor;
+        if (httpClientFactory is not null)
+        {
+            _hlsProxy = new LinuxHlsLocalProxy(
+                httpClientFactory.CreateClient(VardyParty.Hosting.PlaybackHttpClients.Media),
+                logger);
+            if (_playlistProcessor is not null)
+                _hlsProxy.SetPlaylistTransform(_playlistProcessor.Process);
+        }
         _pool = new PlaybackPoolCommandActions(
             _session,
             _switching,
@@ -116,6 +135,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
         _engine.MetricsHandler = GetCurrentMetrics;
         _engine.AttachHandler = AttachLibVlcAsync;
+        // Orchestrator Next only advances the pool index; Windows/Android re-attach
+        // from this subscription. Without it Linux updates Stream N/M chrome and
+        // leaves LibVLC on the previous URL (audio blip then black player).
+        _indexSubscription = _switching.CurrentStreamIndexChanged.Subscribe(_ =>
+            TrySwitchToCurrentStream());
     }
 
 #if EMBEDDED_LINUX_VIDEO
@@ -206,7 +230,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     var attached = await RunVlcOpAsync(vlc, "attach-frame-sink", AttachTimeout, () =>
                     {
                         vlc.FrameSink?.Dispose();
-                        var sink = new LibVlcSoftwareFrameSink(presenter);
+                        var present = LinuxPlatformProbe.ResolveSoftwarePresentLimits(
+                            UseConservativeVlcOptions);
+                        var sink = new LibVlcSoftwareFrameSink(
+                            presenter,
+                            maxFrameWidth: present.MaxFrameWidth,
+                            minPresentIntervalMs: present.MinPresentIntervalMs);
                         sink.Attach(vlc.Player);
                         vlc.FrameSink = sink;
                     });
@@ -289,6 +318,58 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _pool.SwitchPoolToPrevious();
+    }
+
+    /// <summary>
+    /// Index-driven attach after Next/Previous pool rotate (Windows
+    /// <c>TrySwitchToCurrentStreamAsync</c> / Android <c>TrySwitchToCurrentStream</c>).
+    /// </summary>
+    private void TrySwitchToCurrentStream(bool force = false)
+    {
+        if (_suppressIndexDrivenSwitch)
+        {
+            return;
+        }
+
+        // First healthy chip publishes index 0 before PlayVideoAsync runs — attaching
+        // here races the orchestrator attach (Stop tears pulse, second Play fails).
+        // Only follow index changes while a PlayVideoAsync session is active.
+        if (_playbackTcs is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var current = _switching.GetCurrentStream();
+            var url = current?.ResolvedM3U8Url;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            if (!force &&
+                string.Equals(_session.Snapshot.CurrentUrl, url, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            // LibVLC often never raises Playing on the vmem/HLS path, so the
+            // session stays IsPreparing and CanAttach rejects the new URL.
+            // Index-driven switches already compared URLs — force the attach.
+            _logger.LogInformation(
+                "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
+                true,
+                current?.Stream?.Channel ?? "(unknown)");
+            _requestHeaders = current?.RequestHeaders ?? _requestHeaders;
+            if (!string.IsNullOrWhiteSpace(current?.Referer))
+                _refererUrl = current.Referer;
+            AttachViaSession(url, usedCachedUrl: false, force: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[LinuxVideoPlayerService] Stream switch failed");
+        }
     }
 
     /// <summary>
@@ -600,6 +681,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             var initTask = Task.Run(() =>
             {
                 Core.Initialize();
+                LinuxPlatformProbe.TryApplyPulseLatencyHint();
                 var libVlc = new LibVLC(BuildVlcOptions());
                 var player = new MediaPlayer(libVlc);
                 ConfigureAudioOutput(player);
@@ -715,7 +797,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
     {
         _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
-        ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.BeginAttach(url, usedCachedUrl, force)));
+        var effects = _session.BeginAttach(url, usedCachedUrl, force);
+        if (effects.Count > 0 && effects[0].Kind == PlaybackEffectKind.None)
+        {
+            _logger.LogWarning(
+                "[LinuxVideoPlayerService] Attach rejected ({Reason}) url={Url} preparing={Preparing}",
+                effects[0].Reason,
+                url,
+                _session.Snapshot.IsPreparing);
+        }
+
+        ApplyPlaybackCommand(PlaybackCommand.FromEffects(effects));
     }
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
@@ -725,13 +817,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private sealed class LinuxPlaybackCommandHost(LinuxVideoPlayerService player) : IPlaybackCommandHost
     {
-        public void BeginIndexSwitchSuppression()
-        {
-        }
+        public void BeginIndexSwitchSuppression() => player._suppressIndexDrivenSwitch = true;
 
-        public void EndIndexSwitchSuppression()
-        {
-        }
+        public void EndIndexSwitchSuppression() => player._suppressIndexDrivenSwitch = false;
 
         public void ClearCurrentResolvedUrl() => player._pool.ClearCurrentResolvedUrl();
 
@@ -811,11 +899,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 _ = player._onNextStreamRequested();
         }
 
-        public void SwitchPoolToPrevious()
-        {
-            player._pool.SwitchPoolToPrevious();
-            _ = player._pool.AttachCurrentFromPoolAsync();
-        }
+        public void SwitchPoolToPrevious() => player._pool.SwitchPoolToPrevious();
 
         public void NotifyApplyFailed(Exception exception)
             => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
@@ -852,12 +936,40 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
-        // Direct CDN play with :http-referrer — this is the path that had
-        // working video (silent until Pulse yield/--aout). A loopback HLS
-        // bridge fetched bytes fine but LibVLC adaptive demux then failed.
+        var current = _switching.GetCurrentStream();
+        if (current?.RequestHeaders is { Count: > 0 })
+            requestHeaders = current.RequestHeaders;
+        if (!string.IsNullOrWhiteSpace(current?.Referer))
+            _refererUrl = current.Referer;
+
         var referer = ResolveHeader(requestHeaders, "referer") ?? _refererUrl;
         var userAgent = ResolveHeader(requestHeaders, "user-agent")
             ?? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        var origin = ResolveHeader(requestHeaders, "origin");
+
+        // LibVLC's C HTTP stack cannot use DualStack/DoH and prefers AAAA on
+        // WSL (Network is unreachable). Play through a loopback proxy so .NET
+        // fetches playlists/segments and VLC only opens 127.0.0.1.
+        var playUrl = m3u8Url;
+        var playViaProxy = false;
+        if (_hlsProxy is not null && _hlsProxy.TryStart())
+        {
+            try
+            {
+                _hlsProxy.SetPlaybackHeaders(requestHeaders, referer);
+                _hlsProxy.SetRewrittenSegments(_switching.GetCurrentStream()?.RewrittenSegments);
+                playUrl = _hlsProxy.Wrap(m3u8Url).AbsoluteUri;
+                playViaProxy = true;
+                _logger.LogInformation(
+                    "[LinuxVideoPlayerService] HLS via loopback proxy {ProxyUrl} (origin {Origin})",
+                    playUrl,
+                    m3u8Url);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[LinuxVideoPlayerService] HLS proxy wrap failed; falling back to direct CDN URL");
+            }
+        }
 
         var attached = await RunVlcOpAsync(vlc, "attach-play", AttachTimeout, () =>
         {
@@ -874,9 +986,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
             previousMedia?.Dispose();
 
-            var media = new Media(vlc.LibVlc, new Uri(m3u8Url));
+            var media = new Media(vlc.LibVlc, new Uri(playUrl));
             foreach (var option in LinuxPlatformProbe.BuildPlaybackMediaOptions(
-                         UseConservativeVlcOptions, referer, userAgent))
+                         UseConservativeVlcOptions,
+                         playViaProxy ? null : referer,
+                         userAgent,
+                         playViaProxy ? null : origin))
             {
                 media.AddOption(option);
             }
@@ -893,6 +1008,93 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Requested LibVLC attach for {Url}", m3u8Url);
+        _ = WatchAttachProgressAsync(generation, m3u8Url, cancellationToken);
+    }
+
+    /// <summary>
+    /// If Playing never fires, Video Info still says "Playing" (chrome label)
+    /// with pending metrics. Probe LibVLC state and fail the attempt so the
+    /// session can advance instead of sitting on a black screen.
+    /// </summary>
+    private async Task WatchAttachProgressAsync(
+        long generation,
+        string m3u8Url,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+                if (_session.Snapshot.AttachGeneration != generation)
+                    return;
+
+                var playing = _current is { Abandoned: false } session && session.Player.IsPlaying;
+                if (!playing)
+                    continue;
+
+                if (_session.Snapshot.IsPreparing)
+                {
+                    _logger.LogInformation(
+                        "[LinuxVideoPlayerService] LibVLC is playing without a Playing event; treating as Ready ({Url})",
+                        m3u8Url);
+                    RaiseReadyFromCurrentPlayer();
+                }
+
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (_session.Snapshot.AttachGeneration != generation)
+        {
+            return;
+        }
+
+        var vlc = _current;
+        if (vlc is not { Abandoned: false })
+        {
+            return;
+        }
+
+        try
+        {
+            if (vlc.Player.IsPlaying)
+            {
+                if (_session.Snapshot.IsPreparing)
+                    RaiseReadyFromCurrentPlayer();
+                return;
+            }
+
+            var mediaState = vlc.Player.Media?.State.ToString() ?? "(no media)";
+            _logger.LogWarning(
+                "[LinuxVideoPlayerService] No Playing event after attach; player.IsPlaying={IsPlaying}, media.State={MediaState}, url={Url}",
+                vlc.Player.IsPlaying,
+                mediaState,
+                m3u8Url);
+            _engine.Raise(MediaEngineEvent.Error(
+                generation,
+                $"LibVLC did not start playback (media state {mediaState})"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] Attach watchdog failed");
+        }
+    }
+
+    private void RaiseReadyFromCurrentPlayer()
+    {
+        if (_current is { Abandoned: false } vlc)
+            EnsurePlaybackAudio(vlc.Player);
+
+        PlaybackVisibilityChanged?.Invoke(this, true);
+        SetBufferingState(false);
+        _engine.Raise(MediaEngineEvent.Ready(_session.Snapshot.AttachGeneration));
+        StartMetricsLoop();
     }
 
     private static string? ResolveHeader(IReadOnlyDictionary<string, string>? headers, string name)
@@ -926,15 +1128,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
-        if (sender is MediaPlayer player)
-        {
-            EnsurePlaybackAudio(player);
-        }
-
-        PlaybackVisibilityChanged?.Invoke(this, true);
-        SetBufferingState(false);
-        _engine.Raise(MediaEngineEvent.Ready(_session.Snapshot.AttachGeneration));
-        StartMetricsLoop();
+        RaiseReadyFromCurrentPlayer();
     }
 
     private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e)
@@ -1058,7 +1252,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public void Dispose()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Disposing");
+        _indexSubscription.Dispose();
         StopMetricsLoop();
+        _hlsProxy?.Dispose();
 
         var vlc = _current;
         _current = null;

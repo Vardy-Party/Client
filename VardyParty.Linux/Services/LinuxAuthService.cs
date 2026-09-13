@@ -49,6 +49,9 @@ public class LinuxAuthService : Auth0TokenSession
         if (HasValidToken)
             return new AuthLoginResult(true, AccessToken, null);
 
+        if (string.IsNullOrWhiteSpace(Settings.ClientId) || string.IsNullOrWhiteSpace(Settings.Domain))
+            return new AuthLoginResult(false, null, DescribeMissingAuth0DeviceConfig());
+
         var redirectUri = Auth0Pkce.ResolveLinuxBrowserRedirectUri(
             Settings.RedirectUri,
             Settings.LoopbackRedirectUri);

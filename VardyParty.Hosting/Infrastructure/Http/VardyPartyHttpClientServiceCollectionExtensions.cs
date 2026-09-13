@@ -40,6 +40,7 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
 
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>()
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(3));
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()

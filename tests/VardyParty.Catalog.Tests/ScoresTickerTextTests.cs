@@ -131,6 +131,83 @@ public class ScoresTickerTextTests
     }
 
     [Fact]
+    public void Build_Finished_ExcludesScorelessHeuristicFt()
+    {
+        var scored = FinishedGame("League Alpha", "Home United", "Away City", 2, 0);
+        var heuristic = _fixture.Build<Game>()
+            .With(g => g.Home, "North Rovers")
+            .With(g => g.Away, "South Wanderers")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "League Alpha")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.HomeScore, (int?)null)
+            .With(g => g.AwayScore, (int?)null)
+            .With(g => g.StatusText, "FT")
+            .Create();
+
+        var snapshot = ScoresTickerText.Build(
+            ScoresTickerMode.AllFinished,
+            new[] { scored, heuristic },
+            watchedLeague: null,
+            watchedHome: null,
+            watchedAway: null);
+
+        Assert.Contains("2-0", snapshot.FullText, StringComparison.Ordinal);
+        Assert.DoesNotContain("North Rovers", snapshot.FullText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_Upcoming_IncludesUnstartedWithoutLookAhead()
+    {
+        var farKickoff = DateTime.UtcNow.AddDays(5);
+        var upcoming = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "League Alpha")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.StatusText, "")
+            .With(g => g.Start, farKickoff)
+            .Create();
+
+        var selected = ScoresTickerText.SelectGames(
+            ScoresTickerMode.AllUpcoming,
+            new[] { upcoming },
+            watchedLeague: null,
+            watchedHome: null,
+            watchedAway: null);
+
+        Assert.Contains(upcoming, selected);
+    }
+
+    [Fact]
+    public void BuildParts_Finished_IncludesScoreAndFtStatus()
+    {
+        var finished = FinishedGame("League Alpha", "Home United", "Away City", 4, 1);
+
+        var parts = ScoresTickerText.BuildParts(
+            ScoresTickerMode.AllFinished,
+            new[] { finished },
+            watchedLeague: null,
+            watchedHome: null,
+            watchedAway: null);
+        var plain = InternationalTeamDisplay.PartsToPlainText(parts);
+
+        Assert.Contains("Finished games:", plain, StringComparison.Ordinal);
+        Assert.Contains("[League Alpha]", plain, StringComparison.Ordinal);
+        Assert.Contains("4-1", plain, StringComparison.Ordinal);
+        Assert.Contains("(FT)", plain, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TitleFor_BlankLeague_UsesGenericInPlay()
     {
         // Arrange

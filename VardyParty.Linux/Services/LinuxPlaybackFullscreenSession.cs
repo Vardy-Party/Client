@@ -39,8 +39,10 @@ public static class LinuxPlaybackEscapeOrder
 /// Prefer shell <see cref="LinuxHostWindowMode.FullScreen"/> (not LibVLC-only)
 /// so the Avalonia chrome overlay can still <c>PlaceOver</c> the video.
 ///
-/// WSLg: set <c>VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED=1</c> to enter
-/// Maximized instead of FullScreen when the compositor is flaky.
+/// Native Ubuntu uses host <see cref="LinuxHostWindowMode.FullScreen"/>.
+/// WSL (test host) defaults to Maximized because WSLg Weston often
+/// ignores FullScreen. Override with
+/// <c>VARDYPARTY_LINUX_FULLSCREEN_AS_MAXIMIZED=0|1</c>.
 /// </summary>
 public sealed class LinuxPlaybackFullscreenSession
 {
@@ -52,45 +54,51 @@ public sealed class LinuxPlaybackFullscreenSession
     public LinuxHostWindowMode RestoreMode { get; private set; } = LinuxHostWindowMode.Normal;
 
     /// <summary>
-    /// Target mode when entering fullscreen playback. FullScreen by default;
-    /// Maximized when the WSLg degrade env is set.
+    /// Target mode when entering fullscreen playback.
+    /// Native Ubuntu: FullScreen. WSL test host: Maximized (Weston).
+    /// Env <c>1</c>/<c>true</c> forces Maximized; <c>0</c>/<c>false</c>
+    /// forces FullScreen even on WSL.
     /// </summary>
     public static LinuxHostWindowMode ResolveEnterTarget(
-        Func<string, string?>? getEnv = null)
+        Func<string, string?>? getEnv = null,
+        bool? isWsl = null)
     {
         getEnv ??= static name => Environment.GetEnvironmentVariable(name);
         var raw = getEnv(MaximizeInsteadEnv);
-        if (string.Equals(raw, "1", StringComparison.Ordinal) ||
-            string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase))
-        {
+        if (IsFalsey(raw))
+            return LinuxHostWindowMode.FullScreen;
+        if (IsTruthy(raw))
             return LinuxHostWindowMode.Maximized;
-        }
 
-        return LinuxHostWindowMode.FullScreen;
+        return (isWsl ?? LinuxPlatformProbe.IsWsl)
+            ? LinuxHostWindowMode.Maximized
+            : LinuxHostWindowMode.FullScreen;
     }
 
     public LinuxHostWindowMode Toggle(
         LinuxHostWindowMode current,
-        Func<string, string?>? getEnv = null)
+        Func<string, string?>? getEnv = null,
+        bool? isWsl = null)
     {
         if (IsFullscreen)
             return Exit();
 
-        return Enter(current, getEnv);
+        return Enter(current, getEnv, isWsl);
     }
 
     public LinuxHostWindowMode Enter(
         LinuxHostWindowMode current,
-        Func<string, string?>? getEnv = null)
+        Func<string, string?>? getEnv = null,
+        bool? isWsl = null)
     {
         if (IsFullscreen)
-            return ResolveEnterTarget(getEnv);
+            return ResolveEnterTarget(getEnv, isWsl);
 
         RestoreMode = current is LinuxHostWindowMode.FullScreen or LinuxHostWindowMode.Minimized
             ? LinuxHostWindowMode.Normal
             : current;
         IsFullscreen = true;
-        return ResolveEnterTarget(getEnv);
+        return ResolveEnterTarget(getEnv, isWsl);
     }
 
     public LinuxHostWindowMode Exit()
@@ -104,4 +112,12 @@ public sealed class LinuxPlaybackFullscreenSession
         IsFullscreen = false;
         RestoreMode = LinuxHostWindowMode.Normal;
     }
+
+    private static bool IsTruthy(string? raw) =>
+        string.Equals(raw, "1", StringComparison.Ordinal) ||
+        string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFalsey(string? raw) =>
+        string.Equals(raw, "0", StringComparison.Ordinal) ||
+        string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase);
 }

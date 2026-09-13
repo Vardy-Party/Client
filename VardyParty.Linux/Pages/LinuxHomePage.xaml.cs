@@ -47,6 +47,7 @@ public partial class LinuxHomePage : ContentPage
     private readonly MatchEventToastViewModel _playbackToast;
 
     private readonly List<IDisposable> _subscriptions = new();
+    private readonly List<IDisposable> _gameFeedSubscriptions = new();
     private IDisposable? _progressSubscription;
     private readonly List<IDisposable> _chromeSubscriptions = new();
     private bool _initialized;
@@ -83,6 +84,10 @@ public partial class LinuxHomePage : ContentPage
     private Avalonia.Controls.TopLevel? _playbackTopLevel;
     private readonly LinuxCloseChipReveal _closeChip = new();
     private IDispatcherTimer? _closeChipHideTimer;
+    private long _lastFullscreenToggleMs;
+    private long _lastVideoPressMs;
+    private Avalonia.Point _lastVideoPressPos;
+    private HostWindowRestore? _hostWindowRestore;
 
     private static bool UseSampleData =>
         Environment.GetEnvironmentVariable("VARDYPARTY_LINUX_SAMPLE_DATA") == "1";
@@ -335,14 +340,26 @@ public partial class LinuxHomePage : ContentPage
         // Does not close; the chip click does.
         ApplyCloseChip(_closeChip.OnTouched());
 
-        // Double-click on the video surface toggles host fullscreen (same as F11 /
-        // menu). Skip when chrome layers are open so dismiss taps are not toggles.
-        if (e.ClickCount == 2
-            && _playbackChrome?.IsMenuVisible != true
-            && _playbackChrome?.IsVideoInfoVisible != true)
+        // WSLg/X11 often reports ClickCount=1 for each press. Detect a
+        // double-press by time + slop so the video surface matches F11 / menu.
+        if (_playbackChrome?.IsMenuVisible != true
+            && _playbackChrome?.IsVideoInfoVisible != true
+            && e.GetCurrentPoint(_playbackTopLevel).Properties.IsLeftButtonPressed)
         {
-            TogglePlaybackFullscreen();
-            e.Handled = true;
+            var pos = _playbackTopLevel is { } top
+                ? e.GetPosition(top)
+                : default;
+            var now = Environment.TickCount64;
+            var isDouble = now - _lastVideoPressMs <= 400
+                && Math.Abs(pos.X - _lastVideoPressPos.X) <= 24
+                && Math.Abs(pos.Y - _lastVideoPressPos.Y) <= 24;
+            _lastVideoPressMs = now;
+            _lastVideoPressPos = pos;
+            if (isDouble)
+            {
+                TogglePlaybackFullscreen();
+                e.Handled = true;
+            }
         }
     }
 
@@ -365,6 +382,10 @@ public partial class LinuxHomePage : ContentPage
         var videoTap = new TapGestureRecognizer();
         videoTap.Tapped += (_, _) => ApplyCloseChip(_closeChip.OnTouched());
         VideoHostContainer.GestureRecognizers.Add(videoTap);
+
+        var videoDoubleTap = new TapGestureRecognizer { NumberOfTapsRequired = 2 };
+        videoDoubleTap.Tapped += (_, _) => TogglePlaybackFullscreen();
+        VideoHostContainer.GestureRecognizers.Add(videoDoubleTap);
 #endif
     }
 
@@ -494,22 +515,85 @@ public partial class LinuxHomePage : ContentPage
         }
         else
         {
-            SetAuthOverlayVisible(true);
+            // One UI pass: show overlay already gated — never flash Sign in when
+            // Auth0 Domain/ClientId are empty (would open a dead-end authorize URL).
+            ShowUnauthenticatedOverlay();
         }
 
         _logger.LogInformation("[LinuxHome] Initialize complete (authenticated={Authenticated})", _isAuthenticated);
     }
 
+    /// <summary>
+    /// Empty Auth0 Domain/ClientId means this build was not patched with secrets.
+    /// Do not offer Sign in — that only opens a dead-end authorize URL.
+    /// </summary>
+    private bool IsAuth0Configured() =>
+        !string.IsNullOrWhiteSpace(_auth0Settings.Domain)
+        && !string.IsNullOrWhiteSpace(_auth0Settings.ClientId);
+
+    private void ShowUnauthenticatedOverlay()
+    {
+        var configured = IsAuth0Configured();
+        if (!configured)
+        {
+            _logger.LogWarning(
+                "[LinuxHome] Auth0 not configured; hiding Sign in. {Reason}",
+                DescribeDeviceSignInUnavailable());
+        }
+
+        Dispatcher.Dispatch(() =>
+        {
+            AuthOverlay.IsVisible = true;
+            DeviceCodePanel.IsVisible = false;
+
+            if (configured)
+            {
+                AuthWelcomeLabel.IsVisible = true;
+                AuthWelcomeLabel.Text = "Welcome — please sign in to browse today's matches.";
+                SignInButton.IsVisible = true;
+                SignInButton.IsEnabled = true;
+                SignInButton.Text = "Sign in — Continue";
+                AuthStatusLabel.Text = string.Empty;
+                AuthStatusLabel.IsVisible = false;
+                SignInButton.Focus();
+                return;
+            }
+
+            AuthWelcomeLabel.Text = string.Empty;
+            AuthWelcomeLabel.IsVisible = false;
+            SignInButton.IsVisible = false;
+            SignInButton.IsEnabled = false;
+            AuthStatusLabel.Text = "Missing configuration.";
+            AuthStatusLabel.IsVisible = true;
+        });
+    }
+
+    private void ApplyAuthConfigurationGate()
+    {
+        ShowUnauthenticatedOverlay();
+    }
+
     private void StartGamesFeed()
     {
-        _subscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
-        _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
+        StopGamesFeed();
+        _gameFeedSubscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
+        _gameFeedSubscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
             _viewModel.SetServiceError(error);
         }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
+    }
+
+    private void StopGamesFeed()
+    {
+        foreach (var subscription in _gameFeedSubscriptions)
+        {
+            subscription.Dispose();
+        }
+
+        _gameFeedSubscriptions.Clear();
     }
 
     /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
@@ -528,6 +612,12 @@ public partial class LinuxHomePage : ContentPage
     private async Task StartSignInAsync()
     {
         if (_isAuthenticating) return;
+
+        if (!IsAuth0Configured())
+        {
+            ApplyAuthConfigurationGate();
+            return;
+        }
 
         _logger.LogInformation("[LinuxHome] Sign in pressed");
         _isAuthenticating = true;
@@ -678,6 +768,8 @@ public partial class LinuxHomePage : ContentPage
 
         await _authTokens.LogoutAsync();
 
+        StopGamesFeed();
+
         foreach (var subscription in _subscriptions)
         {
             subscription.Dispose();
@@ -746,7 +838,7 @@ public partial class LinuxHomePage : ContentPage
     private void SetAuthOverlayVisible(bool visible) => Dispatcher.Dispatch(() =>
     {
         AuthOverlay.IsVisible = visible;
-        if (visible)
+        if (visible && SignInButton.IsVisible && SignInButton.IsEnabled)
         {
             SignInButton.Focus();
         }
@@ -892,6 +984,10 @@ public partial class LinuxHomePage : ContentPage
             }
             catch (OperationCanceledException)
             {
+                // Close-player cancels the CTS while playback was up; treat as
+                // exhausted so finally → TryResumeAfterPlayer does not re-open
+                // the finding-streams overlay.
+                _resolutionExhausted = true;
                 _logger.LogInformation("[LinuxHome] Stream resolution cancelled");
             }
             catch (Exception ex)
@@ -1009,10 +1105,27 @@ public partial class LinuxHomePage : ContentPage
 
     private void CompletePlaybackClose()
     {
+        // Closing the player is a terminal outcome for this pick. Mark exhausted
+        // + clear selection BEFORE cancelling the resolution CTS — otherwise the
+        // cancel surfaces as OperationCanceledException with exhausted=false and
+        // TryResumeAfterPlayer restarts "Finding streams..." (0 tested).
+        _resolutionExhausted = true;
+        _selection.CurrentGame = null;
         try
         {
-            _resolutionCts?.Cancel();
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxHome] ClearSelection during playback close failed");
+        }
+
+        try
+        {
+            // Stop playback first so PlayVideoAsync completes with "User closed"
+            // before the resolve CTS cancel races the await-foreach.
             (_videoPlayer as LinuxVideoPlayerService)?.StopPlayback();
+            _resolutionCts?.Cancel();
         }
         catch (Exception ex)
         {
@@ -1043,7 +1156,7 @@ public partial class LinuxHomePage : ContentPage
         _playbackToast.Publish(_viewModel.BuildToastItem(matchEvent));
     }
 
-    private void OnPlaybackVisibilityChanged(object? sender, bool visible)
+    private async void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         // Suppress + yield the miniaudio device before libvlc Play; un-suppress
         // + recover it after Close / a failed session (see PlaybackAudioSession).
@@ -1052,22 +1165,64 @@ public partial class LinuxHomePage : ContentPage
         // Homepage stays visible next to the native VLC window, but it is no
         // longer the active surface: match events downgrade to toast-only.
         _notifications.IsPlaybackActive = visible;
-        Dispatcher.Dispatch(() =>
+        if (visible)
         {
-            PlaybackOverlay.IsVisible = visible;
-            if (visible)
+            Dispatcher.Dispatch(() =>
             {
+                PlaybackOverlay.IsVisible = true;
+                TryWireEscapeClose();
                 ResetCloseChip();
                 ShowPlaybackChrome();
-            }
-            else
-            {
-                HidePlaybackChrome();
-                ResetPlayerChrome();
-                ResetCloseChip();
-                TryResumeAfterPlayer();
-            }
+            });
+            return;
+        }
+
+        Dispatcher.Dispatch(() =>
+        {
+            PlaybackOverlay.IsVisible = false;
+            HidePlaybackChrome();
+            ResetPlayerChrome();
+            ResetCloseChip();
         });
+
+        if (UseSampleData)
+        {
+            Dispatcher.Dispatch(TryResumeAfterPlayer);
+            return;
+        }
+
+        var authenticated = false;
+        try
+        {
+            authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxHome] Authentication check after playback failed");
+        }
+
+        if (!authenticated)
+        {
+            _logger.LogWarning("[LinuxHome] Authentication expired or invalidated during playback; transitioning to sign-in overlay");
+            _isAuthenticated = false;
+            _selection.CurrentGame = null;
+            try
+            {
+                _homeShell.ClearSelection();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxHome] ClearSelection failed");
+            }
+
+            Dispatcher.Dispatch(() => _viewModel.CanSignOut = false);
+            StopGamesFeed();
+            _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
+            ShowUnauthenticatedOverlay();
+            return;
+        }
+
+        Dispatcher.Dispatch(TryResumeAfterPlayer);
     }
 
     private PlaybackChromePresenter EnsurePlaybackChrome()
@@ -1180,21 +1335,42 @@ public partial class LinuxHomePage : ContentPage
 
     private void TogglePlaybackFullscreen()
     {
-        if (_playbackTopLevel is not Avalonia.Controls.Window window)
+        var now = Environment.TickCount64;
+        if (now - _lastFullscreenToggleMs < 350)
+            return;
+        _lastFullscreenToggleMs = now;
+
+        if (TryGetAvaloniaHostWindow() is not { } window)
         {
-            _logger.LogDebug("[LinuxHome] Fullscreen toggle skipped — no Avalonia Window");
+            _logger.LogWarning(
+                "[LinuxHome] Fullscreen toggle skipped — no host window (top={TopKind}, maui={MauiKind})",
+                _playbackTopLevel?.GetType().Name ?? "null",
+                GetParentWindow()?.Handler?.PlatformView?.GetType().Name ?? "null");
             return;
         }
 
         try
         {
+            var maui = GetParentWindow() ?? Microsoft.Maui.Controls.Application.Current?.Windows.FirstOrDefault();
             var current = ToHostWindowMode(window.WindowState);
             var next = _fullscreenSession.Toggle(current);
-            window.WindowState = ToAvaloniaWindowState(next);
+            if (_fullscreenSession.IsFullscreen)
+            {
+                _hostWindowRestore ??= CaptureHostWindowRestore(window, maui, current);
+                window.WindowState = ToAvaloniaWindowState(next);
+                ApplyFilledHostBounds(window, maui);
+            }
+            else
+            {
+                var restore = next;
+                window.WindowState = ToAvaloniaWindowState(restore);
+                RestoreHostWindowBounds(window, maui);
+            }
+
             ApplyPlayerChromeVisuals();
             _logger.LogInformation(
-                "[LinuxHome] Playback host window -> {State} (fullscreenSession={IsFs})",
-                next, _fullscreenSession.IsFullscreen);
+                "[LinuxHome] Playback host window -> {State} (session={IsFs}, avalonia={AvaloniaState})",
+                next, _fullscreenSession.IsFullscreen, window.WindowState);
         }
         catch (Exception ex)
         {
@@ -1207,24 +1383,134 @@ public partial class LinuxHomePage : ContentPage
         if (!_fullscreenSession.IsFullscreen)
             return;
 
-        if (_playbackTopLevel is not Avalonia.Controls.Window window)
+        if (TryGetAvaloniaHostWindow() is not { } window)
         {
             _fullscreenSession.Reset();
+            _hostWindowRestore = null;
             ApplyPlayerChromeVisuals();
             return;
         }
 
         try
         {
+            var maui = GetParentWindow() ?? Microsoft.Maui.Controls.Application.Current?.Windows.FirstOrDefault();
             var restore = _fullscreenSession.Exit();
             window.WindowState = ToAvaloniaWindowState(restore);
+            RestoreHostWindowBounds(window, maui);
             ApplyPlayerChromeVisuals();
         }
         catch (Exception ex)
         {
             _fullscreenSession.Reset();
+            _hostWindowRestore = null;
             _logger.LogDebug(ex, "[LinuxHome] ExitPlaybackFullscreenIfNeeded failed");
         }
+    }
+
+    private Avalonia.Controls.Window? TryGetAvaloniaHostWindow()
+    {
+        if (_playbackTopLevel is Avalonia.Controls.Window fromTop)
+            return fromTop;
+
+        if (GetParentWindow()?.Handler?.PlatformView is Avalonia.Controls.Window fromPage)
+            return fromPage;
+
+        var windows = Microsoft.Maui.Controls.Application.Current?.Windows;
+        if (windows is null)
+            return null;
+
+        foreach (var maui in windows)
+        {
+            if (maui.Handler?.PlatformView is Avalonia.Controls.Window fromApp)
+                return fromApp;
+        }
+
+        return null;
+    }
+
+    private static HostWindowRestore CaptureHostWindowRestore(
+        Avalonia.Controls.Window avalonia,
+        Microsoft.Maui.Controls.Window? maui,
+        LinuxHostWindowMode mode) =>
+        new()
+        {
+            Mode = mode,
+            Position = avalonia.Position,
+            Width = avalonia.Width,
+            Height = avalonia.Height,
+            MauiX = maui?.X,
+            MauiY = maui?.Y,
+            MauiWidth = maui?.Width,
+            MauiHeight = maui?.Height,
+        };
+
+    private static void ApplyFilledHostBounds(
+        Avalonia.Controls.Window avalonia,
+        Microsoft.Maui.Controls.Window? maui)
+    {
+        var screen = avalonia.Screens?.ScreenFromWindow(avalonia) ?? avalonia.Screens?.Primary;
+        if (screen is null)
+            return;
+
+        var area = LinuxPlatformProbe.IsWsl ? screen.WorkingArea : screen.Bounds;
+        avalonia.Position = area.Position;
+        var scale = avalonia.RenderScaling > 0 ? avalonia.RenderScaling : 1;
+        var dipWidth = area.Width / scale;
+        var dipHeight = area.Height / scale;
+        if (dipWidth > 1 && dipHeight > 1)
+        {
+            avalonia.Width = dipWidth;
+            avalonia.Height = dipHeight;
+        }
+
+        if (maui is null)
+            return;
+
+        maui.X = area.X / scale;
+        maui.Y = area.Y / scale;
+        maui.Width = dipWidth;
+        maui.Height = dipHeight;
+    }
+
+    private void RestoreHostWindowBounds(
+        Avalonia.Controls.Window avalonia,
+        Microsoft.Maui.Controls.Window? maui)
+    {
+        var restore = _hostWindowRestore;
+        _hostWindowRestore = null;
+        if (restore is null)
+            return;
+
+        avalonia.Position = restore.Position;
+        if (restore.Width > 1 && restore.Height > 1)
+        {
+            avalonia.Width = restore.Width;
+            avalonia.Height = restore.Height;
+        }
+
+        if (maui is null)
+            return;
+
+        if (restore.MauiX is { } x)
+            maui.X = x;
+        if (restore.MauiY is { } y)
+            maui.Y = y;
+        if (restore.MauiWidth is { } w and > 1)
+            maui.Width = w;
+        if (restore.MauiHeight is { } h and > 1)
+            maui.Height = h;
+    }
+
+    private sealed class HostWindowRestore
+    {
+        public LinuxHostWindowMode Mode { get; init; }
+        public Avalonia.PixelPoint Position { get; init; }
+        public double Width { get; init; }
+        public double Height { get; init; }
+        public double? MauiX { get; init; }
+        public double? MauiY { get; init; }
+        public double? MauiWidth { get; init; }
+        public double? MauiHeight { get; init; }
     }
 
     private static LinuxHostWindowMode ToHostWindowMode(Avalonia.Controls.WindowState state) =>
@@ -1263,12 +1549,17 @@ public partial class LinuxHomePage : ContentPage
     /// <summary>Same decision the other heads make after the native player closed.</summary>
     private void TryResumeAfterPlayer()
     {
+        if (!_isAuthenticated && !UseSampleData)
+        {
+            return;
+        }
+
         try
         {
             var resolutionActive = _isResolvingStreams
                 || _resolutionStartClaimed
                 || _resolutionTask is { IsCompleted: false };
-            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted);
+            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted, _isAuthenticated || UseSampleData);
             if (resume == ResumeAfterPlayerAction.Clear)
             {
                 _selection.CurrentGame = null;

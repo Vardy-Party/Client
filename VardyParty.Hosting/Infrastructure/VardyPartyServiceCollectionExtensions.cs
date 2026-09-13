@@ -19,6 +19,7 @@ public static class VardyPartyServiceCollectionExtensions
     {
         services.AddV1TransportPlugin();
         services.AddV2TransportPlugin();
+        services.AddSingleton<IPlaybackPlaylistProcessor, TransportPluginPlaylistProcessor>();
 
         services.AddSingleton<IGameMatcher, GameMatcher>();
         services.AddSingleton<IBbcJsonParser, BbcJsonParser>();

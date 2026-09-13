@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Input;
 using VardyParty.Catalog;
@@ -162,300 +164,38 @@ namespace VardyParty.Platforms.Windows
                 args.Handled = true;
             }
 
-            private bool IsCurrentGame(Game g)
+            private List<Game> GetGamesSnapshot()
             {
-                if (string.IsNullOrWhiteSpace(watchedHomeTeam) || string.IsNullOrWhiteSpace(watchedAwayTeam))
-                {
-                    return false;
-                }
-
-                var watchedKey = GameMatcher.BuildFixtureKey(watchedHomeTeam, watchedAwayTeam);
-                var gameKey = GameMatcher.BuildFixtureKey(g.DisplayHome, g.DisplayAway);
-                if (string.Equals(watchedKey, gameKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-
-                var swappedKey = GameMatcher.BuildFixtureKey(g.DisplayAway, g.DisplayHome);
-                return string.Equals(watchedKey, swappedKey, StringComparison.OrdinalIgnoreCase);
-            }
-
-            private bool IsWatchedPreMatchFixture(Game g) =>
-                IsCurrentGame(g) && !g.IsPostponed && !g.IsHalfTime && g.Minute is not > 0;
-
-            private bool IsUpcomingForTicker(Game g, DateTime nowUtc)
-            {
-                if (g.IsPostponed || g.IsFinished)
-                {
-                    return false;
-                }
-
-                if (!BbcFixtureSchedule.IsWithinLookAheadWindow(g.StartUtcForOrdering, nowUtc))
-                {
-                    return false;
-                }
-
-                // Stream you're watching counts as upcoming until there is a real live minute.
-                if (IsWatchedPreMatchFixture(g))
-                {
-                    return true;
-                }
-
-                var startUtc = g.StartUtcForOrdering;
-                if (startUtc != default && startUtc != DateTime.MaxValue && startUtc > nowUtc.AddMinutes(5))
-                {
-                    return true;
-                }
-
-                return g.IsScheduledUpcoming(nowUtc);
-            }
-
-            private List<TickerDisplayPart> JoinSeparatedLineParts(string header, string emptyMessage, IReadOnlyList<List<TickerDisplayPart>> lines)
-            {
-                if (lines.Count == 0)
-                {
-                    return InternationalTeamDisplay.TextParts(emptyMessage).ToList();
-                }
-
-                var parts = new List<TickerDisplayPart>();
-                parts.AddRange(InternationalTeamDisplay.TextParts(header));
-                for (var i = 0; i < lines.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        parts.AddRange(InternationalTeamDisplay.SeparatorParts());
-                    }
-
-                    parts.AddRange(lines[i]);
-                }
-
-                return parts;
-            }
-
-            private List<TickerDisplayPart> FormatUpcomingLineParts(Game g)
-            {
-                // Same rule as MatchStatusPresenter.FormatStartTime: exactly one
-                // conversion to device-local; non-Local kinds are UTC by ingestion.
-                var local = g.Start.Kind == DateTimeKind.Local ? g.Start : g.Start.ToLocalTime();
-                var ko = local == default ? "TBD" : local.ToString("HH:mm");
-                var international = InternationalTeamDisplay.IsInternationalGame(g);
-                var parts = new List<TickerDisplayPart>
-                {
-                    new($"[{g.DisplayLeague}]"),
-                    new(ko),
-                };
-                parts.AddRange(InternationalTeamDisplay.TeamParts(g.DisplayHome, international));
-                parts.Add(new("vs"));
-                parts.AddRange(InternationalTeamDisplay.TeamParts(g.DisplayAway, international));
-                return parts;
-            }
-
-            private List<TickerDisplayPart> FormatWatchedUpcomingFallbackParts(IReadOnlyList<Game> allGames)
-            {
-                if (string.IsNullOrWhiteSpace(watchedHomeTeam) || string.IsNullOrWhiteSpace(watchedAwayTeam))
-                {
-                    return new List<TickerDisplayPart>();
-                }
-
-                var watched = allGames.FirstOrDefault(IsCurrentGame);
-                if (watched != null)
-                {
-                    return FormatUpcomingLineParts(watched);
-                }
-
-                var displayLeague = string.IsNullOrWhiteSpace(watchedLeagueName) ? "Match" : watchedLeagueName;
-                var international = InternationalTeamDisplay.IsInternationalMatch(displayLeague, watchedHomeTeam, watchedAwayTeam);
-                var parts = new List<TickerDisplayPart>
-                {
-                    new($"[{displayLeague}]"),
-                    new("TBD"),
-                };
-                parts.AddRange(InternationalTeamDisplay.TeamParts(watchedHomeTeam, international));
-                parts.Add(new("vs"));
-                parts.AddRange(InternationalTeamDisplay.TeamParts(watchedAwayTeam, international));
-                return parts;
-            }
-
-            private List<TickerDisplayPart> FormatInternationalTickerLineParts(Game g, string? statusOverride = null)
-            {
-                string FormatScoreLocal(Game game)
-                {
-                    var s = $"{game.HomeScore?.ToString() ?? "-"}-{game.AwayScore?.ToString() ?? "-"}";
-                    if (game.AggregateHomeScore.HasValue || game.AggregateAwayScore.HasValue)
-                        s += $" agg {game.AggregateHomeScore?.ToString() ?? "-"}-{game.AggregateAwayScore?.ToString() ?? "-"}";
-                    return s;
-                }
-
-                var international = InternationalTeamDisplay.IsInternationalGame(g);
-                var parts = new List<TickerDisplayPart>();
-                parts.AddRange(InternationalTeamDisplay.TeamParts(g.DisplayHome, international));
-                parts.Add(new($"  {FormatScoreLocal(g)}  "));
-                parts.AddRange(InternationalTeamDisplay.TeamParts(g.DisplayAway, international));
-                var status = statusOverride ?? g.DisplayStatusText();
-                if (string.IsNullOrWhiteSpace(status)) status = "Live";
-                parts.Add(new($"  ({status})"));
-                return parts;
-            }
-
-            private List<TickerDisplayPart> BuildSameLeagueTickerParts()
-            {
-                Dictionary<string, List<Game>>? snapshot;
                 lock (gamesLock)
                 {
-                    snapshot = latestGamesByLeague == null
-                        ? null
-                        : latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
-                }
-
-                if (snapshot == null || snapshot.Count == 0)
-                {
-                    return InternationalTeamDisplay.TextParts("In-play games: No same-league live scores available.").ToList();
-                }
-
-                bool IsSameLeague(Game g) => ScoresTickerPolicy.IsSameLeague(g, watchedLeagueName);
-
-                var lines = snapshot.Values
-                    .SelectMany(v => v)
-                    .Where(IsSameLeague)
-                    .Where(ScoresTickerPolicy.IsInPlay)
-                    .Where(g => !IsCurrentGame(g))
-                    .OrderByDescending(g => g.LiveMinuteForOrdering)
-                    .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                    .Select((Game g) => FormatInternationalTickerLineParts(g))
-                    .ToList();
-
-                var header = string.IsNullOrWhiteSpace(watchedLeagueName) ? "In-play: " : $"In-play {watchedLeagueName}: ";
-                return JoinSeparatedLineParts(
-                    header,
-                    $"{header.TrimEnd()} No other live games right now.",
-                    lines);
-            }
-
-            private static string BuildAllLeaguesTickerDedupeKey(Game g)
-            {
-                var gameLeague = (g.DisplayLeague ?? string.Empty).Trim();
-                return $"{gameLeague}|{GameMatcher.BuildFixtureKey(g.DisplayHome, g.DisplayAway)}";
-            }
-
-            private List<TickerDisplayPart> BuildAllLeaguesInPlayTickerParts()
-            {
-                List<Game> allGames;
-                lock (gamesLock)
-                {
-                    allGames = latestGamesByLeague == null
+                    return latestGamesByLeague == null
                         ? new List<Game>()
                         : latestGamesByLeague.Values.SelectMany(v => v).ToList();
                 }
-
-                var lines = allGames
-                    .Where(ScoresTickerPolicy.IsInPlay)
-                    .Where(g => !IsCurrentGame(g))
-                    .DistinctBy(BuildAllLeaguesTickerDedupeKey)
-                    .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                    .ThenByDescending(g => g.LiveMinuteForOrdering)
-                    .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                    .Select(g =>
-                    {
-                        var line = new List<TickerDisplayPart> { new($"[{g.DisplayLeague}] ") };
-                        line.AddRange(FormatInternationalTickerLineParts(g));
-                        return line;
-                    })
-                    .ToList();
-
-                return JoinSeparatedLineParts(
-                    "All leagues in-play: ",
-                    "All leagues in-play: No live games right now.",
-                    lines);
             }
 
-            private List<TickerDisplayPart> BuildFinishedScoresTickerParts()
-            {
-                List<Game> allGames;
-                lock (gamesLock)
-                {
-                    allGames = latestGamesByLeague == null
-                        ? new List<Game>()
-                        : latestGamesByLeague.Values.SelectMany(v => v).ToList();
-                }
-
-                var lines = allGames
-                    .Where(ScoresTickerPolicy.IsFinishedWithScore)
-                    .OrderBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                    .ThenByDescending(g => g.StartUtcForOrdering)
-                    .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                    .Select(g =>
-                    {
-                        var line = new List<TickerDisplayPart> { new($"[{g.DisplayLeague}] ") };
-                        line.AddRange(FormatInternationalTickerLineParts(g, "FT"));
-                        return line;
-                    })
-                    .ToList();
-
-                return JoinSeparatedLineParts(
-                    "Finished games: ",
-                    "Finished games: No finished games right now.",
-                    lines);
-            }
-
-            private List<TickerDisplayPart> BuildUpcomingTickerParts()
+            private List<TickerDisplayPart> BuildCurrentModeTickerParts()
             {
                 RefreshGamesSnapshot();
-
-                Dictionary<string, List<Game>>? snapshot;
-                lock (gamesLock)
-                {
-                    snapshot = latestGamesByLeague == null
-                        ? null
-                        : latestGamesByLeague.ToDictionary(k => k.Key, v => v.Value?.ToList() ?? new List<Game>());
-                }
-
-                if (snapshot == null || snapshot.Count == 0)
-                {
-                    return InternationalTeamDisplay.TextParts("Upcoming games: Schedule not loaded yet.").ToList();
-                }
-
-                var allGames = snapshot.ToDisplay();
-                var nowUtc = DateTime.UtcNow;
-                var lines = allGames
-                    .Where(g => IsUpcomingForTicker(g, nowUtc))
-                    .OrderBy(g => g.StartUtcForOrdering)
-                    .ThenBy(g => g.DisplayLeague, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(g => g.DisplayHome, StringComparer.OrdinalIgnoreCase)
-                    .Select(FormatUpcomingLineParts)
-                    .ToList();
-
-                var watchedLine = FormatWatchedUpcomingFallbackParts(allGames);
-                if (watchedLine.Count > 0)
-                {
-                    var watchedPlain = InternationalTeamDisplay.PartsToPlainText(watchedLine);
-                    lines.RemoveAll(line => InternationalTeamDisplay.PartsToPlainText(line) == watchedPlain);
-                    lines.Insert(0, watchedLine);
-                }
-
-                return JoinSeparatedLineParts(
-                    "Upcoming games: ",
-                    "Upcoming games: No unstarted games in the schedule window.",
-                    lines);
+                var watched = ResolveWatchedContext();
+                return ScoresTickerText.BuildParts(
+                    scoresTickerMode,
+                    GetGamesSnapshot(),
+                    watched.League ?? watchedLeagueName,
+                    watched.Home ?? watchedHomeTeam,
+                    watched.Away ?? watchedAwayTeam);
             }
 
-            private List<TickerDisplayPart> BuildCurrentModeTickerParts() => scoresTickerMode switch
+            private List<TickerDisplayPart> GetTickerEmptyParts(ScoresTickerMode mode)
             {
-                ScoresTickerMode.AllLeaguesInPlay => BuildAllLeaguesInPlayTickerParts(),
-                ScoresTickerMode.AllFinished => BuildFinishedScoresTickerParts(),
-                ScoresTickerMode.AllUpcoming => BuildUpcomingTickerParts(),
-                _ => BuildSameLeagueTickerParts()
-            };
-
-            private List<TickerDisplayPart> GetTickerEmptyParts(ScoresTickerMode mode) => mode switch
-            {
-                ScoresTickerMode.AllLeaguesInPlay => InternationalTeamDisplay.TextParts("All leagues in-play: No live games right now.").ToList(),
-                ScoresTickerMode.AllFinished => InternationalTeamDisplay.TextParts("Finished games: No finished games right now.").ToList(),
-                ScoresTickerMode.AllUpcoming => InternationalTeamDisplay.TextParts("Upcoming games: No unstarted games in the schedule window.").ToList(),
-                _ => InternationalTeamDisplay.TextParts(
-                    string.IsNullOrWhiteSpace(watchedLeagueName)
-                        ? "In-play: No other live games right now."
-                        : $"In-play {watchedLeagueName}: No other live games right now.").ToList()
-            };
+                var watched = ResolveWatchedContext();
+                return ScoresTickerText.BuildParts(
+                    mode,
+                    Array.Empty<Game>(),
+                    watched.League ?? watchedLeagueName,
+                    watched.Home ?? watchedHomeTeam,
+                    watched.Away ?? watchedAwayTeam);
+            }
 
             private void EnsureTickerTimer()
             {

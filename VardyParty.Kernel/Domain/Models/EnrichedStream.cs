@@ -29,6 +29,12 @@ public class EnrichedStream
     public Dictionary<string, string>? RequestHeaders { get; set; }
 
     /// <summary>
+    /// Absolute media URLs captured by LocalService <c>/mp</c> (KDNS / <c>_s2=</c>).
+    /// Playlist-relative decoy lines are not playable from HttpClient or LibVLC.
+    /// </summary>
+    public IReadOnlyList<string>? RewrittenSegments { get; set; }
+
+    /// <summary>
     /// Stream health and metadata extracted from the m3u8 manifest
     /// Populated after m3u8 is resolved and tested
     /// </summary>

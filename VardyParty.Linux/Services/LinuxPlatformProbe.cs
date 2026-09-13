@@ -7,13 +7,15 @@ namespace VardyParty.Linux.Services;
 /// <summary>
 /// Environment probes and libvlc option policy for the Linux/desktop head.
 ///
-/// WSL matters to playback: WSLg's compositor and GPU paths have wedged
-/// libvlc in the field (a stuck hardware-decode/vout probe froze the whole
-/// app), so conservative options are the WSL default — software decode,
-/// no hardware probing. Standalone fallback pins plain X11 vout; in-window
-/// compositing uses <c>--vout=vmem</c> (never X11 on the same player). The
-/// same conservative set is forced by <c>VARDYPARTY_LINUX_VLC_SAFE=1</c>
-/// and is also safe under xvfb.
+/// Product target is a real Ubuntu desktop (hardware decode, full-res
+/// present, host FullScreen). WSL is a test host only: WSLg's compositor
+/// and GPU have wedged libvlc in the field, so the conservative set
+/// (software decode, no VA-API probe, heavier live cache, Pulse latency)
+/// is the WSL default and must not leak onto native Linux. Standalone
+/// fallback pins plain X11 vout; in-window compositing uses
+/// <c>--vout=vmem</c> (never X11 on the same player). The conservative
+/// set is also forced by <c>VARDYPARTY_LINUX_VLC_SAFE=1</c> (xvfb / a
+/// broken desktop GPU) — that is an opt-in, not the Ubuntu default.
 ///
 /// Audio: SoundFlow (miniaudio) and libvlc share Pulse/ALSA. Leaving aout
 /// unspecified lets VLC probe into a dummy output under WSLg (silent
@@ -43,8 +45,7 @@ public static class LinuxPlatformProbe
         Environment.GetEnvironmentVariable("VARDYPARTY_LINUX_VLC_SAFE") == "1";
 
     /// <summary>
-    /// Conservative libvlc options are the WSL default and the
-    /// VARDYPARTY_LINUX_VLC_SAFE=1 override.
+    /// WSL / safe-mode option set. False on a normal Ubuntu desktop.
     /// </summary>
     public static bool UseConservativeVlcOptions => IsWsl || ForceSafeVlcOptions;
 
@@ -54,6 +55,38 @@ public static class LinuxPlatformProbe
     public const string PulseAudioOutput = "pulse";
     public const string AlsaAudioOutput = "alsa";
     public const string AnyAudioOutput = "any";
+
+    /// <summary>
+    /// Live HLS cache on a real desktop. VLC's 3s default plus a small
+    /// cushion — do not use the WSL 12s value here (that is extra delay).
+    /// </summary>
+    public const int DesktopLiveNetworkCachingMs = 4_000;
+
+    /// <summary>
+    /// WSL-only: 3s plus software RV32 present late/flush/silence. Not
+    /// applied on native Ubuntu.
+    /// </summary>
+    public const int WslLiveNetworkCachingMs = 12_000;
+
+    /// <summary>
+    /// Extra input-clock slack (µs). WSL-only: default 5ms makes Pulse/WSLg
+    /// resample and flush. Not applied on native Ubuntu.
+    /// </summary>
+    public const int ClockJitterUs = 200_000;
+
+    /// <summary>WSLg Pulse underruns below ~150ms; only set when unset.</summary>
+    public const string PulseLatencyVariableName = "PULSE_LATENCY_MSEC";
+
+    public const int PulseLatencyMsec = 300;
+
+    /// <summary>
+    /// WSL-only cap so Avalonia present does not starve Pulse. Native
+    /// desktop presents at the decoded size.
+    /// </summary>
+    public const int WslMaxFrameWidth = 1280;
+
+    /// <summary>WSL-only present floor (~25 fps). Native desktop is uncapped.</summary>
+    public const int WslPresentIntervalMs = 40;
 
     /// <summary>
     /// Picks the libvlc <c>--aout</c> module. An explicit env/override of
@@ -97,12 +130,13 @@ public static class LinuxPlatformProbe
         bool callbackVout = false)
     {
         var aout = ResolveAudioOutputModule(conservative, audioOutputModule);
+        var cacheMs = ResolveLiveNetworkCachingMs(conservative);
         var vlcOptions = new List<string>
         {
             "--quiet",                       // Reduce verbose output
             "--no-video-title-show",         // Don't show video title on playback
-            "--network-caching=3000",        // Align with per-media :network-caching (live HLS)
-            "--live-caching=3000",           // Live/HLS underrun cushion (a/v crackle)
+            $"--network-caching={cacheMs}",
+            $"--live-caching={cacheMs}",
             "--http-reconnect",              // Auto-reconnect on network issues
             "--no-spdif",                    // Avoid passthrough / exclusive SPDIF
             $"--aout={aout}",
@@ -116,6 +150,14 @@ public static class LinuxPlatformProbe
         if (conservative)
         {
             vlcOptions.Add("--avcodec-hw=none"); // software decode, no VA-API/VDPAU probing
+            vlcOptions.Add("--avcodec-skiploopfilter=all");
+            vlcOptions.Add($"--clock-jitter={ClockJitterUs}");
+            vlcOptions.Add("--no-audio-time-stretch");
+            vlcOptions.Add("--drop-late-frames");
+            vlcOptions.Add("--skip-frames");
+            // Do not pass --ipv4 or --pulse-latency: this LibVLC aborts
+            // construction ("unknown option"). IPv4 is the loopback HLS
+            // proxy; Pulse fragment size is PULSE_LATENCY_MSEC only.
             if (!callbackVout)
             {
                 vlcOptions.Add("--vout=x11"); // standalone window only — fights vmem/callbacks
@@ -140,7 +182,8 @@ public static class LinuxPlatformProbe
     public static IReadOnlyList<string> BuildPlaybackMediaOptions(
         bool conservative,
         string? referer,
-        string userAgent)
+        string userAgent,
+        string? origin = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userAgent);
 
@@ -148,18 +191,33 @@ public static class LinuxPlatformProbe
         {
             $":http-user-agent={userAgent}",
             conservative ? ":avcodec-hw=none" : ":avcodec-hw=any",
-            ":network-caching=3000",
+            $":network-caching={ResolveLiveNetworkCachingMs(conservative)}",
         };
+
+        if (conservative)
+        {
+            options.Add(":avcodec-skiploopfilter=all");
+            options.Add($":clock-jitter={ClockJitterUs}");
+        }
 
         if (string.IsNullOrWhiteSpace(referer))
             return options;
 
         var trimmed = referer.Trim();
         options.Add($":http-referrer={trimmed}");
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+
+        var originTrimmed = string.IsNullOrWhiteSpace(origin)
+            ? null
+            : origin.Trim();
+        if (originTrimmed is null && Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
         {
-            var origin = uri.GetLeftPart(UriPartial.Authority);
-            options.Add($":avformat-options=headers=Referer: {trimmed}\r\nOrigin: {origin}\r\nUser-Agent: {userAgent}");
+            originTrimmed = uri.GetLeftPart(UriPartial.Authority);
+        }
+
+        if (!string.IsNullOrWhiteSpace(originTrimmed))
+        {
+            options.Add(
+                $":avformat-options=headers=Referer: {trimmed}\r\nOrigin: {originTrimmed}\r\nUser-Agent: {userAgent}");
         }
 
         return options;
@@ -173,6 +231,20 @@ public static class LinuxPlatformProbe
             UseConservativeVlcOptions,
             Environment.GetEnvironmentVariable(AudioOutputVariableName));
 
+    public static int ResolveLiveNetworkCachingMs(bool conservative) =>
+        conservative ? WslLiveNetworkCachingMs : DesktopLiveNetworkCachingMs;
+
+    /// <summary>
+    /// Software-callback present limits. Native desktop is uncapped
+    /// (full decoded size and frame rate). WSL caps width and pace so
+    /// Pulse is not starved — test-host only.
+    /// </summary>
+    public static (int MaxFrameWidth, int MinPresentIntervalMs) ResolveSoftwarePresentLimits(
+        bool conservative) =>
+        conservative
+            ? (WslMaxFrameWidth, WslPresentIntervalMs)
+            : (0, 0);
+
     /// <summary>
     /// True when <paramref name="module"/> is a real aout we are willing to
     /// pin (pulse / alsa). <c>any</c> is a probe, not a SetAudioOutput name.
@@ -180,6 +252,22 @@ public static class LinuxPlatformProbe
     public static bool IsPinnedAudioOutput(string? module) =>
         TryNormalizeAudioOutput(module, out var normalized) &&
         (normalized == PulseAudioOutput || normalized == AlsaAudioOutput);
+
+    /// <summary>
+    /// WSLg Pulse crackles at the default ~20ms fragment. Set
+    /// <see cref="PulseLatencyVariableName"/> when conservative and unset.
+    /// </summary>
+    public static bool TryApplyPulseLatencyHint()
+    {
+        if (!UseConservativeVlcOptions)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(PulseLatencyVariableName)))
+            return false;
+
+        Environment.SetEnvironmentVariable(PulseLatencyVariableName, PulseLatencyMsec.ToString());
+        return true;
+    }
 
     public static bool TryNormalizeAudioOutput(string? raw, out string module)
     {
@@ -212,7 +300,9 @@ public static class LinuxPlatformProbe
 
         var pulse = string.IsNullOrWhiteSpace(pulseServer) ? "default" : pulseServer.Trim();
         var runtime = string.IsNullOrWhiteSpace(runtimeDir) ? "unset" : "set";
-        return $"aout={aout}; wsl={wsl}; PULSE_SERVER={pulse}; XDG_RUNTIME_DIR={runtime}";
+        var latency = Environment.GetEnvironmentVariable(PulseLatencyVariableName);
+        var latencyText = string.IsNullOrWhiteSpace(latency) ? "unset" : latency.Trim();
+        return $"aout={aout}; wsl={wsl}; PULSE_SERVER={pulse}; PULSE_LATENCY_MSEC={latencyText}; XDG_RUNTIME_DIR={runtime}";
     }
 
     private static bool DetectWsl()

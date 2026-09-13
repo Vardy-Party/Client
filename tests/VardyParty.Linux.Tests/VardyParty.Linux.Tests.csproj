@@ -18,5 +18,7 @@
     <Compile Include="..\..\VardyParty.Linux\Services\LibVlcPlaybackFailure.cs" Link="LibVlcPlaybackFailure.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LibVlcFrameGeometry.cs" Link="LibVlcFrameGeometry.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackFullscreenSession.cs" Link="LinuxPlaybackFullscreenSession.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxHlsPlaylistRewriter.cs" Link="LinuxHlsPlaylistRewriter.cs" />
+    <Compile Include="..\..\VardyParty.Linux\Services\LinuxHlsLocalProxy.cs" Link="LinuxHlsLocalProxy.cs" />
   </ItemGroup>
 </Project>

@@ -429,6 +429,7 @@ public class StreamResolverTests
         Assert.Equal(2, results.Count);
         Assert.Equal("Chip A", results[0].Stream.Channel);
         Assert.Equal("Chip B", results[1].Stream.Channel);
+        Assert.DoesNotContain(1, totals);
         Assert.Contains(2, totals);
         _localLanPlay.Verify(
             s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
@@ -666,6 +667,7 @@ public class StreamResolverTests
         // Assert
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        Assert.Equal(["https://media.example.test/cfall/seg.exe?_s2=1"], results[0].RewrittenSegments);
         _healthChecker.Verify(
             h => h.CheckStreamHealthAsync(
                 m3u8.Url,

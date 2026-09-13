@@ -186,5 +186,65 @@ namespace VardyParty.Catalog.Tests
             Assert.DoesNotContain(consumerVisible, g => g.League.Equals("League Hidden", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(consumerVisible, g => g.League.Equals("League Alpha", StringComparison.OrdinalIgnoreCase));
         }
+
+        [Fact]
+        public void ToDisplay_IncludesRecentScoredFinished()
+        {
+            var now = DateTime.UtcNow;
+            var finished = Make(
+                "Home United",
+                "Away City",
+                now.AddHours(-2),
+                isFinished: true,
+                homeScore: 2,
+                awayScore: 0,
+                statusText: "FT",
+                league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [finished] };
+
+            var ordered = dict.ToDisplay();
+
+            Assert.Contains(finished, ordered);
+        }
+
+        [Fact]
+        public void ToDisplay_ExcludesScorelessHeuristicFinished()
+        {
+            var now = DateTime.UtcNow;
+            var heuristic = Make(
+                "North FC",
+                "South FC",
+                now.AddHours(-3),
+                isFinished: true,
+                statusText: "FT",
+                league: "League Alpha");
+            var upcoming = Make("Home United", "Away City", now.AddHours(2), league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [heuristic, upcoming] };
+
+            var ordered = dict.ToDisplay();
+
+            Assert.DoesNotContain(heuristic, ordered);
+            Assert.Contains(upcoming, ordered);
+        }
+
+        [Fact]
+        public void ToDisplay_ExcludesStaleScoredFinished()
+        {
+            var now = DateTime.UtcNow;
+            var stale = Make(
+                "Old Park",
+                "New Park",
+                now.AddHours(-30),
+                isFinished: true,
+                homeScore: 1,
+                awayScore: 0,
+                statusText: "FT",
+                league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [stale] };
+
+            var ordered = dict.ToDisplay();
+
+            Assert.DoesNotContain(stale, ordered);
+        }
     }
 }

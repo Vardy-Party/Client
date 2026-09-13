@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using VardyParty.Auth;
 using VardyParty.Hosting;
+using VardyParty.Streaming;
 using VardyParty.TestSupport;
 
 namespace VardyParty.Hosting.Tests;
@@ -65,6 +66,16 @@ public class NonDisposingDelegatingHandlerTests
         Assert.Equal(PlaybackHttpClients.ProbeTimeout, probe.Timeout);
         Assert.Equal(PlaybackHttpClients.MediaTimeout, media.Timeout);
         Assert.NotNull(auth0);
+    }
+
+    [Fact]
+    public void AddVardyPartyHttpClients_RegistersLocalLanPlayServiceWithAuth0Handler()
+    {
+        var services = new ServiceCollection();
+        services.AddVardyPartyHttpClients();
+
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(ILocalLanPlayService));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(Auth0ApiTokenHandler));
     }
 
     private sealed class TrackingHandler : HttpMessageHandler

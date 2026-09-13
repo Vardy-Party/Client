@@ -24,4 +24,9 @@ public interface ILocalLanPlayService
     Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default);
 
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The HTTP status code returned by the most recent health check, or null if no check was attempted or connection failed.
+    /// </summary>
+    System.Net.HttpStatusCode? LastHealthStatus => null;
 }

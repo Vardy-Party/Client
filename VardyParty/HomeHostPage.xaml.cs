@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QRCoder;
 using VardyParty.Auth;
 using VardyParty.Catalog;
@@ -32,9 +33,11 @@ public partial class HomeHostPage : ContentPage
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly IUiSoundPlayer _soundPlayer;
+    private readonly Auth0Settings _auth0Settings;
     private readonly HomeShellViewModel _homeShell = new();
 
     private readonly List<IDisposable> _subscriptions = new();
+    private readonly List<IDisposable> _gameFeedSubscriptions = new();
     private IDisposable? _progressSubscription;
     private bool _initialized;
     private bool _isAuthenticated;
@@ -74,7 +77,8 @@ public partial class HomeHostPage : ContentPage
         SelectionState selection,
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
-        IUiSoundPlayer soundPlayer)
+        IUiSoundPlayer soundPlayer,
+        IOptions<Auth0Settings> auth0Settings)
     {
         _logger = logger;
         _viewModel = viewModel;
@@ -88,6 +92,7 @@ public partial class HomeHostPage : ContentPage
         _sounds = sounds;
         _notifications = notifications;
         _soundPlayer = soundPlayer;
+        _auth0Settings = auth0Settings.Value;
 
         // Hand the Leanback TV detection (MainApplication) to the shared view
         // BEFORE InitializeComponent builds it: HomeView seeds the layout
@@ -229,22 +234,73 @@ public partial class HomeHostPage : ContentPage
         }
         else
         {
-            SetAuthOverlayVisible(true);
+            ShowUnauthenticatedOverlay();
         }
 
         _logger.LogInformation("[HomeHost] Initialize complete (authenticated={Authenticated})", _isAuthenticated);
     }
 
+    private bool IsAuth0Configured() =>
+        !string.IsNullOrWhiteSpace(_auth0Settings.Domain)
+        && !string.IsNullOrWhiteSpace(_auth0Settings.ClientId);
+
+    private void ShowUnauthenticatedOverlay()
+    {
+        var configured = IsAuth0Configured();
+        if (!configured)
+        {
+            _logger.LogWarning(
+                "[HomeHost] Auth0 not configured; hiding Sign in. Domain/ClientId empty in this build.");
+        }
+
+        PostUi(() =>
+        {
+            AuthOverlay.IsVisible = true;
+            DeviceCodePanel.IsVisible = false;
+
+            if (configured)
+            {
+                AuthWelcomeLabel.IsVisible = true;
+                AuthWelcomeLabel.Text = "Welcome — please sign in to browse today's matches.";
+                SignInButton.IsVisible = true;
+                SignInButton.IsEnabled = true;
+                SignInButton.Text = "Sign in — Continue";
+                AuthStatusLabel.Text = string.Empty;
+                AuthStatusLabel.IsVisible = false;
+                SignInButton.Focus();
+                return;
+            }
+
+            AuthWelcomeLabel.Text = string.Empty;
+            AuthWelcomeLabel.IsVisible = false;
+            SignInButton.IsVisible = false;
+            SignInButton.IsEnabled = false;
+            AuthStatusLabel.Text = "Missing configuration.";
+            AuthStatusLabel.IsVisible = true;
+        });
+    }
+
     private void StartGamesFeed()
     {
-        _subscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
-        _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
+        StopGamesFeed();
+        _gameFeedSubscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
+        _gameFeedSubscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
             _viewModel.SetServiceError(error);
         }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
+    }
+
+    private void StopGamesFeed()
+    {
+        foreach (var subscription in _gameFeedSubscriptions)
+        {
+            subscription.Dispose();
+        }
+
+        _gameFeedSubscriptions.Clear();
     }
 
     /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
@@ -263,6 +319,12 @@ public partial class HomeHostPage : ContentPage
     private async Task StartSignInAsync()
     {
         if (_isAuthenticating) return;
+
+        if (!IsAuth0Configured())
+        {
+            ShowUnauthenticatedOverlay();
+            return;
+        }
 
         _logger.LogInformation("[HomeHost] Sign in pressed (IsTv={IsTv})", MauiProgram.IsTv);
         _isAuthenticating = true;
@@ -396,6 +458,8 @@ public partial class HomeHostPage : ContentPage
 
         await _authTokens.LogoutAsync();
 
+        StopGamesFeed();
+
         foreach (var subscription in _subscriptions)
         {
             subscription.Dispose();
@@ -469,7 +533,7 @@ public partial class HomeHostPage : ContentPage
     private void SetAuthOverlayVisible(bool visible) => PostUi(() =>
     {
         AuthOverlay.IsVisible = visible;
-        if (visible)
+        if (visible && SignInButton.IsVisible && SignInButton.IsEnabled)
         {
             SignInButton.Focus();
         }
@@ -562,6 +626,9 @@ public partial class HomeHostPage : ContentPage
             }
             catch (OperationCanceledException)
             {
+                // Player close may cancel the resolution CTS; mark exhausted so
+                // TryResumeAfterPlayer does not restart finding-streams.
+                _resolutionExhausted = true;
                 _logger.LogInformation("[HomeHost] Stream resolution cancelled");
             }
             catch (Exception ex)
@@ -657,7 +724,7 @@ public partial class HomeHostPage : ContentPage
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
 
-    private void OnPlaybackVisibilityChanged(object? sender, bool visible)
+    private async void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         PlaybackAudioSession.Apply(visible, _sounds, _soundPlayer);
 
@@ -667,6 +734,37 @@ public partial class HomeHostPage : ContentPage
         _notifications.IsPlaybackActive = visible;
         if (!visible)
         {
+            var authenticated = false;
+            try
+            {
+                authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[HomeHost] Authentication check after playback failed");
+            }
+
+            if (!authenticated)
+            {
+                _logger.LogWarning("[HomeHost] Authentication expired or invalidated during playback; transitioning to sign-in overlay");
+                _isAuthenticated = false;
+                _selection.CurrentGame = null;
+                try
+                {
+                    _homeShell.ClearSelection();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
+                }
+
+                PostUi(() => _viewModel.CanSignOut = false);
+                StopGamesFeed();
+                _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
+                ShowUnauthenticatedOverlay();
+                return;
+            }
+
             PostUi(TryResumeAfterPlayer);
         }
     }
@@ -674,12 +772,17 @@ public partial class HomeHostPage : ContentPage
     /// <summary>Same decision the old Blazor Home page made after the native player closed.</summary>
     private void TryResumeAfterPlayer()
     {
+        if (!_isAuthenticated)
+        {
+            return;
+        }
+
         try
         {
             var resolutionActive = _isResolvingStreams
                 || _resolutionStartClaimed
                 || _resolutionTask is { IsCompleted: false };
-            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted);
+            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted, _isAuthenticated);
             if (resume == ResumeAfterPlayerAction.Clear)
             {
                 _selection.CurrentGame = null;

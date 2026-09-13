@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
@@ -77,7 +78,17 @@ public sealed class LocalLanServiceAvailabilityMonitor(
                 return true;
             }
 
-            _warningSubject.OnNext("Local service unavailable. Ensure VardyParty Local Service is running on your LAN.");
+            var warning = localLanPlayService.LastHealthStatus switch
+            {
+                HttpStatusCode.Unauthorized =>
+                    "Local service requires authentication. Sign in to enable local stream playback.",
+                HttpStatusCode.Forbidden =>
+                    "Local service access denied. Stream viewer permission required.",
+                _ =>
+                    "Local service unavailable. Ensure VardyParty Local Service is running on your LAN."
+            };
+
+            _warningSubject.OnNext(warning);
             return false;
         }
         catch (OperationCanceledException)

@@ -8,6 +8,10 @@ export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}"
 export USER_SECRETS_ID="${USER_SECRETS_ID:-543d9e88-b60c-4397-bc9d-c4614b8b1dcb}"
+# local|preview|production — see VardyParty.Linux MauiProgram BuildConfiguration.
+# Pass through from the caller; default preview for local WSL bring-up.
+export VARDYPARTY_LINUX_API="${VARDYPARTY_LINUX_API:-preview}"
+echo "[linux] VARDYPARTY_LINUX_API=$VARDYPARTY_LINUX_API"
 
 APPSETTINGS="VardyParty.Linux/appsettings.json"
 LOG="$(mktemp /tmp/vardyparty-linux-launch.XXXXXX.log)"
@@ -25,8 +29,8 @@ tr -d '\r' < scripts/merge-appsettings-secrets.sh | bash -s -- "$APPSETTINGS"
     --ignore-failed-sources -p:HomeUiTargetFrameworks=net11.0 \
   && "$HOME/.dotnet/dotnet" build VardyParty.Linux/VardyParty.Linux.csproj \
     -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0 \
-  && pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/assert-linux-appsettings-auth0.ps1 \
-    -AppSettingsPath "VardyParty.Linux/bin/Release/net11.0/appsettings.json" \
+  && tr -d '\r' < scripts/assert-linux-appsettings-auth0.sh | bash -s -- \
+       "VardyParty.Linux/bin/Release/net11.0/appsettings.json" \
   && "$HOME/.dotnet/dotnet" run --project VardyParty.Linux/VardyParty.Linux.csproj \
     -c Release --no-build -p:HomeUiTargetFrameworks=net11.0
 } 2>&1 | tee "$LOG"

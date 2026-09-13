@@ -92,60 +92,78 @@ public class StreamResolutionOrchestrator(
             return outcome;
         }
 
-        await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
-                           orderedStreams,
-                           2,
-                           cancellationToken,
-                           totalCount =>
-                           {
-                               _totalStreams = totalCount;
-                               PublishProgress();
-                           }))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Check if playback was closed by user
-            if (playbackTask != null && playbackTask.IsCompleted)
+            await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
+                               orderedStreams,
+                               2,
+                               cancellationToken,
+                               totalCount =>
+                               {
+                                   _totalStreams = totalCount;
+                                   PublishProgress();
+                               }))
             {
-                var playbackResult = await playbackTask;
-                if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Check if playback was closed by user
+                if (playbackTask != null && playbackTask.IsCompleted)
                 {
-                    outcome.UserClosed = true;
-                    outcome.PlaybackResult = playbackResult;
-                    return outcome;
+                    var playbackResult = await playbackTask;
+                    if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        outcome.UserClosed = true;
+                        outcome.PlaybackResult = playbackResult;
+                        return outcome;
+                    }
+                }
+
+                streamCount++;
+                _streamsTested++;
+                PublishProgress();
+
+                if (enrichedStream.Status == StreamResolutionStatus.Failed)
+                {
+                    _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
+                        enrichedStream.Health, cancellationToken);
+                }
+                else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
+                {
+                    _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
+                        cancellationToken);
+                }
+
+                if (enrichedStream.Status != StreamResolutionStatus.Healthy)
+                {
+                    continue;
+                }
+
+                streamSwitchingService.AddHealthyStream(enrichedStream);
+                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                PublishProgress();
+
+                if (!hasPlayedFirstStream)
+                {
+                    hasPlayedFirstStream = true;
+                    // Start playback without awaiting so stream testing can continue
+                    playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
                 }
             }
+        }
+        catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
+        {
+            // Close cancels the resolve CTS while PlayVideoAsync already completed
+            // with "User closed" — prefer that outcome over a bare cancel.
+            var playbackResult = await playbackTask;
+            outcome.PlaybackResult = playbackResult;
+            if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                outcome.UserClosed = true;
+            }
 
-            streamCount++;
-            _streamsTested++;
+            _isResolving = false;
             PublishProgress();
-
-            if (enrichedStream.Status == StreamResolutionStatus.Failed)
-            {
-                _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
-                    enrichedStream.Health, cancellationToken);
-            }
-            else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
-            {
-                _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
-                    cancellationToken);
-            }
-
-            if (enrichedStream.Status != StreamResolutionStatus.Healthy)
-            {
-                continue;
-            }
-
-            streamSwitchingService.AddHealthyStream(enrichedStream);
-            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-            PublishProgress();
-
-            if (!hasPlayedFirstStream)
-            {
-                hasPlayedFirstStream = true;
-                // Start playback without awaiting so stream testing can continue
-                playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
-            }
+            return outcome;
         }
 
         // Wait for playback to complete if it was started

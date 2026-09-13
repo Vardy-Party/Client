@@ -301,4 +301,28 @@ public class HomePlaybackIntentTests
         Assert.True(sut.UserInitiatedResolution);
         Assert.False(sut.PlayerSessionStarted);
     }
+
+    [Fact]
+    public void DecideResumeAfterPlayer_WhenUnauthenticated_Clears()
+    {
+        // Arrange
+        var sut = new HomePlaybackIntent();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        sut.MarkUserInitiated();
+        sut.MarkPlayerSessionStarted();
+
+        // Act
+        var action = sut.DecideResumeAfterPlayer(
+            isResolvingStreams: false,
+            selectedGame: game,
+            currentGame: game,
+            resolutionExhausted: false,
+            isAuthenticated: false);
+
+        // Assert
+        Assert.Equal(ResumeAfterPlayerAction.Clear, action);
+    }
 }

@@ -93,6 +93,32 @@ public class LibVlcFrameGeometryTests
         // Assert
         Assert.Throws<ArgumentNullException>(() => LibVlcFrameGeometry.WriteRv32Chroma(IntPtr.Zero));
     }
+
+    [Fact]
+    public void CapMaxWidth_LeavesSmallerFramesAlone()
+    {
+        // Arrange
+        // Act
+        var same = LibVlcFrameGeometry.CapMaxWidth(1280, 720, 1280);
+        var unused = LibVlcFrameGeometry.CapMaxWidth(1920, 1080, 0);
+
+        // Assert
+        Assert.Equal((1280u, 720u), same);
+        Assert.Equal((1920u, 1080u), unused);
+    }
+
+    [Fact]
+    public void CapMaxWidth_Scales1080pTo720pAndKeepsEvenHeight()
+    {
+        // Arrange
+        // Act
+        var capped = LibVlcFrameGeometry.CapMaxWidth(1920, 1080, 1280);
+
+        // Assert
+        Assert.Equal(1280u, capped.Width);
+        Assert.Equal(720u, capped.Height);
+        Assert.Equal(0u, capped.Height % 2);
+    }
 }
 
 public class LibVlcFramePresentGateTests
@@ -113,5 +139,21 @@ public class LibVlcFramePresentGateTests
         Assert.True(first);
         Assert.False(second);
         Assert.True(third);
+    }
+
+    [Fact]
+    public void TryBeginPresent_MinInterval_RejectsUntilElapsed()
+    {
+        // Arrange
+        var sut = new LibVlcFramePresentGate();
+
+        // Act
+        var first = sut.TryBeginPresent(minIntervalMs: 10_000);
+        sut.EndPresent();
+        var second = sut.TryBeginPresent(minIntervalMs: 10_000);
+
+        // Assert
+        Assert.True(first);
+        Assert.False(second);
     }
 }

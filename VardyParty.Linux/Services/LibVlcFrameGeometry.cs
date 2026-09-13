@@ -63,6 +63,24 @@ public static class LibVlcFrameGeometry
         return (int)bytes;
     }
 
+    /// <summary>
+    /// Shrinks a frame so its width is at most <paramref name="maxWidth"/>,
+    /// keeping aspect. Even height for planar converters. No-op when
+    /// <paramref name="maxWidth"/> is 0 or the frame is already smaller.
+    /// </summary>
+    public static (uint Width, uint Height) CapMaxWidth(uint width, uint height, int maxWidth)
+    {
+        if (maxWidth <= 0 || width == 0 || height == 0 || width <= (uint)maxWidth)
+            return (width, height);
+
+        var scale = (double)maxWidth / width;
+        var cappedHeight = (uint)Math.Max(2, Math.Round(height * scale));
+        cappedHeight &= ~1u;
+        if (cappedHeight == 0)
+            cappedHeight = 2;
+        return ((uint)maxWidth, cappedHeight);
+    }
+
     /// <summary>Writes the four-character RV32 chroma tag into LibVLC's chroma pointer.</summary>
     public static void WriteRv32Chroma(IntPtr chroma)
     {
@@ -86,8 +104,25 @@ public static class LibVlcFrameGeometry
 public sealed class LibVlcFramePresentGate
 {
     private int _posted;
+    private long _nextAllowedMs;
 
-    public bool TryBeginPresent() => Interlocked.CompareExchange(ref _posted, 1, 0) == 0;
+    public bool TryBeginPresent(int minIntervalMs = 0)
+    {
+        if (minIntervalMs > 0)
+        {
+            var now = Environment.TickCount64;
+            if (now < Volatile.Read(ref _nextAllowedMs))
+                return false;
+        }
+
+        if (Interlocked.CompareExchange(ref _posted, 1, 0) != 0)
+            return false;
+
+        if (minIntervalMs > 0)
+            Volatile.Write(ref _nextAllowedMs, Environment.TickCount64 + minIntervalMs);
+
+        return true;
+    }
 
     public void EndPresent() => Interlocked.Exchange(ref _posted, 0);
 }

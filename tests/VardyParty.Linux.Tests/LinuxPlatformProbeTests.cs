@@ -16,11 +16,20 @@ public class LinuxPlatformProbeTests
 
         // Assert
         Assert.Contains("--avcodec-hw=none", options);
+        Assert.Contains($"--clock-jitter={LinuxPlatformProbe.ClockJitterUs}", options);
+        Assert.Contains("--no-audio-time-stretch", options);
+        Assert.Contains("--drop-late-frames", options);
+        Assert.Contains("--skip-frames", options);
+        Assert.DoesNotContain("--clock-synchro=0", options);
+        Assert.DoesNotContain("--audio-resampler=soxr", options);
+        Assert.DoesNotContain("--ipv4", options);
+        Assert.DoesNotContain(options, o => o.StartsWith("--pulse-latency=", StringComparison.Ordinal));
+        Assert.DoesNotContain(options, o => o.StartsWith("--audio-desync=", StringComparison.Ordinal));
         Assert.Contains("--vout=x11", options);
         Assert.DoesNotContain("--vout=vmem", options);
         Assert.DoesNotContain("--demux=avformat", options);
         Assert.Contains("--aout=pulse", options);
-        Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("--no-audio", options);
     }
 
     [Fact]
@@ -33,6 +42,14 @@ public class LinuxPlatformProbeTests
 
         // Assert
         Assert.Contains("--avcodec-hw=none", options);
+        Assert.Contains("--avcodec-skiploopfilter=all", options);
+        Assert.Contains($"--clock-jitter={LinuxPlatformProbe.ClockJitterUs}", options);
+        Assert.Contains("--no-audio-time-stretch", options);
+        Assert.Contains("--drop-late-frames", options);
+        Assert.DoesNotContain("--clock-synchro=0", options);
+        Assert.DoesNotContain("--ipv4", options);
+        Assert.DoesNotContain(options, o => o.StartsWith("--pulse-latency=", StringComparison.Ordinal));
+        Assert.DoesNotContain(options, o => o.StartsWith("--audio-desync=", StringComparison.Ordinal));
         Assert.Contains("--vout=vmem", options);
         Assert.DoesNotContain("--vout=x11", options);
         Assert.Contains("--aout=pulse", options);
@@ -50,6 +67,8 @@ public class LinuxPlatformProbeTests
         Assert.Contains("--vout=vmem", options);
         Assert.DoesNotContain("--vout=x11", options);
         Assert.Contains("--avcodec-hw=any", options);
+        Assert.DoesNotContain("--avcodec-hw=none", options);
+        Assert.DoesNotContain($"--network-caching={LinuxPlatformProbe.WslLiveNetworkCachingMs}", options);
     }
 
     [Fact]
@@ -62,9 +81,33 @@ public class LinuxPlatformProbeTests
         // Assert
         Assert.Contains("--avcodec-hw=any", options);
         Assert.Contains("--aout=pulse", options);
+        Assert.Contains($"--network-caching={LinuxPlatformProbe.DesktopLiveNetworkCachingMs}", options);
         Assert.DoesNotContain("--vout=x11", options);
         Assert.DoesNotContain("--demux=avformat", options);
-        Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("--no-audio", options);
+        Assert.DoesNotContain("--avcodec-hw=none", options);
+        Assert.DoesNotContain("--avcodec-skiploopfilter=all", options);
+        Assert.DoesNotContain("--ipv4", options);
+        Assert.DoesNotContain(options, o => o.StartsWith("--pulse-latency=", StringComparison.Ordinal));
+        Assert.DoesNotContain(options, o => o.StartsWith("--clock-jitter=", StringComparison.Ordinal));
+        Assert.DoesNotContain("--no-audio-time-stretch", options);
+        Assert.DoesNotContain("--drop-late-frames", options);
+        Assert.DoesNotContain("--skip-frames", options);
+    }
+
+    [Fact]
+    public void ResolveSoftwarePresentLimits_Native_Uncapped()
+    {
+        // Arrange
+        // Act
+        var native = LinuxPlatformProbe.ResolveSoftwarePresentLimits(conservative: false);
+        var wsl = LinuxPlatformProbe.ResolveSoftwarePresentLimits(conservative: true);
+
+        // Assert
+        Assert.Equal((0, 0), native);
+        Assert.Equal(
+            (LinuxPlatformProbe.WslMaxFrameWidth, LinuxPlatformProbe.WslPresentIntervalMs),
+            wsl);
     }
 
     [Fact]
@@ -80,12 +123,15 @@ public class LinuxPlatformProbeTests
         {
             Assert.Contains("--quiet", options);
             Assert.Contains("--no-video-title-show", options);
-            Assert.Contains("--network-caching=3000", options);
-            Assert.Contains("--live-caching=3000", options);
             Assert.Contains("--http-reconnect", options);
             Assert.Contains("--no-spdif", options);
             Assert.Equal(1, options.Count(o => o.StartsWith("--aout=", StringComparison.Ordinal)));
         }
+
+        Assert.Contains($"--network-caching={LinuxPlatformProbe.WslLiveNetworkCachingMs}", conservative);
+        Assert.Contains($"--live-caching={LinuxPlatformProbe.WslLiveNetworkCachingMs}", conservative);
+        Assert.Contains($"--network-caching={LinuxPlatformProbe.DesktopLiveNetworkCachingMs}", native);
+        Assert.Contains($"--live-caching={LinuxPlatformProbe.DesktopLiveNetworkCachingMs}", native);
     }
 
     [Theory]
@@ -103,7 +149,7 @@ public class LinuxPlatformProbeTests
         // Assert
         Assert.True(LinuxPlatformProbe.TryNormalizeAudioOutput(overrideModule, out var normalized));
         Assert.Contains($"--aout={normalized}", options);
-        Assert.DoesNotContain(options, o => o.Contains("no-audio", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("--no-audio", options);
     }
 
     [Theory]
@@ -151,6 +197,7 @@ public class LinuxPlatformProbeTests
         Assert.Contains("aout=pulse", description, StringComparison.Ordinal);
         Assert.Contains("wsl=True", description, StringComparison.Ordinal);
         Assert.Contains("PULSE_SERVER=unix:/tmp/pulse", description, StringComparison.Ordinal);
+        Assert.Contains("PULSE_LATENCY_MSEC=", description, StringComparison.Ordinal);
         Assert.Contains("XDG_RUNTIME_DIR=set", description, StringComparison.Ordinal);
     }
 
@@ -191,5 +238,25 @@ public class LinuxPlatformProbeTests
             o.Contains($"Referer: {referer}", StringComparison.Ordinal) &&
             o.Contains("Origin: https://referer.example.com", StringComparison.Ordinal));
         Assert.DoesNotContain(options, o => o.Equals(":demux=avformat", StringComparison.Ordinal));
+        Assert.Contains($":clock-jitter={LinuxPlatformProbe.ClockJitterUs}", options);
+        Assert.Contains($":network-caching={LinuxPlatformProbe.WslLiveNetworkCachingMs}", options);
+    }
+
+    [Fact]
+    public void BuildPlaybackMediaOptions_Native_UsesDesktopCacheAndHardwareDecode()
+    {
+        // Arrange
+        const string userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
+
+        // Act
+        var options = LinuxPlatformProbe.BuildPlaybackMediaOptions(
+            conservative: false, referer: null, userAgent);
+
+        // Assert
+        Assert.Contains(":avcodec-hw=any", options);
+        Assert.Contains($":network-caching={LinuxPlatformProbe.DesktopLiveNetworkCachingMs}", options);
+        Assert.DoesNotContain(":avcodec-hw=none", options);
+        Assert.DoesNotContain(":avcodec-skiploopfilter=all", options);
+        Assert.DoesNotContain(options, o => o.StartsWith(":clock-jitter=", StringComparison.Ordinal));
     }
 }

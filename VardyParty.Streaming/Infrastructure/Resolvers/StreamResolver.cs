@@ -31,7 +31,12 @@ public class StreamResolver(
             seen.Add(CandidateKey(stream));
         }
 
-        onTotalStreamsKnown?.Invoke(pending.Count);
+        // Catalog MP rows often have no chip labels yet — LocalService discovers them
+        // on the first /mp. Keep overlay total unknown (indeterminate) until then.
+        if (!pending.Any(HasUnknownMpChipFanOut))
+        {
+            onTotalStreamsKnown?.Invoke(pending.Count);
+        }
 
         var concurrency = Math.Max(1, batchSize);
         logger.LogInformation(
@@ -123,9 +128,14 @@ public class StreamResolver(
                 pending.Add(sibling);
             }
 
-            if (outcome.Siblings.Count > 0)
+            // Publish total once MP chip inventory is known (siblings and/or sole chip).
+            if (entry.IsMp || outcome.Siblings.Count > 0)
             {
                 onTotalStreamsKnown?.Invoke(pending.Count);
+            }
+
+            if (outcome.Siblings.Count > 0)
+            {
                 logger.LogInformation(
                     "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
                     outcome.Siblings.Count,
@@ -217,6 +227,9 @@ public class StreamResolver(
             enriched.ResolvedM3U8Url = m3u8Url;
             enriched.Status = StreamResolutionStatus.Resolved;
             enriched.RequestHeaders = m3u8Response?.RequestHeaders;
+            enriched.RewrittenSegments = m3u8Response?.RewrittenSegments?
+                .Where(url => !string.IsNullOrWhiteSpace(url))
+                .ToList();
             enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
@@ -279,6 +292,12 @@ public class StreamResolver(
         || url.Contains("kdns.fr", StringComparison.OrdinalIgnoreCase)
         || url.Contains("fhlsport", StringComparison.OrdinalIgnoreCase)
         || url.Contains("isyjvux", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasUnknownMpChipFanOut(Stream stream) =>
+        MpPageUrl.IsV2Stream(stream)
+        && string.IsNullOrWhiteSpace(stream.PlayerStream)
+        && (stream.PlayerStreams is null || stream.PlayerStreams.Count == 0)
+        && string.IsNullOrWhiteSpace(stream.Channel);
 
     private IReadOnlyList<Stream> SiblingsFrom(Stream source, M3U8Response? response)
     {

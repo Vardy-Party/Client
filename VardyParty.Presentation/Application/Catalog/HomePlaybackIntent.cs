@@ -80,8 +80,12 @@ public sealed class HomePlaybackIntent
         bool isResolvingStreams,
         Game? selectedGame,
         Game? currentGame,
-        bool resolutionExhausted)
+        bool resolutionExhausted,
+        bool isAuthenticated = true)
     {
+        if (!isAuthenticated)
+            return ResumeAfterPlayerAction.Clear;
+
         if (isResolvingStreams || selectedGame is null || !UserInitiatedResolution)
             return ResumeAfterPlayerAction.None;
 

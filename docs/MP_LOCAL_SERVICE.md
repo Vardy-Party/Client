@@ -28,9 +28,11 @@ Desktop bring-up docs in m3u8-resolver: `docs/MP_CHROME.md`, `docs/MP_PROTOCOL.m
    capability `mp.chrome`.
 3. Client calls `POST /mp` with page URL (+ optional chip) when strategy is v2 and `mp.chrome` is advertised.
 4. LocalService returns playlist `url` + `requestHeaders` (+ optional `rewrittenSegments` from live capture).
-5. **Playlist CTU rewrite stays server-side on `/mp` today** — the client resolve
-   path has no playlist body, so `PostProcessPlaylist` is not applied client-side yet.
-6. Health-check prefers `rewrittenSegments` / rewritten absolute URLs (not playlist-relative `*.json`).
+5. Client playback applies `PostProcessPlaylist` when a playlist body is fetched
+   (Linux loopback HLS proxy). Resolve still has no playlist body; health-check
+   prefers `rewrittenSegments` / rewritten absolute URLs (not playlist-relative `*.json`).
+6. Linux also substitutes captured `rewrittenSegments` into decoy URI lines before
+   wrapping them through the loopback proxy.
 
 `/mp` timeout is 90s; `/play` keeps the existing M3U8 timeout. Same-match `/mp` calls stay sequential.
 

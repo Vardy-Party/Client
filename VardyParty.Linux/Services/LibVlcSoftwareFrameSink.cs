@@ -14,6 +14,8 @@ namespace VardyParty.Linux.Services;
 public sealed class LibVlcSoftwareFrameSink : IDisposable
 {
     readonly IVideoFramePresenter _presenter;
+    readonly int _maxFrameWidth;
+    readonly int _minPresentIntervalMs;
     readonly MediaPlayer.LibVLCVideoLockCb _lock;
     readonly MediaPlayer.LibVLCVideoDisplayCb _display;
     readonly MediaPlayer.LibVLCVideoFormatCb _format;
@@ -30,9 +32,14 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
     bool _attached;
     byte[] _copy = [];
 
-    public LibVlcSoftwareFrameSink(IVideoFramePresenter presenter)
+    public LibVlcSoftwareFrameSink(
+        IVideoFramePresenter presenter,
+        int maxFrameWidth = 0,
+        int minPresentIntervalMs = 0)
     {
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
+        _maxFrameWidth = maxFrameWidth;
+        _minPresentIntervalMs = minPresentIntervalMs;
         _lock = OnLock;
         _display = OnDisplay;
         _format = OnFormat;
@@ -67,6 +74,10 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
     {
         _ = opaque;
         LibVlcFrameGeometry.WriteRv32Chroma(chroma);
+
+        var capped = LibVlcFrameGeometry.CapMaxWidth(width, height, _maxFrameWidth);
+        width = capped.Width;
+        height = capped.Height;
 
         var w = (int)width;
         var h = (int)height;
@@ -122,7 +133,7 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
             return;
         }
 
-        if (!_gate.TryBeginPresent())
+        if (!_gate.TryBeginPresent(_minPresentIntervalMs))
         {
             return;
         }
