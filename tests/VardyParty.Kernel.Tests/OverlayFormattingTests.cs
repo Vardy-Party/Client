@@ -183,6 +183,7 @@ namespace VardyParty.Kernel.Tests
             // Arrange
             var stream = _fixture.Build<Stream>()
                 .With(s => s.Channel, "Channel North")
+                .With(s => s.PlayerStream, string.Empty)
                 .With(s => s.Resolution, "640x360")
                 .With(s => s.BitrateKbps, 800)
                 .Create();
@@ -227,6 +228,42 @@ namespace VardyParty.Kernel.Tests
 
             // Assert
             Assert.Null(info);
+        }
+
+        [Fact]
+        public void ResolveChipOrChannelLabel_PrefersPlayerStreamOverBadgeChannel()
+        {
+            var stream = _fixture.Build<Stream>()
+                .With(s => s.Channel, "V2")
+                .With(s => s.PlayerStream, "TyR")
+                .With(s => s.Source, "mp")
+                .Create();
+
+            Assert.Equal("TyR", PlayerOverlayFormatter.ResolveChipOrChannelLabel(stream));
+        }
+
+        [Fact]
+        public void ResolveChipOrChannelLabel_UsesNonBadgeChannelWhenNoPlayerStream()
+        {
+            var stream = _fixture.Build<Stream>()
+                .With(s => s.Channel, "Fola ID")
+                .With(s => s.PlayerStream, string.Empty)
+                .With(s => s.Source, "mp")
+                .Create();
+
+            Assert.Equal("Fola ID", PlayerOverlayFormatter.ResolveChipOrChannelLabel(stream));
+        }
+
+        [Fact]
+        public void ResolveChipOrChannelLabel_IgnoresCatalogBadgeOnly()
+        {
+            var stream = _fixture.Build<Stream>()
+                .With(s => s.Channel, "FB")
+                .With(s => s.PlayerStream, string.Empty)
+                .With(s => s.Source, "fb")
+                .Create();
+
+            Assert.Null(PlayerOverlayFormatter.ResolveChipOrChannelLabel(stream));
         }
     }
 }

@@ -40,9 +40,7 @@ namespace VardyParty.Platforms.Android
                 {
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
-                    Channel = !string.IsNullOrWhiteSpace(current.Stream?.PlayerStream)
-                        ? current.Stream!.PlayerStream
-                        : (IsCatalogBadge(current.Stream?.Channel) ? null : current.Stream?.Channel),
+                    Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
                     BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
                     Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
@@ -52,9 +50,7 @@ namespace VardyParty.Platforms.Android
                     VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
                     AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
                     AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                    Title = !string.IsNullOrWhiteSpace(current.Stream?.PlayerStream)
-                        ? current.Stream!.PlayerStream
-                        : (IsCatalogBadge(current.Stream?.Channel) ? null : current.Stream?.Channel)
+                    Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream)
                 };
             }
             catch (Exception ex)
@@ -63,11 +59,6 @@ namespace VardyParty.Platforms.Android
                 return null;
             }
         }
-
-        private static bool IsCatalogBadge(string? label) =>
-            string.Equals(label, "V2", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(label, "MP", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
 
         private void ApplySourceBadge(string? label)
         {
@@ -105,7 +96,8 @@ namespace VardyParty.Platforms.Android
             _lastOverlayInfo = info;
 
             // Top line should be game title (Home vs Away) when provided
-            var channel = info.Title ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
+            var chip = info.Channel;
+            var channelFallback = chip ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
             var statusLine = $"{VardyParty.Resources.Strings.Resources.StatusLabel}: {_playbackStateText}";
             var indexLine = info.Total > 0 ? string.Format(VardyParty.Resources.Strings.Resources.StreamIndexFormat, info.Index, info.Total) : string.Empty;
 
@@ -141,13 +133,15 @@ namespace VardyParty.Platforms.Android
             }
             catch (Exception ex) { LogIgnored("ReadVideoSize", ex); }
 
-            if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channel);
+            if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channelFallback);
             if (_statusView != null) _statusView.Text = statusLine;
             if (_indexView != null) _indexView.Text = indexLine;
             ApplySourceBadge(_switching?.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
             if (_qualityView != null) _qualityView.Text = qualityLabel;
-            // Build lines: resolution (+fr), bitrate, buffer each on its own line
+            // Build lines: chip, resolution (+fr), bitrate, buffer each on its own line
             var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(chip))
+                lines.Add($"Channel: {chip}");
             var resLine = string.Empty;
             if (!string.IsNullOrEmpty(resDetails) || !string.IsNullOrEmpty(resolution))
             {
@@ -178,9 +172,10 @@ namespace VardyParty.Platforms.Android
 
             // Control whether updating overlay should show it. If suppressed (e.g. switching via Right while overlay hidden),
             // update texts but do not reveal the overlay.
+            // While video-info is locked open, keep it visible even during buffering so Buffer % can update.
             if (!_suppressOverlayShow)
             {
-                if (_isBuffering)
+                if (_isBuffering && !_overlayLocked)
                 {
                     HideOverlayAnimated();
                     return;

@@ -875,8 +875,7 @@ public partial class HomeHostPage : ContentPage
             : progress.Status == "Playing..." ? "Now Playing" : "Finding streams...";
         ResolveTitleLabel.IsVisible = ResolveTitleLabel.Text.Length > 0;
         ResolveStatusLabel.Text = progress.Status;
-        ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
-            && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
+        ResolveStatusLabel.IsVisible = StreamResolveOverlayProgress.ShouldShowStatusSubtitle(progress.Status);
         ApplyResolveWaitVisual(
             indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));

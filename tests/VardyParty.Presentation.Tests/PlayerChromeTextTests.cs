@@ -104,6 +104,7 @@ public class PlayerChromeTextTests
         // Arrange
         var stream = _fixture.Build<Stream>()
             .With(s => s.Channel, "Channel North")
+            .With(s => s.PlayerStream, string.Empty)
             .With(s => s.Source, "fb")
             .With(s => s.Url, "https://streams.example.com/watch")
             .With(s => s.Resolution, "1280x720")
@@ -136,9 +137,46 @@ public class PlayerChromeTextTests
         Assert.Equal(4, model.StreamTotal);
         Assert.Equal("Channel North", model.Channel);
         Assert.Equal("FB", model.SourceLabel);
+        Assert.Equal("Home United vs Away City", model.Title);
         Assert.Equal("https://streams.example.com/live.m3u8", model.SourceUrl);
         Assert.Equal("referer.example.com", model.RefererHost);
         Assert.Equal("2500 kbps", model.Bitrate);
+    }
+
+    [Fact]
+    public void FromPlayback_MpChip_UsesPlayerStreamNotGameTitleOrBadge()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Channel, "V2")
+            .With(s => s.PlayerStream, "BE ID")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Url, "https://streams.example.com/page")
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(s => s.Stream, stream)
+            .With(s => s.ResolvedM3U8Url, "https://cdn.example.com/live.m3u8")
+            .Without(s => s.Health)
+            .Create();
+        var overlay = PlayerOverlayFormatter.BuildOverlayInfo(enriched, index: 1, total: 3);
+
+        // Act
+        var model = PlayerChromeText.FromPlayback(
+            overlay,
+            enriched,
+            playbackState: "Playing",
+            title: "Home United vs Away City",
+            sourceUrl: null,
+            refererUrl: stream.Url,
+            bufferPercent: 72);
+
+        // Assert
+        Assert.Equal("BE ID", model.Channel);
+        Assert.Equal("V2", model.SourceLabel);
+        Assert.Equal("Home United vs Away City", model.Title);
+        Assert.Equal("72%", model.Buffer);
+        Assert.DoesNotContain("V2", model.Channel);
     }
 
     [Fact]

@@ -117,10 +117,16 @@ namespace VardyParty.Platforms.Android
                 }
                 catch (Exception ex) { LogIgnored("DismissStreamToast", ex); }
                 ShowOverlayAnimated();
+                StartVideoInfoRefreshLoop();
             }
             else if (!wantInfo && _isInfoVisible)
             {
+                StopVideoInfoRefreshLoop();
                 HideOverlayAnimated();
+            }
+            else if (wantInfo)
+            {
+                StartVideoInfoRefreshLoop();
             }
 
             _isMenuVisible = wantMenu;
@@ -269,6 +275,8 @@ namespace VardyParty.Platforms.Android
         private TextView? _streamToastView;
         private global::Android.OS.Handler? _streamToastHandler;
         private Java.Lang.IRunnable? _streamToastRunnable;
+        private global::Android.OS.Handler? _videoInfoRefreshHandler;
+        private Java.Lang.IRunnable? _videoInfoRefreshRunnable;
         private int _lastToastIndex = -1;
         private int _lastToastTotal = -1;
         private bool _playbackResultReported;
@@ -887,6 +895,7 @@ namespace VardyParty.Platforms.Android
             {
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
+                StopVideoInfoRefreshLoop();
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
                 RemoveCallback(_overlayHandler, _overlayHideRunnable);
@@ -1017,6 +1026,49 @@ namespace VardyParty.Platforms.Android
             if (handler is null || runnable is null)
                 return;
             handler.PostDelayed(runnable, delayMs);
+        }
+
+        private void StartVideoInfoRefreshLoop()
+        {
+            try
+            {
+                _videoInfoRefreshHandler ??= new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+                _videoInfoRefreshRunnable ??= new Java.Lang.Runnable(() =>
+                {
+                    try
+                    {
+                        if (_chrome?.IsVideoInfoVisible != true && !_isInfoVisible)
+                        {
+                            StopVideoInfoRefreshLoop();
+                            return;
+                        }
+
+                        UpdateOverlayFromCurrentStream();
+                        PostDelayedCallback(
+                            _videoInfoRefreshHandler,
+                            _videoInfoRefreshRunnable,
+                            (long)PlaybackChromePresenter.VideoInfoRefreshInterval.TotalMilliseconds);
+                    }
+                    catch (Exception ex) { LogIgnored("VideoInfoRefreshTick", ex); }
+                });
+
+                RemoveCallback(_videoInfoRefreshHandler, _videoInfoRefreshRunnable);
+                UpdateOverlayFromCurrentStream();
+                PostDelayedCallback(
+                    _videoInfoRefreshHandler,
+                    _videoInfoRefreshRunnable,
+                    (long)PlaybackChromePresenter.VideoInfoRefreshInterval.TotalMilliseconds);
+            }
+            catch (Exception ex) { LogIgnored("StartVideoInfoRefreshLoop", ex); }
+        }
+
+        private void StopVideoInfoRefreshLoop()
+        {
+            try
+            {
+                RemoveCallback(_videoInfoRefreshHandler, _videoInfoRefreshRunnable);
+            }
+            catch (Exception ex) { LogIgnored("StopVideoInfoRefreshLoop", ex); }
         }
 
         // Hide system UI (status bar and navigation bar) for full-screen video experience
@@ -1353,10 +1405,15 @@ namespace VardyParty.Platforms.Android
                 {
                     try
                     {
-                        var last = _activity._lastOverlayInfo;
-                        if (last != null)
+                        // Rebuild so BufferPercent / status are not stuck on a prior snapshot.
+                        var info = _activity.BuildOverlayInfoFromCurrentStream();
+                        if (info != null)
+                            _activity.RunOnUiThread(() => _activity.UpdateOverlayText(info));
+                        else
                         {
-                            _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
+                            var last = _activity._lastOverlayInfo;
+                            if (last != null)
+                                _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
                         }
                     }
                     catch (Exception ex) { _activity.LogIgnored("UpdateOverlayOnStateChange", ex); }

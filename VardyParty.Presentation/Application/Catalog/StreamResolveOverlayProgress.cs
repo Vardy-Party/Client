@@ -37,6 +37,21 @@ public static class StreamResolveOverlayProgress
     }
 
     /// <summary>
+    /// Hide status text that only repeats the modal title ("Finding streams" /
+    /// "Searching for streams", with or without trailing ellipsis). Matchup
+    /// subtitles and progress statuses stay visible.
+    /// </summary>
+    public static bool ShouldShowStatusSubtitle(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return false;
+
+        var normalized = status.Trim().TrimEnd('.').Trim();
+        return !string.Equals(normalized, "Searching for streams", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(normalized, "Finding streams", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Count line for the finding-streams modal. While the bar is indeterminate
     /// (candidate total unknown), "0 tested • 0 healthy" is meaningless — return
     /// empty so hosts hide the label.

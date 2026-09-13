@@ -115,13 +115,12 @@ public static class PlayerOverlayFormatter
             return null;
 
         var resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution;
+        var chip = ResolveChipOrChannelLabel(current?.Stream);
         return new PlayerOverlayInfo
         {
             Index = index,
             Total = total,
-            Channel = FirstNonEmpty(
-                current?.Stream?.PlayerStream,
-                IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel),
+            Channel = chip,
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
             Resolution = resolution,
             FrameRate = current?.Health?.FrameRate,
@@ -130,23 +129,31 @@ public static class PlayerOverlayFormatter
             AspectRatio = BuildAspect(resolution),
             M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
             RefererUrl = refererUrl,
-            Title = FirstNonEmpty(
-                current?.Stream?.PlayerStream,
-                IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel)
+            // Hosts supply the game title separately; keep chip identity on Channel.
+            Title = chip
         };
     }
 
-    private static string? FirstNonEmpty(params string?[] values)
+    /// <summary>
+    /// MP chip / player label for overlays. Prefers <see cref="Stream.PlayerStream"/>,
+    /// then a non-badge <see cref="Stream.Channel"/> (stamped after chip autoplay).
+    /// </summary>
+    public static string? ResolveChipOrChannelLabel(Stream? stream)
     {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value.Trim();
-            }
-        }
+        if (stream is null)
+            return null;
 
-        return null;
+        if (!string.IsNullOrWhiteSpace(stream.PlayerStream))
+            return stream.PlayerStream.Trim();
+
+        if (string.IsNullOrWhiteSpace(stream.Channel))
+            return null;
+
+        var channel = stream.Channel.Trim();
+        if (IsCatalogBadgeChannel(channel))
+            return null;
+
+        return channel;
     }
 
     private static bool IsCatalogBadgeChannel(string? channel) =>

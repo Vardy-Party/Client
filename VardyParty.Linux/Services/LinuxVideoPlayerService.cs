@@ -70,6 +70,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private TaskCompletionSource<PlaybackResult>? _playbackTcs;
     private Func<Task>? _onNextStreamRequested;
     private bool _isBuffering;
+    private float _bufferCachePercent;
     private bool _initFailed;
     private string? _refererUrl;
     private IReadOnlyDictionary<string, string>? _requestHeaders;
@@ -282,6 +283,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     /// <summary>Game title shown in the video-info panel (Home vs Away).</summary>
     public string? PlaybackTitle => _playbackTitle;
+
+    /// <summary>
+    /// Latest LibVLC buffering cache percent (0–100). Updated from Buffering events;
+    /// stays at the last value between events (typically 100 while stably playing).
+    /// </summary>
+    public int? BufferPercent =>
+        _bufferCachePercent > 0 || _isBuffering
+            ? (int)Math.Clamp(Math.Round(_bufferCachePercent), 0, 100)
+            : null;
 
     public string? PlaybackLeague => _playbackLeague;
 
@@ -1136,6 +1146,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Playback started");
+        _bufferCachePercent = 100f;
         RaiseReadyFromCurrentPlayer();
     }
 
@@ -1147,6 +1158,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         var isBuffering = e.Cache < 100f;
+        _bufferCachePercent = e.Cache;
         _logger.LogDebug("[LinuxVideoPlayerService] Buffering: {Percentage}%", e.Cache);
         SetBufferingState(isBuffering);
         _engine.Raise(MediaEngineEvent.Buffering(_session.Snapshot.AttachGeneration, isBuffering));

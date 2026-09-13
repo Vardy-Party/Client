@@ -156,7 +156,8 @@ public static class PlayerChromeText
             Bitrate = bitrate is > 0 ? $"{bitrate} kbps" : null,
             VideoCodec = overlay?.VideoCodec,
             AudioCodec = overlay?.AudioCodec,
-            Title = title ?? overlay?.Title,
+            // Game title from the host; never substitute the MP chip here.
+            Title = string.IsNullOrWhiteSpace(title) ? null : title.Trim(),
             Buffer = buffer.HasValue ? $"{buffer}%" : null,
             SourceUrl = StripQuery(sourceUrl ?? overlay?.M3u8Url ?? current?.ResolvedM3U8Url),
             RefererHost = RefererHost(refererUrl ?? overlay?.RefererUrl)
@@ -228,14 +229,14 @@ public static class PlayerChromeText
     /// </summary>
     private static string? PreferChipLabel(string? overlayChannel, Kernel.Stream? stream)
     {
-        if (!string.IsNullOrWhiteSpace(stream?.PlayerStream))
-            return stream!.PlayerStream.Trim();
+        var fromStream = PlayerOverlayFormatter.ResolveChipOrChannelLabel(stream);
+        if (!string.IsNullOrWhiteSpace(fromStream))
+            return fromStream;
 
-        var channel = overlayChannel ?? stream?.Channel;
-        if (string.IsNullOrWhiteSpace(channel))
+        if (string.IsNullOrWhiteSpace(overlayChannel))
             return null;
 
-        var trimmed = channel.Trim();
+        var trimmed = overlayChannel.Trim();
         if (string.Equals(trimmed, "V2", StringComparison.OrdinalIgnoreCase)
             || string.Equals(trimmed, "MP", StringComparison.OrdinalIgnoreCase)
             || string.Equals(trimmed, "FB", StringComparison.OrdinalIgnoreCase))

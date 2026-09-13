@@ -12,6 +12,7 @@ public partial class LinuxHomePage
     private IDispatcherTimer? _streamToastHideTimer;
     private IDispatcherTimer? _tickerTimer;
     private IDispatcherTimer? _reportStatusTimer;
+    private IDispatcherTimer? _videoInfoRefreshTimer;
     private double _tickerOffset;
     private bool _isNextStreamRequestInProgress;
     private Dictionary<string, List<Game>>? _latestGamesByLeague;
@@ -51,6 +52,7 @@ public partial class LinuxHomePage
         _streamToastHideTimer?.Stop();
         _tickerTimer?.Stop();
         _reportStatusTimer?.Stop();
+        _videoInfoRefreshTimer?.Stop();
         _tickerOffset = 0;
         _isPlaybackBuffering = false;
         _playbackChrome?.DismissStreamToast();
@@ -187,6 +189,10 @@ public partial class LinuxHomePage
 
         VideoInfoPanel.IsVisible = infoVisible;
         ScoresTickerRow.IsVisible = scoresVisible;
+        if (infoVisible)
+            StartVideoInfoRefreshTimer();
+        else
+            _videoInfoRefreshTimer?.Stop();
         if (scoresVisible)
         {
             RefreshScoresTickerText();
@@ -210,13 +216,37 @@ public partial class LinuxHomePage
                 title: linux?.PlaybackTitle,
                 sourceUrl: _switching.GetCurrentStream()?.ResolvedM3U8Url,
                 refererUrl: _switching.GetCurrentStream()?.Referer,
-                bufferPercent: null);
+                bufferPercent: linux?.BufferPercent);
             VideoInfoText.Text = PlayerChromeText.FormatVideoInfo(model);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "[LinuxHome] RefreshVideoInfoText failed");
         }
+    }
+
+    private void StartVideoInfoRefreshTimer()
+    {
+        _videoInfoRefreshTimer ??= CreateVideoInfoRefreshTimer();
+        if (!_videoInfoRefreshTimer.IsRunning)
+            _videoInfoRefreshTimer.Start();
+    }
+
+    private IDispatcherTimer CreateVideoInfoRefreshTimer()
+    {
+        var timer = Dispatcher.CreateTimer();
+        timer.Interval = PlaybackChromePresenter.VideoInfoRefreshInterval;
+        timer.Tick += (_, _) =>
+        {
+            if (_playbackChrome?.IsVideoInfoVisible != true)
+            {
+                _videoInfoRefreshTimer?.Stop();
+                return;
+            }
+
+            RefreshVideoInfoText();
+        };
+        return timer;
     }
 
     private PlayerOverlayInfo? BuildOverlaySnapshot()

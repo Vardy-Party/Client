@@ -80,4 +80,18 @@ public class StreamResolveOverlayProgressTests
     {
         Assert.Equal(expected, StreamResolveOverlayProgress.IsExhaustedStatus(status));
     }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("Searching for streams", false)]
+    [InlineData("Searching for streams...", false)]
+    [InlineData("Finding streams", false)]
+    [InlineData("Finding streams...", false)]
+    [InlineData("Home United v Away City", true)]
+    [InlineData("Testing stream 2 of 5", true)]
+    public void ShouldShowStatusSubtitle_HidesTitleEcho(string? status, bool expected)
+    {
+        Assert.Equal(expected, StreamResolveOverlayProgress.ShouldShowStatusSubtitle(status));
+    }
 }

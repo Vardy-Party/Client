@@ -53,7 +53,7 @@ namespace VardyParty.Platforms.Windows
                             streamIndex = switching.GetCurrentStreamIndex();
                             streamTotal = switching.GetHealthyStreams().Count;
                             var current = switching.GetCurrentStream();
-                            streamChannel = current?.Stream?.Channel;
+                            streamChannel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream);
                             try { streamQuality = current?.GetQualityDisplay(); } catch (Exception ex) { _host.LogIgnored("GetQualityDisplay", ex); }
                             try { streamSourceLabel = current?.Stream?.CatalogSourceBadgeLabel; } catch (Exception ex) { _host.LogIgnored("CatalogSourceBadgeLabel", ex); }
                         }

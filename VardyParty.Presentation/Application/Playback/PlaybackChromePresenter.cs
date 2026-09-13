@@ -29,6 +29,12 @@ public sealed class PlaybackChromePresenter
     public static readonly TimeSpan StreamToastAutoHide = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan ReportStatusLinger = TimeSpan.FromMilliseconds(900);
 
+    /// <summary>
+    /// While the video-info overlay is open, hosts may poll cheap player buffer
+    /// APIs on this interval. Do not run when the overlay is hidden.
+    /// </summary>
+    public static readonly TimeSpan VideoInfoRefreshInterval = TimeSpan.FromMilliseconds(500);
+
     private readonly Func<string, CancellationToken, Task>? _reportBadStream;
     private readonly Func<Task>? _requestNext;
     private readonly Func<Task>? _requestPrevious;
