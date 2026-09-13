@@ -8,7 +8,7 @@ public class StreamHealthReport
     public string StreamUrl { get; set; } = string.Empty;
 
     /// <summary>
-    /// MadPlay / v2 player label when multiple streams share the same page URL.
+    /// MP / v2 player label when multiple streams share the same page URL.
     /// </summary>
     [JsonPropertyName("streamName")]
     public string? StreamName { get; set; }

@@ -1214,7 +1214,8 @@ namespace VardyParty.Platforms.Android
                         metrics.IsBuffering = true;
                     }
 
-                    await _healthReporter.ReportPlaybackMetricsAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                    await _healthReporter.ReportPlaybackMetricsAsync(
+                        _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
 
                     var generation = CurrentAttachGeneration;
                     var bitrate = metrics.BitrateKbps;
@@ -1235,7 +1236,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics();
-                _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                _ = _healthReporter.ReportPlaybackStartedAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
             }
             catch (Exception ex)
             {

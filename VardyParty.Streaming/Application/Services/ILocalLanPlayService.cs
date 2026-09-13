@@ -23,6 +23,17 @@ public interface ILocalLanPlayService
     /// </summary>
     Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Package version reported by the discovered LocalService (<c>/health</c> <c>version</c>),
+    /// or null if unknown / unavailable.
+    /// </summary>
+    string? DiscoveredServiceVersion { get; }
+
+    /// <summary>
+    /// Refresh discovery/health and return the LocalService package version when available.
+    /// </summary>
+    Task<string?> GetDiscoveredServiceVersionAsync(CancellationToken cancellationToken = default);
+
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

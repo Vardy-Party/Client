@@ -147,7 +147,7 @@ public static class PlayerChromeText
             PlaybackState = string.IsNullOrWhiteSpace(playbackState) ? "unknown" : playbackState,
             StreamIndex = overlay?.Index ?? 0,
             StreamTotal = overlay?.Total ?? 0,
-            Channel = overlay?.Channel ?? current?.Stream?.Channel,
+            Channel = PreferChipLabel(overlay?.Channel, current?.Stream),
             SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
             Quality = quality,
             Resolution = resolution,
@@ -221,6 +221,29 @@ public static class PlayerChromeText
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Prefer MP chip / player label over catalog badge placeholders like "V2".
+    /// </summary>
+    private static string? PreferChipLabel(string? overlayChannel, Kernel.Stream? stream)
+    {
+        if (!string.IsNullOrWhiteSpace(stream?.PlayerStream))
+            return stream!.PlayerStream.Trim();
+
+        var channel = overlayChannel ?? stream?.Channel;
+        if (string.IsNullOrWhiteSpace(channel))
+            return null;
+
+        var trimmed = channel.Trim();
+        if (string.Equals(trimmed, "V2", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "MP", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "FB", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return trimmed;
     }
 }
 

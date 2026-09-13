@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Streaming;
 
 namespace VardyParty.Platforms.Android
 {
@@ -133,12 +134,19 @@ namespace VardyParty.Platforms.Android
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
+        private string? CurrentHealthStreamName()
+        {
+            var stream = _switching?.GetCurrentStream()?.Stream;
+            return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
+        }
+
         private void PostHealthError(string? error)
         {
             if (_healthReporter == null) return;
             try
             {
-                _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error: error);
+                _ = _healthReporter.ReportPlaybackErrorAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), error: error);
             }
             catch (Exception ex) { LogIgnored("ReportPlaybackError", ex); }
         }
@@ -149,7 +157,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics(isBuffering: true);
-                _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                _ = _healthReporter.ReportBufferingAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
             }
             catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }

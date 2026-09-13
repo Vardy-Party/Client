@@ -315,7 +315,15 @@ public class StreamResolver(
 
     private static string? GetPlayerStreamName(Stream stream)
     {
-        if (!stream.RequiresV2StreamSelection || StreamCandidateRules.ShouldSkipCountdown(stream.IsCountdown))
+        if (StreamCandidateRules.ShouldSkipCountdown(stream.IsCountdown))
+        {
+            return null;
+        }
+
+        // MP/v2: pass chip label when known. Catalog often has source=mp without resolutionStrategy=v2.
+        if (!stream.RequiresV2StreamSelection
+            && !string.Equals(stream.Source, "mp", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
@@ -325,7 +333,15 @@ public class StreamResolver(
             return stream.PlayerStream.Trim();
         }
 
-        return string.IsNullOrWhiteSpace(stream.Channel) ? null : stream.Channel.Trim();
+        if (!string.IsNullOrWhiteSpace(stream.Channel)
+            && !string.Equals(stream.Channel, "V2", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(stream.Channel, "MP", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(stream.Channel, "FB", StringComparison.OrdinalIgnoreCase))
+        {
+            return stream.Channel.Trim();
+        }
+
+        return null;
     }
 
     private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)

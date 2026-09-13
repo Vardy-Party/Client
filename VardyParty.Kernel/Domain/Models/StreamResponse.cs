@@ -85,8 +85,8 @@ public class Stream
 
 
     public bool RequiresV2StreamSelection =>
-
-        string.Equals(ResolutionStrategy, "v2", StringComparison.OrdinalIgnoreCase);
+        string.Equals(ResolutionStrategy, "v2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Source, "mp", StringComparison.OrdinalIgnoreCase);
 
 
 

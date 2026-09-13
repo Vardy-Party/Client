@@ -119,7 +119,8 @@ public static class PlayerOverlayFormatter
         {
             Index = index,
             Total = total,
-            Channel = current?.Stream?.Channel,
+            Channel = current?.Stream?.PlayerStream
+                ?? (IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel),
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
             Resolution = resolution,
             FrameRate = current?.Health?.FrameRate,
@@ -128,9 +129,15 @@ public static class PlayerOverlayFormatter
             AspectRatio = BuildAspect(resolution),
             M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
             RefererUrl = refererUrl,
-            Title = current?.Stream?.Channel
+            Title = current?.Stream?.PlayerStream
+                ?? (IsCatalogBadgeChannel(current?.Stream?.Channel) ? null : current?.Stream?.Channel)
         };
     }
+
+    private static bool IsCatalogBadgeChannel(string? channel) =>
+        string.Equals(channel, "V2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(channel, "MP", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(channel, "FB", StringComparison.OrdinalIgnoreCase);
 
     private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
 }

@@ -831,14 +831,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
+                player._session.Snapshot.CurrentUrl,
+                player._refererUrl,
+                player.CurrentHealthStreamName(),
+                error: reason);
         }
 
         public void ReportDeclined(string? reason)
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl, player._refererUrl, error: reason);
+                player._session.Snapshot.CurrentUrl,
+                player._refererUrl,
+                player.CurrentHealthStreamName(),
+                error: reason);
         }
 
         public void ReportWorking()
@@ -847,6 +853,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _ = player._healthReporter.ReportPlaybackStartedAsync(
                 player._session.Snapshot.CurrentUrl,
                 player._refererUrl,
+                player.CurrentHealthStreamName(),
                 metrics: player.GetCurrentMetrics());
         }
 
@@ -863,6 +870,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 _ = player._healthReporter.ReportBufferingAsync(
                     player._session.Snapshot.CurrentUrl,
                     player._refererUrl,
+                    player.CurrentHealthStreamName(),
                     metrics: player.GetCurrentMetrics());
             }
         }
@@ -1177,6 +1185,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _isBuffering = isBuffering;
             BufferingStateChanged?.Invoke(this, isBuffering);
         }
+    }
+
+    private string? CurrentHealthStreamName()
+    {
+        var stream = _switching.GetCurrentStream()?.Stream;
+        return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
     }
 
     public PlaybackMetrics? GetCurrentMetrics()

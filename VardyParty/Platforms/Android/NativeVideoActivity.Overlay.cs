@@ -40,7 +40,9 @@ namespace VardyParty.Platforms.Android
                 {
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
-                    Channel = current.Stream?.Channel,
+                    Channel = !string.IsNullOrWhiteSpace(current.Stream?.PlayerStream)
+                        ? current.Stream!.PlayerStream
+                        : (IsCatalogBadge(current.Stream?.Channel) ? null : current.Stream?.Channel),
                     BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
                     Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
@@ -50,7 +52,9 @@ namespace VardyParty.Platforms.Android
                     VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
                     AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
                     AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                    Title = current.Stream?.Channel
+                    Title = !string.IsNullOrWhiteSpace(current.Stream?.PlayerStream)
+                        ? current.Stream!.PlayerStream
+                        : (IsCatalogBadge(current.Stream?.Channel) ? null : current.Stream?.Channel)
                 };
             }
             catch (Exception ex)
@@ -59,6 +63,11 @@ namespace VardyParty.Platforms.Android
                 return null;
             }
         }
+
+        private static bool IsCatalogBadge(string? label) =>
+            string.Equals(label, "V2", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(label, "MP", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
 
         private void ApplySourceBadge(string? label)
         {
@@ -382,9 +391,8 @@ namespace VardyParty.Platforms.Android
             {
                 var international = InternationalTeamDisplay.IsInternationalMatch(
                     _currentLeague, _currentHomeTeam, _currentAwayTeam);
-                var home = FormatTeamForDisplay(_currentHomeTeam, international);
-                var away = FormatTeamForDisplay(_currentAwayTeam, international);
-                return InternationalTeamDisplay.FormatMatchTitle(home, away, international: false);
+                return InternationalTeamDisplay.FormatMatchTitle(
+                    _currentHomeTeam, _currentAwayTeam, international);
             }
 
             return string.IsNullOrEmpty(_gameTitle) ? fallbackChannel : _gameTitle;

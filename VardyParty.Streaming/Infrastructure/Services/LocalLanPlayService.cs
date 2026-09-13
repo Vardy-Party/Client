@@ -49,13 +49,28 @@ public class LocalLanPlayService(
     private DateTimeOffset _cachedBaseUrlAt = DateTimeOffset.MinValue;
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
+    private string? _cachedServiceVersion;
 
     public HttpStatusCode? LastHealthStatus { get; private set; }
+
+    public string? DiscoveredServiceVersion => _cachedServiceVersion;
 
     public async Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default)
     {
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
         return SupportsPlayStreamQuery(_cachedCapabilities);
+    }
+
+    public async Task<string?> GetDiscoveredServiceVersionAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(_cachedServiceVersion))
+            return _cachedServiceVersion;
+
+        // Force a health probe even when capabilities were cached from UDP without serviceVersion.
+        _capabilitiesCachedAt = DateTimeOffset.MinValue;
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        return _cachedServiceVersion;
     }
 
     private static bool SupportsPlayStreamQuery(IEnumerable<string> capabilities) =>
@@ -218,13 +233,20 @@ public class LocalLanPlayService(
                 return [];
 
             using var doc = JsonDocument.Parse(json);
-            return ParseCapabilities(doc.RootElement);
+            ApplyHealthPayload(doc.RootElement);
+            return _cachedCapabilities;
         }
         catch (Exception ex)
         {
             logger.LogDebug(ex, "[LocalLanPlay] Failed to read capabilities from {Url}", healthUrl);
             return [];
         }
+    }
+
+    private void ApplyHealthPayload(JsonElement root)
+    {
+        _cachedCapabilities = ParseCapabilities(root);
+        _cachedServiceVersion = ParseServiceVersion(root) ?? _cachedServiceVersion;
     }
 
     private static string[] ParseCapabilities(JsonElement root)
@@ -240,6 +262,31 @@ public class LocalLanPlayService(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Reads package semver from <c>/health</c> (<c>version</c>) or UDP (<c>serviceVersion</c>).
+    /// Discovery protocol <c>version</c> is an int and is ignored here.
+    /// </summary>
+    private static string? ParseServiceVersion(JsonElement root)
+    {
+        if (root.TryGetProperty("serviceVersion", out var serviceVersionEl)
+            && serviceVersionEl.ValueKind == JsonValueKind.String)
+        {
+            var serviceVersion = serviceVersionEl.GetString();
+            if (!string.IsNullOrWhiteSpace(serviceVersion))
+                return serviceVersion.Trim();
+        }
+
+        if (root.TryGetProperty("version", out var versionEl)
+            && versionEl.ValueKind == JsonValueKind.String)
+        {
+            var version = versionEl.GetString();
+            if (!string.IsNullOrWhiteSpace(version))
+                return version.Trim();
+        }
+
+        return null;
     }
 
     private async Task<bool> CheckHealthAsync(string baseUrl, CancellationToken cancellationToken)
@@ -283,7 +330,7 @@ public class LocalLanPlayService(
                 if (!string.IsNullOrWhiteSpace(json))
                 {
                     using var doc = JsonDocument.Parse(json);
-                    _cachedCapabilities = ParseCapabilities(doc.RootElement);
+                    ApplyHealthPayload(doc.RootElement);
                     _capabilitiesCachedAt = DateTimeOffset.UtcNow;
                 }
             }
@@ -574,7 +621,7 @@ public class LocalLanPlayService(
 
                 var host = received.RemoteEndPoint.Address.ToString();
                 var discoveredUrl = $"http://{host}:{httpPort}";
-                _cachedCapabilities = ParseCapabilities(root);
+                ApplyHealthPayload(root);
                 _capabilitiesCachedAt = DateTimeOffset.UtcNow;
                 logger.LogInformation("[LocalLanPlay] Successfully discovered local service endpoint: {Endpoint}", discoveredUrl);
                 return discoveredUrl;
@@ -597,6 +644,7 @@ public class LocalLanPlayService(
         _cachedBaseUrl = null;
         _cachedBaseUrlAt = DateTimeOffset.MinValue;
         _cachedCapabilities = [];
+        _cachedServiceVersion = null;
         _capabilitiesCachedAt = DateTimeOffset.MinValue;
     }
 }
