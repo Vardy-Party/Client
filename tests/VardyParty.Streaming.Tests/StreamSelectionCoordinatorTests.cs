@@ -301,10 +301,13 @@ public class StreamSelectionCoordinatorTests
         // Act
         await sut.InitializeAsync(game);
 
-        // Assert
+        // Assert — recs failure uses session-spread within FB, then MP (salt is random)
+        var channels = sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList();
+        Assert.Equal(3, channels.Count);
+        Assert.Equal("Channel East", channels[^1]);
         Assert.Equal(
-            ["Channel North", "Channel South", "Channel East"],
-            sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList());
+            new HashSet<string> { "Channel North", "Channel South" },
+            channels.Take(2).ToHashSet());
     }
 
     [Fact]
