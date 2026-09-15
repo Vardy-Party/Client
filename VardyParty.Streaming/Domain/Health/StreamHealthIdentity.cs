@@ -9,18 +9,39 @@ public static class StreamHealthIdentity
 
     public static string? GetStreamName(StreamModel stream)
     {
-        if (!stream.RequiresV2StreamSelection || stream.IsCountdown)
+        if (stream.IsCountdown)
         {
             return null;
         }
 
+        // Prefer explicit chip/player label whenever present (MP page URL alone is not enough).
         if (!string.IsNullOrWhiteSpace(stream.PlayerStream))
         {
             return stream.PlayerStream.Trim();
         }
 
-        return string.IsNullOrWhiteSpace(stream.Channel) ? null : stream.Channel.Trim();
+        // After LocalService autoplay, ApplySelectedChip stamps the chip onto Channel.
+        if (IsMpStream(stream) && !string.IsNullOrWhiteSpace(stream.Channel))
+        {
+            var channel = stream.Channel.Trim();
+            if (!IsCatalogBadgeLabel(channel))
+            {
+                return channel;
+            }
+        }
+
+        return null;
     }
+
+    private static bool IsMpStream(StreamModel stream) =>
+        stream.RequiresV2StreamSelection
+        || string.Equals(stream.Source, "mp", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCatalogBadgeLabel(string label) =>
+        string.Equals(label, "V2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(label, "MP", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
 
     public static (string StreamUrl, string? StreamName) FromStream(StreamModel stream)
     {

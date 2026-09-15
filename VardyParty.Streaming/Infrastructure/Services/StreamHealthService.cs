@@ -29,13 +29,32 @@ public class StreamHealthService(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(_recommendationsTimeout);
             var response = await httpClient.GetAsync(url, cts.Token);
-            response.EnsureSuccessStatusCode();
-            var recommendations = await response.Content.ReadFromJsonAsync<RecommendationResponse>(cts.Token);
-            logger.LogInformation("[StreamHealth] Recommendations for {League} {Home} vs {Away}: {@Recommendations}",
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning("[StreamHealth] Unauthorized (401) fetching recommendations for {League} {Home} vs {Away}. User authentication required.", league, homeTeam, awayTeam);
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning("[StreamHealth] Forbidden (403) fetching recommendations for {League} {Home} vs {Away}. Stream viewer permission required.", league, homeTeam, awayTeam);
+                }
+                else
+                {
+                    logger.LogWarning("[StreamHealth] HTTP {StatusCode} fetching recommendations for {League} {Home} vs {Away}", response.StatusCode, league, homeTeam, awayTeam);
+                }
+                return null;
+            }
+
+            var recommendations = response.Content != null
+                ? await response.Content.ReadFromJsonAsync<RecommendationResponse>(cts.Token)
+                : null;
+            logger.LogInformation(
+                "[StreamHealth] Recommendations for {League} {Home} vs {Away}: {Summary}",
                 league,
                 homeTeam,
                 awayTeam,
-                recommendations);
+                RecommendationLogFormatter.Format(recommendations));
             return recommendations;
         }
         catch (Exception ex)
@@ -81,7 +100,9 @@ public class StreamHealthService(
 
             if (!response.IsSuccessStatusCode)
             {
-                var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                var responseContent = response.Content != null
+                    ? await response.Content.ReadAsStringAsync(cancellationToken)
+                    : string.Empty;
                 logger.LogWarning(
                     "[StreamHealth] Health report FAILED. Status: {StatusCode}, Response: {ResponseContent}",
                     response.StatusCode,
@@ -109,8 +130,26 @@ public class StreamHealthService(
         try
         {
             var response = await httpClient.GetAsync(url, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadFromJsonAsync<StreamStatsResponse>(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning("[StreamHealth] Unauthorized (401) fetching stats for {League} {Home} vs {Away}. User authentication required.", league, homeTeam, awayTeam);
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning("[StreamHealth] Forbidden (403) fetching stats for {League} {Home} vs {Away}. Stream viewer permission required.", league, homeTeam, awayTeam);
+                }
+                else
+                {
+                    logger.LogWarning("[StreamHealth] HTTP {StatusCode} fetching stats for {League} {Home} vs {Away}", response.StatusCode, league, homeTeam, awayTeam);
+                }
+                return null;
+            }
+
+            return response.Content != null
+                ? await response.Content.ReadFromJsonAsync<StreamStatsResponse>(cancellationToken)
+                : null;
         }
         catch (Exception ex)
         {

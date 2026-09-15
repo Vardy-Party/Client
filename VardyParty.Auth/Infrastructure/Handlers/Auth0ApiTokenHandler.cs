@@ -19,7 +19,11 @@ public class Auth0ApiTokenHandler(
             logger.LogWarning("[Auth0] No access token available for {Method} {Url}", request.Method, request.RequestUri);
             return new HttpResponseMessage(HttpStatusCode.Unauthorized)
             {
-                RequestMessage = request
+                RequestMessage = request,
+                Content = new StringContent(
+                    """{"error":"unauthorized","error_description":"No Auth0 access token available."}""",
+                    System.Text.Encoding.UTF8,
+                    "application/json")
             };
         }
 

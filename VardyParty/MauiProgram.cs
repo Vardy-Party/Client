@@ -243,6 +243,7 @@ public static class MauiProgram
         // packaged MSIX launches) swaps in the null player for crash bisecting.
 #if ANDROID || WINDOWS
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore, MauiDnsPreferencesStore>();
         if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
         {
             Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");

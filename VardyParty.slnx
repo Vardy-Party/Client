@@ -40,7 +40,7 @@
   <Project Path="tests/VardyParty.Playback.Tests/VardyParty.Playback.Tests.csproj" />
   <Project Path="tests/VardyParty.Presentation.Tests/VardyParty.Presentation.Tests.csproj" />
   <Project Path="tests/VardyParty.HomeUi.Tests/VardyParty.HomeUi.Tests.csproj" />
-  <Project Path="tests/VardyParty.Desktop.Tests/VardyParty.Desktop.Tests.csproj" />
+  <Project Path="tests/VardyParty.Linux.Tests/VardyParty.Linux.Tests.csproj" />
   <Project Path="tests/VardyParty.Hosting.Tests/VardyParty.Hosting.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
   <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />
@@ -53,10 +53,10 @@
   <Project Path="VardyParty.Hosting/VardyParty.Hosting.csproj" />
   <!--
     Preview stack (net11.0 + MAUI-Avalonia): needs the .NET 11 preview SDK.
-    CI code-quality excludes these; the build-desktop job builds them.
+    CI code-quality excludes these; the build-linux job builds them.
   -->
   <Project Path="VardyParty.HomeUi/VardyParty.HomeUi.csproj" />
-  <Project Path="VardyParty.Desktop/VardyParty.Desktop.csproj" />
+  <Project Path="VardyParty.Linux/VardyParty.Linux.csproj" />
   <Project Path="VardyParty/VardyParty.csproj">
     <Deploy />
   </Project>

@@ -11,7 +11,7 @@
 #      API_HEADLESSBASEURL
 #
 # Usage:
-#   scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
+#   scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
 #   USER_SECRETS_ID=... scripts/merge-appsettings-secrets.sh path/to/appsettings.json
 #
 # Requires: python3 (stdlib only).
@@ -33,25 +33,34 @@ resolve_user_secrets_file() {
   [[ -z "$id" ]] && return 1
 
   local candidates=()
+
+  # On WSL, prefer the Windows user-secrets store (same id the MAUI head uses).
+  # $HOME/.microsoft/usersecrets often lags and can still point at production.
+  if [[ -d /mnt/c/Users ]]; then
+    local win_user="${USERPROFILE:-}"
+    if [[ -z "$win_user" ]]; then
+      # /mnt/c/Users/<same login as Windows> when USERPROFILE is unset
+      local guess="/mnt/c/Users/$(whoami)/AppData/Roaming"
+      if [[ -d "$guess" ]]; then
+        candidates+=("$guess/Microsoft/UserSecrets/$id/secrets.json")
+      fi
+    else
+      local wsl_appdata=""
+      if command -v wslpath >/dev/null 2>&1; then
+        local win_appdata="${APPDATA:-$win_user/AppData/Roaming}"
+        wsl_appdata="$(wslpath -u "$win_appdata" 2>/dev/null || true)"
+      fi
+      if [[ -n "$wsl_appdata" ]]; then
+        candidates+=("$wsl_appdata/Microsoft/UserSecrets/$id/secrets.json")
+      fi
+    fi
+  fi
+
   if [[ -n "${HOME:-}" ]]; then
     candidates+=("$HOME/.microsoft/usersecrets/$id/secrets.json")
   fi
   if [[ -n "${APPDATA:-}" ]]; then
     candidates+=("$APPDATA/Microsoft/UserSecrets/$id/secrets.json")
-  fi
-  # WSL reading a Windows user-secrets store
-  if command -v wslpath >/dev/null 2>&1 && [[ -n "${USERPROFILE:-}" || -d /mnt/c/Users ]]; then
-    local win_appdata="${APPDATA:-}"
-    if [[ -z "$win_appdata" && -n "${USERPROFILE:-}" ]]; then
-      win_appdata="$USERPROFILE/AppData/Roaming"
-    fi
-    if [[ -n "$win_appdata" ]]; then
-      local wsl_appdata
-      wsl_appdata="$(wslpath -u "$win_appdata" 2>/dev/null || true)"
-      if [[ -n "$wsl_appdata" ]]; then
-        candidates+=("$wsl_appdata/Microsoft/UserSecrets/$id/secrets.json")
-      fi
-    fi
   fi
 
   local c

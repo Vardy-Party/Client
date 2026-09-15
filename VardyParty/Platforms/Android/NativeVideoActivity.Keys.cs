@@ -360,29 +360,9 @@ namespace VardyParty.Platforms.Android
         /// <summary>
         /// Dismiss in-player overlays first (menu → info → scores ticker).
         /// Returns true when Back was consumed without closing the player.
+        /// Presenter owns scores visibility; ApplyChromeState syncs the host ticker.
         /// </summary>
-        private bool TryConsumeBackLayer()
-        {
-            if (_isMenuVisible)
-            {
-                HideMenu();
-                return true;
-            }
-
-            if (_isInfoVisible)
-            {
-                HideInfoOverlay();
-                return true;
-            }
-
-            if (_isScoresTickerVisible)
-            {
-                ToggleSameLeagueScoresTicker();
-                return true;
-            }
-
-            return false;
-        }
+        private bool TryConsumeBackLayer() => EnsureChrome().TryDismissLayer();
     }
 }
 #endif

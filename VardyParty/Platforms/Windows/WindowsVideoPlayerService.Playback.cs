@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Threading;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Streaming;
 using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -262,9 +263,12 @@ namespace VardyParty.Platforms.Windows
                 public void ReportWorking()
                 {
                     var url = session.session.Snapshot.CurrentUrl;
+                    var stream = session.switchingService?.GetCurrentStream()?.Stream;
+                    var streamName = stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
                     _ = session._host._healthReporter.ReportPlaybackStartedAsync(
                         url,
                         session._refererUrl,
+                        streamName,
                         metrics: session._host.GetCurrentMetrics());
                 }
 

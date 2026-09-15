@@ -51,7 +51,8 @@ public sealed class HomeViewModelTests : IDisposable
         var preferences = new InMemorySoundPreferencesStore();
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         _notifications = new MatchEventNotificationPolicy(preferences);
-        var menu = new MenuViewModel(_filter.Object, sounds, _notifications);
+        var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
@@ -313,6 +314,22 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.True(_sut.HasError);
         Assert.Equal("catalog down", _sut.ErrorMessage);
         Assert.False(_sut.HasPendingWork);
+    }
+
+    [Fact]
+    public void FlushPendingApply_CatalogBoard_DoesNotBlankExistingBanner()
+    {
+        _sut.SetLanWarning("Local service unavailable. Ensure VardyParty Local Service is running on your LAN.");
+        _sut.FlushPendingApply();
+        Assert.True(_sut.HasError);
+
+        _sut.UpdateGames(CatalogWithOneGame());
+        _sut.SetServiceError(null);
+        _sut.FlushPendingApply();
+
+        Assert.True(_sut.HasError);
+        Assert.Contains("Local service unavailable", _sut.ErrorMessage, StringComparison.Ordinal);
+        Assert.True(_sut.HasGames);
     }
 
     [Fact]

@@ -16,8 +16,8 @@ namespace VardyParty.Presentation;
 public sealed record StreamResolutionOutcomePlan(bool ClearSelection, string? ErrorMessage);
 
 /// <summary>
-/// Shared outcome handling for the stream-resolution host pages (Desktop's
-/// DesktopHomePage and the MAUI head's HomeHostPage). Field failure this
+/// Shared outcome handling for the stream-resolution host pages
+/// (LinuxHomePage and the MAUI head's HomeHostPage). Field failure this
 /// codifies: the no-working-streams outcome left the picked game latched as
 /// the shell selection and surfaced nothing, so the card looked dead — the
 /// same-game guard ate every re-click until an app restart. EVERY terminal

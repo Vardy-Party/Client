@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Streaming;
 
 namespace VardyParty.Platforms.Android
 {
@@ -133,12 +134,19 @@ namespace VardyParty.Platforms.Android
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
+        private string? CurrentHealthStreamName()
+        {
+            var stream = _switching?.GetCurrentStream()?.Stream;
+            return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
+        }
+
         private void PostHealthError(string? error)
         {
             if (_healthReporter == null) return;
             try
             {
-                _ = _healthReporter.ReportPlaybackErrorAsync(_m3u8Url, _refererUrl, error: error);
+                _ = _healthReporter.ReportPlaybackErrorAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), error: error);
             }
             catch (Exception ex) { LogIgnored("ReportPlaybackError", ex); }
         }
@@ -149,7 +157,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics(isBuffering: true);
-                _ = _healthReporter.ReportBufferingAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                _ = _healthReporter.ReportBufferingAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
             }
             catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }
@@ -234,6 +243,36 @@ namespace VardyParty.Platforms.Android
             return PlaybackPolicy.IsBehindLiveWindowFailure(error.ErrorCode, error.Message, causeSummary);
         }
 
+        /// <summary>
+        /// Prefer V2 / LocalService headers (referer, origin, UA, cookie) when
+        /// present — same contract Windows AdaptiveMediaSource uses.
+        /// </summary>
+        private System.Collections.Generic.Dictionary<string, string?> BuildPlaybackRequestHeaders()
+        {
+            var headers = new System.Collections.Generic.Dictionary<string, string?>(
+                System.StringComparer.OrdinalIgnoreCase);
+            if (_requestHeaders is { Count: > 0 })
+            {
+                foreach (var pair in _requestHeaders)
+                {
+                    if (!string.IsNullOrWhiteSpace(pair.Value))
+                        headers[pair.Key] = pair.Value;
+                }
+
+                return headers;
+            }
+
+            headers["User-Agent"] =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+            if (string.IsNullOrWhiteSpace(_refererUrl))
+                return headers;
+
+            headers["Referer"] = _refererUrl;
+            if (System.Uri.TryCreate(_refererUrl, System.UriKind.Absolute, out var refererUri))
+                headers["Origin"] = $"{refererUri.Scheme}://{refererUri.Authority}";
+            return headers;
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
@@ -256,22 +295,31 @@ namespace VardyParty.Platforms.Android
                         var dataSourceFactory = new AndroidX.Media3.DataSource.DefaultHttpDataSource.Factory();
                         try
                         {
-                            var headers = new System.Collections.Generic.Dictionary<string, string?>
-                            {
-                                ["Referer"] = _refererUrl ?? string.Empty,
-                                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            };
+                            var headers = BuildPlaybackRequestHeaders();
                             try
                             {
+                                headers.TryGetValue("Referer", out var referer);
+                                headers.TryGetValue("User-Agent", out var userAgent);
                                 _logger?.LogInformation(
                                     "[NativeVideoActivity] Playing stream. m3u8={Url} Referer={Referer} UserAgent={UA}",
                                     m3u8Url,
-                                    headers["Referer"],
-                                    headers["User-Agent"]);
+                                    referer ?? _refererUrl ?? string.Empty,
+                                    userAgent ?? string.Empty);
                             }
                             catch (Exception ex) { LogIgnored("LogPlaybackHeaders", ex); }
 
-                            var customFactory = new HeaderInjectingDataSourceFactory(headers);
+                            var dohEnabled = true;
+                            try
+                            {
+                                var dnsPrefs = VardyParty.AppServiceProvider.ServiceProvider
+                                    ?.GetService(typeof(VardyParty.Ports.IDnsPreferencesStore))
+                                    as VardyParty.Ports.IDnsPreferencesStore;
+                                if (dnsPrefs is not null)
+                                    dohEnabled = dnsPrefs.LoadDnsOverHttpsFallbackEnabled();
+                            }
+                            catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
+
+                            var customFactory = ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);

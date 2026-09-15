@@ -41,10 +41,12 @@ public sealed class HomeShellViewModel
     public ResumeAfterPlayerAction DecideResumeAfterPlayer(
         bool isResolvingStreams,
         Game? currentGame,
-        bool resolutionExhausted) =>
+        bool resolutionExhausted,
+        bool isAuthenticated = true) =>
         _intent.DecideResumeAfterPlayer(
             isResolvingStreams,
             SelectedGame,
             currentGame,
-            resolutionExhausted);
+            resolutionExhausted,
+            isAuthenticated);
 }

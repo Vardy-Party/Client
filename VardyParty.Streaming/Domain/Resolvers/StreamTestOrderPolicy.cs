@@ -27,7 +27,8 @@ public static class StreamTestOrderPolicy
         RecommendationResponse? recommendations,
         int totalStreams,
         Func<string, string?, int> resolveIndex,
-        Func<int, StreamModel> getStream)
+        Func<int, StreamModel> getStream,
+        int sessionSalt)
     {
         if (totalStreams <= 0)
         {
@@ -70,7 +71,20 @@ public static class StreamTestOrderPolicy
             }
         }
 
+        if (ordered.Count == 0)
+        {
+            // Empty crowd data: FB before MP with session-spread within each bucket.
+            return StreamRecommendationPolicy.SpreadDiscoveryOrder(totalStreams, getStream, sessionSalt);
+        }
+
         ordered.AddRange(StreamCatalogSourceOrderer.OrderIndexesFbBeforeMp(remainder, getStream));
         return ordered;
     }
+
+    public static List<int> Build(
+        RecommendationResponse? recommendations,
+        int totalStreams,
+        Func<string, string?, int> resolveIndex,
+        Func<int, StreamModel> getStream) =>
+        Build(recommendations, totalStreams, resolveIndex, getStream, sessionSalt: 0);
 }

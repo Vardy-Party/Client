@@ -1,5 +1,6 @@
 #if ANDROID
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using VardyParty.Kernel;
 using VardyParty.Playback;
@@ -16,6 +17,7 @@ namespace VardyParty.Platforms.Android
         private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private static Func<Task>? _onNextStreamRequested;
         private static PlaybackMetrics? _currentMetrics;
+        private static IReadOnlyDictionary<string, string>? _requestHeaders;
 
         public AndroidVideoPlayerService()
         {
@@ -39,6 +41,7 @@ namespace VardyParty.Platforms.Android
 
                 _playbackTcs = new TaskCompletionSource<PlaybackResult>();
                 _onNextStreamRequested = onNextStreamRequested;
+                _requestHeaders = requestHeaders;
 
                 var intent = new global::Android.Content.Intent(context, typeof(NativeVideoActivity));
                 intent.PutExtra("M3U8_URL", m3u8Url);
@@ -101,6 +104,7 @@ namespace VardyParty.Platforms.Android
             catch { }
             _playbackTcs = null;
             _onNextStreamRequested = null;
+            _requestHeaders = null;
 
             try
             {
@@ -153,6 +157,9 @@ namespace VardyParty.Platforms.Android
         {
             _currentMetrics = metrics;
         }
+
+        /// <summary>V2 / LocalService headers captured for the current playback session.</summary>
+        internal static IReadOnlyDictionary<string, string>? CurrentRequestHeaders => _requestHeaders;
     }
 }
 #endif

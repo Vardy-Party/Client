@@ -71,6 +71,12 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
     public PlaybackMetrics? GetCurrentMetrics() => _currentMetrics;
 
+    private string? CurrentHealthStreamName()
+    {
+        var stream = _switching.GetCurrentStream()?.Stream;
+        return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
+    }
+
     public async Task<PlaybackResult> PlayVideoAsync(
         string m3u8Url,
         string refererUrl,
@@ -422,7 +428,8 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
             player._logger.LogWarning("[AppleVideoPlayer] Stream failed: {Reason}", reason);
             var url = player._session.Snapshot.CurrentUrl;
             if (player._healthReporter != null)
-                _ = player._healthReporter.ReportPlaybackErrorAsync(url, player._refererUrl, error: reason);
+                _ = player._healthReporter.ReportPlaybackErrorAsync(
+                    url, player._refererUrl, player.CurrentHealthStreamName(), error: reason);
         }
 
         public void ReportDeclined(string? reason)
@@ -430,14 +437,16 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
             player._logger.LogWarning("[AppleVideoPlayer] Stream declined: {Reason}", reason);
             var url = player._session.Snapshot.CurrentUrl;
             if (player._healthReporter != null)
-                _ = player._healthReporter.ReportPlaybackErrorAsync(url, player._refererUrl, error: reason);
+                _ = player._healthReporter.ReportPlaybackErrorAsync(
+                    url, player._refererUrl, player.CurrentHealthStreamName(), error: reason);
         }
 
         public void ReportWorking()
         {
             var url = player._session.Snapshot.CurrentUrl;
             if (player._healthReporter != null)
-                _ = player._healthReporter.ReportPlaybackStartedAsync(url, player._refererUrl, metrics: player._currentMetrics);
+                _ = player._healthReporter.ReportPlaybackStartedAsync(
+                    url, player._refererUrl, player.CurrentHealthStreamName(), metrics: player._currentMetrics);
         }
 
         public void MarkEstablished()
@@ -453,6 +462,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
                 _ = player._healthReporter.ReportBufferingAsync(
                     player._session.Snapshot.CurrentUrl,
                     player._refererUrl,
+                    player.CurrentHealthStreamName(),
                     metrics: player._currentMetrics);
             }
         }

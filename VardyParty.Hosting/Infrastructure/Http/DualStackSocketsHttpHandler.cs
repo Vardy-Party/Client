@@ -67,15 +67,18 @@ public static class DualStackSocketsHttpHandler
 
     public static SocketsHttpHandler Create(
         bool ignoreSslCertificateErrors = false,
-        bool useCookies = true)
+        bool useCookies = true,
+        IHostNameResolver? hostNameResolver = null)
     {
+        var resolver = hostNameResolver ?? SystemDnsHostNameResolver.Instance;
         var handler = new SocketsHttpHandler
         {
             ConnectTimeout = ConnectTimeout,
             AllowAutoRedirect = true,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             UseCookies = useCookies,
-            ConnectCallback = ConnectViaDnsAsync
+            ConnectCallback = (context, cancellationToken) =>
+                ConnectViaDnsAsync(context, resolver, cancellationToken)
         };
 
         if (ignoreSslCertificateErrors)
@@ -119,10 +122,11 @@ public static class DualStackSocketsHttpHandler
 
     private static async ValueTask<Stream> ConnectViaDnsAsync(
         SocketsHttpConnectionContext context,
+        IHostNameResolver hostNameResolver,
         CancellationToken cancellationToken)
     {
         var host = context.DnsEndPoint.Host;
-        var resolved = await Dns.GetHostAddressesAsync(host, cancellationToken)
+        var resolved = await hostNameResolver.ResolveAsync(host, cancellationToken)
             .ConfigureAwait(false);
         var plan = PlanConnect(resolved);
         if (plan.Ipv4.Count == 0)
@@ -144,6 +148,15 @@ public static class DualStackSocketsHttpHandler
 
         return await ConnectAsync(plan, context.DnsEndPoint.Port, ConnectSocketAsync, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>System DNS only — used when no DoH resolver is registered.</summary>
+    private sealed class SystemDnsHostNameResolver : IHostNameResolver
+    {
+        public static readonly SystemDnsHostNameResolver Instance = new();
+
+        public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken = default) =>
+            Dns.GetHostAddressesAsync(host, cancellationToken);
     }
 
     private static async Task<Stream> ConnectSocketAsync(

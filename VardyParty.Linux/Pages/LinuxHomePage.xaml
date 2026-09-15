@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:hv="clr-namespace:VardyParty.HomeUi.Views;assembly=VardyParty.HomeUi"
+             x:Class="VardyParty.Linux.Pages.LinuxHomePage"
+             NavigationPage.HasNavigationBar="False"
+             BackgroundColor="#0B0F1A">
+
+    <Grid>
+        <!-- The shared MAUI XAML homepage (same view the Android/Windows heads host). -->
+        <hv:HomeView x:Name="HomeSurface" />
+
+        <!-- Auth overlay: sign-in hero / device-code QR (same glue as HomeHostPage). -->
+        <Grid x:Name="AuthOverlay" BackgroundColor="#0B0F1A" IsVisible="False">
+            <ScrollView>
+                <VerticalStackLayout Spacing="16"
+                                     Padding="32"
+                                     HorizontalOptions="Center"
+                                     VerticalOptions="Center"
+                                     MaximumWidthRequest="560">
+                    <Label Text="Vardy Party"
+                           FontSize="36"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="AuthWelcomeLabel"
+                           Text="Welcome — please sign in to browse today's matches."
+                           FontSize="16"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="SignInButton"
+                            Text="Sign in — Continue"
+                            Clicked="OnSignInClicked"
+                            BackgroundColor="#2563EB"
+                            TextColor="White"
+                            CornerRadius="10"
+                            Padding="24,12"
+                            HorizontalOptions="Center" />
+
+                    <VerticalStackLayout x:Name="DeviceCodePanel" IsVisible="False" Spacing="12">
+                        <Label x:Name="DeviceCodeLabel"
+                               FontSize="30"
+                               FontAttributes="Bold"
+                               TextColor="White"
+                               HorizontalTextAlignment="Center" />
+                        <Image x:Name="DeviceQrImage"
+                               WidthRequest="240"
+                               HeightRequest="240"
+                               Aspect="AspectFit"
+                               HorizontalOptions="Center" />
+                        <Label x:Name="DeviceUriLabel"
+                               FontSize="15"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Button x:Name="CancelSignInButton"
+                                Text="Cancel"
+                                Clicked="OnCancelSignInClicked"
+                                BackgroundColor="#1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="10"
+                                Padding="24,10"
+                                HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+
+                    <Label x:Name="AuthStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#FECACA"
+                           HorizontalTextAlignment="Center" />
+                </VerticalStackLayout>
+            </ScrollView>
+        </Grid>
+
+        <!-- Stream-resolution progress overlay (same glue as HomeHostPage). -->
+        <Grid x:Name="ResolveOverlay" BackgroundColor="#D9000000" IsVisible="False">
+            <Border BackgroundColor="#111726"
+                    Stroke="#26FFFFFF"
+                    StrokeThickness="1"
+                    StrokeShape="RoundRectangle 14"
+                    Padding="28,22"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    MinimumWidthRequest="360">
+                <VerticalStackLayout Spacing="12">
+                    <Label x:Name="ResolveTitleLabel"
+                           Text="Finding streams..."
+                           FontSize="20"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           HorizontalTextAlignment="Center" />
+                    <Label x:Name="ResolveStatusLabel"
+                           IsVisible="False"
+                           FontSize="15"
+                           TextColor="#8A93A6"
+                           HorizontalTextAlignment="Center" />
+                    <ActivityIndicator x:Name="ResolveActivityIndicator"
+                                       Color="#2563EB"
+                                       HeightRequest="32"
+                                       WidthRequest="32"
+                                       HorizontalOptions="Center"
+                                       IsRunning="True" />
+                    <ProgressBar x:Name="ResolveProgressBar"
+                                 ProgressColor="#2563EB"
+                                 HeightRequest="8"
+                                 IsVisible="False" />
+                    <Label x:Name="ResolveCountLabel"
+                           FontSize="13"
+                           TextColor="#5B6478"
+                           HorizontalTextAlignment="Center" />
+                    <Button x:Name="ResolveCancelButton"
+                            Text="Cancel"
+                            Clicked="OnResolveCancelClicked"
+                            BackgroundColor="#1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="10"
+                            Padding="24,8"
+                            HorizontalOptions="Center" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+
+        <!--
+            Playback panel. With the EmbeddedLinuxVideo build switch ON
+            (default) LibVLC software frames composite into an Avalonia Image
+            (VideoHostView) that fills this grid. Chrome — Close, toast,
+            next/prev, menu, video info, scores ticker — is stacked on the
+            SAME cell so it paints and hit-tests on top of the picture
+            (Windows/Android parity). No reserved strips around the video.
+
+            Standalone fallback (switch OFF, or compositing failed at
+            runtime): libvlc opens its own native video window; the same
+            chrome stays in this overlay as companion UI.
+        -->
+        <Grid x:Name="PlaybackOverlay" BackgroundColor="Black" IsVisible="False">
+            <!-- In-window composited video (VideoHostView injected in code-behind). -->
+            <Grid x:Name="VideoHostContainer" BackgroundColor="Black" IsVisible="False" />
+
+            <!-- Standalone-window fallback card (pre-feature behaviour). -->
+            <Grid x:Name="StandalonePlaybackPanel">
+                <Border BackgroundColor="#111726"
+                        Stroke="#26FFFFFF"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 14"
+                        Padding="28,22"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Center"
+                        MinimumWidthRequest="360">
+                    <VerticalStackLayout Spacing="12">
+                        <Label Text="Video is playing in its own window."
+                               FontSize="14"
+                               TextColor="#8A93A6"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="Stream count, next/previous, video info and scores stay in this window as companion chrome — the same controls Windows and Android draw over the picture."
+                               FontSize="12"
+                               TextColor="#5B6478"
+                               HorizontalTextAlignment="Center"
+                               MaximumWidthRequest="420" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+
+            <Grid x:Name="PlaybackChromeRow"
+                  BackgroundColor="Transparent"
+                  VerticalOptions="Start"
+                  HorizontalOptions="Fill"
+                  RowDefinitions="Auto,Auto"
+                  ColumnDefinitions="*,Auto">
+                <hv:MatchEventToastView x:Name="PlaybackToast"
+                                        InputTransparent="True"
+                                        HorizontalOptions="Start"
+                                        VerticalOptions="Start" />
+
+                <HorizontalStackLayout Grid.Column="1"
+                                       Spacing="8"
+                                       Padding="0,4,8,0"
+                                       VerticalOptions="Start"
+                                       HorizontalOptions="End">
+                    <ActivityIndicator x:Name="PlaybackBufferingIndicator"
+                                       Color="#2563EB"
+                                       HeightRequest="22"
+                                       WidthRequest="22"
+                                       IsVisible="False"
+                                       IsRunning="False"
+                                       VerticalOptions="Center" />
+
+                    <Border x:Name="StreamToastPanel"
+                            IsVisible="False"
+                            BackgroundColor="#B3000000"
+                            Stroke="#55FFFFFF"
+                            StrokeThickness="1"
+                            StrokeShape="RoundRectangle 4"
+                            Padding="10,6"
+                            VerticalOptions="Center">
+                        <HorizontalStackLayout Spacing="8">
+                            <Label x:Name="StreamToastLabel"
+                                   TextColor="White"
+                                   FontSize="14"
+                                   FontAttributes="Bold"
+                                   VerticalOptions="Center" />
+                            <Border x:Name="StreamSourceBadge"
+                                    IsVisible="False"
+                                    StrokeShape="RoundRectangle 999"
+                                    Padding="6,1">
+                                <Label x:Name="StreamSourceBadgeLabel"
+                                       FontSize="10"
+                                       FontAttributes="Bold" />
+                            </Border>
+                        </HorizontalStackLayout>
+                    </Border>
+
+                    <Button x:Name="PreviousStreamButton"
+                            Text="⏮"
+                            Clicked="OnPreviousStreamClicked"
+                            IsVisible="False"
+                            WidthRequest="36"
+                            HeightRequest="36"
+                            Padding="0"
+                            BackgroundColor="#CC1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="8"
+                            FontSize="14"
+                            SemanticProperties.Description="Previous stream" />
+
+                    <HorizontalStackLayout x:Name="NextStreamCluster"
+                                           IsVisible="False"
+                                           Spacing="4"
+                                           VerticalOptions="Center">
+                        <Button x:Name="NextStreamButton"
+                                Text="⏭"
+                                Clicked="OnNextStreamClicked"
+                                WidthRequest="36"
+                                HeightRequest="36"
+                                Padding="0"
+                                BackgroundColor="#CC1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="8"
+                                FontSize="14"
+                                SemanticProperties.Description="Next stream" />
+                        <Label x:Name="NextStreamHintLabel"
+                               TextColor="White"
+                               FontSize="11"
+                               FontAttributes="Bold"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+
+                    <Button x:Name="PlayerMenuButton"
+                            Text="☰"
+                            Clicked="OnPlayerMenuClicked"
+                            WidthRequest="36"
+                            HeightRequest="36"
+                            Padding="0"
+                            Opacity="0"
+                            InputTransparent="True"
+                            BackgroundColor="#CC1C2333"
+                            TextColor="#E5E7EB"
+                            CornerRadius="8"
+                            FontSize="16"
+                            SemanticProperties.Description="Player menu" />
+
+                    <!-- Generous top-right hit-zone (wider than the chip). The
+                         button itself is shown only after reveal; the zone stays
+                         so hover works while the chip is hidden. -->
+                    <Grid x:Name="CloseHitZone"
+                          WidthRequest="44"
+                          HeightRequest="24"
+                          VerticalOptions="Start"
+                          BackgroundColor="Transparent">
+                        <Button x:Name="ClosePlaybackButton"
+                                Text="✕"
+                                Clicked="OnClosePlaybackClicked"
+                                VerticalOptions="Start"
+                                HorizontalOptions="End"
+                                WidthRequest="36"
+                                HeightRequest="36"
+                                Padding="0"
+                                Opacity="0"
+                                InputTransparent="True"
+                                BackgroundColor="#CC1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="18"
+                                FontSize="16"
+                                SemanticProperties.Description="Close playback" />
+                    </Grid>
+                </HorizontalStackLayout>
+
+                <Border x:Name="PlayerMenuPanel"
+                        Grid.Row="1"
+                        Grid.ColumnSpan="2"
+                        IsVisible="False"
+                        HorizontalOptions="End"
+                        Margin="0,4,8,8"
+                        BackgroundColor="#CC101010"
+                        Stroke="#55FFFFFF"
+                        StrokeThickness="1"
+                        StrokeShape="RoundRectangle 8"
+                        Padding="12">
+                    <VerticalStackLayout Spacing="8">
+                        <Button x:Name="VideoInfoMenuButton"
+                                Text="Video Info"
+                                Clicked="OnVideoInfoMenuClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="ScoresMenuButton"
+                                Text="Scores"
+                                Clicked="OnScoresMenuClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="ReportStreamMenuButton"
+                                Text="Report stream"
+                                Clicked="OnReportStreamClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="FullscreenMenuButton"
+                                Text="Fullscreen"
+                                Clicked="OnFullscreenMenuClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Button x:Name="ExitPlaybackMenuButton"
+                                Text="Exit"
+                                Clicked="OnClosePlaybackClicked"
+                                BackgroundColor="#202020"
+                                TextColor="White"
+                                CornerRadius="6"
+                                Padding="16,8" />
+                        <Label x:Name="ReportStreamStatusLabel"
+                               IsVisible="False"
+                               TextColor="#FFB300"
+                               FontSize="12" />
+                    </VerticalStackLayout>
+                </Border>
+            </Grid>
+
+            <Border x:Name="VideoInfoPanel"
+                    IsVisible="False"
+                    WidthRequest="360"
+                    MaximumHeightRequest="420"
+                    HorizontalOptions="End"
+                    VerticalOptions="Start"
+                    Margin="0,56,8,8"
+                    BackgroundColor="#D9000000"
+                    Stroke="#55FFFFFF"
+                    StrokeThickness="1"
+                    Padding="10">
+                <Grid RowDefinitions="Auto,*">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="Video Info"
+                               TextColor="White"
+                               FontAttributes="Bold"
+                               FontSize="13"
+                               VerticalOptions="Center" />
+                        <Button x:Name="VideoInfoCloseButton"
+                                Grid.Column="1"
+                                Text="✕"
+                                Clicked="OnVideoInfoCloseClicked"
+                                WidthRequest="28"
+                                HeightRequest="24"
+                                Padding="0"
+                                BackgroundColor="Transparent"
+                                TextColor="White"
+                                FontSize="12"
+                                SemanticProperties.Description="Close video info" />
+                    </Grid>
+                    <ScrollView Grid.Row="1">
+                        <Label x:Name="VideoInfoText"
+                               TextColor="White"
+                               FontFamily="Consolas"
+                               FontSize="12"
+                               LineBreakMode="WordWrap" />
+                    </ScrollView>
+                </Grid>
+            </Border>
+
+            <Grid x:Name="ScoresTickerRow"
+                  IsVisible="False"
+                  HeightRequest="36"
+                  VerticalOptions="End"
+                  HorizontalOptions="Fill"
+                  BackgroundColor="#CC101010"
+                  ColumnDefinitions="*,Auto"
+                  Padding="12,6,0,6">
+                <Grid x:Name="TickerViewport" IsClippedToBounds="True">
+                    <HorizontalStackLayout x:Name="TickerTrack" Spacing="0">
+                        <Label x:Name="TickerText1"
+                               TextColor="White"
+                               FontSize="13"
+                               LineBreakMode="NoWrap"
+                               VerticalOptions="Center" />
+                        <BoxView x:Name="TickerGap"
+                                 WidthRequest="64"
+                                 Color="Transparent" />
+                        <Label x:Name="TickerText2"
+                               TextColor="White"
+                               FontSize="13"
+                               LineBreakMode="NoWrap"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                </Grid>
+                <Button x:Name="TickerCycleButton"
+                        Grid.Column="1"
+                        Text="⟳"
+                        Clicked="OnTickerCycleClicked"
+                        WidthRequest="40"
+                        HeightRequest="28"
+                        Padding="0"
+                        Margin="8,0,8,0"
+                        BackgroundColor="#66FFFFFF"
+                        TextColor="White"
+                        FontSize="16"
+                        SemanticProperties.Description="Next scores view" />
+            </Grid>
+        </Grid>
+    </Grid>
+
+</ContentPage>

@@ -7,8 +7,8 @@
 <path d='M 35,18 L 52,62 L 18,85 L -18,85 L -35,18 Z' fill='#E8E8E8'/>
 <path d='M 0,-8 L 35,18 L -35,18 Z' fill='#D5D5D5'/>
 </g>
-<text x='256' y='330' font-size='44' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='700' text-anchor='middle'>VardyParty</text>
-<text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='600' text-anchor='middle'>Version 2.0.0</text>
-<text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Commit: fb87acb</text>
-<text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'>Built: 2026-08-30 17:42:54 UTC</text>
+<text x='256' y='330' font-size='44' fill='#ffffff' font-family='Arial' font-weight='700' text-anchor='middle'>VardyParty</text>
+<text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial' font-weight='600' text-anchor='middle'>Version 2.1.5</text>
+<text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial' text-anchor='middle'>Commit: faf0a4c</text>
+<text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial' text-anchor='middle'>Built: 2026-09-12 20:04:32 UTC</text>
 </svg>

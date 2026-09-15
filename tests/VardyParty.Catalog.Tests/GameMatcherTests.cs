@@ -1141,5 +1141,100 @@ namespace VardyParty.Catalog.Tests
             Assert.Equal("Northern League Alpha", g.BBCLeague);
             Assert.Equal("Northern League Alpha", g.League);
         }
+
+        [Fact]
+        public void BbcFinishedWithScores_KeepsResult_WhenKickoffStillLooksFuture()
+        {
+            var kickoff = DateTime.UtcNow.AddHours(3);
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = kickoff,
+                    Status = "FT",
+                    IsFinished = true,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = 2,
+                    AwayScore = 0,
+                    HomeBadgeUrl = "homebadge",
+                    AwayBadgeUrl = "awaybadge",
+                    League = "League Alpha",
+                    HasProgress = true
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            matcher.EnrichGames(games, bbc, "League Alpha");
+
+            var g = games.First();
+            Assert.True(g.IsFinished);
+            Assert.Equal(2, g.HomeScore);
+            Assert.Equal(0, g.AwayScore);
+            Assert.True(ScoresTickerPolicy.IsFinishedWithScore(g));
+        }
+
+        [Fact]
+        public void UnmatchedOldKickoff_MarksFinishedWithoutInventingScores()
+        {
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, DateTime.UtcNow.AddHours(-4))
+                    .With(g => g.IsFinished, false)
+                    .With(g => g.IsInProgress, false)
+                    .With(g => g.IsHalfTime, false)
+                    .With(g => g.Minute, (int?)null)
+                    .With(g => g.StatusText, string.Empty)
+                    .With(g => g.HomeScore, (int?)null)
+                    .With(g => g.AwayScore, (int?)null)
+                    .With(g => g.League, "League Alpha")
+                    .With(g => g.ApiLeague, "League Alpha")
+                    .With(g => g.BBCHome, string.Empty)
+                    .With(g => g.BBCAway, string.Empty)
+                    .With(g => g.BBCLeague, string.Empty)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Other Athletic",
+                    Away = "Different Town",
+                    KickoffUtc = DateTime.UtcNow,
+                    Status = "Live",
+                    IsFinished = false,
+                    IsInProgress = true,
+                    HasProgress = true,
+                    HomeScore = 1,
+                    AwayScore = 0,
+                    League = "League Alpha"
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            matcher.EnrichGames(games, bbc, "League Alpha");
+
+            var g = games.First();
+            Assert.True(g.IsFinished);
+            Assert.Null(g.HomeScore);
+            Assert.Null(g.AwayScore);
+            Assert.False(ScoresTickerPolicy.IsFinishedWithScore(g));
+        }
     }
 }

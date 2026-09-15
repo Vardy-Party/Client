@@ -15,6 +15,21 @@ a collaborator here.
 needs repo access. The Packages username secret (`NUGET_GITHUB_USERNAME`) is
 the same GitHub login `GH_TOKEN` must belong to.
 
+## M3U8-resolver / LocalService NuGet packages
+
+When restoring **LocalService** (or Client Streaming strategy packages), always use the
+**newest** `VardyParty.LocalService.*` package versions available from:
+
+1. Sibling `../Strategies/artifacts/nuget` (`strategies-local` in NuGet.config), and/or
+2. GitHub Packages (`NUGET_GITHUB_TOKEN` + `NUGET_GITHUB_USERNAME` on
+   `Vardy-Party/M3U8-resolver` — CI injects these; local agents need the same values
+   in the shell env or a user-level NuGet credential for `github-vardy-party`).
+
+Do **not** leave stale pins (e.g. V2.Scrape `0.1.1`) when newer packs exist — outdated
+scrape plugins advertise `mp.chrome` but fail `/mp` with `v2 scrape plugin not registered`.
+
+Never commit `packageSourceCredentials` / clear-text PATs into repo `NuGet.config`.
+
 ## ⚠️ `GH_TOKEN` expires every ~90 days — rotate it
 
 `GH_TOKEN` is a GitHub Personal Access Token issued **2026-09-02**. It

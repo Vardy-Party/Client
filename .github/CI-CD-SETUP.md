@@ -100,26 +100,26 @@ Installers will be automatically created and attached to the GitHub Release.
 
 ### Windows (APPX)
 - Builds on: `windows-latest`
-- Framework: `net10.0-windows10.0.19041.0`
+- Framework: `net11.0-windows10.0.19041.0`
 - Output: Self-contained Windows package
 
 ### Android (APK)
 - Builds on: `ubuntu-latest`
-- Framework: `net10.0-android`
+- Framework: `net11.0-android`
 - Requirements: Java 17
 - Output: Multi-architecture APK (arm, arm64, x86, x86_64)
 
 ### iOS (IPA)
 - Builds on: `macos-14`
-- Framework: `net10.0-ios`
+- Framework: `net11.0-ios`
 - Output: iOS app archive
 
 ### macOS
 - Builds on: `macos-14`
-- Framework: `net10.0-maccatalyst`
+- Framework: `net11.0-maccatalyst`
 - Output: macOS application
 
-### Linux / WSL (`VardyParty.Desktop`)
+### Linux / WSL (`VardyParty.Linux`)
 - Builds on: `ubuntu-latest`
 - Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
 - Architectures: x64, ARM64
@@ -132,7 +132,7 @@ Installers will be automatically created and attached to the GitHub Release.
 ```
 VardyParty/                 # MAUI head (Android/iOS/Mac Catalyst/Windows)
 VardyParty.HomeUi/          # Shared XAML homepage
-VardyParty.Desktop/         # Linux/WSL head
+VardyParty.Linux/         # Linux/WSL head
 VardyParty.*/               # Kernel, Ports, Auth, Catalog, Streaming, Playback, Presentation, Hosting
 tests/
 Version.props               # ApplicationDisplayVersion + ApplicationVersion
@@ -219,7 +219,7 @@ dotnet format --verify-no-changes
 
 # Build for a specific platform
 dotnet workload restore
-dotnet publish VardyParty/VardyParty.csproj -c Release -f net10.0-windows10.0.19041.0 -o ./artifacts/windows
+dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 -o ./artifacts/windows
 ```
 
 ## Accessing Build Artifacts

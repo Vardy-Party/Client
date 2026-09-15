@@ -1,0 +1,137 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<Import Project="..\Version.props" />
+
+	<PropertyGroup>
+		<!--
+			Linux head: the shared .NET MAUI homepage drawn by Avalonia
+			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11 RC1
+			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
+			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
+		-->
+		<TargetFramework>net11.0</TargetFramework>
+		<OutputType>Exe</OutputType>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<RootNamespace>VardyParty.Linux</RootNamespace>
+		<AssemblyName>VardyPartyLinux</AssemblyName>
+
+		<ApplicationTitle>Vardy Party</ApplicationTitle>
+		<ApplicationId>uk.jonbreen.vardyparty.linux</ApplicationId>
+
+		<!--
+			Same UserSecretsId as the MAUI head so one local secrets store
+			feeds Android packaging and Linux (-p:PatchAppSettings=true).
+		-->
+		<UserSecretsId>543d9e88-b60c-4397-bc9d-c4614b8b1dcb</UserSecretsId>
+
+		<!-- Netflix-style dark UI regardless of OS theme. -->
+		<AvaloniaControlsMauiThemeVariant>Dark</AvaloniaControlsMauiThemeVariant>
+
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<AssemblyVersion>$(ApplicationVersion)</AssemblyVersion>
+		<FileVersion>$(ApplicationDisplayVersion).0</FileVersion>
+		<InformationalVersion>$(ApplicationDisplayVersion)</InformationalVersion>
+
+		<!--
+			Build-time feature switch: in-window video playback (default ON).
+
+			  dotnet build ... -p:EmbeddedLinuxVideo=false
+
+			compiles the embedded-playback feature OUT entirely: no
+			VideoHostView/handler, no hosted-surface code in
+			LinuxHomePage/LinuxVideoPlayerService — playback opens
+			libvlc's own native video window (the pre-feature behaviour),
+			with overlay chrome still in-app as companion UI.
+			Everything the switch controls is guarded by the
+			EMBEDDED_LINUX_VIDEO define derived below. Independent of the
+			switch, the embedded path also auto-falls back to the standalone
+			window at RUNTIME if the composited surface cannot be attached
+			(see LinuxVideoPlayerService). Documented in
+			docs/architecture/homepage-maui-avalonia.md.
+		-->
+		<EmbeddedLinuxVideo Condition="'$(EmbeddedLinuxVideo)' == ''">true</EmbeddedLinuxVideo>
+		<DefineConstants Condition="'$(EmbeddedLinuxVideo)' == 'true'">$(DefineConstants);EMBEDDED_LINUX_VIDEO</DefineConstants>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-rc.1.26451.6" />
+		<PackageReference Include="Avalonia.Controls.Maui.Desktop" Version="11.0.0-rc.1.26252.343" />
+		<!--
+			Avalonia.Controls.Maui.Desktop RC1 needs SkiaSharp native 4.151; Svg.Skia
+			still pins an older Linux native. Without this override the wrong
+			libSkiaSharp.so is deployed (startup native mismatch / NU1605).
+		-->
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="11.0.0-rc.1.26425.128" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-rc.1.26425.128" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0-rc.1.26425.128" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-rc.1.26425.128" />
+		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
+		<PackageReference Include="SoundFlow" Version="1.4.1" />
+		<!--
+			LibVLC playback (system libvlc, initialised lazily). In-window
+			compositing uses SetVideoCallbacks → Avalonia Image (no VideoView /
+			native child). LibVLCSharp.Avalonia is intentionally not referenced.
+		-->
+		<PackageReference Include="LibVLCSharp" Version="3.10.1" />
+		<!-- Device-code sign-in QR (same wiring as the retired VardyParty.Linux head). -->
+		<PackageReference Include="QRCoder" Version="1.7.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!--
+			HomeUi cross-targets (net11.0 for this head, net11.0-android/-windows
+			for the MAUI head). Directory.Build.targets strips TargetFramework off
+			every ProjectReference, which would break the cross-targeting reference
+			protocol (no compiled output back) - so this one reference overrides
+			GlobalPropertiesToRemove to keep only the RID/SelfContained stripping.
+		-->
+		<ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
+			<GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+			<!-- Pin HomeUi to the Avalonia TFM so restore never pulls net11.0-android. -->
+			<AdditionalProperties>TargetFrameworks=net11.0;HomeUiTargetFrameworks=net11.0</AdditionalProperties>
+		</ProjectReference>
+		<ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj" />
+		<ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj" />
+		<ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj" />
+		<ProjectReference Include="..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<!-- League logos shipped next to the binary, mirroring the VardyParty.Linux layout. -->
+		<None Include="..\VardyParty\Resources\Images\Leagues\**\*.*"
+		      Link="wwwroot\images\leagues\%(RecursiveDir)%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+		<!-- UI sounds: the same generated WAVs the MAUI head ships as MauiAssets. -->
+		<None Include="..\VardyParty\Resources\Raw\Sounds\*.wav"
+		      Link="Sounds\%(Filename)%(Extension)"
+		      CopyToOutputDirectory="PreserveNewest"
+		      CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<!--
+		Local Desktop/Linux: patch SOURCE appsettings.json from user-secrets before build
+		so CopyToOutputDirectory / publish embed real Auth0 + API values.
+		Usage: dotnet build/run ... -p:PatchAppSettings=true
+		WARNING: modifies source — revert with git restore VardyParty.Linux/appsettings.json
+	-->
+	<Target Name="PatchAppSettingsForLocalDesktop" BeforeTargets="BeforeBuild" Condition="'$(PatchAppSettings)' == 'true'">
+		<PropertyGroup>
+			<SourceAppSettingsPath>$(MSBuildProjectDirectory)/appsettings.json</SourceAppSettingsPath>
+			<_PatchScriptPs1>$(MSBuildProjectDirectory)/../scripts/patch-appsettings.ps1</_PatchScriptPs1>
+			<_PatchScriptSh>$(MSBuildProjectDirectory)/../scripts/merge-appsettings-secrets.sh</_PatchScriptSh>
+		</PropertyGroup>
+		<Message Text="[LOCAL BUILD] Patching Desktop appsettings.json from user-secrets BEFORE build" Importance="high" />
+		<Exec Condition="'$(OS)' == 'Windows_NT'"
+		      Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(_PatchScriptPs1)&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+		<Exec Condition="'$(OS)' != 'Windows_NT'"
+		      Command="USER_SECRETS_ID='$(UserSecretsId)' bash &quot;$(_PatchScriptSh)&quot; &quot;$(SourceAppSettingsPath)&quot;" />
+	</Target>
+
+</Project>

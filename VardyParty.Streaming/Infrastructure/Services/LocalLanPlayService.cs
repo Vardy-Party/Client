@@ -4,8 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using VardyParty.LocalService.Client.Discovery;
 using VardyParty.Kernel;
+using VardyParty.LocalService.Abstractions;
+using VardyParty.LocalService.Client.Discovery;
 
 namespace VardyParty.Streaming;
 
@@ -35,6 +36,7 @@ namespace VardyParty.Streaming;
 public class LocalLanPlayService(
     HttpClient httpClient,
     IOptions<GamesApiSettings> gamesApiSettings,
+    IEnumerable<IPlaybackTransportPlugin> transportPlugins,
     ILogger<LocalLanPlayService> logger) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
@@ -47,11 +49,28 @@ public class LocalLanPlayService(
     private DateTimeOffset _cachedBaseUrlAt = DateTimeOffset.MinValue;
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
+    private string? _cachedServiceVersion;
+
+    public HttpStatusCode? LastHealthStatus { get; private set; }
+
+    public string? DiscoveredServiceVersion => _cachedServiceVersion;
 
     public async Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default)
     {
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
         return SupportsPlayStreamQuery(_cachedCapabilities);
+    }
+
+    public async Task<string?> GetDiscoveredServiceVersionAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(_cachedServiceVersion))
+            return _cachedServiceVersion;
+
+        // Force a health probe even when capabilities were cached from UDP without serviceVersion.
+        _capabilitiesCachedAt = DateTimeOffset.MinValue;
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        return _cachedServiceVersion;
     }
 
     private static bool SupportsPlayStreamQuery(IEnumerable<string> capabilities) =>
@@ -66,6 +85,11 @@ public class LocalLanPlayService(
         if (await CheckHealthAsync(baseUrl, cancellationToken))
             return true;
 
+        // If the service responded with an authentication or authorization failure (401/403),
+        // it is running and reachable on this port. Retrying UDP discovery across the LAN is futile.
+        if (LastHealthStatus is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            return false;
+
         InvalidateDiscoveryCache();
         baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -75,11 +99,19 @@ public class LocalLanPlayService(
     }
 
     public Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
-        ResolveM3U8UrlAsync(streamUrl, playerStreamName: null, cancellationToken);
+        ResolveM3U8UrlAsync(streamUrl, playerStreamName: null, resolutionStrategy: null, source: null, cancellationToken);
+
+    public Task<M3U8Response?> ResolveM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken = default) =>
+        ResolveM3U8UrlAsync(streamUrl, playerStreamName, resolutionStrategy: null, source: null, cancellationToken);
 
     public async Task<M3U8Response?> ResolveM3U8UrlAsync(
         string streamUrl,
         string? playerStreamName,
+        string? resolutionStrategy,
+        string? source,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(streamUrl))
@@ -93,17 +125,22 @@ public class LocalLanPlayService(
         }
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        // Catalog resolutionStrategy/source + transport plugins choose /mp vs /play — never URL host sniffing.
+        // Playlist CTU rewrite stays on LocalService (/mp); client has no playlist body on this path.
+        var useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
         var effectiveStreamName = SupportsPlayStreamQuery(_cachedCapabilities)
             ? playerStreamName
             : null;
-        if (!string.IsNullOrWhiteSpace(playerStreamName) && effectiveStreamName is null)
+        if (!string.IsNullOrWhiteSpace(playerStreamName) && effectiveStreamName is null && !useMp)
         {
             logger.LogDebug(
                 "[LocalLanPlay] Local service does not advertise play.stream; resolving without stream query param for {Url}",
                 streamUrl);
         }
 
-        var resolved = await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+        var resolved = useMp
+            ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+            : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
         if (resolved != null)
             return resolved;
 
@@ -112,7 +149,38 @@ public class LocalLanPlayService(
         if (string.IsNullOrWhiteSpace(baseUrl))
             return null;
 
-        return await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, cancellationToken);
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
+        return useMp
+            ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+            : await CallPlayEndpointAsync(
+                baseUrl,
+                streamUrl,
+                SupportsPlayStreamQuery(_cachedCapabilities) ? playerStreamName : null,
+                cancellationToken);
+    }
+
+    /// <summary>
+    /// Prefer matching <see cref="IPlaybackTransportPlugin"/> endpoint; require <c>mp.chrome</c>
+    /// when the plugin (or fallback) selects <c>mp</c>.
+    /// </summary>
+    private bool ShouldUseMpEndpoint(
+        string? resolutionStrategy,
+        string? source,
+        IEnumerable<string> capabilities)
+    {
+        var plugin = transportPlugins.FirstOrDefault(p => p.Matches(resolutionStrategy, source));
+        if (plugin is not null)
+        {
+            var wantsMp = string.Equals(plugin.LocalServiceEndpoint, "mp", StringComparison.OrdinalIgnoreCase);
+            if (!wantsMp)
+                return false;
+
+            return capabilities.Any(c =>
+                string.Equals(c, "mp.chrome", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return MpPageUrl.UseMpEndpoint(resolutionStrategy, source, capabilities);
     }
 
     private async Task RefreshCapabilitiesIfNeededAsync(CancellationToken cancellationToken)
@@ -147,18 +215,38 @@ public class LocalLanPlayService(
             var response = await httpClient.GetAsync(healthUrl, cts.Token);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning("[LocalLanPlay] Health check rejected with 401 Unauthorized reading capabilities from {Url}", healthUrl);
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning("[LocalLanPlay] Health check rejected with 403 Forbidden reading capabilities from {Url}", healthUrl);
+                }
                 return [];
             }
 
-            var json = await response.Content.ReadAsStringAsync(cts.Token);
+            var json = response.Content != null
+                ? await response.Content.ReadAsStringAsync(cts.Token)
+                : string.Empty;
+            if (string.IsNullOrWhiteSpace(json))
+                return [];
+
             using var doc = JsonDocument.Parse(json);
-            return ParseCapabilities(doc.RootElement);
+            ApplyHealthPayload(doc.RootElement);
+            return _cachedCapabilities;
         }
         catch (Exception ex)
         {
             logger.LogDebug(ex, "[LocalLanPlay] Failed to read capabilities from {Url}", healthUrl);
             return [];
         }
+    }
+
+    private void ApplyHealthPayload(JsonElement root)
+    {
+        _cachedCapabilities = ParseCapabilities(root);
+        _cachedServiceVersion = ParseServiceVersion(root) ?? _cachedServiceVersion;
     }
 
     private static string[] ParseCapabilities(JsonElement root)
@@ -176,6 +264,31 @@ public class LocalLanPlayService(
             .ToArray();
     }
 
+    /// <summary>
+    /// Reads package semver from <c>/health</c> (<c>version</c>) or UDP (<c>serviceVersion</c>).
+    /// Discovery protocol <c>version</c> is an int and is ignored here.
+    /// </summary>
+    private static string? ParseServiceVersion(JsonElement root)
+    {
+        if (root.TryGetProperty("serviceVersion", out var serviceVersionEl)
+            && serviceVersionEl.ValueKind == JsonValueKind.String)
+        {
+            var serviceVersion = serviceVersionEl.GetString();
+            if (!string.IsNullOrWhiteSpace(serviceVersion))
+                return serviceVersion.Trim();
+        }
+
+        if (root.TryGetProperty("version", out var versionEl)
+            && versionEl.ValueKind == JsonValueKind.String)
+        {
+            var version = versionEl.GetString();
+            if (!string.IsNullOrWhiteSpace(version))
+                return version.Trim();
+        }
+
+        return null;
+    }
+
     private async Task<bool> CheckHealthAsync(string baseUrl, CancellationToken cancellationToken)
     {
         var healthUrl = $"{baseUrl.TrimEnd('/')}/health";
@@ -185,30 +298,153 @@ public class LocalLanPlayService(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(3));
             var response = await httpClient.GetAsync(healthUrl, cts.Token);
+            LastHealthStatus = response.StatusCode;
             var isOk = response.IsSuccessStatusCode;
             if (!isOk)
             {
-                logger.LogInformation("[LocalLanPlay] Health check failed for {Url} with status {StatusCode}. " +
-                    "Local service may be unavailable or misconfigured.",
-                    healthUrl, response.StatusCode);
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] Health check rejected with 401 Unauthorized for {Url}. Access token missing, expired, or invalid.",
+                        healthUrl);
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] Health check rejected with 403 Forbidden for {Url}. User lacks stream-viewer role.",
+                        healthUrl);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "[LocalLanPlay] Health check failed for {Url} with status {StatusCode}. Local service may be unavailable or misconfigured.",
+                        healthUrl, response.StatusCode);
+                }
             }
             else
             {
                 logger.LogDebug("[LocalLanPlay] Health check successful for {Url}", healthUrl);
-                var json = await response.Content.ReadAsStringAsync(cts.Token);
-                using var doc = JsonDocument.Parse(json);
-                _cachedCapabilities = ParseCapabilities(doc.RootElement);
-                _capabilitiesCachedAt = DateTimeOffset.UtcNow;
+                var json = response.Content != null
+                    ? await response.Content.ReadAsStringAsync(cts.Token)
+                    : string.Empty;
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    ApplyHealthPayload(doc.RootElement);
+                    _capabilitiesCachedAt = DateTimeOffset.UtcNow;
+                }
             }
 
             return isOk;
         }
         catch (Exception ex)
         {
+            LastHealthStatus = null;
             logger.LogInformation(ex, "[LocalLanPlay] Health check request failed for {Url}. " +
                 "Unable to connect to discovered local service endpoint.",
                 healthUrl);
             return false;
+        }
+    }
+
+    private static readonly TimeSpan MpCallTimeout = TimeSpan.FromSeconds(90);
+
+    private static bool HasDiscoveredChips(M3U8Response? result) =>
+        result?.Streams is { Count: > 0 };
+
+    private async Task<M3U8Response?> CallMpEndpointAsync(
+        string baseUrl,
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{baseUrl.TrimEnd('/')}/mp";
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(MpCallTimeout);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                pageUrl = streamUrl,
+                stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
+            });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            logger.LogInformation(
+                "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix}",
+                url,
+                string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName.Trim()})");
+            var response = await httpClient.PostAsync(url, content, cts.Token);
+            var json = response.Content != null
+                ? await response.Content.ReadAsStringAsync(cts.Token)
+                : string.Empty;
+
+            M3U8Response? result = null;
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                try
+                {
+                    result = JsonSerializer.Deserialize<M3U8Response>(json,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogDebug(ex, "[LocalLanPlay] Failed to deserialize POST /mp response body as JSON");
+                }
+            }
+
+            var chips = result?.Streams is { Count: > 0 }
+                ? string.Join(", ", result.Streams)
+                : "(none)";
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] POST /mp rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
+                        streamUrl);
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] POST /mp rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
+                        streamUrl);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}; chips={Chips}",
+                        response.StatusCode, streamUrl, chips);
+                }
+
+                return HasDiscoveredChips(result) ? result : null;
+            }
+
+            if (result == null)
+            {
+                logger.LogWarning("[LocalLanPlay] POST /mp returned success but no body");
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(result.Url))
+            {
+                logger.LogWarning(
+                    "[LocalLanPlay] POST /mp returned success but no m3u8 URL; chips={Chips} selected={Selected}",
+                    chips, result.SelectedStream ?? "(none)");
+                return HasDiscoveredChips(result) ? result : null;
+            }
+
+            logger.LogInformation(
+                "[LocalLanPlay] Resolved MP m3u8 via local service for {StreamUrl} selected={Selected} chips={Chips}",
+                streamUrl, result.SelectedStream ?? "(none)", chips);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
+                baseUrl, streamUrl);
+            return null;
         }
     }
 
@@ -231,11 +467,48 @@ public class LocalLanPlayService(
 
             logger.LogDebug("[LocalLanPlay] Resolving stream via local service: {Url}", url);
             var response = await httpClient.GetAsync(url, cts.Token);
-            response.EnsureSuccessStatusCode();
+            var json = response.Content != null
+                ? await response.Content.ReadAsStringAsync(cts.Token)
+                : string.Empty;
 
-            var json = await response.Content.ReadAsStringAsync(cts.Token);
-            var result = JsonSerializer.Deserialize<M3U8Response>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] GET /play rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
+                        streamUrl);
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] GET /play rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
+                        streamUrl);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] GET /play returned {StatusCode} for {StreamUrl}: {Body}",
+                        response.StatusCode, streamUrl, json);
+                }
+
+                return null;
+            }
+
+            M3U8Response? result = null;
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                try
+                {
+                    result = JsonSerializer.Deserialize<M3U8Response>(json,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogWarning(ex, "[LocalLanPlay] Failed to deserialize GET /play response body: {Body}", json);
+                }
+            }
+
             if (result == null || string.IsNullOrWhiteSpace(result.Url))
             {
                 logger.LogWarning("[LocalLanPlay] Local service returned success but no m3u8 URL in response body");
@@ -348,7 +621,7 @@ public class LocalLanPlayService(
 
                 var host = received.RemoteEndPoint.Address.ToString();
                 var discoveredUrl = $"http://{host}:{httpPort}";
-                _cachedCapabilities = ParseCapabilities(root);
+                ApplyHealthPayload(root);
                 _capabilitiesCachedAt = DateTimeOffset.UtcNow;
                 logger.LogInformation("[LocalLanPlay] Successfully discovered local service endpoint: {Endpoint}", discoveredUrl);
                 return discoveredUrl;
@@ -371,6 +644,7 @@ public class LocalLanPlayService(
         _cachedBaseUrl = null;
         _cachedBaseUrlAt = DateTimeOffset.MinValue;
         _cachedCapabilities = [];
+        _cachedServiceVersion = null;
         _capabilitiesCachedAt = DateTimeOffset.MinValue;
     }
 }

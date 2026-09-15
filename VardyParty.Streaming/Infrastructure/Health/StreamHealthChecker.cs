@@ -14,7 +14,14 @@ public class StreamHealthChecker(
     private const int MaxRecursionDepth = 3;
     private StreamHealthSettings StreamHealthOptions = streamHealthOptions.Value;
 
-    public async Task<StreamHealth> CheckStreamHealthAsync(string m3u8Url, string refererUrl,
+    public Task<StreamHealth> CheckStreamHealthAsync(string m3u8Url, string refererUrl,
+        CancellationToken cancellationToken = default) =>
+        CheckStreamHealthAsync(m3u8Url, refererUrl, probe: null, cancellationToken);
+
+    public async Task<StreamHealth> CheckStreamHealthAsync(
+        string m3u8Url,
+        string refererUrl,
+        StreamHealthProbe? probe,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
@@ -28,7 +35,7 @@ public class StreamHealthChecker(
             // but rely on caller's token primarily.
             // We'll enforce a specific timeout for the HTTP calls if needed.
 
-            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, cancellationToken);
+            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken);
 
             // Extract metadata from the manifest if check was successful
             if (health.Status == StreamHealthStatus.Healthy)
@@ -58,11 +65,7 @@ public class StreamHealthChecker(
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.ManifestTimeoutSeconds));
 
             var request = new HttpRequestMessage(HttpMethod.Get, m3u8Url);
-            // Use a browser-like User-Agent to match playback and avoid hosts treating probe requests differently
-            request.Headers.TryAddWithoutValidation("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
-                request.Headers.Referrer = refUri;
+            ApplyPlaybackHeaders(request, refererUrl, requestHeaders: null);
             logger.LogInformation("[StreamHealthChecker] ExtractMetadataAsync requesting {Url} with referer {Referer}",
                 m3u8Url, refererUrl);
 
@@ -127,7 +130,11 @@ public class StreamHealthChecker(
         }
     }
 
-    private async Task<StreamHealthStatus> CheckRecursivelyAsync(string url, string refererUrl, int depth,
+    private async Task<StreamHealthStatus> CheckRecursivelyAsync(
+        string url,
+        string refererUrl,
+        int depth,
+        StreamHealthProbe? probe,
         CancellationToken ct)
     {
         if (depth > MaxRecursionDepth)
@@ -142,13 +149,13 @@ public class StreamHealthChecker(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.ManifestTimeoutSeconds));
 
-            content = await FetchManifestContentAsync(url, refererUrl, cts.Token);
+            content = await FetchManifestContentAsync(url, refererUrl, probe, cts.Token);
             if (content is null && !string.IsNullOrEmpty(refererUrl))
             {
                 logger.LogInformation(
                     "[StreamHealthChecker] Manifest fetch with referer failed for {Url}; retrying without referer",
                     url);
-                content = await FetchManifestContentAsync(url, refererUrl: null, cts.Token);
+                content = await FetchManifestContentAsync(url, refererUrl: null, probe: null, cts.Token);
             }
 
             if (content is null)
@@ -169,12 +176,21 @@ public class StreamHealthChecker(
         {
             var nextUrl = ExtractFirstStreamUrl(content, url);
             if (string.IsNullOrEmpty(nextUrl)) return StreamHealthStatus.InvalidManifest;
-            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, ct);
+            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct);
         }
 
         // Media playlist contains EXTINF
         if (content.Contains("#EXTINF"))
         {
+            var rewritten = probe?.RewrittenSegmentUrls?
+                .FirstOrDefault(segment => !string.IsNullOrWhiteSpace(segment));
+            if (!string.IsNullOrEmpty(rewritten))
+            {
+                logger.LogInformation(
+                    "[StreamHealthChecker] Probing MP rewritten segment instead of playlist-relative URI: {Url}",
+                    rewritten);
+                return await CheckSegmentAsync(rewritten, refererUrl, ct, probe, skipUrlExtensionCheck: true);
+            }
             var segmentUrls = EnumerateSegmentUrls(content, url).ToList();
             if (segmentUrls.Count == 0) return StreamHealthStatus.EmptyManifest;
 
@@ -187,7 +203,7 @@ public class StreamHealthChecker(
                 return StreamHealthStatus.SegmentUnreachable;
             }
 
-            return await CheckSegmentAsync(segmentUrl, refererUrl, ct);
+            return await CheckSegmentAsync(segmentUrl, refererUrl, ct, probe);
         }
 
         // If it starts with #EXTM3U but has neither stream nor inf, it might be empty or valid but with no segments yet (live)
@@ -238,13 +254,14 @@ public class StreamHealthChecker(
         return relativeUrl;
     }
 
-    private async Task<string?> FetchManifestContentAsync(string url, string? refererUrl, CancellationToken ct)
+    private async Task<string?> FetchManifestContentAsync(
+        string url,
+        string? refererUrl,
+        StreamHealthProbe? probe,
+        CancellationToken ct)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.TryAddWithoutValidation("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
-            request.Headers.Referrer = refUri;
+        ApplyPlaybackHeaders(request, refererUrl, probe?.RequestHeaders);
         logger.LogInformation("[StreamHealthChecker] Fetching manifest {Url} with referer {Referer}", url,
             refererUrl ?? "(none)");
 
@@ -259,20 +276,31 @@ public class StreamHealthChecker(
         return string.IsNullOrWhiteSpace(content) ? null : content;
     }
 
-    private async Task<StreamHealthStatus> CheckSegmentAsync(string url, string refererUrl, CancellationToken ct)
+    private async Task<StreamHealthStatus> CheckSegmentAsync(
+        string url,
+        string refererUrl,
+        CancellationToken ct,
+        StreamHealthProbe? probe = null,
+        bool skipUrlExtensionCheck = false)
     {
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
 
-            if (await ProbeSegmentAsync(HttpMethod.Head, url, refererUrl, cts.Token))
+            if (await ProbeSegmentAsync(HttpMethod.Head, url, refererUrl, cts.Token, probe, skipUrlExtensionCheck))
             {
                 return StreamHealthStatus.Healthy;
             }
 
             // Tokenized CDNs often reject HEAD (403/401/405) while ranged GET succeeds.
-            if (await ProbeSegmentAsync(HttpMethod.Get, url, refererUrl, cts.Token, useRange: true))
+            if (await ProbeSegmentAsync(HttpMethod.Get, url, refererUrl, cts.Token, probe, skipUrlExtensionCheck, useRange: true))
+            {
+                return StreamHealthStatus.Healthy;
+            }
+
+            if (skipUrlExtensionCheck
+                && await ProbeSegmentAsync(HttpMethod.Get, url, refererUrl, cts.Token, probe, skipUrlExtensionCheck))
             {
                 return StreamHealthStatus.Healthy;
             }
@@ -292,13 +320,12 @@ public class StreamHealthChecker(
         string url,
         string refererUrl,
         CancellationToken ct,
+        StreamHealthProbe? probe = null,
+        bool skipUrlExtensionCheck = false,
         bool useRange = false)
     {
         var request = new HttpRequestMessage(method, url);
-        request.Headers.TryAddWithoutValidation("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        if (!string.IsNullOrEmpty(refererUrl) && Uri.TryCreate(refererUrl, UriKind.Absolute, out var refUri))
-            request.Headers.Referrer = refUri;
+        ApplyPlaybackHeaders(request, refererUrl, probe?.RequestHeaders);
         if (useRange)
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
 
@@ -315,7 +342,7 @@ public class StreamHealthChecker(
 
         var contentType = response.Content.Headers.ContentType?.MediaType;
         if (!HlsMediaSegment.ContentTypeLooksLikeMedia(contentType) ||
-            !HlsMediaSegment.LooksLikeVideoSegment(url))
+            (!skipUrlExtensionCheck && !HlsMediaSegment.LooksLikeVideoSegment(url)))
         {
             logger.LogWarning(
                 "[StreamHealthChecker] Rejecting non-video segment {Url} (Content-Type={ContentType})",
@@ -324,5 +351,40 @@ public class StreamHealthChecker(
         }
 
         return true;
+    }
+
+    private static void ApplyPlaybackHeaders(
+        HttpRequestMessage request,
+        string? refererUrl,
+        IReadOnlyDictionary<string, string>? requestHeaders)
+    {
+        var userAgent = GetHeader(requestHeaders, "user-agent")
+                        ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+        request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
+
+        var referer = GetHeader(requestHeaders, "referer") ?? refererUrl;
+        if (!string.IsNullOrEmpty(referer) && Uri.TryCreate(referer, UriKind.Absolute, out var refUri))
+            request.Headers.Referrer = refUri;
+
+        var origin = GetHeader(requestHeaders, "origin");
+        if (!string.IsNullOrEmpty(origin))
+            request.Headers.TryAddWithoutValidation("Origin", origin);
+    }
+
+    private static string? GetHeader(IReadOnlyDictionary<string, string>? headers, string name)
+    {
+        if (headers is null)
+            return null;
+
+        foreach (var pair in headers)
+        {
+            if (pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
     }
 }

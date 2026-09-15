@@ -8,7 +8,7 @@ public class StreamHealthReport
     public string StreamUrl { get; set; } = string.Empty;
 
     /// <summary>
-    /// MadPlay / v2 player label when multiple streams share the same page URL.
+    /// MP / v2 player label when multiple streams share the same page URL.
     /// </summary>
     [JsonPropertyName("streamName")]
     public string? StreamName { get; set; }
@@ -57,6 +57,13 @@ public class RecommendationResponse
 
     [JsonPropertyName("confidence")]
     public RecommendationConfidence Confidence { get; set; }
+
+    /// <summary>
+    /// Server clock when this recommendation snapshot was produced.
+    /// Clients use it to decide whether a cached list is stale.
+    /// </summary>
+    [JsonPropertyName("generatedAt")]
+    public long? GeneratedAt { get; set; }
 }
 
 public class RecommendationItem

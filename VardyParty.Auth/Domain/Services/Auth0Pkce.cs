@@ -12,6 +12,26 @@ public static class Auth0Pkce
     public const int StateByteLength = 32;
     public const int VerifierByteLength = 64;
 
+    /// <summary>
+    /// Default loopback callback for Linux browser PKCE. Must be listed in the
+    /// Auth0 application Allowed Callback URLs alongside any mobile custom-scheme URI.
+    /// </summary>
+    public const string DefaultLinuxLoopbackRedirectUri = "http://127.0.0.1:4280/callback";
+
+    /// <summary>
+    /// Prefer an explicit loopback override, then a loopback <paramref name="redirectUri"/>,
+    /// otherwise the Linux default. Custom schemes (e.g. vardyparty://) stay for MAUI
+    /// WebAuthenticator and are not used for HttpListener browser login.
+    /// </summary>
+    public static Uri ResolveLinuxBrowserRedirectUri(string? redirectUri, string? loopbackRedirectUri = null)
+    {
+        if (TryGetLoopbackRedirectUri(loopbackRedirectUri, out var fromOverride))
+            return fromOverride;
+        if (TryGetLoopbackRedirectUri(redirectUri, out var fromSettings))
+            return fromSettings;
+        return new Uri(DefaultLinuxLoopbackRedirectUri);
+    }
+
     public static Auth0PkceStart Start(Auth0Settings settings, Uri redirectUri)
     {
         var state = CreateRandomBase64Url(StateByteLength);

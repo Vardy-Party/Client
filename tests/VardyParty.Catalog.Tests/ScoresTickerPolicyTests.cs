@@ -1,3 +1,4 @@
+using System;
 using AutoFixture;
 using VardyParty.Kernel;
 using Xunit;
@@ -75,5 +76,48 @@ public class ScoresTickerPolicyTests
         Assert.True(blank);
         Assert.True(match);
         Assert.False(other);
+    }
+
+    [Fact]
+    public void IsFinishedWithScore_RequiresBothScores()
+    {
+        var scored = _fixture.Build<Game>()
+            .With(g => g.IsFinished, true)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 0)
+            .With(g => g.Start, DateTime.UtcNow.AddHours(-2))
+            .Create();
+        var scoreless = _fixture.Build<Game>()
+            .With(g => g.IsFinished, true)
+            .With(g => g.HomeScore, (int?)null)
+            .With(g => g.AwayScore, (int?)null)
+            .With(g => g.Start, DateTime.UtcNow.AddHours(-2))
+            .Create();
+
+        Assert.True(ScoresTickerPolicy.IsFinishedWithScore(scored));
+        Assert.False(ScoresTickerPolicy.IsFinishedWithScore(scoreless));
+        Assert.False(ScoresTickerPolicy.IsRecentScoredFinish(scoreless, DateTime.UtcNow));
+        Assert.True(ScoresTickerPolicy.IsRecentScoredFinish(scored, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void IsUpcoming_ExcludesLiveAndFinished()
+    {
+        var upcoming = _fixture.Build<Game>()
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.StatusText, string.Empty)
+            .Create();
+        var live = _fixture.Build<Game>()
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.Minute, 12)
+            .With(g => g.StatusText, "12'")
+            .Create();
+
+        Assert.True(ScoresTickerPolicy.IsUpcoming(upcoming));
+        Assert.False(ScoresTickerPolicy.IsUpcoming(live));
     }
 }

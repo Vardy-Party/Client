@@ -23,8 +23,34 @@ public class StreamSelectionCoordinator(
 
     private bool _paused;
     private int _totalStreams;
+    private int _discoverySalt = Random.Shared.Next();
+    private RecommendationResponse? _latestRecommendations;
 
     public IObservable<StreamSelectionProgress> ProgressUpdated => _progressSubject;
+
+    public RecommendationResponse? LatestRecommendations
+    {
+        get
+        {
+            lock (_gate) return _latestRecommendations;
+        }
+    }
+
+    public void RememberRecommendations(RecommendationResponse? recommendations)
+    {
+        lock (_gate)
+        {
+            _latestRecommendations = recommendations;
+        }
+    }
+
+    public int DiscoverySalt
+    {
+        get
+        {
+            lock (_gate) return _discoverySalt;
+        }
+    }
 
     public async Task InitializeAsync(Game game, CancellationToken cancellationToken = default)
     {
@@ -40,19 +66,10 @@ public class StreamSelectionCoordinator(
                 return;
             }
 
-            var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
-                V2StreamExpander.Expand(streamsResponse.Streams));
-
-            lock (_gate)
-            {
-                _totalStreams = expandedStreams.Count;
-                BuildCandidates(expandedStreams);
-            }
-
-            List<int> testOrder = new();
+            RecommendationResponse? recommendations = null;
             try
             {
-                var recommendations = await streamHealthService.GetRecommendationsAsync(
+                recommendations = await streamHealthService.GetRecommendationsAsync(
                     game.ApiLeague,
                     game.Home,
                     game.Away,
@@ -60,36 +77,59 @@ public class StreamSelectionCoordinator(
 
                 if (recommendations != null)
                 {
-                    logger.LogInformation("[StreamSelection] Recommendations received. Confidence={Confidence}, Recommended count={Count}",
-                        recommendations.Confidence,
-                        recommendations.Recommended?.Count ?? 0);
+                    logger.LogInformation(
+                        "[StreamSelection] Recommendations received: {Summary}",
+                        RecommendationLogFormatter.Format(recommendations));
                 }
                 else
                 {
                     logger.LogInformation("[StreamSelection] No recommendations returned");
                 }
-
-                lock (_gate)
-                {
-                    testOrder = BuildTestOrder(recommendations, _totalStreams);
-                }
-
-                if (StreamTestOrderPolicy.ShouldPreferRecommendations(recommendations))
-                {
-                    logger.LogInformation(
-                        "[StreamSelection] Using recommendation-based test order. OverallConfidence={Confidence}, Order={Order}",
-                        recommendations?.Confidence,
-                        string.Join(",", testOrder));
-                }
-                else
-                {
-                    logger.LogInformation("[StreamSelection] Using catalog source order: {Order}",
-                        string.Join(",", testOrder));
-                }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[StreamSelection] Failed to fetch recommendations, defaulting to original order");
+                logger.LogWarning(ex, "[StreamSelection] Failed to fetch recommendations, defaulting to discovery spread");
+            }
+
+            var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
+                StreamRecommendationPolicy.ApplyRecommendedChips(
+                    V2StreamExpander.Expand(streamsResponse.Streams),
+                    recommendations));
+
+            List<int> testOrder;
+            lock (_gate)
+            {
+                _latestRecommendations = recommendations;
+                _totalStreams = expandedStreams.Count;
+                BuildCandidates(expandedStreams);
+                testOrder = BuildTestOrder(recommendations, _totalStreams);
+            }
+
+            string LabelForIndex(int index)
+            {
+                lock (_gate)
+                {
+                    var candidate = _candidates.FirstOrDefault(c => c.Index == index);
+                    if (candidate is null)
+                        return "?";
+                    var name = StreamHealthIdentity.GetStreamName(candidate.Stream);
+                    return string.IsNullOrWhiteSpace(name) ? "(unnamed)" : name;
+                }
+            }
+
+            if (StreamTestOrderPolicy.ShouldPreferRecommendations(recommendations))
+            {
+                logger.LogInformation(
+                    "[StreamSelection] Using recommendation-based test order. OverallConfidence={Confidence}, Order={Order}",
+                    recommendations?.Confidence,
+                    RecommendationLogFormatter.FormatTestOrder(testOrder, LabelForIndex));
+            }
+            else
+            {
+                logger.LogInformation(
+                    "[StreamSelection] Using session-spread discovery order (salt={Salt}): {Order}",
+                    _discoverySalt,
+                    RecommendationLogFormatter.FormatTestOrder(testOrder, LabelForIndex));
             }
 
             lock (_gate)
@@ -229,6 +269,8 @@ public class StreamSelectionCoordinator(
             _testedIndexes.Clear();
             _workingIndexes.Clear();
             _streamIndexByKey.Clear();
+            _latestRecommendations = null;
+            _discoverySalt = Random.Shared.Next();
         }
 
         PublishProgress();
@@ -254,12 +296,15 @@ public class StreamSelectionCoordinator(
                 _streamIndexByKey[streamKey] = i;
             }
 
-            if (!string.IsNullOrWhiteSpace(normalized))
+            if (!string.IsNullOrWhiteSpace(normalized)
+                && string.IsNullOrWhiteSpace(StreamHealthIdentity.GetStreamName(stream)))
             {
+                // Only index bare URLs for unlabeled candidates so chip keys win for MP.
                 _streamIndexByKey[normalized] = i;
             }
 
-            if (!string.IsNullOrWhiteSpace(stream.Url))
+            if (!string.IsNullOrWhiteSpace(stream.Url)
+                && string.IsNullOrWhiteSpace(StreamHealthIdentity.GetStreamName(stream)))
             {
                 _streamIndexByKey[stream.Url] = i;
             }
@@ -272,7 +317,8 @@ public class StreamSelectionCoordinator(
             recommendations,
             totalStreams,
             ResolveRecommendationIndex,
-            index => _candidates.First(c => c.Index == index).Stream);
+            index => _candidates.First(c => c.Index == index).Stream,
+            _discoverySalt);
     }
 
     private int ResolveRecommendationIndex(string recommendedUrl, string? recommendedStreamName)
@@ -292,6 +338,18 @@ public class StreamSelectionCoordinator(
             {
                 return compositeIndex;
             }
+
+            // Chip recommendations must not fall back to an unlabeled page URL row.
+            foreach (var candidate in _candidates)
+            {
+                if (StreamHealthIdentity.MatchesRecommendation(
+                        candidate.Stream, recommendedUrl, recommendedStreamName))
+                {
+                    return candidate.Index;
+                }
+            }
+
+            return -1;
         }
 
         if (_streamIndexByKey.TryGetValue(recommendedUrl, out var index))

@@ -41,7 +41,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _isContentLoading = true;
     private Game? _resolvingGame;
     private PendingApply? _pendingApply;
-    private string? _pendingError;
+    private string? _pendingLanWarning;
+    private string? _pendingServiceError;
+    private bool _hasPendingLanWarning;
+    private bool _hasPendingServiceError;
+    private string _lanWarning = string.Empty;
+    private string _serviceError = string.Empty;
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
     private readonly IDesktopUpdateService _updates;
@@ -130,7 +135,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             lock (_pendingLock)
             {
                 return _pendingApply != null
-                    || _pendingError != null
+                    || _hasPendingLanWarning
+                    || _hasPendingServiceError
                     || _pendingClearResolving
                     || _pendingResetScores
                     || _pendingUiAssign.Count > 0
@@ -184,7 +190,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool HasError => _errorMessage.Length > 0;
+    public bool HasError => !string.IsNullOrWhiteSpace(_errorMessage);
 
     public bool HasGames
     {
@@ -242,15 +248,38 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         Rebuild();
     }
 
-    /// <summary>Surface a service error banner. Safe to call from any thread.</summary>
-    public void SetError(string? message)
+    /// <summary>Local-service discovery warning. Catalog success must not clear this.</summary>
+    public void SetLanWarning(string? message)
     {
         lock (_pendingLock)
         {
-            _pendingError = message ?? string.Empty;
+            _pendingLanWarning = message ?? string.Empty;
+            _hasPendingLanWarning = true;
         }
 
         NotifyWorkQueued();
+    }
+
+    /// <summary>Catalog / playback / update error. Null clears only this channel.</summary>
+    public void SetServiceError(string? message)
+    {
+        lock (_pendingLock)
+        {
+            _pendingServiceError = message ?? string.Empty;
+            _hasPendingServiceError = true;
+        }
+
+        NotifyWorkQueued();
+    }
+
+    /// <summary>Playback/update errors share the service-error channel.</summary>
+    public void SetError(string? message) => SetServiceError(message);
+
+    /// <summary>Sign-out / full reset.</summary>
+    public void ClearErrors()
+    {
+        SetLanWarning(null);
+        SetServiceError(null);
     }
 
     /// <summary>Reclassify the layout for a new viewport size / idiom.</summary>
@@ -305,6 +334,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             if (_menu.GoalNotificationsEnabled == value) return;
             _menu.ToggleGoalNotifications();
             Raise(nameof(GoalNotificationsEnabled));
+        }
+    }
+
+    /// <summary>
+    /// Settings: DNS over HTTPS fallback (default ON). When system DNS cannot
+    /// resolve a host, Cloudflare 1.1.1.1 is tried.
+    /// </summary>
+    public bool DnsOverHttpsFallbackEnabled
+    {
+        get => _menu.DnsOverHttpsFallbackEnabled;
+        set
+        {
+            if (_menu.DnsOverHttpsFallbackEnabled == value) return;
+            _menu.ToggleDnsOverHttpsFallback();
+            Raise(nameof(DnsOverHttpsFallbackEnabled));
         }
     }
 
@@ -455,14 +499,23 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     public void FlushPendingApply()
     {
-        string? error;
+        string? pendingLan = null;
+        string? pendingService = null;
+        var hasLan = false;
+        var hasService = false;
         PendingApply? apply;
         var clearResolving = false;
         var resetScores = false;
         lock (_pendingLock)
         {
-            error = _pendingError;
-            _pendingError = null;
+            hasLan = _hasPendingLanWarning;
+            pendingLan = _pendingLanWarning;
+            _hasPendingLanWarning = false;
+            _pendingLanWarning = null;
+            hasService = _hasPendingServiceError;
+            pendingService = _pendingServiceError;
+            _hasPendingServiceError = false;
+            _pendingServiceError = null;
             apply = _pendingApply;
             _pendingApply = null;
             clearResolving = _pendingClearResolving;
@@ -476,16 +529,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             if (resetScores)
             {
                 _matchEvents.Reset();
-            }
-
-            if (error != null)
-            {
-                if (error.Length > 0 && _errorMessage.Length == 0)
-                {
-                    _sounds.Play(UiSound.Error);
-                }
-
-                ErrorMessage = error;
             }
 
             if (clearResolving)
@@ -505,6 +548,27 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 var events = _matchEvents.Observe(apply.Display);
                 Apply(apply.Rows, apply.Display.Count, apply.Dict);
                 DeliverMatchEvents(events);
+            }
+
+            if (hasLan)
+            {
+                _lanWarning = pendingLan ?? string.Empty;
+            }
+
+            if (hasService)
+            {
+                _serviceError = pendingService ?? string.Empty;
+            }
+
+            if (hasLan || hasService)
+            {
+                var banner = !string.IsNullOrWhiteSpace(_serviceError) ? _serviceError : _lanWarning;
+                if (banner.Length > 0 && _errorMessage.Length == 0)
+                {
+                    _sounds.Play(UiSound.Error);
+                }
+
+                ErrorMessage = banner;
             }
 
             DrainPendingImageAssigns();

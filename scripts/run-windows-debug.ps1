@@ -35,7 +35,7 @@ $winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net11.0-windows10.0
 # The MAUI head targets net11.0-*: fail fast when dotnet resolves to an older SDK.
 $sdkVersion = (& dotnet --version)
 if (-not $sdkVersion.StartsWith('11.')) {
-    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 preview SDK (11.0.100-preview.7 or later)."
+    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 RC1 SDK (11.0.100-rc.1 or later)."
 }
 
 if (-not (Test-Path $project)) {

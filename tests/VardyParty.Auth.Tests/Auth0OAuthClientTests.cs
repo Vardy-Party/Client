@@ -104,6 +104,26 @@ public class Auth0OAuthClientTests
         Assert.Contains("grant_type=authorization_code", inner.LastRequestBody, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RefreshAsync_WhenNon200HtmlOrEmpty_ReturnsFailedResultWithoutThrowing()
+    {
+        // Arrange
+        var settings = CreateNorthgateSettings();
+        var inner = new JsonHandler(HttpStatusCode.ServiceUnavailable, "<html>503 Service Unavailable</html>");
+        using var http = new HttpClient(inner);
+        var factory = _fixture.GetMock<IHttpClientFactory>();
+        factory.Setup(clientFactory => clientFactory.CreateClient(Auth0HttpClients.Name)).Returns(http);
+        var sut = new Auth0OAuthClient(factory.Object, NullLogger<Auth0OAuthClient>.Instance);
+
+        // Act
+        var result = await sut.RefreshAsync(settings, "refresh-token", CancellationToken.None);
+
+        // Assert
+        Assert.False(result.IsSuccess);
+        Assert.Equal("HTTP_503", result.Error);
+        Assert.Equal("<html>503 Service Unavailable</html>", result.ErrorDescription);
+    }
+
     private Auth0Settings CreateNorthgateSettings()
         => _fixture.Build<Auth0Settings>()
             .With(settings => settings.Domain, "id.northgate.test")

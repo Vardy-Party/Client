@@ -6,6 +6,8 @@ public interface IStreamSelectionCoordinator
 {
     IObservable<StreamSelectionProgress> ProgressUpdated { get; }
 
+    RecommendationResponse? LatestRecommendations { get; }
+
     Task InitializeAsync(Game game, CancellationToken cancellationToken = default);
 
     StreamSelectionCandidate? GetNextCandidate();
@@ -21,6 +23,8 @@ public interface IStreamSelectionCoordinator
     IReadOnlyList<int> GetUntestedIndexes();
 
     bool TryGetStreamIndex(string? streamUrlOrReferer, out int index);
+
+    void RememberRecommendations(RecommendationResponse? recommendations);
 
     void Reset();
 }

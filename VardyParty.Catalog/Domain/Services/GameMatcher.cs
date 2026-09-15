@@ -157,9 +157,15 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         foreach (var g in games)
         {
             var startUtc = NormalizeUtc(g.Start, now);
+            var scoredFinish = ScoresTickerPolicy.IsFinishedWithScore(g);
 
             if (startUtc > now.AddMinutes(5))
             {
+                if (scoredFinish)
+                {
+                    continue;
+                }
+
                 g.IsFinished = false;
                 g.IsInProgress = false;
                 g.IsHalfTime = false;
@@ -180,6 +186,11 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
             if (!matchedKeys.ContainsKey(Key(g.Home, g.Away))
                 && startUtc < now.AddHours(g.IsOlympicLeague ? -5 : -2))
             {
+                if (scoredFinish || ScoresTickerPolicy.IsInPlay(g))
+                {
+                    continue;
+                }
+
                 g.IsFinished = true;
             }
         }

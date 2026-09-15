@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QRCoder;
 using VardyParty.Auth;
 using VardyParty.Catalog;
@@ -32,9 +33,11 @@ public partial class HomeHostPage : ContentPage
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly IUiSoundPlayer _soundPlayer;
+    private readonly Auth0Settings _auth0Settings;
     private readonly HomeShellViewModel _homeShell = new();
 
     private readonly List<IDisposable> _subscriptions = new();
+    private readonly List<IDisposable> _gameFeedSubscriptions = new();
     private IDisposable? _progressSubscription;
     private bool _initialized;
     private bool _isAuthenticated;
@@ -74,7 +77,8 @@ public partial class HomeHostPage : ContentPage
         SelectionState selection,
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
-        IUiSoundPlayer soundPlayer)
+        IUiSoundPlayer soundPlayer,
+        IOptions<Auth0Settings> auth0Settings)
     {
         _logger = logger;
         _viewModel = viewModel;
@@ -88,6 +92,7 @@ public partial class HomeHostPage : ContentPage
         _sounds = sounds;
         _notifications = notifications;
         _soundPlayer = soundPlayer;
+        _auth0Settings = auth0Settings.Value;
 
         // Hand the Leanback TV detection (MainApplication) to the shared view
         // BEFORE InitializeComponent builds it: HomeView seeds the layout
@@ -158,8 +163,13 @@ public partial class HomeHostPage : ContentPage
 
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
+            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                return;
+            }
+
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
 
         // Yield past the first layout pass before Keystore + catalog start —
@@ -224,27 +234,81 @@ public partial class HomeHostPage : ContentPage
         }
         else
         {
-            SetAuthOverlayVisible(true);
+            ShowUnauthenticatedOverlay();
         }
 
         _logger.LogInformation("[HomeHost] Initialize complete (authenticated={Authenticated})", _isAuthenticated);
     }
 
+    private bool IsAuth0Configured() =>
+        !string.IsNullOrWhiteSpace(_auth0Settings.Domain)
+        && !string.IsNullOrWhiteSpace(_auth0Settings.ClientId);
+
+    private void ShowUnauthenticatedOverlay()
+    {
+        var configured = IsAuth0Configured();
+        if (!configured)
+        {
+            _logger.LogWarning(
+                "[HomeHost] Auth0 not configured; hiding Sign in. Domain/ClientId empty in this build.");
+        }
+
+        PostUi(() =>
+        {
+            AuthOverlay.IsVisible = true;
+            DeviceCodePanel.IsVisible = false;
+
+            if (configured)
+            {
+                AuthWelcomeLabel.IsVisible = true;
+                AuthWelcomeLabel.Text = "Welcome — please sign in to browse today's matches.";
+                SignInButton.IsVisible = true;
+                SignInButton.IsEnabled = true;
+                SignInButton.Text = "Sign in — Continue";
+                AuthStatusLabel.Text = string.Empty;
+                AuthStatusLabel.IsVisible = false;
+                SignInButton.Focus();
+                return;
+            }
+
+            AuthWelcomeLabel.Text = string.Empty;
+            AuthWelcomeLabel.IsVisible = false;
+            SignInButton.IsVisible = false;
+            SignInButton.IsEnabled = false;
+            AuthStatusLabel.Text = "Missing configuration.";
+            AuthStatusLabel.IsVisible = true;
+        });
+    }
+
     private void StartGamesFeed()
     {
-        _subscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
-        _subscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
+        StopGamesFeed();
+        _gameFeedSubscriptions.Add(_gameService.GamesStream.Subscribe(dict => _viewModel.UpdateGames(dict)));
+        _gameFeedSubscriptions.Add(_gameService.ErrorStream.Subscribe(error =>
         {
             _serviceError = error;
-            PushErrorBanner();
+            _viewModel.SetServiceError(error);
         }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
     }
 
-    /// <summary>Service errors outrank the LAN warning; one shared banner.</summary>
-    private void PushErrorBanner() =>
-        _viewModel.SetError(!string.IsNullOrWhiteSpace(_serviceError) ? _serviceError : _lanWarning);
+    private void StopGamesFeed()
+    {
+        foreach (var subscription in _gameFeedSubscriptions)
+        {
+            subscription.Dispose();
+        }
+
+        _gameFeedSubscriptions.Clear();
+    }
+
+    /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
+    private void PushErrorBanner()
+    {
+        _viewModel.SetServiceError(_serviceError);
+        _viewModel.SetLanWarning(_lanWarning);
+    }
 
     // ---------------------------------------------------------------- auth --
 
@@ -255,6 +319,12 @@ public partial class HomeHostPage : ContentPage
     private async Task StartSignInAsync()
     {
         if (_isAuthenticating) return;
+
+        if (!IsAuth0Configured())
+        {
+            ShowUnauthenticatedOverlay();
+            return;
+        }
 
         _logger.LogInformation("[HomeHost] Sign in pressed (IsTv={IsTv})", MauiProgram.IsTv);
         _isAuthenticating = true;
@@ -388,6 +458,8 @@ public partial class HomeHostPage : ContentPage
 
         await _authTokens.LogoutAsync();
 
+        StopGamesFeed();
+
         foreach (var subscription in _subscriptions)
         {
             subscription.Dispose();
@@ -409,7 +481,7 @@ public partial class HomeHostPage : ContentPage
             _viewModel.CanSignOut = false;
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
-            _viewModel.SetError(null);
+            _viewModel.ClearErrors();
             _viewModel.ResetScoreObservations();
             SetAuthOverlayVisible(true);
         });
@@ -417,8 +489,13 @@ public partial class HomeHostPage : ContentPage
         // The LAN warning stream keeps running across sign-in sessions.
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
         {
+            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                return;
+            }
+
             _lanWarning = warning;
-            PushErrorBanner();
+            _viewModel.SetLanWarning(warning);
         }));
     }
 
@@ -456,7 +533,7 @@ public partial class HomeHostPage : ContentPage
     private void SetAuthOverlayVisible(bool visible) => PostUi(() =>
     {
         AuthOverlay.IsVisible = visible;
-        if (visible)
+        if (visible && SignInButton.IsVisible && SignInButton.IsEnabled)
         {
             SignInButton.Focus();
         }
@@ -549,6 +626,9 @@ public partial class HomeHostPage : ContentPage
             }
             catch (OperationCanceledException)
             {
+                // Player close may cancel the resolution CTS; mark exhausted so
+                // TryResumeAfterPlayer does not restart finding-streams.
+                _resolutionExhausted = true;
                 _logger.LogInformation("[HomeHost] Stream resolution cancelled");
             }
             catch (Exception ex)
@@ -589,7 +669,7 @@ public partial class HomeHostPage : ContentPage
         await Task.CompletedTask;
     }
 
-    private void CancelStreamDiscoveryFromUser()
+    private void CancelStreamDiscoveryFromUser(bool playCancelSound = true)
     {
         try
         {
@@ -629,7 +709,8 @@ public partial class HomeHostPage : ContentPage
         {
         }
 #endif
-        _sounds.Play(UiSound.Back);
+        if (playCancelSound)
+            _sounds.Play(UiSound.Back);
         _logger.LogInformation("[HomeHost] Stream discovery cancelled by user");
 
         PostUi(() =>
@@ -642,9 +723,50 @@ public partial class HomeHostPage : ContentPage
         });
     }
 
+    /// <summary>
+    /// User left the native player — stop any in-flight finding-streams and
+    /// dismiss the modal (same end state as Cancel).
+    /// </summary>
+    private void StopFindingStreamsAfterPlaybackLeft()
+    {
+        var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
+            _resolveOverlayOpen,
+            _isResolvingStreams,
+            _resolutionStartClaimed,
+            _resolutionTask is { IsCompleted: false })
+            || ResolveOverlay.IsVisible;
+
+        // Always terminal for this pick so TryResumeAfterPlayer cannot restart.
+        _resolutionExhausted = true;
+
+        if (HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive)
+            || _homeShell.PlayerSessionStarted)
+        {
+            _logger.LogInformation("[HomeHost] Stopping finding-streams after playback left");
+            CancelStreamDiscoveryFromUser(playCancelSound: false);
+            return;
+        }
+
+        _selection.CurrentGame = null;
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[HomeHost] ClearSelection after playback left failed");
+        }
+
+        PostUi(() =>
+        {
+            ResolveOverlay.IsVisible = false;
+            UpdateBackSuppression();
+        });
+    }
+
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
 
-    private void OnPlaybackVisibilityChanged(object? sender, bool visible)
+    private async void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
         PlaybackAudioSession.Apply(visible, _sounds, _soundPlayer);
 
@@ -654,6 +776,39 @@ public partial class HomeHostPage : ContentPage
         _notifications.IsPlaybackActive = visible;
         if (!visible)
         {
+            StopFindingStreamsAfterPlaybackLeft();
+
+            var authenticated = false;
+            try
+            {
+                authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[HomeHost] Authentication check after playback failed");
+            }
+
+            if (!authenticated)
+            {
+                _logger.LogWarning("[HomeHost] Authentication expired or invalidated during playback; transitioning to sign-in overlay");
+                _isAuthenticated = false;
+                _selection.CurrentGame = null;
+                try
+                {
+                    _homeShell.ClearSelection();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
+                }
+
+                PostUi(() => _viewModel.CanSignOut = false);
+                StopGamesFeed();
+                _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
+                ShowUnauthenticatedOverlay();
+                return;
+            }
+
             PostUi(TryResumeAfterPlayer);
         }
     }
@@ -661,12 +816,17 @@ public partial class HomeHostPage : ContentPage
     /// <summary>Same decision the old Blazor Home page made after the native player closed.</summary>
     private void TryResumeAfterPlayer()
     {
+        if (!_isAuthenticated)
+        {
+            return;
+        }
+
         try
         {
             var resolutionActive = _isResolvingStreams
                 || _resolutionStartClaimed
                 || _resolutionTask is { IsCompleted: false };
-            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted);
+            var resume = _homeShell.DecideResumeAfterPlayer(resolutionActive, _selection.CurrentGame, _resolutionExhausted, _isAuthenticated);
             if (resume == ResumeAfterPlayerAction.Clear)
             {
                 _selection.CurrentGame = null;
@@ -692,7 +852,10 @@ public partial class HomeHostPage : ContentPage
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
         ApplyResolveWaitVisual(indeterminate: true, fraction: 0);
-        ResolveCountLabel.Text = "0 tested • 0 healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            streamsTested: 0, healthyStreams: 0, totalStreams: 0, indeterminate: true);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         ResolveOverlay.IsVisible = true;
         // Re-assert suppression on the UI thread with the overlay actually
         // visible — covers any race where a prior session's finally cleared
@@ -705,20 +868,24 @@ public partial class HomeHostPage : ContentPage
     private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
     {
         var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
+        var indeterminate = StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
 
         ResolveTitleLabel.Text = isNoHealthy
             ? string.Empty
             : progress.Status == "Playing..." ? "Now Playing" : "Finding streams...";
         ResolveTitleLabel.IsVisible = ResolveTitleLabel.Text.Length > 0;
         ResolveStatusLabel.Text = progress.Status;
-        ResolveStatusLabel.IsVisible = !string.IsNullOrEmpty(progress.Status)
-            && !string.Equals(progress.Status, "Searching for streams", StringComparison.OrdinalIgnoreCase);
+        ResolveStatusLabel.IsVisible = StreamResolveOverlayProgress.ShouldShowStatusSubtitle(progress.Status);
         ApplyResolveWaitVisual(
-            StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy),
+            indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
-        ResolveCountLabel.Text = progress.TotalStreams > 0
-            ? $"{progress.TotalStreams} total • {progress.StreamsTested} tested • {progress.HealthyStreams} healthy"
-            : $"{progress.StreamsTested} tested • {progress.HealthyStreams} healthy";
+        var count = StreamResolveOverlayProgress.FormatCountLabel(
+            progress.StreamsTested,
+            progress.HealthyStreams,
+            progress.TotalStreams,
+            indeterminate);
+        ResolveCountLabel.Text = count;
+        ResolveCountLabel.IsVisible = count.Length > 0;
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false while we still owe the user a cancelable overlay.
         ResolveOverlay.IsVisible = _resolveOverlayOpen;
@@ -777,7 +944,8 @@ public partial class HomeHostPage : ContentPage
             return true;
         }
 
-        if (_resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible)
+        if (HomeFindingStreamsPolicy.HardwareBackShouldCancelFinding(
+                _resolveOverlayOpen || _isResolvingStreams || _resolutionStartClaimed || ResolveOverlay.IsVisible))
         {
             _logger.LogInformation("[HomeHost] Hardware back — canceling stream resolution");
             CancelStreamDiscoveryFromUser();

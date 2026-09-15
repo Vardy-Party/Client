@@ -11,13 +11,14 @@ using AndroidX.Media3.ExoPlayer.Hls;
 using AndroidX.Media3.DataSource;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.UI;
+using VardyParty.Catalog;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Ports;
+using VardyParty.Presentation;
+using VardyParty.Streaming;
 using Microsoft.Extensions.Logging;
 using System.Threading;
-using VardyParty.Ports;
-using VardyParty.Streaming;
-using VardyParty.Catalog;
 
 namespace VardyParty.Platforms.Android
 {
@@ -33,8 +34,10 @@ namespace VardyParty.Platforms.Android
             _logger = logger;
             _healthReporter = healthReporter ?? ResolveHealthReporter();
             _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
-            _engine.AttachHandler = (url, _, _) =>
+            _engine.AttachHandler = (url, requestHeaders, _) =>
             {
+                if (requestHeaders is { Count: > 0 })
+                    _requestHeaders = requestHeaders;
                 AttachEngine(url);
                 return Task.CompletedTask;
             };
@@ -44,28 +47,6 @@ namespace VardyParty.Platforms.Android
                 return Task.CompletedTask;
             };
             EnsurePool();
-        }
-
-        private static string? MapCodecToFriendlyName(string? codec)
-        {
-            if (string.IsNullOrEmpty(codec)) return null;
-            try
-            {
-                var lower = codec.ToLowerInvariant();
-                if (lower.StartsWith("avc1") || lower.StartsWith("avc3") || lower.Contains("h264") || lower.Contains("avc")) return "H.264";
-                if (lower.StartsWith("hev1") || lower.StartsWith("hvc1") || lower.Contains("hevc") || lower.Contains("h265")) return "H.265";
-                if (lower.StartsWith("vp9") || lower.Contains("vp9")) return "VP9";
-                if (lower.StartsWith("vp8") || lower.Contains("vp8")) return "VP8";
-                if (lower.StartsWith("mp4a") || lower.Contains("aac") || lower.Contains("mp4a")) return "AAC";
-                if (lower.StartsWith("ac-3") || lower.Contains("ac3")) return "AC-3";
-                if (lower.StartsWith("opus") || lower.Contains("opus")) return "Opus";
-                // default: return original token trimmed
-                return codec;
-            }
-            catch
-            {
-                return codec;
-            }
         }
 
         // Support post-construction injection for true constructor-like DI via activity factory / lifecycle hook
@@ -83,7 +64,93 @@ namespace VardyParty.Platforms.Android
             if (enrichedGames != null) _enrichedGames = enrichedGames;
             if (resolveFresh != null) _resolveFresh = resolveFresh;
             if (orchestrator != null) _orchestrator = orchestrator;
+            _chrome = null; // recreate with latest orchestrator/switching on next EnsureChrome
             EnsurePool();
+        }
+
+        private PlaybackChromePresenter EnsureChrome()
+        {
+            if (_chrome != null) return _chrome;
+
+            _chrome = new PlaybackChromePresenter(
+                reportBadStream: async (reason, _) =>
+                {
+                    if (_orchestrator is null)
+                        throw new InvalidOperationException("Report unavailable");
+                    await _orchestrator.ReportCurrentStreamAsBadAsync(reason);
+                },
+                requestNext: () => AndroidVideoPlayerService.RequestNextStream(),
+                cleanupPool: () => _switching?.Cleanup());
+            _chrome.StateChanged += (_, __) => RunOnUiThread(ApplyChromeState);
+            _chrome.StreamToastDismissed += (_, __) => RunOnUiThread(() =>
+            {
+                if (_streamToastView != null)
+                    _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+            });
+            return _chrome;
+        }
+
+        private void ApplyChromeState()
+        {
+            if (_chrome is null) return;
+
+            var wantMenu = _chrome.IsMenuVisible;
+            var wantInfo = _chrome.IsVideoInfoVisible;
+
+            if (_menuPanel != null)
+            {
+                _menuPanel.Visibility = wantMenu
+                    ? global::Android.Views.ViewStates.Visible
+                    : global::Android.Views.ViewStates.Gone;
+            }
+
+            if (wantMenu && !_isMenuVisible)
+                _videoInfoButton?.Post(() => _videoInfoButton.RequestFocus());
+
+            if (wantInfo && !_isInfoVisible)
+            {
+                try
+                {
+                    RemoveCallback(_streamToastHandler, _streamToastRunnable);
+                    if (_streamToastView != null)
+                        _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+                }
+                catch (Exception ex) { LogIgnored("DismissStreamToast", ex); }
+                ShowOverlayAnimated();
+                StartVideoInfoRefreshLoop();
+            }
+            else if (!wantInfo && _isInfoVisible)
+            {
+                StopVideoInfoRefreshLoop();
+                HideOverlayAnimated();
+            }
+            else if (wantInfo)
+            {
+                StartVideoInfoRefreshLoop();
+            }
+
+            _isMenuVisible = wantMenu;
+            _isInfoVisible = wantInfo;
+            _overlayLocked = _chrome.OverlayLocked;
+
+            if (_reportStatusView != null)
+            {
+                if (_chrome.ReportState == PlaybackReportUiState.Idle)
+                {
+                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
+                }
+                else
+                {
+                    _reportStatusView.Text = _chrome.ReportStatusText;
+                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Visible;
+                }
+            }
+
+            if (_streamToastView != null && !_chrome.IsStreamToastVisible)
+                _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+
+            SyncScoresTickerFromChrome();
+            UpdateBackdropVisibility();
         }
 
         private void LogIgnored(string operation, Exception ex)
@@ -160,6 +227,7 @@ namespace VardyParty.Platforms.Android
         private int? _videoHeight;
         private string _m3u8Url = string.Empty;
         private string? _refererUrl;
+        private IReadOnlyDictionary<string, string>? _requestHeaders;
         private IStreamSwitchingService? _switching;
         private ILogger<NativeVideoActivity>? _logger;
         private IStreamHealthReporter? _healthReporter;
@@ -200,12 +268,15 @@ namespace VardyParty.Platforms.Android
         private const long TickerScrollStartDelayMs = 5000;
         private bool _isScoresTickerVisible;
         private ScoresTickerMode _scoresTickerMode = ScoresTickerMode.SameLeagueInPlay;
+        private PlaybackChromePresenter? _chrome;
         private bool _isMenuVisible;
         private bool _isInfoVisible;
         private bool _isTvDevice;
         private TextView? _streamToastView;
         private global::Android.OS.Handler? _streamToastHandler;
         private Java.Lang.IRunnable? _streamToastRunnable;
+        private global::Android.OS.Handler? _videoInfoRefreshHandler;
+        private Java.Lang.IRunnable? _videoInfoRefreshRunnable;
         private int _lastToastIndex = -1;
         private int _lastToastTotal = -1;
         private bool _playbackResultReported;
@@ -233,6 +304,7 @@ namespace VardyParty.Platforms.Android
             // Game title (prefer BBC display names) passed from caller route
             _gameTitle = Intent?.GetStringExtra("TITLE") ?? string.Empty;
             _refererUrl = Intent?.GetStringExtra("REFERER_URL") ?? string.Empty;
+            _requestHeaders = AndroidVideoPlayerService.CurrentRequestHeaders;
             _currentLeague = Intent?.GetStringExtra("LEAGUE") ?? string.Empty;
             _currentHomeTeam = Intent?.GetStringExtra("HOME_TEAM") ?? string.Empty;
             _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;
@@ -369,7 +441,13 @@ namespace VardyParty.Platforms.Android
             _streamToastHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
             _streamToastRunnable = new Java.Lang.Runnable(() =>
             {
-                try { _streamToastView.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
+                try
+                {
+                    _chrome?.DismissStreamToast();
+                    if (_streamToastView != null)
+                        _streamToastView.Visibility = global::Android.Views.ViewStates.Gone;
+                }
+                catch { }
             });
 
             _bufferingIndicator = new global::Android.Widget.ProgressBar(
@@ -464,47 +542,20 @@ namespace VardyParty.Platforms.Android
             ApplyTvMenuFocusStyling(inPlayScoresButton);
             ApplyTvMenuFocusStyling(reportButton);
 
-            videoInfoButton.Click += (_, __) =>
-            {
-                HideMenu();
-                ShowInfoOverlay();
-            };
+            EnsureChrome();
 
-            inPlayScoresButton.Click += (_, __) =>
-            {
-                HideMenu();
-                ToggleSameLeagueScoresTicker();
-            };
+            videoInfoButton.Click += (_, __) => EnsureChrome().ShowVideoInfo();
+
+            inPlayScoresButton.Click += (_, __) => EnsureChrome().ToggleScores();
 
             reportButton.Click += async (_, __) =>
             {
-                if (_reportStatusView != null)
-                {
-                    _reportStatusView.Visibility = global::Android.Views.ViewStates.Visible;
-                    _reportStatusView.Text = "Reporting stream...";
-                }
-
-                try
-                {
-                    if (_orchestrator != null)
-                    {
-                        await _orchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
-                        if (_reportStatusView != null) _reportStatusView.Text = "Stream reported";
-                    }
-                    else if (_reportStatusView != null)
-                    {
-                        _reportStatusView.Text = "Report unavailable";
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogIgnored("ReportCurrentStreamAsBad", ex);
-                    if (_reportStatusView != null) _reportStatusView.Text = "Report failed";
-                }
-
-                try { await Task.Delay(900); } catch (Exception ex) { LogIgnored("ReportStatusDelay", ex); }
-                if (_reportStatusView != null) _reportStatusView.Visibility = global::Android.Views.ViewStates.Gone;
-                HideMenu();
+                var chrome = EnsureChrome();
+                await chrome.ReportBadStreamAsync();
+                try { await Task.Delay(PlaybackChromePresenter.ReportStatusLinger); }
+                catch (Exception ex) { LogIgnored("ReportStatusDelay", ex); }
+                chrome.ClearReportStatus();
+                chrome.HideMenu();
             };
 
             _menuPanel.AddView(videoInfoButton);
@@ -844,6 +895,7 @@ namespace VardyParty.Platforms.Android
             {
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
+                StopVideoInfoRefreshLoop();
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
                 RemoveCallback(_overlayHandler, _overlayHideRunnable);
@@ -974,6 +1026,49 @@ namespace VardyParty.Platforms.Android
             if (handler is null || runnable is null)
                 return;
             handler.PostDelayed(runnable, delayMs);
+        }
+
+        private void StartVideoInfoRefreshLoop()
+        {
+            try
+            {
+                _videoInfoRefreshHandler ??= new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+                _videoInfoRefreshRunnable ??= new Java.Lang.Runnable(() =>
+                {
+                    try
+                    {
+                        if (_chrome?.IsVideoInfoVisible != true && !_isInfoVisible)
+                        {
+                            StopVideoInfoRefreshLoop();
+                            return;
+                        }
+
+                        UpdateOverlayFromCurrentStream();
+                        PostDelayedCallback(
+                            _videoInfoRefreshHandler,
+                            _videoInfoRefreshRunnable,
+                            (long)PlaybackChromePresenter.VideoInfoRefreshInterval.TotalMilliseconds);
+                    }
+                    catch (Exception ex) { LogIgnored("VideoInfoRefreshTick", ex); }
+                });
+
+                RemoveCallback(_videoInfoRefreshHandler, _videoInfoRefreshRunnable);
+                UpdateOverlayFromCurrentStream();
+                PostDelayedCallback(
+                    _videoInfoRefreshHandler,
+                    _videoInfoRefreshRunnable,
+                    (long)PlaybackChromePresenter.VideoInfoRefreshInterval.TotalMilliseconds);
+            }
+            catch (Exception ex) { LogIgnored("StartVideoInfoRefreshLoop", ex); }
+        }
+
+        private void StopVideoInfoRefreshLoop()
+        {
+            try
+            {
+                RemoveCallback(_videoInfoRefreshHandler, _videoInfoRefreshRunnable);
+            }
+            catch (Exception ex) { LogIgnored("StopVideoInfoRefreshLoop", ex); }
         }
 
         // Hide system UI (status bar and navigation bar) for full-screen video experience
@@ -1171,7 +1266,8 @@ namespace VardyParty.Platforms.Android
                         metrics.IsBuffering = true;
                     }
 
-                    await _healthReporter.ReportPlaybackMetricsAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                    await _healthReporter.ReportPlaybackMetricsAsync(
+                        _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
 
                     var generation = CurrentAttachGeneration;
                     var bitrate = metrics.BitrateKbps;
@@ -1192,7 +1288,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics();
-                _ = _healthReporter.ReportPlaybackStartedAsync(_m3u8Url, _refererUrl, metrics: metrics);
+                _ = _healthReporter.ReportPlaybackStartedAsync(
+                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
             }
             catch (Exception ex)
             {
@@ -1308,10 +1405,15 @@ namespace VardyParty.Platforms.Android
                 {
                     try
                     {
-                        var last = _activity._lastOverlayInfo;
-                        if (last != null)
+                        // Rebuild so BufferPercent / status are not stuck on a prior snapshot.
+                        var info = _activity.BuildOverlayInfoFromCurrentStream();
+                        if (info != null)
+                            _activity.RunOnUiThread(() => _activity.UpdateOverlayText(info));
+                        else
                         {
-                            _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
+                            var last = _activity._lastOverlayInfo;
+                            if (last != null)
+                                _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
                         }
                     }
                     catch (Exception ex) { _activity.LogIgnored("UpdateOverlayOnStateChange", ex); }
