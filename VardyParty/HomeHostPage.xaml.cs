@@ -344,17 +344,12 @@ public partial class HomeHostPage : ContentPage
             }
             else
             {
+                // Desktop: browser only (packaged WebAuthenticator, then loopback PKCE inside
+                // Auth0AuthService). Device-code is TV-only — do not surprise desktop users.
                 var result = await _authLogin.LoginInteractiveAsync();
                 if (result.IsSuccess && !string.IsNullOrWhiteSpace(result.AccessToken))
                 {
                     OnSignedIn();
-                }
-                else if (LooksLikeMissingRedirectCheck(result.Error)
-                    || LooksLikeBrowserUnavailable(result.Error))
-                {
-                    _logger.LogWarning("[HomeHost] Interactive Auth0 login unavailable; falling back to device sign-in");
-                    SetAuthStatus("Browser sign-in unavailable — use the code below.");
-                    await SignInWithDeviceCodeAsync();
                 }
                 else if (!string.IsNullOrWhiteSpace(result.Error))
                 {
@@ -384,14 +379,6 @@ public partial class HomeHostPage : ContentPage
             });
         }
     }
-
-    private static bool LooksLikeMissingRedirectCheck(string? error) =>
-        !string.IsNullOrWhiteSpace(error)
-        && error.Contains("redirection check", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeBrowserUnavailable(string? error) =>
-        !string.IsNullOrWhiteSpace(error)
-        && error.Contains("Could not open a browser for Auth0 login", StringComparison.OrdinalIgnoreCase);
 
     private async Task SignInWithDeviceCodeAsync()
     {

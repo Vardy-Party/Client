@@ -77,6 +77,13 @@ public class Auth0AuthService : Auth0TokenSession
             if (loginResult.IsError)
             {
                 Logger.LogWarning("[Auth0] Login error: {Error}", loginResult.Error);
+                if (LooksLikeRedirectionCheckFailure(loginResult.Error))
+                {
+                    Logger.LogWarning(
+                        "[Auth0] Packaged WebAuthenticator redirection check failed — falling back to loopback browser PKCE");
+                    return await LoginViaLoopbackPkceAsync(cancellationToken);
+                }
+
                 return new AuthLoginResult(false, null, loginResult.Error);
             }
 
@@ -99,12 +106,22 @@ public class Auth0AuthService : Auth0TokenSession
             Logger.LogInformation("[Auth0] Token set successfully");
             return new AuthLoginResult(true, AccessToken, null);
         }
+        catch (Exception ex) when (LooksLikeRedirectionCheckFailure(ex.Message))
+        {
+            Logger.LogWarning(ex,
+                "[Auth0] Packaged WebAuthenticator failed redirection check — falling back to loopback browser PKCE");
+            return await LoginViaLoopbackPkceAsync(cancellationToken);
+        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "[Auth0] Interactive login failed");
             return new AuthLoginResult(false, null, ex.Message);
         }
     }
+
+    private static bool LooksLikeRedirectionCheckFailure(string? message) =>
+        !string.IsNullOrWhiteSpace(message)
+        && message.Contains("redirection check", StringComparison.OrdinalIgnoreCase);
 
     protected override async Task LoadPersistedTokensAsync()
     {
