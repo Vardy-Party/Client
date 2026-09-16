@@ -9,8 +9,8 @@ export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}"
 export USER_SECRETS_ID="${USER_SECRETS_ID:-543d9e88-b60c-4397-bc9d-c4614b8b1dcb}"
 # local|preview|production — see VardyParty.Linux MauiProgram BuildConfiguration.
-# Pass through from the caller; default preview for local WSL bring-up.
-export VARDYPARTY_LINUX_API="${VARDYPARTY_LINUX_API:-preview}"
+# Pass through from the caller; default production to match MAUI heads.
+export VARDYPARTY_LINUX_API="${VARDYPARTY_LINUX_API:-production}"
 echo "[linux] VARDYPARTY_LINUX_API=$VARDYPARTY_LINUX_API"
 
 APPSETTINGS="VardyParty.Linux/appsettings.json"
