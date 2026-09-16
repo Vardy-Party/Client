@@ -10,9 +10,23 @@ public class Auth0ApiTokenHandler(
 {
     internal static readonly TimeSpan TokenFetchTimeout = TimeSpan.FromSeconds(20);
 
+    internal static bool ShouldAttachAccessToken(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.AbsolutePath;
+        if (string.IsNullOrEmpty(path))
+            return true;
+
+        return !path.Equals("/health", StringComparison.OrdinalIgnoreCase)
+            && !path.EndsWith("/health", StringComparison.OrdinalIgnoreCase);
+    }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        using var tokenCts = new CancellationTokenSource(TokenFetchTimeout);
+        if (!ShouldAttachAccessToken(request))
+            return await base.SendAsync(request, cancellationToken);
+
+        using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        tokenCts.CancelAfter(TokenFetchTimeout);
         var token = await tokenProvider.GetAccessTokenAsync(tokenCts.Token, forceRefresh: false);
         if (string.IsNullOrWhiteSpace(token))
         {
@@ -36,7 +50,8 @@ public class Auth0ApiTokenHandler(
             return response;
         }
 
-        using var refreshCts = new CancellationTokenSource(TokenFetchTimeout);
+        using var refreshCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        refreshCts.CancelAfter(TokenFetchTimeout);
         var refreshed = await tokenProvider.GetAccessTokenAsync(refreshCts.Token, forceRefresh: true);
         if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, token, StringComparison.Ordinal))
         {

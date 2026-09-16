@@ -260,6 +260,10 @@ public class StreamResolver(
 
             return new ResolveOutcome(enriched, SiblingsFrom(stream, m3u8Response));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             enriched.Status = StreamResolutionStatus.Failed;

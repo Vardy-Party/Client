@@ -73,9 +73,41 @@ public class Auth0ApiTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_TokenFetchDoesNotUseRequestCancellation()
+    public async Task SendAsync_HealthCheck_DoesNotFetchAccessToken()
     {
-        // Arrange
+        var tokenProvider = _fixture.GetMock<IAuthTokenProvider>();
+        var inner = new SequenceStatusHandler(HttpStatusCode.OK);
+        var handler = new Auth0ApiTokenHandler(tokenProvider.Object, NullLogger<Auth0ApiTokenHandler>.Instance)
+        {
+            InnerHandler = inner
+        };
+        using var client = new HttpClient(handler);
+
+        var response = await client.GetAsync("http://192.168.1.10:5019/health");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, inner.SendCount);
+        tokenProvider.Verify(
+            provider => provider.GetAccessTokenAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData("/health", false)]
+    [InlineData("/Health", false)]
+    [InlineData("/mp", true)]
+    [InlineData("/play/https%3A%2F%2Fexample.test", true)]
+    public void ShouldAttachAccessToken_MatchesLocalServicePaths(string path, bool expected)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:5019{path}");
+        Assert.Equal(expected, Auth0ApiTokenHandler.ShouldAttachAccessToken(request));
+    }
+
+    [Fact]
+    public async Task SendAsync_TokenFetchRespectsRequestCancellation()
+    {
+        // Arrange — token fetch is linked to the request token so Cancel on
+        // finding-streams can abort a hung Auth0 refresh before /mp starts.
         CancellationToken captured = default;
         var tokenProvider = _fixture.GetMock<IAuthTokenProvider>();
         tokenProvider
@@ -96,6 +128,8 @@ public class Auth0ApiTokenHandlerTests
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // Linked to the request CTS (plus a 20s timeout) so overlay Cancel can abort token fetch.
+        Assert.True(captured.CanBeCanceled);
         Assert.False(captured.Equals(requestCts.Token));
     }
 
