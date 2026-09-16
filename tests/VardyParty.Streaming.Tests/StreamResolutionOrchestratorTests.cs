@@ -18,6 +18,34 @@ public class StreamResolutionOrchestratorTests
 {
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
+    public StreamResolutionOrchestratorTests()
+    {
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+    }
+
+    [Fact]
+    public async Task StartAsync_LocalServiceUnavailable_AbortsFastWithLocalServiceUnavailable()
+    {
+        // Arrange
+        var game = _fixture.Create<Game>();
+        var launcher = _fixture.GetMock<IPlaybackLauncher>();
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var outcome = await sut.StartAsync(game, launcher.Object);
+
+        // Assert
+        Assert.True(outcome.LocalServiceUnavailable);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Verify(c => c.InitializeAsync(It.IsAny<Game>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task StartAsync_CachedM3U8Fails_RetriesWithFreshUrl()
     {

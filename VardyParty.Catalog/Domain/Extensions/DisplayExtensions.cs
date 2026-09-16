@@ -9,9 +9,8 @@ public static class DisplayExtensions
 {
     /// <summary>
     /// Convert enriched API games dictionary (league -> games) into an ordered list of games
-    /// suitable for homepage rendering. Live and upcoming fixtures stay visible; scored
-    /// full-time results stay for a short window. Scoreless heuristic-FT is omitted.
-    /// Do not use this list as the in-player ticker catalog — tickers flatten the raw snapshot.
+    /// suitable for homepage rendering. Live and upcoming fixtures stay visible; finished
+    /// games are excluded. Do not use this list as the in-player ticker catalog — tickers flatten the raw snapshot.
     /// </summary>
     public static List<Game> ToDisplay(this IDictionary<string, List<Game>>? source)
     {
@@ -22,10 +21,9 @@ public static class DisplayExtensions
         var now = DateTime.UtcNow;
 
         var visible = allGames
-            .Where(g => !g.IsFinished || ScoresTickerPolicy.IsRecentScoredFinish(g, now))
+            .Where(g => !g.IsFinished)
             .Where(g => BbcFixtureSchedule.IsWithinLookAheadWindow(g.StartUtcForOrdering, now))
             .Where(g => g.IsLiveForOrdering
-                || ScoresTickerPolicy.IsRecentScoredFinish(g, now)
                 || g.IsScheduledUpcoming(now)
                 || g.StartUtcForOrdering == default
                 || g.StartUtcForOrdering == DateTime.MaxValue

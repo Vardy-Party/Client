@@ -36,30 +36,6 @@ public static class ScoresTickerPolicy
     public static bool IsFinishedWithScore(Game game) =>
         game.IsFinished && game.HomeScore.HasValue && game.AwayScore.HasValue;
 
-    /// <summary>
-    /// Homepage cards keep scored FT results for the rest of the UTC day or eight
-    /// hours after kickoff — long enough to read the score, short enough to drop
-    /// yesterday. Scoreless heuristic-FT is not a result.
-    /// </summary>
-    public static readonly TimeSpan HomepageFinishedRetention = TimeSpan.FromHours(8);
-
-    public static bool IsRecentScoredFinish(Game game, DateTime utcNow)
-    {
-        if (!IsFinishedWithScore(game))
-        {
-            return false;
-        }
-
-        var start = game.StartUtcForOrdering;
-        if (start == default || start == DateTime.MaxValue)
-        {
-            return true;
-        }
-
-        return start > utcNow - HomepageFinishedRetention
-            || start.Date == utcNow.Date;
-    }
-
     public static bool IsUpcoming(Game game)
     {
         if (game.IsFinished || game.IsPostponed)

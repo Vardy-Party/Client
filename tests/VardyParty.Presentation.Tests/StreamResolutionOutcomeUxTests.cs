@@ -31,6 +31,15 @@ public class StreamResolutionOutcomeUxTests
     }
 
     [Fact]
+    public void Plan_LocalServiceUnavailable_ClearsSelectionAndSaysLocalServiceUnavailable()
+    {
+        var plan = StreamResolutionOutcomeUx.Plan(new StreamResolutionOutcome { LocalServiceUnavailable = true });
+
+        Assert.True(plan.ClearSelection);
+        Assert.Equal(StreamResolutionOutcomeUx.LocalServiceUnavailableMessage, plan.ErrorMessage);
+    }
+
+    [Fact]
     public void Plan_StartRefused_ClearsSelectionAndSaysResolverBusy()
     {
         var plan = StreamResolutionOutcomeUx.Plan(new StreamResolutionOutcome { StartRefused = true });

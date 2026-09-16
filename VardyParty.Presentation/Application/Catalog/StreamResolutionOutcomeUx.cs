@@ -39,6 +39,10 @@ public static class StreamResolutionOutcomeUx
     public const string ResolverBusyMessage =
         "Still finishing the previous stream search — try again in a moment";
 
+    /// <summary>Banner when LocalService is not running or unreachable on the LAN.</summary>
+    public const string LocalServiceUnavailableMessage =
+        "Local service unavailable. Ensure VardyParty Local Service is running on your LAN.";
+
     /// <summary>Fallback when playback failed without its own message.</summary>
     public const string StreamUnavailableMessage = "Stream unavailable";
 
@@ -50,6 +54,11 @@ public static class StreamResolutionOutcomeUx
         if (outcome.UserClosed)
         {
             return new StreamResolutionOutcomePlan(ClearSelection: true, ErrorMessage: null);
+        }
+
+        if (outcome.LocalServiceUnavailable)
+        {
+            return new StreamResolutionOutcomePlan(ClearSelection: true, LocalServiceUnavailableMessage);
         }
 
         if (outcome.NoWorkingStreams)
