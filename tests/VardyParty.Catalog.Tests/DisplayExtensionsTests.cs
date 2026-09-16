@@ -188,7 +188,7 @@ namespace VardyParty.Catalog.Tests
         }
 
         [Fact]
-        public void ToDisplay_IncludesRecentScoredFinished()
+        public void ToDisplay_ExcludesFinishedGames()
         {
             var now = DateTime.UtcNow;
             var finished = Make(
@@ -200,11 +200,13 @@ namespace VardyParty.Catalog.Tests
                 awayScore: 0,
                 statusText: "FT",
                 league: "League Alpha");
-            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [finished] };
+            var upcoming = Make("North Rovers", "South Wanderers", now.AddHours(1), league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [finished, upcoming] };
 
             var ordered = dict.ToDisplay();
 
-            Assert.Contains(finished, ordered);
+            Assert.DoesNotContain(finished, ordered);
+            Assert.Contains(upcoming, ordered);
         }
 
         [Fact]
@@ -225,26 +227,6 @@ namespace VardyParty.Catalog.Tests
 
             Assert.DoesNotContain(heuristic, ordered);
             Assert.Contains(upcoming, ordered);
-        }
-
-        [Fact]
-        public void ToDisplay_ExcludesStaleScoredFinished()
-        {
-            var now = DateTime.UtcNow;
-            var stale = Make(
-                "Old Park",
-                "New Park",
-                now.AddHours(-30),
-                isFinished: true,
-                homeScore: 1,
-                awayScore: 0,
-                statusText: "FT",
-                league: "League Alpha");
-            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [stale] };
-
-            var ordered = dict.ToDisplay();
-
-            Assert.DoesNotContain(stale, ordered);
         }
     }
 }

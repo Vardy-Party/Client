@@ -96,8 +96,6 @@ public class ScoresTickerPolicyTests
 
         Assert.True(ScoresTickerPolicy.IsFinishedWithScore(scored));
         Assert.False(ScoresTickerPolicy.IsFinishedWithScore(scoreless));
-        Assert.False(ScoresTickerPolicy.IsRecentScoredFinish(scoreless, DateTime.UtcNow));
-        Assert.True(ScoresTickerPolicy.IsRecentScoredFinish(scored, DateTime.UtcNow));
     }
 
     [Fact]
