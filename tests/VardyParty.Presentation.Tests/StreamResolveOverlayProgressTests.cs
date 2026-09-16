@@ -70,10 +70,23 @@ public class StreamResolveOverlayProgressTests
                 indeterminate: false));
     }
 
+    [Fact]
+    public void FormatCountLabel_WhileIndeterminateWithTestedStreams_ShowsTestedHealthyOnly()
+    {
+        Assert.Equal(
+            "2 tested • 0 healthy",
+            StreamResolveOverlayProgress.FormatCountLabel(
+                streamsTested: 2,
+                healthyStreams: 0,
+                totalStreams: 0,
+                indeterminate: true));
+    }
+
     [Theory]
     [InlineData("No working streams found", true)]
     [InlineData("No streams found", true)]
     [InlineData("No healthy streams found — try again or pick another game", true)]
+    [InlineData("Local service unavailable. Ensure VardyParty Local Service is running on your LAN.", true)]
     [InlineData("Searching for streams...", false)]
     [InlineData(null, false)]
     public void IsExhaustedStatus_MatchesOrchestratorCopy(string? status, bool expected)

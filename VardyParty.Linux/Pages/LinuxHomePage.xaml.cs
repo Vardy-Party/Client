@@ -915,6 +915,15 @@ public partial class LinuxHomePage : ContentPage
         _logger.LogInformation(
             "[LinuxHome] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
 
+        if (!string.IsNullOrWhiteSpace(_lanWarning))
+        {
+            _logger.LogInformation("[LinuxHome] Refusing stream resolution: local service unavailable ({Warning})", _lanWarning);
+            _serviceError = _lanWarning;
+            PushErrorBanner();
+            _sounds.Play(UiSound.Error);
+            return;
+        }
+
         if (_resolutionStartClaimed || _resolutionTask is { IsCompleted: false })
         {
             var sameGame = _homeShell.SelectedGame != null

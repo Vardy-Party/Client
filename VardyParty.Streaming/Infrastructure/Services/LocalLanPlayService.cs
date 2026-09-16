@@ -41,12 +41,15 @@ public class LocalLanPlayService(
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan DiscoveryFailureCacheTtl = TimeSpan.FromSeconds(5);
 
     private readonly TimeSpan _m3u8CallTimeout =
         TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);
 
     private string? _cachedBaseUrl;
     private DateTimeOffset _cachedBaseUrlAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastDiscoveryAttemptAt = DateTimeOffset.MinValue;
+    private bool _lastDiscoveryFailed;
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
@@ -536,14 +539,28 @@ public class LocalLanPlayService(
             return _cachedBaseUrl;
         }
 
+        if (_lastDiscoveryFailed && DateTimeOffset.UtcNow - _lastDiscoveryAttemptAt < DiscoveryFailureCacheTtl)
+        {
+            logger.LogDebug("[LocalLanPlay] Skipping UDP discovery: previous attempt failed recently (backoff {Remaining:F1}s)",
+                (DiscoveryFailureCacheTtl - (DateTimeOffset.UtcNow - _lastDiscoveryAttemptAt)).TotalSeconds);
+            return null;
+        }
+
         logger.LogDebug("[LocalLanPlay] Cache miss or expired, performing fresh discovery...");
+        _lastDiscoveryAttemptAt = DateTimeOffset.UtcNow;
         var discovered = await DiscoverViaUdpAsync(cancellationToken);
         if (!string.IsNullOrWhiteSpace(discovered))
         {
             _cachedBaseUrl = discovered.TrimEnd('/');
             _cachedBaseUrlAt = DateTimeOffset.UtcNow;
+            _lastDiscoveryFailed = false;
             logger.LogInformation("[LocalLanPlay] Cached discovered service endpoint: {Endpoint} (TTL: {TTL}s)",
                 _cachedBaseUrl, DiscoveryCacheTtl.TotalSeconds);
+        }
+        else
+        {
+            _lastDiscoveryFailed = true;
+            _cachedBaseUrl = null;
         }
 
         return _cachedBaseUrl;
@@ -643,6 +660,8 @@ public class LocalLanPlayService(
     {
         _cachedBaseUrl = null;
         _cachedBaseUrlAt = DateTimeOffset.MinValue;
+        _lastDiscoveryAttemptAt = DateTimeOffset.MinValue;
+        _lastDiscoveryFailed = false;
         _cachedCapabilities = [];
         _cachedServiceVersion = null;
         _capabilitiesCachedAt = DateTimeOffset.MinValue;

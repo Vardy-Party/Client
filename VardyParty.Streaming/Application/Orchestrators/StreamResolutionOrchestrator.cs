@@ -15,7 +15,8 @@ public class StreamResolutionOrchestrator(
     ISessionIdProvider sessionIdProvider,
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
-    ILogger<StreamResolutionOrchestrator> logger) : IStreamResolutionOrchestrator
+    ILogger<StreamResolutionOrchestrator> logger,
+    ILocalLanPlayService? localLanPlayService = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -79,6 +80,16 @@ public class StreamResolutionOrchestrator(
         var hasPlayedFirstStream = false;
         var streamCount = 0;
         Task<PlaybackResult?>? playbackTask = null;
+
+        if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+        {
+            logger.LogWarning("[StreamResolution] Local LAN service is unavailable — aborting stream resolution");
+            _status = "Local service unavailable";
+            outcome.LocalServiceUnavailable = true;
+            _isResolving = false;
+            PublishProgress();
+            return outcome;
+        }
 
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
@@ -201,8 +212,16 @@ public class StreamResolutionOrchestrator(
 
         if (_healthyStreamCount == 0)
         {
-            _status = "No working streams found";
-            outcome.NoWorkingStreams = true;
+            if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+            {
+                _status = "Local service unavailable";
+                outcome.LocalServiceUnavailable = true;
+            }
+            else
+            {
+                _status = "No working streams found";
+                outcome.NoWorkingStreams = true;
+            }
             PublishProgress();
         }
 
