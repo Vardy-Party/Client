@@ -259,6 +259,56 @@ public class StreamResolverTests
     }
 
     [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_CancelledDuringLocalService_PropagatesWithoutFailedYield()
+    {
+        // Arrange — Cancel during POST /mp must surface as OCE, not a Failed candidate.
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://stream.example.test/cancel-mp")
+            .With(s => s.Channel, "Channel Cancel")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+        var localServiceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(
+                stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string? _, string? _, string? _, CancellationToken token) =>
+            {
+                localServiceEntered.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                return (M3U8Response?)null;
+            });
+
+        var yielded = new List<EnrichedStream>();
+
+        // Act
+        async Task ConsumeAsync()
+        {
+            await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync(
+                               [stream],
+                               cancellationToken: cts.Token))
+            {
+                yielded.Add(enriched);
+            }
+        }
+
+        var consume = ConsumeAsync();
+        await localServiceEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => consume);
+        Assert.Empty(yielded);
+        Assert.DoesNotContain(yielded, e => e.Status == StreamResolutionStatus.Failed);
+    }
+
+    [Fact]
     public async Task ResolveStreamsIncrementallyAsync_SegmentUnreachable_MarksFailed()
     {
         // Arrange

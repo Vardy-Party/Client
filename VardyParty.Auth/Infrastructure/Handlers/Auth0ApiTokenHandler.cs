@@ -10,14 +10,18 @@ public class Auth0ApiTokenHandler(
 {
     internal static readonly TimeSpan TokenFetchTimeout = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// LocalService GET /health is anonymous; catalog crowd-health POSTs
+    /// (`/{league}/{match}/health`) still need the Auth0 bearer. Match only the
+    /// exact probe path — never <c>EndsWith("/health")</c>.
+    /// </summary>
     internal static bool ShouldAttachAccessToken(HttpRequestMessage request)
     {
         var path = request.RequestUri?.AbsolutePath;
         if (string.IsNullOrEmpty(path))
             return true;
 
-        return !path.Equals("/health", StringComparison.OrdinalIgnoreCase)
-            && !path.EndsWith("/health", StringComparison.OrdinalIgnoreCase);
+        return !path.Equals("/health", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

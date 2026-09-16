@@ -25,7 +25,7 @@ public class StreamResolutionOrchestrator(
     /// When this runs out the outcome is StartRefused — surfaced to the user —
     /// never a silent empty outcome.
     /// </summary>
-    private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
 
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
