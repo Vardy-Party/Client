@@ -338,7 +338,7 @@ public partial class HomeHostPage : ContentPage
 
         try
         {
-            if (MauiProgram.IsTv || !MauiProgram.IsWindowsPackaged)
+            if (MauiProgram.IsTv)
             {
                 await SignInWithDeviceCodeAsync();
             }
@@ -349,9 +349,10 @@ public partial class HomeHostPage : ContentPage
                 {
                     OnSignedIn();
                 }
-                else if (LooksLikeMissingRedirectCheck(result.Error))
+                else if (LooksLikeMissingRedirectCheck(result.Error)
+                    || LooksLikeBrowserUnavailable(result.Error))
                 {
-                    _logger.LogWarning("[HomeHost] Interactive Auth0 login missing redirect check; falling back to device sign-in");
+                    _logger.LogWarning("[HomeHost] Interactive Auth0 login unavailable; falling back to device sign-in");
                     SetAuthStatus("Browser sign-in unavailable — use the code below.");
                     await SignInWithDeviceCodeAsync();
                 }
@@ -387,6 +388,10 @@ public partial class HomeHostPage : ContentPage
     private static bool LooksLikeMissingRedirectCheck(string? error) =>
         !string.IsNullOrWhiteSpace(error)
         && error.Contains("redirection check", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeBrowserUnavailable(string? error) =>
+        !string.IsNullOrWhiteSpace(error)
+        && error.Contains("Could not open a browser for Auth0 login", StringComparison.OrdinalIgnoreCase);
 
     private async Task SignInWithDeviceCodeAsync()
     {

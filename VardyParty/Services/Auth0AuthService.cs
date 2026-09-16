@@ -3,6 +3,9 @@ using Duende.IdentityModel.OidcClient;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
+using System.Net;
+using System.Text;
 using VardyParty.Auth;
 using VardyParty.Hosting;
 
@@ -29,9 +32,8 @@ public class Auth0AuthService : Auth0TokenSession
 
         if (!MauiProgram.IsWindowsPackaged)
         {
-            Logger.LogWarning("[Auth0] Interactive login requires a packaged Windows app.");
-            return new AuthLoginResult(false, null,
-                "Interactive login requires a packaged Windows app. Use device sign-in instead.");
+            Logger.LogInformation("[Auth0] Unpackaged Windows — using loopback browser PKCE");
+            return await LoginViaLoopbackPkceAsync(cancellationToken);
         }
 
         try
@@ -157,6 +159,102 @@ public class Auth0AuthService : Auth0TokenSession
 
         return Task.CompletedTask;
     }
+
+    private async Task<AuthLoginResult> LoginViaLoopbackPkceAsync(CancellationToken cancellationToken)
+    {
+        var redirectUri = Auth0Pkce.ResolveLinuxBrowserRedirectUri(
+            Settings.RedirectUri,
+            Settings.LoopbackRedirectUri);
+        var pkce = Auth0Pkce.Start(Settings, redirectUri);
+
+        try
+        {
+            using var listener = new HttpListener();
+            listener.Prefixes.Add(Auth0Pkce.BuildListenerPrefix(redirectUri));
+            listener.Start();
+
+            if (!OpenSystemBrowser(pkce.AuthorizeUrl))
+            {
+                listener.Stop();
+                Logger.LogWarning("[Auth0] Could not open a browser for loopback PKCE at {Redirect}", redirectUri);
+                return new AuthLoginResult(false, null, "Could not open a browser for Auth0 login.");
+            }
+
+            Logger.LogInformation(
+                "[Auth0] Browser sign-in started; waiting for loopback callback at {Redirect}",
+                redirectUri);
+
+            var callback = await WaitForLoopbackCallbackAsync(listener, TimeSpan.FromMinutes(3), cancellationToken);
+            if (callback == null)
+                return new AuthLoginResult(false, null, "Timed out waiting for Auth0 login callback.");
+
+            var callbackFailure = Auth0Pkce.DescribeCallbackFailure(
+                pkce.State, callback.State, callback.Code, callback.Error, callback.ErrorDescription);
+            if (callbackFailure != null)
+                return new AuthLoginResult(false, null, callbackFailure);
+
+            return await CompleteAuthorizationCodeAsync(
+                callback.Code!, redirectUri.ToString(), pkce.CodeVerifier, cancellationToken);
+        }
+        catch (HttpListenerException ex)
+        {
+            Logger.LogWarning(ex, "[Auth0] Loopback listener failed at {Redirect}", redirectUri);
+            return new AuthLoginResult(false, null, "Could not open a browser for Auth0 login.");
+        }
+    }
+
+    private static bool OpenSystemBrowser(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task<LoopbackCallback?> WaitForLoopbackCallbackAsync(
+        HttpListener listener,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout);
+
+        while (!cts.IsCancellationRequested)
+        {
+            var getContextTask = listener.GetContextAsync();
+            var completed = await Task.WhenAny(getContextTask, Task.Delay(Timeout.Infinite, cts.Token));
+            if (completed != getContextTask)
+                break;
+
+            var context = await getContextTask;
+            var query = context.Request.QueryString;
+            var html = string.IsNullOrWhiteSpace(query["error"])
+                ? "<html><body><h2>Login complete</h2><p>You can close this tab and return to VardyParty.</p></body></html>"
+                : "<html><body><h2>Login failed</h2><p>You can close this tab and return to VardyParty.</p></body></html>";
+
+            var responseBuffer = Encoding.UTF8.GetBytes(html);
+            context.Response.StatusCode = string.IsNullOrWhiteSpace(query["error"]) ? 200 : 400;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.ContentLength64 = responseBuffer.Length;
+            await context.Response.OutputStream.WriteAsync(responseBuffer, cancellationToken);
+            context.Response.OutputStream.Close();
+
+            return new LoopbackCallback(query["code"], query["state"], query["error"], query["error_description"]);
+        }
+
+        return null;
+    }
+
+    private sealed record LoopbackCallback(string? Code, string? State, string? Error, string? ErrorDescription);
 
     private Auth0Client BuildAuth0Client(Auth0Settings settings)
     {
