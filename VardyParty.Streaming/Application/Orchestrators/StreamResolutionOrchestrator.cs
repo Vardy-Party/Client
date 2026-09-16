@@ -165,6 +165,12 @@ public class StreamResolutionOrchestrator(
             PublishProgress();
             return outcome;
         }
+        catch (OperationCanceledException)
+        {
+            _isResolving = false;
+            PublishProgress();
+            throw;
+        }
 
         // Wait for playback to complete if it was started
         if (playbackTask != null)

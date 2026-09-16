@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -73,15 +74,61 @@ public class Auth0ApiTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_TokenFetchDoesNotUseRequestCancellation()
+    public async Task SendAsync_HealthCheck_DoesNotFetchAccessToken()
     {
         // Arrange
-        CancellationToken captured = default;
+        var tokenProvider = _fixture.GetMock<IAuthTokenProvider>();
+        var inner = new SequenceStatusHandler(HttpStatusCode.OK);
+        var handler = new Auth0ApiTokenHandler(tokenProvider.Object, NullLogger<Auth0ApiTokenHandler>.Instance)
+        {
+            InnerHandler = inner
+        };
+        using var client = new HttpClient(handler);
+
+        // Act
+        var response = await client.GetAsync("http://localservice.example.test:5019/health");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, inner.SendCount);
+        tokenProvider.Verify(
+            provider => provider.GetAccessTokenAsync(It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData("/health", false)]
+    [InlineData("/Health", false)]
+    [InlineData("/league-alpha/home-united-vs-away-city/health", true)]
+    [InlineData("/mp", true)]
+    [InlineData("/play/https%3A%2F%2Fexample.test", true)]
+    public void ShouldAttachAccessToken_MatchesLocalServicePaths(string path, bool expected)
+    {
+        // Arrange
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:5019{path}");
+
+        // Act
+        var attach = Auth0ApiTokenHandler.ShouldAttachAccessToken(request);
+
+        // Assert
+        Assert.Equal(expected, attach);
+    }
+
+    [Fact]
+    public async Task SendAsync_TokenFetchRespectsRequestCancellation()
+    {
+        // Arrange — token fetch is linked to the request token so Cancel on
+        // finding-streams can abort a hung Auth0 refresh before /mp starts.
+        var tokenFetchEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tokenProvider = _fixture.GetMock<IAuthTokenProvider>();
         tokenProvider
             .Setup(provider => provider.GetAccessTokenAsync(It.IsAny<CancellationToken>(), false))
-            .Callback<CancellationToken, bool>((token, _) => captured = token)
-            .ReturnsAsync(_fixture.Create<string>());
+            .Returns(async (CancellationToken token, bool _) =>
+            {
+                tokenFetchEntered.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                return _fixture.Create<string>();
+            });
 
         var inner = new SequenceStatusHandler(HttpStatusCode.OK);
         var handler = new Auth0ApiTokenHandler(tokenProvider.Object, NullLogger<Auth0ApiTokenHandler>.Instance)
@@ -92,11 +139,13 @@ public class Auth0ApiTokenHandlerTests
         using var requestCts = new CancellationTokenSource();
 
         // Act
-        var response = await client.GetAsync("https://catalog.example.test/games", requestCts.Token);
+        var sendTask = client.GetAsync("https://catalog.example.test/games", requestCts.Token);
+        await tokenFetchEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        requestCts.Cancel();
 
         // Assert
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.False(captured.Equals(requestCts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        Assert.Equal(0, inner.SendCount);
     }
 
     private sealed class SequenceStatusHandler : HttpMessageHandler

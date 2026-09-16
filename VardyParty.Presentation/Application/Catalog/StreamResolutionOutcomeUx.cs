@@ -37,7 +37,7 @@ public static class StreamResolutionOutcomeUx
     /// was a complete no-op — no overlay, no banner, nothing.
     /// </summary>
     public const string ResolverBusyMessage =
-        "Still finishing the previous stream — try again in a moment";
+        "Still finishing the previous stream search — try again in a moment";
 
     /// <summary>Fallback when playback failed without its own message.</summary>
     public const string StreamUnavailableMessage = "Stream unavailable";

@@ -173,6 +173,10 @@ public class StreamResolver(
             logger.LogWarning("[StreamResolver] No m3u8 URL returned for {Channel}", stream.Channel);
             return null;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "[StreamResolver] Failed to resolve m3u8 URL for {Channel} with {url}", stream.Channel,
@@ -259,6 +263,10 @@ public class StreamResolver(
             }
 
             return new ResolveOutcome(enriched, SiblingsFrom(stream, m3u8Response));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -367,6 +375,10 @@ public class StreamResolver(
                 cancellationToken);
             logger.LogInformation("[StreamResolver] M3U8 resolve completed for source {Url}", stream.Url);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

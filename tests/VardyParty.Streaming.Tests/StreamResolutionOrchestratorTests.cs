@@ -286,6 +286,71 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
+    public async Task StartAsync_CancelledDuringResolve_ReleasesStartGateForNextStart()
+    {
+        // Arrange — Cancel while resolve is blocked must free the start-gate so
+        // the next pick is not StartRefused.
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var stream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.test/match.html")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        var resolveEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream).Create()
+            });
+
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                BlockedYield(resolveEntered, ct));
+
+        using var cts = new CancellationTokenSource();
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var first = sut.StartAsync(game, player.Object, cts.Token);
+        await resolveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>());
+        var second = await sut.StartAsync(game, player.Object);
+
+        Assert.False(second.StartRefused);
+        Assert.True(second.NoWorkingStreams);
+    }
+
+    [Fact]
     public async Task StartAsync_FirstHealthyInvokesPlayer_LaterHealthyJoinPoolOnly()
     {
         // Arrange
@@ -413,5 +478,14 @@ public class StreamResolutionOrchestratorTests
         foreach (var stream in streams)
             yield return stream;
         await Task.CompletedTask;
+    }
+
+    private static async IAsyncEnumerable<EnrichedStream> BlockedYield(
+        TaskCompletionSource entered,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        entered.TrySetResult();
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        yield break;
     }
 }
