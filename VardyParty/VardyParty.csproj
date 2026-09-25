@@ -362,6 +362,11 @@
     <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
+      <!-- Release MSIX includes .NET 11 and the Windows App SDK. A normal PC
+           does not have the .NET 11 preview, so a framework-dependent package
+           cannot start. Debug builds stay framework-dependent. -->
+      <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
+      <WindowsAppSDKSelfContained Condition="'$(Configuration)' == 'Release'">true</WindowsAppSDKSelfContained>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
       <!-- PFX exists (CD): override to sign with PFX file -->
       <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
