@@ -501,6 +501,112 @@ public class StreamResolutionOrchestratorTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task StartAsync_FasterLaterCandidate_PlaysEarlierCatalogIndex()
+    {
+        // Arrange
+        const string earlierUrl = "https://cdn.example.com/live/north.m3u8";
+        const string laterUrl = "https://cdn.example.com/live/south.m3u8";
+        const string pageUrl = "https://streams.example.com/match.html";
+
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var earlierStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl + "#north")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+        var laterStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl + "#south")
+            .With(s => s.Channel, "Channel South")
+            .Create();
+
+        var earlier = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, earlierStream)
+            .With(e => e.ResolvedM3U8Url, earlierUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+        var later = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, laterStream)
+            .With(e => e.ResolvedM3U8Url, laterUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, earlierStream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, laterStream).Create()
+            });
+
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() => Yield(later, earlier));
+
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        player.Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .ReturnsAsync(PlaybackResult.SuccessResult("Playing"));
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var outcome = await sut.StartAsync(game, player.Object);
+
+        // Assert
+        Assert.True(outcome.PlaybackResult?.Success);
+        Assert.Equal(earlierUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                earlierUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Once);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                laterUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Never);
+    }
+
     private static async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
     {
         foreach (var stream in streams)

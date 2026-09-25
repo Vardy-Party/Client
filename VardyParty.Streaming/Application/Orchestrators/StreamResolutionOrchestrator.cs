@@ -94,6 +94,42 @@ public class StreamResolutionOrchestrator(
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
         var orderedStreams = orderedCandidates.Select(c => c.Stream).ToList();
+        // First play follows catalog order. FillWindow may finish a later FB
+        // while an earlier /mp is still in flight; hold that FB until every
+        // lower index has yielded so playback still starts on the earlier row.
+        var catalogIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < orderedStreams.Count; i++)
+            catalogIndex[orderedStreams[i]] = i;
+        var resolvedCatalog = new HashSet<int>();
+        var heldHealthy = new SortedDictionary<int, EnrichedStream>();
+        var nextExtraIndex = orderedStreams.Count;
+
+        void FlushReadyForPlayback()
+        {
+            var frontier = 0;
+            while (frontier < orderedStreams.Count && resolvedCatalog.Contains(frontier))
+                frontier++;
+
+            var ready = heldHealthy
+                .Where(pair => pair.Key < frontier || frontier >= orderedStreams.Count)
+                .Select(pair => pair.Key)
+                .ToList();
+            foreach (var index in ready)
+            {
+                var readyStream = heldHealthy[index];
+                heldHealthy.Remove(index);
+                streamSwitchingService.AddHealthyStream(readyStream);
+                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                PublishProgress();
+
+                if (!hasPlayedFirstStream)
+                {
+                    hasPlayedFirstStream = true;
+                    playbackTask = PlayStreamAsync(game, readyStream, launcher, cancellationToken);
+                }
+            }
+        }
+
         if (orderedStreams.Count == 0)
         {
             _status = "No streams found";
@@ -133,6 +169,11 @@ public class StreamResolutionOrchestrator(
                 _streamsTested++;
                 PublishProgress();
 
+                var index = catalogIndex.TryGetValue(enrichedStream.Stream, out var known)
+                    ? known
+                    : nextExtraIndex++;
+                resolvedCatalog.Add(index);
+
                 if (enrichedStream.Status == StreamResolutionStatus.Failed)
                 {
                     _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
@@ -142,24 +183,14 @@ public class StreamResolutionOrchestrator(
                 {
                     _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
                         cancellationToken);
+                    heldHealthy[index] = enrichedStream;
                 }
 
-                if (enrichedStream.Status != StreamResolutionStatus.Healthy)
-                {
-                    continue;
-                }
-
-                streamSwitchingService.AddHealthyStream(enrichedStream);
-                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-                PublishProgress();
-
-                if (!hasPlayedFirstStream)
-                {
-                    hasPlayedFirstStream = true;
-                    // Start playback without awaiting so stream testing can continue
-                    playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
-                }
+                // Start playback without awaiting so stream testing can continue.
+                FlushReadyForPlayback();
             }
+
+            FlushReadyForPlayback();
         }
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {

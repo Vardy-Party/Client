@@ -1,10 +1,13 @@
 using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
-using HttpClientWin = Windows.Web.Http.HttpClient;
+using Windows.Storage.Streams;
 
 namespace VardyParty.Platforms.Windows
 {
@@ -151,25 +154,132 @@ namespace VardyParty.Platforms.Windows
         private const string PlaybackUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        private static void ConfigurePlaybackHttpClient(
-            HttpClientWin client,
+        private static void ApplyManagedPlaybackHeaders(
+            HttpRequestMessage request,
             string refererUrl,
             IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             foreach (var (name, value) in ResolvePlaybackHeaders(refererUrl, requestHeaders))
-            {
-                client.DefaultRequestHeaders.TryAppendWithoutValidation(name, value);
-            }
+                request.Headers.TryAddWithoutValidation(name, value);
         }
 
-        private static void ApplyPlaybackRequestHeaders(
-            global::Windows.Web.Http.HttpRequestMessage request,
-            string refererUrl,
-            IReadOnlyDictionary<string, string>? requestHeaders = null)
+        private static void ApplyResourceByteRange(
+            HttpRequestMessage request,
+            AdaptiveMediaSourceDownloadRequestedEventArgs args)
         {
-            foreach (var (name, value) in ResolvePlaybackHeaders(refererUrl, requestHeaders))
+            if (args.ResourceByteRangeOffset is not ulong offset)
+                return;
+
+            var end = args.ResourceByteRangeLength is ulong length && length > 0
+                ? offset + length - 1
+                : (ulong?)null;
+            request.Headers.Range = end is ulong last
+                ? new RangeHeaderValue((long)offset, (long)last)
+                : new RangeHeaderValue((long)offset, null);
+        }
+
+        private static string ResolvePlaybackMediaType(
+            System.Net.Http.Headers.MediaTypeHeaderValue? contentType,
+            string path,
+            AdaptiveMediaSourceResourceType resourceType) =>
+            PlaybackContentTypes.Resolve(
+                contentType?.MediaType,
+                path,
+                ToPlaybackResourceKind(resourceType));
+
+        private static PlaybackResourceKind ToPlaybackResourceKind(AdaptiveMediaSourceResourceType resourceType) =>
+            resourceType switch
             {
-                request.Headers.TryAppendWithoutValidation(name, value);
+                AdaptiveMediaSourceResourceType.Manifest => PlaybackResourceKind.Manifest,
+                AdaptiveMediaSourceResourceType.MediaSegment => PlaybackResourceKind.MediaSegment,
+                AdaptiveMediaSourceResourceType.InitializationSegment => PlaybackResourceKind.InitializationSegment,
+                _ => PlaybackResourceKind.Other
+            };
+
+        /// <summary>
+        /// Copy the body into a WinRT stream Media Foundation can read.
+        /// Disposing <see cref="WindowsRuntimeStreamExtensions.AsStreamForWrite"/> closes the
+        /// underlying stream, so the writer is detached before it is disposed and Seek can rewind.
+        /// The caller roots the returned stream for the life of the adaptive source.
+        /// </summary>
+        private static async Task<InMemoryRandomAccessStream> CopyToRandomAccessStreamAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken)
+        {
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            var winrtStream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(winrtStream))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+                writer.DetachStream();
+            }
+
+            winrtStream.Seek(0);
+            return winrtStream;
+        }
+
+        private static int StatusCodeFromDownloadException(Exception ex)
+        {
+            if (ex is HttpRequestException { StatusCode: HttpStatusCode code })
+                return (int)code;
+
+            var msg = ex.Message ?? string.Empty;
+            if (msg.Contains("404", StringComparison.Ordinal)) return 404;
+            if (msg.Contains("502", StringComparison.Ordinal)) return 502;
+            if (msg.Contains("503", StringComparison.Ordinal)) return 503;
+            if (msg.Contains("403", StringComparison.Ordinal)) return 403;
+            if (msg.Contains("401", StringComparison.Ordinal)) return 401;
+            if (msg.Contains("500", StringComparison.Ordinal)) return 500;
+            return 0;
+        }
+
+        private async Task<(AdaptiveMediaSourceCreationResult Result, InMemoryRandomAccessStream? ManifestStream)> CreateAdaptiveMediaSourceAsync(
+            HttpClient http,
+            Uri manifestUri,
+            string refererUrl,
+            IReadOnlyDictionary<string, string>? requestHeaders,
+            CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
+            ApplyManagedPlaybackHeaders(request, refererUrl, requestHeaders);
+            using var response = await http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var contentType = ResolvePlaybackMediaType(
+                response.Content.Headers.ContentType,
+                manifestUri.AbsolutePath,
+                AdaptiveMediaSourceResourceType.Manifest);
+            InMemoryRandomAccessStream? manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            try
+            {
+                var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
+                    manifestStream,
+                    manifestUri,
+                    contentType);
+                if (streamResult.Status == AdaptiveMediaSourceCreationStatus.Success && streamResult.MediaSource != null)
+                {
+                    ConfigureAdaptiveLiveTolerance(streamResult.MediaSource);
+                    var rooted = manifestStream;
+                    manifestStream = null;
+                    return (streamResult, rooted);
+                }
+
+                _logger.LogWarning(
+                    "CreateFromStreamAsync returned {Status} for {Uri}",
+                    streamResult.Status,
+                    manifestUri);
+                return (streamResult, null);
+            }
+            finally
+            {
+                if (manifestStream != null)
+                {
+                    try { manifestStream.Dispose(); } catch { }
+                }
             }
         }
 
@@ -202,41 +312,6 @@ namespace VardyParty.Platforms.Windows
                 yield return new KeyValuePair<string, string>(
                     "Origin",
                     $"{refererUri.Scheme}://{refererUri.Authority}");
-            }
-        }
-
-        private async Task<AdaptiveMediaSourceCreationResult> CreateAdaptiveMediaSourceAsync(
-            HttpClientWin client,
-            Uri manifestUri)
-        {
-            var adaptiveResult = await AdaptiveMediaSource.CreateFromUriAsync(manifestUri, client);
-            if (adaptiveResult.Status == AdaptiveMediaSourceCreationStatus.Success && adaptiveResult.MediaSource != null)
-            {
-                ConfigureAdaptiveLiveTolerance(adaptiveResult.MediaSource);
-                return adaptiveResult;
-            }
-
-            _logger.LogWarning(
-                "CreateFromUriAsync returned {Status}; downloading manifest with Referer/Origin",
-                adaptiveResult.Status);
-
-            try
-            {
-                var response = await client.GetAsync(manifestUri);
-                response.EnsureSuccessStatusCode();
-                var manifestStream = await response.Content.ReadAsInputStreamAsync();
-                var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
-                    manifestStream,
-                    manifestUri,
-                    "application/vnd.apple.mpegurl");
-                if (streamResult.Status == AdaptiveMediaSourceCreationStatus.Success && streamResult.MediaSource != null)
-                    ConfigureAdaptiveLiveTolerance(streamResult.MediaSource);
-                return streamResult;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Manual manifest download failed");
-                return adaptiveResult;
             }
         }
 

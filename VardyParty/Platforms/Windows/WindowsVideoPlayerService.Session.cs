@@ -12,7 +12,6 @@ using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
-using HttpClientWin = Windows.Web.Http.HttpClient;
 using MauiApp = Microsoft.Maui.Controls.Application;
 using WinButton = Microsoft.UI.Xaml.Controls.Button;
 using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
@@ -118,7 +117,15 @@ namespace VardyParty.Platforms.Windows
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;
             private TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs>? activeDownloadHandler;
-            private HttpClientWin? activePlaybackClient;
+            /// <summary>
+            /// Manifest and segment streams Media Foundation reads after the download
+            /// handler returns. Released with the adaptive source.
+            /// </summary>
+            private readonly List<IDisposable> rootedPlaybackStreams = new();
+            private readonly object rootedPlaybackStreamsGate = new();
+            private readonly object playbackDownloadGate = new();
+            private readonly List<CancellationTokenSource> retiredPlaybackDownloads = new();
+            private CancellationTokenSource playbackDownloadsCts = new();
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
             private bool isClosingPlayer;
             /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
