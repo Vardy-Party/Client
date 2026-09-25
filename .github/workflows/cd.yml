@@ -189,7 +189,9 @@ jobs:
       - name: Publish Windows app
         env:
           MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:SelfContained=true -p:WindowsAppSDKSelfContained=true -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        # WindowsAppSDKSelfContained stays in VardyParty.csproj. A -p: flag is global
+        # and the Windows App SDK then requires a Windows architecture on HomeUi.
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:SelfContained=true -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $searchRoots = @(
