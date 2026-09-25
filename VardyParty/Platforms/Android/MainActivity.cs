@@ -158,6 +158,31 @@ namespace VardyParty
             });
         }
 
+        /// <summary>
+        /// Leanback starts this activity before the window has focus.
+        /// <c>RequestFocus</c> earlier is ignored, and the first D-pad OK is
+        /// dropped. Ask only once the window has focus, and only when nothing
+        /// useful is focused, so a return from the video activity does not
+        /// pull focus off the page. Do not mark the decor view
+        /// <c>FocusableInTouchMode</c> — that makes the root eat the OK.
+        /// </summary>
+        public override void OnWindowFocusChanged(bool hasFocus)
+        {
+            base.OnWindowFocusChanged(hasFocus);
+
+            var decor = Window?.DecorView;
+            if (decor is null)
+                return;
+
+            var current = CurrentFocus;
+            if (!MainActivityWindowFocus.ShouldRequestFocus(
+                    HasWindowFocus,
+                    current is null || current == decor))
+                return;
+
+            decor.RequestFocus();
+        }
+
         protected override void OnDestroy()
         {
             RemoteKeyHandler.OnBack -= RemoteBackHandler;

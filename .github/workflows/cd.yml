@@ -189,7 +189,7 @@ jobs:
       - name: Publish Windows app
         env:
           MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:SelfContained=true -p:WindowsAppSDKSelfContained=true -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $searchRoots = @(

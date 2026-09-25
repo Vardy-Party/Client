@@ -30,6 +30,7 @@ namespace VardyParty
     {
         bool _handedOff;
         bool _splashFrameSubmitted;
+        bool _finishAfterHandoff;
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
@@ -141,7 +142,18 @@ namespace VardyParty
             var intent = new Intent(this, typeof(MainActivity));
             intent.AddFlags(ActivityFlags.NoAnimation);
             StartActivity(intent);
-            Finish();
+            _finishAfterHandoff = PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
+                handedOffToMain: true,
+                alreadyFinishing: false);
+        }
+
+        protected override void OnStop()
+        {
+            base.OnStop();
+            if (PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(_finishAfterHandoff, IsFinishing))
+            {
+                Finish();
+            }
         }
 
         sealed class AfterFrameIdleHandler : Java.Lang.Object, MessageQueue.IIdleHandler
