@@ -2,5 +2,8 @@
   <PropertyGroup>
     <!-- Ensure Windows Target Platform Min Version is defined for builds that include Windows packaging targets -->
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <!-- The Windows app project turns this on for Release. The SDK also turns it
+         on by default for any non-library, which fails on projects with no Windows architecture. -->
+    <WindowsAppSDKSelfContained Condition="'$(MSBuildProjectName)' != 'VardyParty'">false</WindowsAppSDKSelfContained>
   </PropertyGroup>
 </Project>

@@ -59,7 +59,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish Windows app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None -o ./output/windows
       
       - name: Package Windows
         run: |
