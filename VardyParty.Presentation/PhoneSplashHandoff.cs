@@ -25,6 +25,14 @@ public static class PhoneSplashHandoff
         mauiStarted && !isFinishing && !isDestroyed;
 
     /// <summary>
+    /// Finish the NoHistory splash only after it has stopped. Finishing it in
+    /// the same turn as <c>StartActivity</c> drops the Android TV task, and the
+    /// next OK on Sign in returns to the launcher.
+    /// </summary>
+    public static bool ShouldFinishLauncherAfterMainResumed(bool handedOffToMain, bool alreadyFinishing) =>
+        handedOffToMain && !alreadyFinishing;
+
+    /// <summary>
     /// The MAUI host must be built on the Android main thread. Start it only
     /// after a splash frame has been submitted <em>and</em> the looper is
     /// idle, so the system has presented splash before the ~2s host build.

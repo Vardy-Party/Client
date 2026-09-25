@@ -148,6 +148,9 @@ namespace VardyParty
             {
                 try
                 {
+                    // A window that never takes focus cancels the first D-pad OK
+                    // ("no window focus") and Leanback returns to the Android home.
+                    Window?.DecorView?.RequestFocus();
                     ReportFullyDrawn();
                     Log.Info("MainActivity", "[MAIN] ReportFullyDrawn");
                 }
@@ -156,6 +159,18 @@ namespace VardyParty
                     Log.Warn("MainActivity", $"[MAIN] ReportFullyDrawn failed: {ex.Message}");
                 }
             });
+        }
+
+        protected override void OnResume()
+        {
+            base.OnResume();
+            var decor = Window?.DecorView;
+            if (decor is null)
+                return;
+
+            decor.Focusable = true;
+            decor.FocusableInTouchMode = true;
+            decor.RequestFocus();
         }
 
         protected override void OnDestroy()

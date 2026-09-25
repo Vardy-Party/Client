@@ -55,6 +55,18 @@ public class PhoneSplashHandoffTests
     }
 
     [Fact]
+    public void ShouldFinishLauncherAfterMainResumed_OnlyAfterHandoff()
+    {
+        // Arrange / Act / Assert
+        Assert.False(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
+            handedOffToMain: false, alreadyFinishing: false));
+        Assert.True(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
+            handedOffToMain: true, alreadyFinishing: false));
+        Assert.False(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
+            handedOffToMain: true, alreadyFinishing: true));
+    }
+
+    [Fact]
     public void ShouldAdvertisePhoneLauncher_PhonesOnly()
     {
         // Arrange / Act / Assert

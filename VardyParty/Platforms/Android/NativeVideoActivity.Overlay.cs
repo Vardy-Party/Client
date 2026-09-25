@@ -240,9 +240,13 @@ namespace VardyParty.Platforms.Android
                 if (overlay == null) return;
                 RunOnUiThread(() =>
                 {
+                    // Text refresh (video-info lock, live bitrate) calls this on every tick.
+                    // Restarting the fade each time flashes the panel.
+                    if (overlay.Visibility == global::Android.Views.ViewStates.Visible && overlay.Alpha >= 0.99f)
+                        return;
+
                     overlay.Animate()?.Cancel();
                     overlay.Visibility = global::Android.Views.ViewStates.Visible;
-                    overlay.Alpha = 0f;
                     overlay.Animate()?.Alpha(1f)?.SetDuration(200)?.Start();
                 });
             }
@@ -260,7 +264,14 @@ namespace VardyParty.Platforms.Android
                     overlay.Animate()?.Cancel();
                     overlay.Animate()?.Alpha(0f)?.SetDuration(300)?.WithEndAction(new Java.Lang.Runnable(() =>
                     {
-                        try { overlay.Visibility = global::Android.Views.ViewStates.Gone; } catch { }
+                        try
+                        {
+                            // A show that started after this hide must not be snapped to Gone.
+                            if (overlay.Alpha > 0.05f)
+                                return;
+                            overlay.Visibility = global::Android.Views.ViewStates.Gone;
+                        }
+                        catch { }
                     }))?.Start();
                 });
             }
