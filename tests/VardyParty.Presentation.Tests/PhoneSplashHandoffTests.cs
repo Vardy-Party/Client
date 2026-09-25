@@ -54,16 +54,22 @@ public class PhoneSplashHandoffTests
         Assert.False(should);
     }
 
-    [Fact]
-    public void ShouldFinishLauncherAfterMainResumed_OnlyAfterHandoff()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public void ShouldFinishLauncherAfterMainResumed_PhoneSplashOnStop(
+        bool handedOffToMain, bool alreadyFinishing, bool expected)
     {
-        // Arrange / Act / Assert
-        Assert.False(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
-            handedOffToMain: false, alreadyFinishing: false));
-        Assert.True(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
-            handedOffToMain: true, alreadyFinishing: false));
-        Assert.False(PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
-            handedOffToMain: true, alreadyFinishing: true));
+        // Arrange
+        // Phone splash only: handed off at StartActivity, finished from OnStop.
+
+        // Act
+        var shouldFinish = PhoneSplashHandoff.ShouldFinishLauncherAfterMainResumed(
+            handedOffToMain, alreadyFinishing);
+
+        // Assert
+        Assert.Equal(expected, shouldFinish);
     }
 
     [Fact]

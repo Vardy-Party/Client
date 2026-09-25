@@ -25,9 +25,12 @@ public static class PhoneSplashHandoff
         mauiStarted && !isFinishing && !isDestroyed;
 
     /// <summary>
-    /// Finish the NoHistory splash only after it has stopped. Finishing it in
-    /// the same turn as <c>StartActivity</c> drops the Android TV task, and the
-    /// next OK on Sign in returns to the launcher.
+    /// Phone launcher only. Finish the NoHistory splash from <c>OnStop</c>,
+    /// after <c>StartActivity</c> has returned, and not when it is already
+    /// finishing. Do not finish in the same turn as <c>StartActivity</c>.
+    /// The flag is that handoff; it does not observe MainActivity resume or
+    /// window focus. Television opens MainActivity through TvLeanbackAlias
+    /// and does not use this path.
     /// </summary>
     public static bool ShouldFinishLauncherAfterMainResumed(bool handedOffToMain, bool alreadyFinishing) =>
         handedOffToMain && !alreadyFinishing;

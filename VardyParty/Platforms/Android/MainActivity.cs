@@ -148,9 +148,6 @@ namespace VardyParty
             {
                 try
                 {
-                    // A window that never takes focus cancels the first D-pad OK
-                    // ("no window focus") and Leanback returns to the Android home.
-                    Window?.DecorView?.RequestFocus();
                     ReportFullyDrawn();
                     Log.Info("MainActivity", "[MAIN] ReportFullyDrawn");
                 }
@@ -161,15 +158,28 @@ namespace VardyParty
             });
         }
 
-        protected override void OnResume()
+        /// <summary>
+        /// Leanback starts this activity before the window has focus.
+        /// <c>RequestFocus</c> earlier is ignored, and the first D-pad OK is
+        /// dropped. Ask only once the window has focus, and only when nothing
+        /// useful is focused, so a return from the video activity does not
+        /// pull focus off the page. Do not mark the decor view
+        /// <c>FocusableInTouchMode</c> — that makes the root eat the OK.
+        /// </summary>
+        public override void OnWindowFocusChanged(bool hasFocus)
         {
-            base.OnResume();
+            base.OnWindowFocusChanged(hasFocus);
+
             var decor = Window?.DecorView;
             if (decor is null)
                 return;
 
-            decor.Focusable = true;
-            decor.FocusableInTouchMode = true;
+            var current = CurrentFocus;
+            if (!MainActivityWindowFocus.ShouldRequestFocus(
+                    HasWindowFocus,
+                    current is null || current == decor))
+                return;
+
             decor.RequestFocus();
         }
 
