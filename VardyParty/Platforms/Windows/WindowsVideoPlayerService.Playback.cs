@@ -24,12 +24,86 @@ namespace VardyParty.Platforms.Windows
 
                 activeAdaptiveMediaSource = null;
                 activeDownloadHandler = null;
+                CancelPlaybackDownloads();
+                DisposeRootedPlaybackStreams();
+            }
+
+            private CancellationToken CurrentPlaybackDownloadToken
+            {
+                get
+                {
+                    lock (playbackDownloadGate)
+                        return playbackDownloadsCts.Token;
+                }
+            }
+
+            private void CancelPlaybackDownloads()
+            {
+                lock (playbackDownloadGate)
+                {
+                    retiredPlaybackDownloads.Add(playbackDownloadsCts);
+                    try { playbackDownloadsCts.Cancel(); } catch { }
+                    playbackDownloadsCts = new CancellationTokenSource();
+                }
+            }
+
+            private void DisposePlaybackDownloadSources()
+            {
+                List<CancellationTokenSource> sources;
+                lock (playbackDownloadGate)
+                {
+                    sources = retiredPlaybackDownloads.ToList();
+                    retiredPlaybackDownloads.Clear();
+                    sources.Add(playbackDownloadsCts);
+                    playbackDownloadsCts = new CancellationTokenSource();
+                }
+
+                foreach (var source in sources)
+                {
+                    try { source.Cancel(); } catch { }
+                    try { source.Dispose(); } catch { }
+                }
+            }
+
+            /// <summary>
+            /// Keep <paramref name="stream"/> alive for Media Foundation. Returns false
+            /// when this attach is already over; the stream is disposed in that case.
+            /// </summary>
+            private bool TryRootPlaybackStream(IDisposable stream, int generation)
+            {
+                lock (rootedPlaybackStreamsGate)
+                {
+                    if (IsStaleAttach(generation))
+                    {
+                        try { stream.Dispose(); } catch { }
+                        return false;
+                    }
+
+                    rootedPlaybackStreams.Add(stream);
+                    return true;
+                }
+            }
+
+            private void DisposeRootedPlaybackStreams()
+            {
+                List<IDisposable> rooted;
+                lock (rootedPlaybackStreamsGate)
+                {
+                    rooted = rootedPlaybackStreams.ToList();
+                    rootedPlaybackStreams.Clear();
+                }
+
+                foreach (var stream in rooted)
+                {
+                    try { stream.Dispose(); } catch { }
+                }
             }
 
             private void CleanupMediaPlayer()
             {
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
+                CancelPlaybackDownloads();
 
                 try
                 {
@@ -74,6 +148,7 @@ namespace VardyParty.Platforms.Windows
                 catch { }
 
                 // Dispose the switch lock last so in-flight StartPlaybackAsync can exit Wait/Release safely.
+                DisposePlaybackDownloadSources();
                 try { playbackSwitchLock.Dispose(); } catch { }
             }
 
@@ -375,58 +450,95 @@ namespace VardyParty.Platforms.Windows
                     // ISP cannot resolve never starts.
                     var managedHttp = _host._httpClientFactory.CreateClient(PlaybackHttpClients.Media);
                     var uri = new Uri(url);
-                    var adaptiveResult = await _host.CreateAdaptiveMediaSourceAsync(
+                    var manifestToken = CurrentPlaybackDownloadToken;
+                    var created = await _host.CreateAdaptiveMediaSourceAsync(
                         managedHttp,
                         uri,
                         _refererUrl,
-                        _requestHeaders);
+                        _requestHeaders,
+                        manifestToken);
+                    var adaptiveResult = created.Result;
+                    var manifestStream = created.ManifestStream;
 
-                    if (IsStaleAttach(generation))
-                        return;
-
-                    if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success || adaptiveResult.MediaSource == null)
-                        throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
-
-                    await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
-                    if (IsStaleAttach(generation))
-                        return;
-
-                    TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
+                    try
                     {
                         if (IsStaleAttach(generation))
                             return;
 
-                        var deferral = args.GetDeferral();
-                        System.Net.Http.HttpRequestMessage? managedRequest = null;
-                        System.Net.Http.HttpResponseMessage? managedResponse = null;
-                        try
+                        if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success
+                            || adaptiveResult.MediaSource == null
+                            || manifestStream == null)
+                        {
+                            throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
+                        }
+
+                        await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
+                        if (IsStaleAttach(generation))
+                            return;
+
+                        if (!TryRootPlaybackStream(manifestStream, generation))
+                        {
+                            manifestStream = null;
+                            return;
+                        }
+
+                        manifestStream = null;
+
+                        var segmentToken = CurrentPlaybackDownloadToken;
+                        TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
                             if (IsStaleAttach(generation))
                                 return;
 
-                            managedRequest = new System.Net.Http.HttpRequestMessage(
-                                System.Net.Http.HttpMethod.Get,
-                                args.ResourceUri.ToString());
-                            ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
-                            ApplyResourceByteRange(managedRequest, args);
+                            var deferral = args.GetDeferral();
+                            System.Net.Http.HttpRequestMessage? managedRequest = null;
+                            System.Net.Http.HttpResponseMessage? managedResponse = null;
+                            try
+                            {
+                                if (IsStaleAttach(generation))
+                                    return;
 
-                            managedResponse = await managedHttp.SendAsync(
-                                managedRequest,
-                                System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
-                            managedResponse.EnsureSuccessStatusCode();
+                                managedRequest = new System.Net.Http.HttpRequestMessage(
+                                    System.Net.Http.HttpMethod.Get,
+                                    args.ResourceUri.ToString());
+                                ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
+                                ApplyResourceByteRange(managedRequest, args);
 
-                            var contentType = ResolvePlaybackContentType(
-                                managedResponse.Content.Headers.ContentType?.ToString(),
-                                args.ResourceUri.AbsolutePath,
-                                args.ResourceType);
-                            var winrtStream = await CopyToRandomAccessStreamAsync(managedResponse);
+                                managedResponse = await managedHttp.SendAsync(
+                                    managedRequest,
+                                    System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                                    segmentToken);
+                                managedResponse.EnsureSuccessStatusCode();
 
-                            args.Result.InputStream = winrtStream.GetInputStreamAt(0);
-                            args.Result.ContentType = contentType;
-                            session.NotifyDownloadSuccess();
-                        }
-                        catch (Exception ex)
-                        {
+                                if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                                    return;
+
+                                var contentType = PlaybackContentTypes.Resolve(
+                                    managedResponse.Content.Headers.ContentType?.MediaType,
+                                    args.ResourceUri.AbsolutePath,
+                                    ToPlaybackResourceKind(args.ResourceType));
+                                var winrtStream = await CopyToRandomAccessStreamAsync(managedResponse, segmentToken);
+                                if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                                {
+                                    winrtStream.Dispose();
+                                    return;
+                                }
+
+                                if (!TryRootPlaybackStream(winrtStream, generation))
+                                    return;
+
+                                args.Result.InputStream = winrtStream.GetInputStreamAt(0);
+                                args.Result.ContentType = contentType;
+                                session.NotifyDownloadSuccess();
+                            }
+                            catch (OperationCanceledException) when (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                            {
+                            }
+                            catch (ObjectDisposedException) when (cleanupInvoked || segmentToken.IsCancellationRequested)
+                            {
+                            }
+                            catch (Exception ex)
+                            {
                             var statusCode = StatusCodeFromDownloadException(ex);
 
                             _host._logger.LogWarning(
@@ -541,6 +653,11 @@ namespace VardyParty.Platforms.Windows
                     });
 
                     // Do not set success result here. We wait for user close or media events;
+                    }
+                    finally
+                    {
+                        try { manifestStream?.Dispose(); } catch { }
+                    }
                 }
                 catch (Exception ex)
                 {

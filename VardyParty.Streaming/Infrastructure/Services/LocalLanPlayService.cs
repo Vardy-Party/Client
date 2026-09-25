@@ -40,7 +40,7 @@ public class LocalLanPlayService(
     IEnumerable<IPlaybackTransportPlugin> transportPlugins,
     ILogger<LocalLanPlayService> logger,
     IDnsPreferencesStore? dnsPreferences = null,
-    IDnsOverHttpsEndpoint? dnsEndpoint = null) : ILocalLanPlayService, ILocalLanDnsNotifier
+    IDnsOverHttpsEndpoint? dnsEndpoint = null) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -537,58 +537,8 @@ public class LocalLanPlayService(
         }
     }
 
-    public async Task NotifyAsync(bool enabled, CancellationToken cancellationToken = default)
-    {
-        var baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            logger.LogInformation(
-                "[LocalLanPlay] DoH preference is now {Enabled}, but no local service was discovered to restart",
-                enabled);
-            return;
-        }
-
-        string? resolver = null;
-        if (enabled)
-        {
-            resolver = dnsEndpoint?.Address?.ToString();
-            if (string.IsNullOrWhiteSpace(resolver))
-            {
-                logger.LogWarning(
-                    "[LocalLanPlay] DoH is on but no resolver address is configured; not restarting the local browser");
-                return;
-            }
-        }
-
-        var url = $"{baseUrl.TrimEnd('/')}/dns";
-        var payload = JsonSerializer.Serialize(new { enabled, resolver });
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(5));
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
-            ApplyDohHeaders(request);
-            var response = await httpClient.SendAsync(request, cts.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                logger.LogWarning(
-                    "[LocalLanPlay] POST /dns returned {StatusCode} (enabled={Enabled}, resolver={Resolver})",
-                    (int)response.StatusCode,
-                    enabled,
-                    resolver ?? "(system DNS)");
-                return;
-            }
-
-            logger.LogInformation(
-                "[LocalLanPlay] Told local service to use {Doh}",
-                enabled ? resolver : "system DNS");
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "[LocalLanPlay] Failed to notify local service of DoH preference");
-        }
-    }
+    public Task<string?> GetServiceBaseUrlAsync(CancellationToken cancellationToken = default) =>
+        ResolveServiceBaseUrlAsync(cancellationToken);
 
     private void ApplyDohHeaders(HttpRequestMessage request)
     {

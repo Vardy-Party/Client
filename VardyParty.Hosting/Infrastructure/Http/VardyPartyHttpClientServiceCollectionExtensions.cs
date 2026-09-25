@@ -40,11 +40,10 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
             .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
 
-        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>()
+        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>(LocalLanPlayHttpClient.Name)
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(3));
-        services.AddSingleton<ILocalLanDnsNotifier>(sp =>
-            (ILocalLanDnsNotifier)sp.GetRequiredService<ILocalLanPlayService>());
+        services.AddSingleton<ILocalLanDnsNotifier, LocalLanDnsNotifier>();
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));

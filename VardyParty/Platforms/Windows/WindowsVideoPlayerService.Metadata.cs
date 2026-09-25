@@ -178,35 +178,35 @@ namespace VardyParty.Platforms.Windows
                 : new RangeHeaderValue((long)offset, null);
         }
 
-        private static string ResolvePlaybackContentType(
-            string? contentType,
+        private static string ResolvePlaybackMediaType(
+            System.Net.Http.Headers.MediaTypeHeaderValue? contentType,
             string path,
-            AdaptiveMediaSourceResourceType resourceType)
-        {
-            if (resourceType == AdaptiveMediaSourceResourceType.MediaSegment
-                && (path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
-                    || (contentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ?? false)))
-            {
-                // Segment hosts often label MPEG-TS as text/plain. Leave fMP4 (.m4s/.mp4) alone.
-                return "video/MP2T";
-            }
-            else if (resourceType == AdaptiveMediaSourceResourceType.Manifest
-                && path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
-            {
-                return "application/vnd.apple.mpegurl";
-            }
+            AdaptiveMediaSourceResourceType resourceType) =>
+            PlaybackContentTypes.Resolve(
+                contentType?.MediaType,
+                path,
+                ToPlaybackResourceKind(resourceType));
 
-            return string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType;
-        }
+        private static PlaybackResourceKind ToPlaybackResourceKind(AdaptiveMediaSourceResourceType resourceType) =>
+            resourceType switch
+            {
+                AdaptiveMediaSourceResourceType.Manifest => PlaybackResourceKind.Manifest,
+                AdaptiveMediaSourceResourceType.MediaSegment => PlaybackResourceKind.MediaSegment,
+                AdaptiveMediaSourceResourceType.InitializationSegment => PlaybackResourceKind.InitializationSegment,
+                _ => PlaybackResourceKind.Other
+            };
 
         /// <summary>
         /// Copy the body into a WinRT stream Media Foundation can read.
         /// Disposing <see cref="WindowsRuntimeStreamExtensions.AsStreamForWrite"/> closes the
         /// underlying stream, so the writer is detached before it is disposed and Seek can rewind.
+        /// The caller roots the returned stream for the life of the adaptive source.
         /// </summary>
-        private static async Task<InMemoryRandomAccessStream> CopyToRandomAccessStreamAsync(HttpResponseMessage response)
+        private static async Task<InMemoryRandomAccessStream> CopyToRandomAccessStreamAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken)
         {
-            var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             var winrtStream = new InMemoryRandomAccessStream();
             using (var writer = new DataWriter(winrtStream))
             {
@@ -234,37 +234,53 @@ namespace VardyParty.Platforms.Windows
             return 0;
         }
 
-        private async Task<AdaptiveMediaSourceCreationResult> CreateAdaptiveMediaSourceAsync(
+        private async Task<(AdaptiveMediaSourceCreationResult Result, InMemoryRandomAccessStream? ManifestStream)> CreateAdaptiveMediaSourceAsync(
             HttpClient http,
             Uri manifestUri,
             string refererUrl,
-            IReadOnlyDictionary<string, string>? requestHeaders)
+            IReadOnlyDictionary<string, string>? requestHeaders,
+            CancellationToken cancellationToken)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
             ApplyManagedPlaybackHeaders(request, refererUrl, requestHeaders);
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var contentType = ResolvePlaybackContentType(
-                response.Content.Headers.ContentType?.ToString(),
+            var contentType = ResolvePlaybackMediaType(
+                response.Content.Headers.ContentType,
                 manifestUri.AbsolutePath,
                 AdaptiveMediaSourceResourceType.Manifest);
-            var manifestStream = await CopyToRandomAccessStreamAsync(response);
-            var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
-                manifestStream,
-                manifestUri,
-                contentType);
-            if (streamResult.Status == AdaptiveMediaSourceCreationStatus.Success && streamResult.MediaSource != null)
-                ConfigureAdaptiveLiveTolerance(streamResult.MediaSource);
-            else
+            InMemoryRandomAccessStream? manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            try
             {
+                var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
+                    manifestStream,
+                    manifestUri,
+                    contentType);
+                if (streamResult.Status == AdaptiveMediaSourceCreationStatus.Success && streamResult.MediaSource != null)
+                {
+                    ConfigureAdaptiveLiveTolerance(streamResult.MediaSource);
+                    var rooted = manifestStream;
+                    manifestStream = null;
+                    return (streamResult, rooted);
+                }
+
                 _logger.LogWarning(
                     "CreateFromStreamAsync returned {Status} for {Uri}",
                     streamResult.Status,
                     manifestUri);
+                return (streamResult, null);
             }
-
-            return streamResult;
+            finally
+            {
+                if (manifestStream != null)
+                {
+                    try { manifestStream.Dispose(); } catch { }
+                }
+            }
         }
 
         private static IEnumerable<KeyValuePair<string, string>> ResolvePlaybackHeaders(

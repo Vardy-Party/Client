@@ -43,12 +43,17 @@ public class StreamResolver(
             "[StreamResolver] Starting incremental resolution of {Count} streams (concurrency {Concurrency}; yield-as-ready; MP single-flight)",
             pending.Count, concurrency);
 
-        // Yield each finished resolve immediately. FB may run in parallel up to
-        // `concurrency`. At most one MP (/mp) is in flight — LocalService is
-        // single-threaded for POST /mp; parallel MP posts only burn the timeout.
-        // Chip siblings from /mp are appended to `pending` and picked up by FillWindow.
+        // Yield each finished resolve immediately. Non-MP rows may run in parallel
+        // up to `concurrency`, including while one MP is in flight. At most one
+        // MP (/mp) is in flight — LocalService is single-threaded for POST /mp.
+        // When the next row is another MP, scan forward for a non-MP row instead
+        // of stalling the window. First playback still follows catalog index
+        // (StreamResolutionOrchestrator holds a faster later row until earlier
+        // candidates have yielded). Chip siblings from /mp are appended to
+        // `pending` and picked up by FillWindow.
         var gate = new SemaphoreSlim(concurrency, concurrency);
         var inFlight = new List<(Task<ResolveOutcome> Task, bool IsMp)>();
+        var started = new HashSet<int>();
         var nextIndex = 0;
         var activeMp = 0;
 
@@ -67,24 +72,36 @@ public class StreamResolver(
 
         void FillWindow()
         {
-            while (nextIndex < pending.Count && inFlight.Count < concurrency)
+            while (inFlight.Count < concurrency)
             {
-                var pick = nextIndex;
-                if (MpPageUrl.IsV2Stream(pending[pick]) && activeMp > 0)
+                int? pick = null;
+                for (var i = nextIndex; i < pending.Count; i++)
                 {
-                    // One /mp is already in flight. Wait for it instead of
-                    // starting an FB candidate that sits behind the MP list.
+                    if (started.Contains(i))
+                        continue;
+
+                    if (MpPageUrl.IsV2Stream(pending[i]) && activeMp > 0)
+                        continue;
+
+                    pick = i;
                     break;
                 }
 
-                var stream = pending[nextIndex++];
+                if (pick is not int index)
+                    break;
+
+                started.Add(index);
+                while (nextIndex < pending.Count && started.Contains(nextIndex))
+                    nextIndex++;
+
+                var stream = pending[index];
                 var isMp = MpPageUrl.IsV2Stream(stream);
                 if (isMp)
                     activeMp++;
 
                 logger.LogInformation(
                     "[StreamResolver] Starting resolve {Index}/{Count} for {Channel} ({Kind})",
-                    nextIndex, pending.Count, stream.Channel, isMp ? "MP" : "FB");
+                    index + 1, pending.Count, stream.Channel, isMp ? "MP" : "FB");
                 inFlight.Add((StartAsync(stream), isMp));
             }
         }

@@ -117,6 +117,15 @@ namespace VardyParty.Platforms.Windows
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;
             private TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs>? activeDownloadHandler;
+            /// <summary>
+            /// Manifest and segment streams Media Foundation reads after the download
+            /// handler returns. Released with the adaptive source.
+            /// </summary>
+            private readonly List<IDisposable> rootedPlaybackStreams = new();
+            private readonly object rootedPlaybackStreamsGate = new();
+            private readonly object playbackDownloadGate = new();
+            private readonly List<CancellationTokenSource> retiredPlaybackDownloads = new();
+            private CancellationTokenSource playbackDownloadsCts = new();
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
             private bool isClosingPlayer;
             /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>

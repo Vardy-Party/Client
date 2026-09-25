@@ -241,6 +241,67 @@ public class StreamResolverTests
     }
 
     [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_BlockedMp_FollowingFbStillResolves()
+    {
+        // Arrange
+        var mp = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://mp.example.test/a")
+            .With(s => s.Channel, "mp-a")
+            .With(s => s.PlayerStream, "mp-a")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Source, "mp")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+        var fb = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://fb.example.test/b")
+            .With(s => s.Channel, "fb-b")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+
+        var mpEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fbEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mpRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var m3u8 = _fixture.Create<M3U8Response>();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string url, string? _, string? __, string? ___, CancellationToken ____) =>
+            {
+                if (url == mp.Url)
+                {
+                    mpEntered.TrySetResult();
+                    await mpRelease.Task;
+                }
+                else
+                {
+                    fbEntered.TrySetResult();
+                }
+
+                return m3u8;
+            });
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        var consume = Task.Run(async () =>
+            await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([mp, fb], batchSize: 2)));
+
+        // Act
+        await mpEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await fbEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.True(fbEntered.Task.IsCompleted);
+        mpRelease.SetResult();
+        await consume.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ResolveStreamsIncrementallyAsync_FailedM3U8Resolution_MarksFailed()
     {
         // Arrange

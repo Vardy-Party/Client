@@ -37,6 +37,12 @@ public interface ILocalLanPlayService
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Base URL of the discovered LAN resolver, using the same discovery cache
+    /// as <c>/play</c> and <c>/mp</c>. Null when nothing is on the network.
+    /// </summary>
+    Task<string?> GetServiceBaseUrlAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// The HTTP status code returned by the most recent health check, or null if no check was attempted or connection failed.
     /// </summary>
     System.Net.HttpStatusCode? LastHealthStatus => null;
