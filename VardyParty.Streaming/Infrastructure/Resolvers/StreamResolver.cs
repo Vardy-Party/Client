@@ -72,24 +72,9 @@ public class StreamResolver(
                 var pick = nextIndex;
                 if (MpPageUrl.IsV2Stream(pending[pick]) && activeMp > 0)
                 {
-                    // Prefer a later FB candidate over queuing a second MP behind the gate.
-                    pick = -1;
-                    for (var i = nextIndex + 1; i < pending.Count; i++)
-                    {
-                        if (!MpPageUrl.IsV2Stream(pending[i]))
-                        {
-                            pick = i;
-                            break;
-                        }
-                    }
-
-                    if (pick < 0)
-                        break;
-
-                    var chosen = pending[pick];
-                    pending.RemoveAt(pick);
-                    pending.Insert(nextIndex, chosen);
-                    pick = nextIndex;
+                    // One /mp is already in flight. Wait for it instead of
+                    // starting an FB candidate that sits behind the MP list.
+                    break;
                 }
 
                 var stream = pending[nextIndex++];

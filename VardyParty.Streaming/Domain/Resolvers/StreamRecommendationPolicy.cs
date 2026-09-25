@@ -85,7 +85,7 @@ public static class StreamRecommendationPolicy
     }
 
     /// <summary>
-    /// When there are no recommendations, keep FB before MP but rotate within
+    /// When there are no recommendations, try MP before FB and rotate within
     /// each source bucket by <paramref name="sessionSalt"/> so concurrent
     /// joiners spread discovery and both benefit once working reports land.
     /// </summary>
@@ -123,9 +123,9 @@ public static class StreamRecommendationPolicy
         RotateInPlace(mp, sessionSalt + 31);
 
         var ordered = new List<int>(totalStreams);
+        ordered.AddRange(mp);
         ordered.AddRange(fb);
         ordered.AddRange(other);
-        ordered.AddRange(mp);
         return ordered;
     }
 

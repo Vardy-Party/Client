@@ -30,11 +30,11 @@ public class StreamRecommendationBusinessRulesTests
         var order1 = StreamRecommendationPolicy.SpreadDiscoveryOrder(
             streams.Length, i => streams[i], sessionSalt: 1);
 
-        Assert.Equal(3, order0.Take(3).Count(i => streams[i].ResolveCatalogSource() == "fb"));
-        Assert.Equal("mp", streams[order0[^1]].ResolveCatalogSource());
+        Assert.Equal("mp", streams[order0[0]].ResolveCatalogSource());
+        Assert.Equal(3, order0.Skip(1).Count(i => streams[i].ResolveCatalogSource() == "fb"));
         Assert.NotEqual(
-            streams[order0[0]].Channel,
-            streams[order1[0]].Channel);
+            streams[order0[1]].Channel,
+            streams[order1[1]].Channel);
     }
 
     [Fact]

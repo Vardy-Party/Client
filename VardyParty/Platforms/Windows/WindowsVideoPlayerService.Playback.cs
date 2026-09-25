@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Threading;
+using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Streaming;
@@ -7,7 +8,6 @@ using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
-using HttpClientWin = Windows.Web.Http.HttpClient;
 
 namespace VardyParty.Platforms.Windows
 {
@@ -24,12 +24,6 @@ namespace VardyParty.Platforms.Windows
 
                 activeAdaptiveMediaSource = null;
                 activeDownloadHandler = null;
-
-                if (activePlaybackClient != null)
-                {
-                    try { activePlaybackClient.Dispose(); } catch { }
-                    activePlaybackClient = null;
-                }
             }
 
             private void CleanupMediaPlayer()
@@ -376,143 +370,107 @@ namespace VardyParty.Platforms.Windows
                     if (IsStaleAttach(generation))
                         return;
 
-                    // Build the adaptive source BEFORE clearing the current player source so a
-                    // failed switch does not leave the UI on a black frame.
-                    var client = new HttpClientWin();
-                    ConfigurePlaybackHttpClient(client, _refererUrl, _requestHeaders);
-
+                    // Manifest and every later segment go through the DoH-aware managed
+                    // client. WinRT HttpClient ignores that handler, so a host the
+                    // ISP cannot resolve never starts.
+                    var managedHttp = _host._httpClientFactory.CreateClient(PlaybackHttpClients.Media);
                     var uri = new Uri(url);
-                    var adaptiveResult = await _host.CreateAdaptiveMediaSourceAsync(client, uri);
+                    var adaptiveResult = await _host.CreateAdaptiveMediaSourceAsync(
+                        managedHttp,
+                        uri,
+                        _refererUrl,
+                        _requestHeaders);
 
                     if (IsStaleAttach(generation))
-                    {
-                        try { client.Dispose(); } catch { }
                         return;
-                    }
 
                     if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success || adaptiveResult.MediaSource == null)
-                    {
-                        try { client.Dispose(); } catch { }
                         throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
-                    }
 
                     await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
                     if (IsStaleAttach(generation))
-                    {
-                        try { client.Dispose(); } catch { }
                         return;
-                    }
 
-                    activePlaybackClient = client;
-
-                    // Attach handler to fix segment content types and ensure headers
                     TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                     {
                         if (IsStaleAttach(generation))
                             return;
 
-                        // Intercept Manifest, MediaSegment, and InitializationSegment
-                        if (args.ResourceType == AdaptiveMediaSourceResourceType.Manifest ||
-                            args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment ||
-                            args.ResourceType == AdaptiveMediaSourceResourceType.InitializationSegment)
+                        var deferral = args.GetDeferral();
+                        System.Net.Http.HttpRequestMessage? managedRequest = null;
+                        System.Net.Http.HttpResponseMessage? managedResponse = null;
+                        try
                         {
-                            var deferral = args.GetDeferral();
+                            if (IsStaleAttach(generation))
+                                return;
+
+                            managedRequest = new System.Net.Http.HttpRequestMessage(
+                                System.Net.Http.HttpMethod.Get,
+                                args.ResourceUri.ToString());
+                            ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
+                            ApplyResourceByteRange(managedRequest, args);
+
+                            managedResponse = await managedHttp.SendAsync(
+                                managedRequest,
+                                System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
+                            managedResponse.EnsureSuccessStatusCode();
+
+                            var contentType = ResolvePlaybackContentType(
+                                managedResponse.Content.Headers.ContentType?.ToString(),
+                                args.ResourceUri.AbsolutePath,
+                                args.ResourceType);
+                            var winrtStream = await CopyToRandomAccessStreamAsync(managedResponse);
+
+                            args.Result.InputStream = winrtStream.GetInputStreamAt(0);
+                            args.Result.ContentType = contentType;
+                            session.NotifyDownloadSuccess();
+                        }
+                        catch (Exception ex)
+                        {
+                            var statusCode = StatusCodeFromDownloadException(ex);
+
+                            _host._logger.LogWarning(
+                                ex,
+                                "Segment download failed ({ResourceType}, status={StatusCode}, uri={Uri})",
+                                args.ResourceType,
+                                statusCode,
+                                args.ResourceUri);
+
+                            var failureMessage =
+                                $"Segment download failed ({args.ResourceType}, status={statusCode})";
+                            var downloadCmd = PlaybackCommand.FromEffects(
+                                session.NotifyDownloadFailure(failureMessage));
+                            if (!downloadCmd.IsNoOp)
+                            {
+                                MainThread.BeginInvokeOnMainThread(() =>
+                                {
+                                    try
+                                    {
+                                        if (IsStaleAttach(generation))
+                                            return;
+                                        ApplyPlaybackCommand(downloadCmd);
+                                    }
+                                    catch (Exception marshalEx)
+                                    {
+                                        _host._logger.LogWarning(marshalEx, "Download-failure command failed");
+                                    }
+                                });
+                            }
+
                             try
                             {
-                                if (IsStaleAttach(generation))
-                                    return;
-                                var request = new global::Windows.Web.Http.HttpRequestMessage(global::Windows.Web.Http.HttpMethod.Get, args.ResourceUri);
-                                ApplyPlaybackRequestHeaders(request, _refererUrl, _requestHeaders);
-
-                                var response = await client.SendRequestAsync(request);
-                                response.EnsureSuccessStatusCode();
-
-                                var contentType = response.Content.Headers.ContentType?.ToString();
-                                var path = args.ResourceUri.AbsolutePath;
-
-                                // Force correct content types
-                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment)
-                                {
-                                    // If it's a media segment, force video/MP2T if it's not a valid video type
-                                    // Many servers return text/plain or application/octet-stream for .ts
-                                    if (string.IsNullOrEmpty(contentType) ||
-                                        contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ||
-                                        contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) ||
-                                        path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        contentType = "video/MP2T";
-                                    }
-                                }
-                                else if (args.ResourceType == AdaptiveMediaSourceResourceType.Manifest)
-                                {
-                                    if (path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        contentType = "application/vnd.apple.mpegurl";
-                                    }
-                                }
-
-                                args.Result.InputStream = await response.Content.ReadAsInputStreamAsync();
-                                args.Result.ContentType = contentType;
-                                session.NotifyDownloadSuccess();
+                                args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
                             }
-                            catch (Exception ex)
+                            catch (Exception statusEx)
                             {
-                                var statusCode = 0;
-                                try
-                                {
-                                    var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
-                                    if (msg.Contains("404")) statusCode = 404;
-                                    else if (msg.Contains("502")) statusCode = 502;
-                                    else if (msg.Contains("503")) statusCode = 503;
-                                    else if (msg.Contains("403")) statusCode = 403;
-                                    else if (msg.Contains("401")) statusCode = 401;
-                                    else if (msg.Contains("500")) statusCode = 500;
-                                }
-                                catch (Exception statusEx)
-                                {
-                                    _host._logger.LogWarning(statusEx, "Failed to parse download status");
-                                }
-
-                                _host._logger.LogWarning(
-                                    ex,
-                                    "Segment download failed ({ResourceType}, status={StatusCode})",
-                                    args.ResourceType,
-                                    statusCode);
-
-                                var failureMessage =
-                                    $"Segment download failed ({args.ResourceType}, status={statusCode})";
-                                var downloadCmd = PlaybackCommand.FromEffects(
-                                    session.NotifyDownloadFailure(failureMessage));
-                                if (!downloadCmd.IsNoOp)
-                                {
-                                    MainThread.BeginInvokeOnMainThread(() =>
-                                    {
-                                        try
-                                        {
-                                            if (IsStaleAttach(generation))
-                                                return;
-                                            ApplyPlaybackCommand(downloadCmd);
-                                        }
-                                        catch (Exception marshalEx)
-                                        {
-                                            _host._logger.LogWarning(marshalEx, "Download-failure command failed");
-                                        }
-                                    });
-                                }
-
-                                try
-                                {
-                                    args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
-                                }
-                                catch (Exception statusEx)
-                                {
-                                    _host._logger.LogWarning(statusEx, "Failed to set download extended status");
-                                }
+                                _host._logger.LogWarning(statusEx, "Failed to set download extended status");
                             }
-                            finally
-                            {
-                                deferral.Complete();
-                            }
+                        }
+                        finally
+                        {
+                            managedResponse?.Dispose();
+                            managedRequest?.Dispose();
+                            deferral.Complete();
                         }
                     };
 

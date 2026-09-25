@@ -22,6 +22,7 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<M3U8HttpHandler>();
 
         services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
+        services.TryAddSingleton<IDnsOverHttpsEndpoint, CloudflareDnsOverHttpsEndpoint>();
         services.AddSingleton<CloudflareDnsOverHttpsClient>();
         services.AddSingleton<IDnsOverHttpsClient>(sp => sp.GetRequiredService<CloudflareDnsOverHttpsClient>());
         services.AddSingleton<IHostNameResolver, SystemThenDohHostNameResolver>();
@@ -42,6 +43,8 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(3));
+        services.AddSingleton<ILocalLanDnsNotifier>(sp =>
+            (ILocalLanDnsNotifier)sp.GetRequiredService<ILocalLanPlayService>());
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));

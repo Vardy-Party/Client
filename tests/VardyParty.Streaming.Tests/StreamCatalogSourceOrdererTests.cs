@@ -13,7 +13,7 @@ public class StreamCatalogSourceOrdererTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public void OrderFbBeforeMp_PlacesFbStreamsAheadOfMp()
+    public void OrderMpBeforeFb_PlacesMpStreamsAheadOfFb()
     {
         // Arrange
         var streams = new List<Stream>
@@ -45,14 +45,14 @@ public class StreamCatalogSourceOrdererTests
         };
 
         // Act
-        var ordered = StreamCatalogSourceOrderer.OrderFbBeforeMp(streams);
+        var ordered = StreamCatalogSourceOrderer.OrderMpBeforeFb(streams);
 
         // Assert
-        Assert.Equal(["Channel North", "Channel South", "Channel East", "Channel West"], ordered.Select(s => s.Channel).ToList());
+        Assert.Equal(["Channel East", "Channel West", "Channel North", "Channel South"], ordered.Select(s => s.Channel).ToList());
     }
 
     [Fact]
-    public void OrderFbBeforeMp_PreservesRelativeOrderWithinSource()
+    public void OrderMpBeforeFb_PreservesRelativeOrderWithinSource()
     {
         // Arrange
         var streams = new List<Stream>
@@ -84,14 +84,14 @@ public class StreamCatalogSourceOrdererTests
         };
 
         // Act
-        var ordered = StreamCatalogSourceOrderer.OrderFbBeforeMp(streams);
+        var ordered = StreamCatalogSourceOrderer.OrderMpBeforeFb(streams);
 
         // Assert
-        Assert.Equal(["Channel North", "Channel South", "Channel East", "Channel West"], ordered.Select(s => s.Channel).ToList());
+        Assert.Equal(["Channel East", "Channel West", "Channel North", "Channel South"], ordered.Select(s => s.Channel).ToList());
     }
 
     [Fact]
-    public void OrderIndexesFbBeforeMp_PartitionsRecommendedOrderBySource()
+    public void OrderIndexesMpBeforeFb_PartitionsRecommendedOrderBySource()
     {
         // Arrange
         var streams = new List<Stream>
@@ -117,11 +117,11 @@ public class StreamCatalogSourceOrdererTests
         };
 
         // Act
-        var orderedIndexes = StreamCatalogSourceOrderer.OrderIndexesFbBeforeMp(
+        var orderedIndexes = StreamCatalogSourceOrderer.OrderIndexesMpBeforeFb(
             [0, 1, 2],
             index => streams[index]);
 
         // Assert
-        Assert.Equal([1, 0, 2], orderedIndexes);
+        Assert.Equal([0, 2, 1], orderedIndexes);
     }
 }

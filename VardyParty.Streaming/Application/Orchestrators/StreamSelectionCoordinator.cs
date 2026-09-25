@@ -91,7 +91,7 @@ public class StreamSelectionCoordinator(
                 logger.LogWarning(ex, "[StreamSelection] Failed to fetch recommendations, defaulting to discovery spread");
             }
 
-            var expandedStreams = StreamCatalogSourceOrderer.OrderFbBeforeMp(
+            var expandedStreams = StreamCatalogSourceOrderer.OrderMpBeforeFb(
                 StreamRecommendationPolicy.ApplyRecommendedChips(
                     V2StreamExpander.Expand(streamsResponse.Streams),
                     recommendations));

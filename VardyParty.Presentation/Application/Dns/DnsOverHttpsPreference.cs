@@ -9,11 +9,17 @@ namespace VardyParty.Presentation;
 public sealed class DnsOverHttpsPreference
 {
     private readonly IDnsPreferencesStore _preferences;
+    private readonly IEnumerable<ILocalLanDnsNotifier> _notifiers;
     private readonly object _gate = new();
     private bool? _enabledCache;
 
-    public DnsOverHttpsPreference(IDnsPreferencesStore preferences) =>
+    public DnsOverHttpsPreference(
+        IDnsPreferencesStore preferences,
+        IEnumerable<ILocalLanDnsNotifier>? notifiers = null)
+    {
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _notifiers = notifiers ?? [];
+    }
 
     public bool Enabled
     {
@@ -34,5 +40,26 @@ public sealed class DnsOverHttpsPreference
         }
 
         _preferences.SaveDnsOverHttpsFallbackEnabled(enabled);
+        NotifyLocalService(enabled);
+    }
+
+    private void NotifyLocalService(bool enabled)
+    {
+        foreach (var notifier in _notifiers)
+        {
+            _ = NotifyOneAsync(notifier, enabled);
+        }
+    }
+
+    private static async Task NotifyOneAsync(ILocalLanDnsNotifier notifier, bool enabled)
+    {
+        try
+        {
+            await notifier.NotifyAsync(enabled).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The notifier logs its own failure. The toggle must still persist.
+        }
     }
 }

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using VardyParty.Kernel;
 using VardyParty.LocalService.Abstractions;
 using VardyParty.LocalService.Client.Discovery;
+using VardyParty.Ports;
 
 namespace VardyParty.Streaming;
 
@@ -37,7 +38,9 @@ public class LocalLanPlayService(
     HttpClient httpClient,
     IOptions<GamesApiSettings> gamesApiSettings,
     IEnumerable<IPlaybackTransportPlugin> transportPlugins,
-    ILogger<LocalLanPlayService> logger) : ILocalLanPlayService
+    ILogger<LocalLanPlayService> logger,
+    IDnsPreferencesStore? dnsPreferences = null,
+    IDnsOverHttpsEndpoint? dnsEndpoint = null) : ILocalLanPlayService, ILocalLanDnsNotifier
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -373,11 +376,13 @@ public class LocalLanPlayService(
                 stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
             });
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+            ApplyDohHeaders(request);
             logger.LogInformation(
                 "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix}",
                 url,
                 string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName.Trim()})");
-            var response = await httpClient.PostAsync(url, content, cts.Token);
+            var response = await httpClient.SendAsync(request, cts.Token);
             var json = response.Content != null
                 ? await response.Content.ReadAsStringAsync(cts.Token)
                 : string.Empty;
@@ -469,7 +474,9 @@ public class LocalLanPlayService(
             cts.CancelAfter(_m3u8CallTimeout);
 
             logger.LogDebug("[LocalLanPlay] Resolving stream via local service: {Url}", url);
-            var response = await httpClient.GetAsync(url, cts.Token);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyDohHeaders(request);
+            var response = await httpClient.SendAsync(request, cts.Token);
             var json = response.Content != null
                 ? await response.Content.ReadAsStringAsync(cts.Token)
                 : string.Empty;
@@ -528,6 +535,74 @@ public class LocalLanPlayService(
                 baseUrl);
             return null;
         }
+    }
+
+    public async Task NotifyAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        var baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            logger.LogInformation(
+                "[LocalLanPlay] DoH preference is now {Enabled}, but no local service was discovered to restart",
+                enabled);
+            return;
+        }
+
+        string? resolver = null;
+        if (enabled)
+        {
+            resolver = dnsEndpoint?.Address?.ToString();
+            if (string.IsNullOrWhiteSpace(resolver))
+            {
+                logger.LogWarning(
+                    "[LocalLanPlay] DoH is on but no resolver address is configured; not restarting the local browser");
+                return;
+            }
+        }
+
+        var url = $"{baseUrl.TrimEnd('/')}/dns";
+        var payload = JsonSerializer.Serialize(new { enabled, resolver });
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+            ApplyDohHeaders(request);
+            var response = await httpClient.SendAsync(request, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "[LocalLanPlay] POST /dns returned {StatusCode} (enabled={Enabled}, resolver={Resolver})",
+                    (int)response.StatusCode,
+                    enabled,
+                    resolver ?? "(system DNS)");
+                return;
+            }
+
+            logger.LogInformation(
+                "[LocalLanPlay] Told local service to use {Doh}",
+                enabled ? resolver : "system DNS");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[LocalLanPlay] Failed to notify local service of DoH preference");
+        }
+    }
+
+    private void ApplyDohHeaders(HttpRequestMessage request)
+    {
+        if (dnsPreferences is null)
+            return;
+
+        var enabled = dnsPreferences.LoadDnsOverHttpsFallbackEnabled();
+        request.Headers.TryAddWithoutValidation("X-Vardy-Doh", enabled ? "1" : "0");
+        if (!enabled)
+            return;
+
+        var resolver = dnsEndpoint?.Address?.ToString();
+        if (!string.IsNullOrWhiteSpace(resolver))
+            request.Headers.TryAddWithoutValidation("X-Vardy-Doh-Resolver", resolver);
     }
 
     private async Task<string?> ResolveServiceBaseUrlAsync(CancellationToken cancellationToken)

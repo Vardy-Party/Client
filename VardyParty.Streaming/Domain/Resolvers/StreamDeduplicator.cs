@@ -72,7 +72,7 @@ public class StreamDeduplicator(ILogger<StreamDeduplicator> logger) : IStreamDed
         if (group.Count == 1)
             return group[0];
 
-        // Sort by reputation score (highest first), then FB before MP, then by channel name
+        // Sort by reputation score (highest first), then MP before FB, then by channel name
         var sorted = group
             .OrderByDescending(s => s.Reputation)
             .ThenBy(s => StreamCatalogSourceOrderer.GetCatalogSourcePriority(s))

@@ -278,7 +278,7 @@ public class StreamSelectionCoordinatorTests
     }
 
     [Fact]
-    public async Task InitializeAsync_RecommendationsThrow_FallsBackToFbBeforeMp()
+    public async Task InitializeAsync_RecommendationsThrow_FallsBackToMpBeforeFb()
     {
         // Arrange
         var streams = new List<StreamModel>
@@ -301,13 +301,13 @@ public class StreamSelectionCoordinatorTests
         // Act
         await sut.InitializeAsync(game);
 
-        // Assert — recs failure uses session-spread within FB, then MP (salt is random)
+        // Assert — recs failure uses MP first, then session-spread within FB (salt is random)
         var channels = sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList();
         Assert.Equal(3, channels.Count);
-        Assert.Equal("Channel East", channels[^1]);
+        Assert.Equal("Channel East", channels[0]);
         Assert.Equal(
             new HashSet<string> { "Channel North", "Channel South" },
-            channels.Take(2).ToHashSet());
+            channels.Skip(1).ToHashSet());
     }
 
     [Fact]
