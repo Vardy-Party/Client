@@ -41,9 +41,11 @@ public partial class HomeView
     private const int MenuTrapFocusRetryFrames = 30;
 
     /// <summary>
-    /// Frames spent putting focus back on a card after the native player
-    /// closes. The home window often does not have focus on the first frame
-    /// back, and a recycled row may not be attached yet.
+    /// Layout passes spent putting focus back on a card after the native
+    /// player closes. Each miss is one <c>View.Post</c> (the card's run
+    /// queue when it is detached, otherwise the rows recycler after the
+    /// scroll), so the budget waits for a traversal instead of draining as
+    /// a burst of dispatcher messages before the row is bound.
     /// </summary>
     private const int StreamExitFocusRetryFrames = 90;
 
@@ -139,32 +141,51 @@ public partial class HomeView
 
         if (attemptsLeft <= 0)
         {
-            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+            FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
             return;
         }
 
         EnsureRailVisible(railIndex);
-        var card = TvCardFocusRegistry.TryGetAttached(gameKey);
-        if (card is null)
+
+        // Prefer the card itself, even when it is detached: View.Post on a
+        // detached view runs from the run queue when that view attaches,
+        // which is the next traversal that can actually take focus.
+        var card = TvCardFocusRegistry.TryGet(gameKey);
+        if (card is not null)
         {
-            Dispatcher.Dispatch(() =>
+            card.Post(() => TryFocusPostedCard(
+                card, gameKey, railIndex, watchedGame, attemptsLeft, generation));
+            return;
+        }
+
+        if (RowsList.Handler?.PlatformView is RecyclerView recycler)
+        {
+            recycler.Post(() =>
                 FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation));
             return;
         }
 
-        if (!watchedGame)
+        // Nothing to post on. Do not spin the dispatcher; ask for the card
+        // if it is already attached, then put Menu back.
+        FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
+    }
+
+    private void TryFocusPostedCard(
+        AView card, string gameKey, int railIndex, bool watchedGame, int attemptsLeft, int generation)
+    {
+        if (generation != _streamExitFocusGeneration)
         {
-            ResetStripToStart(card);
+            return;
         }
 
-        card.Post(() =>
+        if (card is { IsAttachedToWindow: true, IsShown: true } && card.Width > 0)
         {
-            if (generation != _streamExitFocusGeneration)
+            if (!watchedGame)
             {
-                return;
+                ResetStripToStart(card);
             }
 
-            if (card.IsAttachedToWindow && card.RequestFocus())
+            if (card.RequestFocus())
             {
                 TvDpadFocusRouter.NoteCardFocused(card);
                 if (railIndex == 0)
@@ -175,9 +196,27 @@ public partial class HomeView
                 TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
                 return;
             }
+        }
 
-            FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation);
-        });
+        FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation);
+    }
+
+    /// <summary>
+    /// Last chance after the layout budget. If the card is in a window, it
+    /// gets focus. Menu is released either way so the header stays reachable.
+    /// </summary>
+    private static void FocusAttachedCardThenReleaseMenu(string gameKey, int railIndex)
+    {
+        if (TvCardFocusRegistry.TryGetAttached(gameKey) is { } attached && attached.RequestFocus())
+        {
+            TvDpadFocusRouter.NoteCardFocused(attached);
+            if (railIndex == 0)
+            {
+                TvDpadFocusRouter.PostTopAlignContaining(attached);
+            }
+        }
+
+        TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
     }
 
     private void EnsureRailVisible(int railIndex)

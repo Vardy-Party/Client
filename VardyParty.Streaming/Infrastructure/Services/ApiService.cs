@@ -153,9 +153,11 @@ public class ApiService(
 
                     if (response.StatusCode == HttpStatusCode.Forbidden)
                     {
-                        // 403 Forbidden means insufficient permissions - retrying is futile
+                        // 403 is a missing role, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like.
                         logger.LogWarning("[Api] Received 403 Forbidden for {Url} - user lacks stream-viewer role or permissions, aborting without retry", url);
-                        return new Dictionary<string, List<Game>>();
+                        throw new ApiForbiddenException(
+                            $"Games catalog returned 403 Forbidden for {url}");
                     }
 
                     response.EnsureSuccessStatusCode();
@@ -181,6 +183,10 @@ public class ApiService(
                     return parsed;
                 }
                 catch (ApiUnauthorizedException)
+                {
+                    throw;
+                }
+                catch (ApiForbiddenException)
                 {
                     throw;
                 }
@@ -217,6 +223,10 @@ public class ApiService(
             throw;
         }
         catch (ApiUnauthorizedException)
+        {
+            throw;
+        }
+        catch (ApiForbiddenException)
         {
             throw;
         }

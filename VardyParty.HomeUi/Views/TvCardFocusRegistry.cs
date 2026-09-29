@@ -27,7 +27,14 @@ internal static class TvCardFocusRegistry
         Cards[gameKey] = new WeakReference<AView>(view);
     }
 
-    internal static AView? TryGetAttached(string gameKey)
+    /// <summary>
+    /// The live platform view for <paramref name="gameKey"/>, including a
+    /// view that is not attached yet. A detached view can still take
+    /// <c>Post</c>; Android runs that runnable from the view run queue when
+    /// the view attaches. <see cref="TryGetAttached"/> is the same view only
+    /// once it is in a window.
+    /// </summary>
+    internal static AView? TryGet(string gameKey)
     {
         if (!Cards.TryGetValue(gameKey, out var weak))
         {
@@ -36,11 +43,17 @@ internal static class TvCardFocusRegistry
 
         if (weak.TryGetTarget(out var view))
         {
-            return view.IsAttachedToWindow ? view : null;
+            return view;
         }
 
         Cards.Remove(gameKey);
         return null;
+    }
+
+    internal static AView? TryGetAttached(string gameKey)
+    {
+        var view = TryGet(gameKey);
+        return view is { IsAttachedToWindow: true } ? view : null;
     }
 }
 #endif

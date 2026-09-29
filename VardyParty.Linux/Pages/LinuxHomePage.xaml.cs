@@ -607,43 +607,65 @@ public partial class LinuxHomePage : ContentPage
 
     private async Task RecheckAuthOnResumeAsync()
     {
-        if (!_isAuthenticated || _isAuthenticating)
-            return;
-
-        try
-        {
-            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
-            if (!authenticated)
-                TransitionToSignIn("Session missing on resume");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[LinuxHome] Authentication check on resume failed");
-        }
+        var decision = await DecideSessionRecoveryAsync(
+            CatalogSessionRecovery.AfterResume,
+            "[LinuxHome] Authentication check on resume failed");
+        ApplySessionRecovery(decision, "Session missing on resume");
     }
 
     private async Task HandleCatalogUnauthorizedAsync()
     {
-        if (!_isAuthenticated || _isAuthenticating)
-            return;
+        var decision = await DecideSessionRecoveryAsync(
+            CatalogSessionRecovery.AfterCatalogUnauthorized,
+            "[LinuxHome] Authentication check after catalog 401 failed");
+        ApplySessionRecovery(decision, "Catalog unauthorized");
+    }
 
-        var authenticated = true;
+    private async Task<CatalogSessionRecovery.Decision> DecideSessionRecoveryAsync(
+        Func<bool, bool, CatalogSessionRecovery.Probe, CatalogSessionRecovery.Decision> decide,
+        string failureLog)
+    {
+        var showingSignedInHome = _isAuthenticated;
+        var signInInProgress = _isAuthenticating;
+        var probe = CatalogSessionRecovery.Probe.SignedOut;
+        if (showingSignedInHome && !signInInProgress)
+        {
+            probe = await ReadAuthProbeAsync(failureLog).ConfigureAwait(true);
+        }
+
+        return decide(showingSignedInHome, signInInProgress, probe);
+    }
+
+    private async Task<CatalogSessionRecovery.Probe> ReadAuthProbeAsync(string failureLog)
+    {
         try
         {
-            authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
+            return authenticated
+                ? CatalogSessionRecovery.Probe.StillSignedIn
+                : CatalogSessionRecovery.Probe.SignedOut;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[LinuxHome] Authentication check after catalog 401 failed");
+            _logger.LogWarning(ex, "{Failure}", failureLog);
+            return CatalogSessionRecovery.Probe.CheckFailed;
         }
+    }
 
-        if (!authenticated)
+    private void ApplySessionRecovery(CatalogSessionRecovery.Decision decision, string signInReason)
+    {
+        if (decision.OpenSignIn)
         {
-            TransitionToSignIn("Catalog unauthorized");
+            TransitionToSignIn(signInReason);
             return;
         }
 
-        _serviceError = "Couldn't refresh sign-in. Games will update when the session recovers.";
+        if (!decision.ShowRecoveryBanner)
+        {
+            return;
+        }
+
+        _serviceError = CatalogSessionRecovery.RefreshFailureBanner;
         _viewModel.SetServiceError(_serviceError);
     }
 

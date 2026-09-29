@@ -313,45 +313,67 @@ public partial class HomeHostPage : ContentPage
 
     private async Task RecheckAuthOnResumeAsync()
     {
-        if (!_isAuthenticated || _isAuthenticating)
-            return;
-
-        try
-        {
-            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
-            if (!authenticated)
-                TransitionToSignIn("Session missing on resume");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[HomeHost] Authentication check on resume failed");
-        }
+        var decision = await DecideSessionRecoveryAsync(
+            CatalogSessionRecovery.AfterResume,
+            "[HomeHost] Authentication check on resume failed");
+        ApplySessionRecovery(decision, "Session missing on resume");
     }
 
     private async Task HandleCatalogUnauthorizedAsync()
     {
-        if (!_isAuthenticated || _isAuthenticating)
-            return;
+        var decision = await DecideSessionRecoveryAsync(
+            CatalogSessionRecovery.AfterCatalogUnauthorized,
+            "[HomeHost] Authentication check after catalog 401 failed");
+        ApplySessionRecovery(decision, "Catalog unauthorized");
+    }
 
-        var authenticated = true;
+    private async Task<CatalogSessionRecovery.Decision> DecideSessionRecoveryAsync(
+        Func<bool, bool, CatalogSessionRecovery.Probe, CatalogSessionRecovery.Decision> decide,
+        string failureLog)
+    {
+        var showingSignedInHome = _isAuthenticated;
+        var signInInProgress = _isAuthenticating;
+        var probe = CatalogSessionRecovery.Probe.SignedOut;
+        if (showingSignedInHome && !signInInProgress)
+        {
+            probe = await ReadAuthProbeAsync(failureLog).ConfigureAwait(true);
+        }
+
+        return decide(showingSignedInHome, signInInProgress, probe);
+    }
+
+    private async Task<CatalogSessionRecovery.Probe> ReadAuthProbeAsync(string failureLog)
+    {
         try
         {
-            authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
+            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
+            return authenticated
+                ? CatalogSessionRecovery.Probe.StillSignedIn
+                : CatalogSessionRecovery.Probe.SignedOut;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[HomeHost] Authentication check after catalog 401 failed");
+            _logger.LogWarning(ex, "{Failure}", failureLog);
+            return CatalogSessionRecovery.Probe.CheckFailed;
+        }
+    }
+
+    private void ApplySessionRecovery(CatalogSessionRecovery.Decision decision, string signInReason)
+    {
+        if (decision.OpenSignIn)
+        {
+            TransitionToSignIn(signInReason);
+            return;
         }
 
-        if (!authenticated)
+        if (!decision.ShowRecoveryBanner)
         {
-            TransitionToSignIn("Catalog unauthorized");
             return;
         }
 
         // Refresh token is still present; a transient refresh miss must not
         // wipe the board or kick the user to sign-in.
-        _serviceError = "Couldn't refresh sign-in. Games will update when the session recovers.";
+        _serviceError = CatalogSessionRecovery.RefreshFailureBanner;
         _viewModel.SetServiceError(_serviceError);
     }
 

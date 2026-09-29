@@ -39,7 +39,7 @@ public sealed class FinishedGameGrace
                     continue;
                 }
 
-                var key = Key(game);
+                var key = game.FixtureKey;
                 present.Add(key);
                 if (!_firstSeen.ContainsKey(key))
                 {
@@ -83,12 +83,8 @@ public sealed class FinishedGameGrace
 
         lock (_gate)
         {
-            return _firstSeen.TryGetValue(Key(game), out var seen)
+            return _firstSeen.TryGetValue(game.FixtureKey, out var seen)
                 && utcNow - seen < Duration;
         }
     }
-
-    private static string Key(Game game) =>
-        $"{(game.Home ?? string.Empty).Trim()}|{(game.Away ?? string.Empty).Trim()}"
-            .ToUpperInvariant();
 }

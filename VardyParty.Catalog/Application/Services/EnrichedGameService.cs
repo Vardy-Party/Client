@@ -46,6 +46,7 @@ public class EnrichedGameService(
     private readonly BehaviorSubject<Dictionary<string, List<Game>>?> _subject = new(null);
     private Timer? _apiTimer;
     private Timer? _bbcTimer;
+    private int _apiFetchInFlight;
     private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
     private bool _initialBbcCompleted;
@@ -109,39 +110,65 @@ public class EnrichedGameService(
 
     private async Task FetchApiGames()
     {
+        if (Interlocked.CompareExchange(ref _apiFetchInFlight, 1, 0) != 0)
+        {
+            logger.LogInformation("[Enriched] Skipping API poll; previous fetch still in progress");
+            return;
+        }
+
         try
         {
-            logger.LogInformation("[Enriched] Polling API games...");
-            var games = await api.GetAllGamesAsync(true);
-
-            // Clear any previous error on successful fetch
-            _errorSubject.OnNext(null);
-
-            lock (_stateLock)
+            try
             {
-                _latestApiGames.Clear();
-                foreach (var kvp in games) _latestApiGames[kvp.Key] = kvp.Value;
-                _hasFetchedApi = true;
-            }
+                logger.LogInformation("[Enriched] Polling API games...");
+                var games = await api.GetAllGamesAsync(true);
 
-            RunMatching(fromApiFetch: true);
+                // Clear any previous error on successful fetch
+                _errorSubject.OnNext(null);
+
+                lock (_stateLock)
+                {
+                    _latestApiGames.Clear();
+                    foreach (var kvp in games) _latestApiGames[kvp.Key] = kvp.Value;
+                    _hasFetchedApi = true;
+                }
+
+                RunMatching(fromApiFetch: true);
+            }
+            catch (ApiUnauthorizedException ex)
+            {
+                // Keep the last good board. An empty publish is what the homepage
+                // renders as "no games", which is how an expired session presented
+                // after the process had stayed alive overnight.
+                logger.LogWarning(ex, "[Enriched] Catalog unauthorized; leaving the current board in place");
+                // Same lock as _subject.OnNext: a Subject has no cross-thread guarantee,
+                // and the timer plus "timers already started, fetch now" used to overlap.
+                lock (_publishLock)
+                {
+                    _catalogUnauthorized.OnNext(Unit.Default);
+                }
+            }
+            catch (ApiForbiddenException ex)
+            {
+                logger.LogWarning(ex, "[Enriched] Catalog forbidden; leaving the current board in place");
+                lock (_publishLock)
+                {
+                    _errorSubject.OnNext("This account does not have permission to view matches.");
+                }
+            }
+            catch (ApiSystemDownException ex)
+            {
+                logger.LogError(ex, "[Enriched] API system is down");
+                _errorSubject.OnNext("The system is down right now. Try again later");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[Enriched] Background API fetch failed");
+            }
         }
-        catch (ApiUnauthorizedException ex)
+        finally
         {
-            // Keep the last good board. An empty publish is what the homepage
-            // renders as "no games", which is how an expired session presented
-            // after the process had stayed alive overnight.
-            logger.LogWarning(ex, "[Enriched] Catalog unauthorized; leaving the current board in place");
-            _catalogUnauthorized.OnNext(Unit.Default);
-        }
-        catch (ApiSystemDownException ex)
-        {
-            logger.LogError(ex, "[Enriched] API system is down");
-            _errorSubject.OnNext("The system is down right now. Try again later");
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[Enriched] Background API fetch failed");
+            Interlocked.Exchange(ref _apiFetchInFlight, 0);
         }
     }
 
