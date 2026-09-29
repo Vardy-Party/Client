@@ -136,6 +136,11 @@ public class Auth0AuthService : Auth0TokenSession
             var lastRefreshedRaw = await SecureStorage.Default.GetAsync(LastRefreshedAtKey);
             if (long.TryParse(lastRefreshedRaw, out var lastRefreshedSeconds))
                 LastRefreshedAt = DateTimeOffset.FromUnixTimeSeconds(lastRefreshedSeconds);
+
+            Logger.LogInformation(
+                "[Auth0] Loaded tokens. AccessTokenPresent={Access}, RefreshTokenPresent={Refresh}",
+                !string.IsNullOrWhiteSpace(AccessToken),
+                !string.IsNullOrWhiteSpace(RefreshToken));
         }
         catch (Exception ex)
         {
@@ -151,8 +156,13 @@ public class Auth0AuthService : Auth0TokenSession
                 await SecureStorage.Default.SetAsync(AccessTokenKey, AccessToken);
             await SecureStorage.Default.SetAsync(ExpiresAtKey, ExpiresAt.ToUnixTimeSeconds().ToString());
             await SecureStorage.Default.SetAsync(LastRefreshedAtKey, LastRefreshedAt.ToUnixTimeSeconds().ToString());
-            if (!string.IsNullOrWhiteSpace(RefreshToken))
+            var refreshWritten = !string.IsNullOrWhiteSpace(RefreshToken);
+            if (refreshWritten)
                 await SecureStorage.Default.SetAsync(RefreshTokenKey, RefreshToken);
+            Logger.LogInformation(
+                "[Auth0] Persisted tokens. AccessTokenWritten={Access}, RefreshTokenWritten={Refresh}",
+                !string.IsNullOrWhiteSpace(AccessToken),
+                refreshWritten);
         }
         catch (Exception ex)
         {
