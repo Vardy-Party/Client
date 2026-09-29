@@ -1,3 +1,4 @@
+using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,7 @@ public class EnrichedGameService(
     private readonly int _apiTtl = gamesApiSettings.Value?.RefreshSchedule ?? 300;
     private readonly int _bbcTtl = bbcFixturesSettings.Value?.RefreshSchedule ?? 300;
     private readonly BehaviorSubject<string?> _errorSubject = new(null);
+    private readonly Subject<Unit> _catalogUnauthorized = new();
     private readonly Dictionary<string, List<Game>> _latestApiGames = new();
     private readonly object _startLock = new();
     private readonly object _stateLock = new();
@@ -58,10 +60,12 @@ public class EnrichedGameService(
         _bbcTimer?.Dispose();
         _subject?.Dispose();
         _errorSubject?.Dispose();
+        _catalogUnauthorized.Dispose();
     }
 
     public IObservable<Dictionary<string, List<Game>>?> GamesStream => _subject.AsObservable();
     public IObservable<string?> ErrorStream => _errorSubject.AsObservable();
+    public IObservable<Unit> CatalogUnauthorized => _catalogUnauthorized.AsObservable();
 
     public Dictionary<string, List<Game>>? GetLatestGames() => _subject.Value;
 
@@ -73,7 +77,14 @@ public class EnrichedGameService(
             {
                 lock (_startLock)
                 {
-                    if (_timersStarted) return;
+                    if (_timersStarted)
+                    {
+                        // Sign-in after a dead session resubscribes while the
+                        // timers are already running. Fetch now so the board
+                        // does not wait out the API TTL.
+                        _ = FetchApiGames();
+                        return;
+                    }
 
                     logger.LogInformation("[Enriched] Starting background pollers. API TTL={Api}s, BBC TTL={Bbc}s",
                         _apiTtl, _bbcTtl);
@@ -114,6 +125,14 @@ public class EnrichedGameService(
             }
 
             RunMatching(fromApiFetch: true);
+        }
+        catch (ApiUnauthorizedException ex)
+        {
+            // Keep the last good board. An empty publish is what the homepage
+            // renders as "no games", which is how an expired session presented
+            // after the process had stayed alive overnight.
+            logger.LogWarning(ex, "[Enriched] Catalog unauthorized; leaving the current board in place");
+            _catalogUnauthorized.OnNext(Unit.Default);
         }
         catch (ApiSystemDownException ex)
         {

@@ -1,10 +1,14 @@
 #if ANDROID
 using System.ComponentModel;
 using Android.Graphics.Drawables;
+using Android.Widget;
+using AndroidX.RecyclerView.Widget;
 using AColor = Android.Graphics.Color;
 using AView = Android.Views.View;
 using AViewGroup = Android.Views.ViewGroup;
 using Keycode = Android.Views.Keycode;
+using VardyParty.Kernel;
+using VardyParty.Presentation;
 
 namespace VardyParty.HomeUi.Views;
 
@@ -35,6 +39,15 @@ public partial class HomeView
     /// while the just-shown panel materializes its native views and lays out.
     /// </summary>
     private const int MenuTrapFocusRetryFrames = 30;
+
+    /// <summary>
+    /// Frames spent putting focus back on a card after the native player
+    /// closes. The home window often does not have focus on the first frame
+    /// back, and a recycled row may not be attached yet.
+    /// </summary>
+    private const int StreamExitFocusRetryFrames = 90;
+
+    private int _streamExitFocusGeneration;
 
     private readonly TvMenuFocusMemory _menuFocusMemory = new();
     private readonly List<AView> _wiredTrapItems = new();
@@ -79,6 +92,120 @@ public partial class HomeView
         if (_wiredMenuButton is { IsAttachedToWindow: true, IsShown: true } menu)
         {
             menu.Post(() => menu.RequestFocus());
+        }
+    }
+
+    partial void RestoreTvFocusAfterStreamExit(Game? watched)
+    {
+        if (!IsTelevision() || ViewModel is null)
+        {
+            return;
+        }
+
+        var rails = new List<IReadOnlyList<string>>(ViewModel.Rows.Count);
+        foreach (var row in ViewModel.Rows)
+        {
+            var keys = new string[row.Cards.Count];
+            for (var i = 0; i < row.Cards.Count; i++)
+            {
+                keys[i] = HomeBoardDiffer.GameKey(row.Cards[i].Game);
+            }
+
+            rails.Add(keys);
+        }
+
+        var watchedKey = watched is null ? null : HomeBoardDiffer.GameKey(watched);
+        var choice = PlaybackExitFocus.Choose(watchedKey, rails);
+        if (choice is null)
+        {
+            return;
+        }
+
+        var key = rails[choice.Value.RailIndex][choice.Value.CardIndex];
+        var generation = ++_streamExitFocusGeneration;
+        // Menu is the default focus target when the video activity returns
+        // and the window has nothing focused. Hold it out until the card lands.
+        TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+        FocusCardAfterStreamExit(key, choice.Value.RailIndex, choice.Value.WatchedGame, StreamExitFocusRetryFrames, generation);
+    }
+
+    private void FocusCardAfterStreamExit(
+        string gameKey, int railIndex, bool watchedGame, int attemptsLeft, int generation)
+    {
+        if (generation != _streamExitFocusGeneration)
+        {
+            return;
+        }
+
+        if (attemptsLeft <= 0)
+        {
+            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+            return;
+        }
+
+        EnsureRailVisible(railIndex);
+        var card = TvCardFocusRegistry.TryGetAttached(gameKey);
+        if (card is null)
+        {
+            Dispatcher.Dispatch(() =>
+                FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation));
+            return;
+        }
+
+        if (!watchedGame)
+        {
+            ResetStripToStart(card);
+        }
+
+        card.Post(() =>
+        {
+            if (generation != _streamExitFocusGeneration)
+            {
+                return;
+            }
+
+            if (card.IsAttachedToWindow && card.RequestFocus())
+            {
+                TvDpadFocusRouter.NoteCardFocused(card);
+                if (railIndex == 0)
+                {
+                    TvDpadFocusRouter.PostTopAlignContaining(card);
+                }
+
+                TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+                return;
+            }
+
+            FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation);
+        });
+    }
+
+    private void EnsureRailVisible(int railIndex)
+    {
+        if (RowsList.Handler?.PlatformView is not RecyclerView recycler)
+        {
+            return;
+        }
+
+        if (recycler.GetLayoutManager() is LinearLayoutManager linear)
+        {
+            linear.ScrollToPositionWithOffset(railIndex, 0);
+        }
+        else
+        {
+            recycler.ScrollToPosition(railIndex);
+        }
+    }
+
+    private static void ResetStripToStart(AView card)
+    {
+        for (var parent = card.Parent; parent != null; parent = parent.Parent)
+        {
+            if (parent is HorizontalScrollView strip)
+            {
+                strip.ScrollTo(0, 0);
+                return;
+            }
         }
     }
 

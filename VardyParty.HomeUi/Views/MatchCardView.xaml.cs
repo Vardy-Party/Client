@@ -319,6 +319,7 @@ public partial class MatchCardView : ContentView
         // focus search run silences it).
         native.SoundEffectsEnabled = false;
         TvDpadFocusRouter.HardenContainers(native);
+        RememberCardForStreamExitFocus(native);
 
         // TV field report: "click right at the right-most card → it shifts
         // immediately, jumps back, then scrolls on". Android's focus system
@@ -418,6 +419,26 @@ public partial class MatchCardView : ContentView
     }
 
     private global::Android.Views.View? _wiredNative;
+    private string? _streamExitFocusKey;
+
+    /// <summary>
+    /// Index this platform view under its fixture so leaving the player can
+    /// focus that card even after the row was recycled. A rebind of the same
+    /// view drops the previous key so a finished game cannot point at a
+    /// different fixture.
+    /// </summary>
+    private void RememberCardForStreamExitFocus(global::Android.Views.View native)
+    {
+        var game = ViewModel?.Game;
+        if (game is null)
+        {
+            return;
+        }
+
+        var key = VardyParty.Presentation.HomeBoardDiffer.GameKey(game);
+        TvCardFocusRegistry.Move(_streamExitFocusKey, key, native);
+        _streamExitFocusKey = key;
+    }
 
     /// <summary>
     /// Called ONLY when HandlerChanged delivers a different platform view —

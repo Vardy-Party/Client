@@ -261,9 +261,11 @@ namespace VardyParty.Streaming.Tests
         }
 
         [Fact]
-        public async Task GetAllGamesAsync_Unauthorized401_ReturnsEmptyWithoutRetrying()
+        public async Task GetAllGamesAsync_Unauthorized401_ThrowsWithoutRetrying()
         {
-            // Arrange: 401 Unauthorized from /new catalog endpoint
+            // Arrange: 401 Unauthorized from /new catalog endpoint. This must
+            // not look like an empty night (404), which the homepage renders
+            // as "no games".
             var handler = new FakeHttpMessageHandler(
                 """{"error":"Unauthorized"}""", System.Net.HttpStatusCode.Unauthorized);
             var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
@@ -280,11 +282,9 @@ namespace VardyParty.Streaming.Tests
                 Options.Create(apiSettings));
 
             // Act
-            var all = await api.GetAllGamesAsync(forceRefresh: true);
+            await Assert.ThrowsAsync<ApiUnauthorizedException>(() => api.GetAllGamesAsync(forceRefresh: true));
 
             // Assert
-            Assert.NotNull(all);
-            Assert.Empty(all);
             Assert.Equal(1, handler.RequestCount);
         }
 

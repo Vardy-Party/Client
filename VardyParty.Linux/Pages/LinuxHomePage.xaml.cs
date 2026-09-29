@@ -468,7 +468,12 @@ public partial class LinuxHomePage : ContentPage
     {
         base.OnAppearing();
         TryWireEscapeClose();
-        if (_initialized) return;
+        if (_initialized)
+        {
+            if (!UseSampleData)
+                _ = RecheckAuthOnResumeAsync();
+            return;
+        }
         _initialized = true;
 
         // Preload UI sounds on a background task after first render — never in
@@ -531,7 +536,7 @@ public partial class LinuxHomePage : ContentPage
         !string.IsNullOrWhiteSpace(_auth0Settings.Domain)
         && !string.IsNullOrWhiteSpace(_auth0Settings.ClientId);
 
-    private void ShowUnauthenticatedOverlay()
+    private void ShowUnauthenticatedOverlay(string? status = null)
     {
         var configured = IsAuth0Configured();
         if (!configured)
@@ -553,8 +558,8 @@ public partial class LinuxHomePage : ContentPage
                 SignInButton.IsVisible = true;
                 SignInButton.IsEnabled = true;
                 SignInButton.Text = "Sign in — Continue";
-                AuthStatusLabel.Text = string.Empty;
-                AuthStatusLabel.IsVisible = false;
+                AuthStatusLabel.Text = status ?? string.Empty;
+                AuthStatusLabel.IsVisible = !string.IsNullOrWhiteSpace(status);
                 SignInButton.Focus();
                 return;
             }
@@ -582,6 +587,10 @@ public partial class LinuxHomePage : ContentPage
             _serviceError = error;
             _viewModel.SetServiceError(error);
         }));
+        _gameFeedSubscriptions.Add(_gameService.CatalogUnauthorized.Subscribe(unit =>
+        {
+            _ = HandleCatalogUnauthorizedAsync();
+        }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
     }
@@ -594,6 +603,71 @@ public partial class LinuxHomePage : ContentPage
         }
 
         _gameFeedSubscriptions.Clear();
+    }
+
+    private async Task RecheckAuthOnResumeAsync()
+    {
+        if (!_isAuthenticated || _isAuthenticating)
+            return;
+
+        try
+        {
+            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+            if (!authenticated)
+                TransitionToSignIn("Session missing on resume");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxHome] Authentication check on resume failed");
+        }
+    }
+
+    private async Task HandleCatalogUnauthorizedAsync()
+    {
+        if (!_isAuthenticated || _isAuthenticating)
+            return;
+
+        var authenticated = true;
+        try
+        {
+            authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LinuxHome] Authentication check after catalog 401 failed");
+        }
+
+        if (!authenticated)
+        {
+            TransitionToSignIn("Catalog unauthorized");
+            return;
+        }
+
+        _serviceError = "Couldn't refresh sign-in. Games will update when the session recovers.";
+        _viewModel.SetServiceError(_serviceError);
+    }
+
+    private void TransitionToSignIn(string reason)
+    {
+        if (!_isAuthenticated)
+            return;
+
+        _logger.LogWarning("[LinuxHome] {Reason}; showing sign-in", reason);
+        _isAuthenticated = false;
+        _selection.CurrentGame = null;
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxHome] ClearSelection during session expiration failed");
+        }
+
+        Dispatcher.Dispatch(() => _viewModel.CanSignOut = false);
+        StopGamesFeed();
+        _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
+        ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
     }
 
     /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
@@ -1242,22 +1316,7 @@ public partial class LinuxHomePage : ContentPage
 
         if (!authenticated)
         {
-            _logger.LogWarning("[LinuxHome] Authentication expired or invalidated during playback; transitioning to sign-in overlay");
-            _isAuthenticated = false;
-            _selection.CurrentGame = null;
-            try
-            {
-                _homeShell.ClearSelection();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "[LinuxHome] ClearSelection failed");
-            }
-
-            Dispatcher.Dispatch(() => _viewModel.CanSignOut = false);
-            StopGamesFeed();
-            _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
-            ShowUnauthenticatedOverlay();
+            TransitionToSignIn("Authentication expired or invalidated during playback");
             return;
         }
 

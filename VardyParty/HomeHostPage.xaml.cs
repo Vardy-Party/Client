@@ -136,6 +136,10 @@ public partial class HomeHostPage : ContentPage
             // takes the mixer and SoundPool stays silent until rebuilt.
             // Field: ticks dead until Settings → UI sounds was toggled.
             PlaybackAudioSession.Apply(playbackVisible: false, _sounds, _soundPlayer);
+            // The page is a singleton, so a day-later reopen of the same
+            // process never runs InitializeAuthAsync again. A dead session
+            // otherwise stays on the empty board.
+            _ = RecheckAuthOnResumeAsync();
             return;
         }
 
@@ -244,7 +248,7 @@ public partial class HomeHostPage : ContentPage
         !string.IsNullOrWhiteSpace(_auth0Settings.Domain)
         && !string.IsNullOrWhiteSpace(_auth0Settings.ClientId);
 
-    private void ShowUnauthenticatedOverlay()
+    private void ShowUnauthenticatedOverlay(string? status = null)
     {
         var configured = IsAuth0Configured();
         if (!configured)
@@ -265,8 +269,8 @@ public partial class HomeHostPage : ContentPage
                 SignInButton.IsVisible = true;
                 SignInButton.IsEnabled = true;
                 SignInButton.Text = "Sign in — Continue";
-                AuthStatusLabel.Text = string.Empty;
-                AuthStatusLabel.IsVisible = false;
+                AuthStatusLabel.Text = status ?? string.Empty;
+                AuthStatusLabel.IsVisible = !string.IsNullOrWhiteSpace(status);
                 SignInButton.Focus();
                 return;
             }
@@ -289,6 +293,10 @@ public partial class HomeHostPage : ContentPage
             _serviceError = error;
             _viewModel.SetServiceError(error);
         }));
+        _gameFeedSubscriptions.Add(_gameService.CatalogUnauthorized.Subscribe(unit =>
+        {
+            _ = HandleCatalogUnauthorizedAsync();
+        }));
 
         (_gameService as EnrichedGameService)?.StartBackgroundPolling();
     }
@@ -301,6 +309,73 @@ public partial class HomeHostPage : ContentPage
         }
 
         _gameFeedSubscriptions.Clear();
+    }
+
+    private async Task RecheckAuthOnResumeAsync()
+    {
+        if (!_isAuthenticated || _isAuthenticating)
+            return;
+
+        try
+        {
+            var authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
+            if (!authenticated)
+                TransitionToSignIn("Session missing on resume");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[HomeHost] Authentication check on resume failed");
+        }
+    }
+
+    private async Task HandleCatalogUnauthorizedAsync()
+    {
+        if (!_isAuthenticated || _isAuthenticating)
+            return;
+
+        var authenticated = true;
+        try
+        {
+            authenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[HomeHost] Authentication check after catalog 401 failed");
+        }
+
+        if (!authenticated)
+        {
+            TransitionToSignIn("Catalog unauthorized");
+            return;
+        }
+
+        // Refresh token is still present; a transient refresh miss must not
+        // wipe the board or kick the user to sign-in.
+        _serviceError = "Couldn't refresh sign-in. Games will update when the session recovers.";
+        _viewModel.SetServiceError(_serviceError);
+    }
+
+    private void TransitionToSignIn(string reason)
+    {
+        if (!_isAuthenticated)
+            return;
+
+        _logger.LogWarning("[HomeHost] {Reason}; showing sign-in", reason);
+        _isAuthenticated = false;
+        _selection.CurrentGame = null;
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
+        }
+
+        PostUi(() => _viewModel.CanSignOut = false);
+        StopGamesFeed();
+        _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
+        ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
     }
 
     /// <summary>Service errors outrank the LAN warning on the shared banner.</summary>
@@ -670,7 +745,7 @@ public partial class HomeHostPage : ContentPage
         await Task.CompletedTask;
     }
 
-    private void CancelStreamDiscoveryFromUser(bool playCancelSound = true)
+    private void CancelStreamDiscoveryFromUser(bool playCancelSound = true, bool restoreOverlayFocus = true)
     {
         try
         {
@@ -720,7 +795,12 @@ public partial class HomeHostPage : ContentPage
             UpdateBackSuppression();
             // Overlay Cancel held focus — without this, Android TV lands on
             // the Menu button instead of the game that opened finding-streams.
-            HomeSurface.RestoreFocusAfterOverlay();
+            // Leaving the player restores via RestoreFocusAfterStreamExit
+            // instead: the watched game, or the first card if it has finished.
+            if (restoreOverlayFocus)
+            {
+                HomeSurface.RestoreFocusAfterOverlay();
+            }
         });
     }
 
@@ -743,8 +823,10 @@ public partial class HomeHostPage : ContentPage
         if (HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive)
             || _homeShell.PlayerSessionStarted)
         {
+            var watched = _selection.CurrentGame ?? _homeShell.SelectedGame;
             _logger.LogInformation("[HomeHost] Stopping finding-streams after playback left");
-            CancelStreamDiscoveryFromUser(playCancelSound: false);
+            CancelStreamDiscoveryFromUser(playCancelSound: false, restoreOverlayFocus: false);
+            PostUi(() => HomeSurface.RestoreFocusAfterStreamExit(watched));
             return;
         }
 
@@ -791,22 +873,7 @@ public partial class HomeHostPage : ContentPage
 
             if (!authenticated)
             {
-                _logger.LogWarning("[HomeHost] Authentication expired or invalidated during playback; transitioning to sign-in overlay");
-                _isAuthenticated = false;
-                _selection.CurrentGame = null;
-                try
-                {
-                    _homeShell.ClearSelection();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
-                }
-
-                PostUi(() => _viewModel.CanSignOut = false);
-                StopGamesFeed();
-                _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
-                ShowUnauthenticatedOverlay();
+                TransitionToSignIn("Authentication expired or invalidated during playback");
                 return;
             }
 

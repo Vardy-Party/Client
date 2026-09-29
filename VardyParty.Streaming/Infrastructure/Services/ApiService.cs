@@ -143,9 +143,12 @@ public class ApiService(
 
                     if (response.StatusCode == HttpStatusCode.Unauthorized)
                     {
-                        // 401 Unauthorized means credentials/token issue - retrying is futile and causes UI delays
+                        // 401 is a dead session, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like, and
+                        // the homepage renders that as "no games".
                         logger.LogWarning("[Api] Received 401 Unauthorized for {Url} - user not authenticated or token expired, aborting without retry", url);
-                        return new Dictionary<string, List<Game>>();
+                        throw new ApiUnauthorizedException(
+                            $"Games catalog returned 401 Unauthorized for {url}");
                     }
 
                     if (response.StatusCode == HttpStatusCode.Forbidden)
@@ -177,6 +180,10 @@ public class ApiService(
                     logger.LogInformation("[Api] Fetched {Count} games", total);
                     return parsed;
                 }
+                catch (ApiUnauthorizedException)
+                {
+                    throw;
+                }
                 catch (HttpRequestException ex) when (attempt <= _maxRetries &&
                                                       ex.StatusCode == HttpStatusCode.InternalServerError)
                 {
@@ -207,6 +214,10 @@ public class ApiService(
         catch (ApiSystemDownException)
         {
             // Re-throw to allow caller to handle
+            throw;
+        }
+        catch (ApiUnauthorizedException)
+        {
             throw;
         }
         catch (Exception ex)

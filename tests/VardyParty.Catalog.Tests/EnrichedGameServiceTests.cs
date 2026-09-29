@@ -334,6 +334,38 @@ public class EnrichedGameServiceTests
     }
 
     [Fact]
+    public async Task StartBackgroundPolling_UnauthorizedCatalog_DoesNotPublishEmptyBoard()
+    {
+        var api = _fixture.GetMock<IGamesCatalogApi>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .ThrowsAsync(new ApiUnauthorizedException("no token"));
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var svc = CreateService(api, bbc);
+        var boards = new List<Dictionary<string, List<Game>>?>();
+        var unauthorized = 0;
+        using var gamesSub = svc.GamesStream.Subscribe(boards.Add);
+        using var authSub = svc.CatalogUnauthorized.Subscribe(_ => Interlocked.Increment(ref unauthorized));
+
+        try
+        {
+            svc.StartBackgroundPolling();
+
+            for (var i = 0; i < 50 && unauthorized == 0; i++)
+                await Task.Delay(100);
+
+            Assert.True(unauthorized > 0);
+            Assert.All(boards, board => Assert.True(board == null || GameCount(board) > 0));
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
     public void InitialEnrichmentValve_CoversSlowTvBbcParse()
     {
         // Arrange: hung-BBC fallback must outlast a typical TV parse burst
@@ -344,6 +376,14 @@ public class EnrichedGameServiceTests
 
         // Assert
         Assert.Equal(TimeSpan.FromSeconds(30), valve);
+    }
+
+    private static int GameCount(Dictionary<string, List<Game>> board)
+    {
+        var count = 0;
+        foreach (var list in board.Values)
+            count += list.Count;
+        return count;
     }
 
     private EnrichedGameService CreateService(
