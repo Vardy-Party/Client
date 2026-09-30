@@ -366,9 +366,12 @@ and cards in the top row.
   card of the first rail that still has a game. `HomeView` holds Menu out of
   the focus order until that card takes focus. A miss posts on the card
   itself when `TvCardFocusRegistry` still has it (Android runs that from
-  the view run queue on attach) or on the rows `RecyclerView` after
-  `ScrollToPositionWithOffset`. When the budget is spent, an attached card
-  is focused before Menu is put back in the focus order.
+  the view run queue on attach). A card that has not been created yet waits
+  for one `OnGlobalLayout` on the rows list after
+  `ScrollToPositionWithOffset`; posting on that already-attached recycler
+  would spend the budget before the row binds. The listener is removed when
+  it runs. When the budget is spent, an attached card is focused before Menu
+  is put back in the focus order.
 
 ```mermaid
 flowchart TD
@@ -376,9 +379,9 @@ flowchart TD
   choose --> hold[Hold Menu out of the focus order]
   hold --> lookup{Card view in the registry?}
   lookup -->|yes, even if detached| postCard[Post on that view]
-  lookup -->|not created yet| postRow[Scroll the row, then Post on the RecyclerView]
+  lookup -->|not created yet| layout[Scroll the row, then one OnGlobalLayout]
   postCard --> ready{Attached, shown, and laid out?}
-  postRow --> ready
+  layout --> ready
   ready -->|yes| focus[RequestFocus and release Menu]
   ready -->|no, budget left| lookup
   ready -->|budget spent| last[RequestFocus if attached, then release Menu]

@@ -42,14 +42,16 @@ public partial class HomeView
 
     /// <summary>
     /// Layout passes spent putting focus back on a card after the native
-    /// player closes. Each miss is one <c>View.Post</c> (the card's run
-    /// queue when it is detached, otherwise the rows recycler after the
-    /// scroll), so the budget waits for a traversal instead of draining as
-    /// a burst of dispatcher messages before the row is bound.
+    /// player closes. A live card, even when detached, is posted and runs
+    /// from that view's run queue on attach. A card that does not exist yet
+    /// waits for one <c>OnGlobalLayout</c> of the rows list: posting on that
+    /// already-attached recycler is a looper message and would spend this
+    /// budget before the row is bound.
     /// </summary>
     private const int StreamExitFocusRetryFrames = 90;
 
     private int _streamExitFocusGeneration;
+    private IStreamExitPass? _streamExitLayoutPass;
 
     private readonly TvMenuFocusMemory _menuFocusMemory = new();
     private readonly List<AView> _wiredTrapItems = new();
@@ -125,6 +127,8 @@ public partial class HomeView
 
         var key = rails[choice.Value.RailIndex][choice.Value.CardIndex];
         var generation = ++_streamExitFocusGeneration;
+        _streamExitLayoutPass?.Cancel();
+        _streamExitLayoutPass = null;
         // Menu is the default focus target when the video activity returns
         // and the window has nothing focused. Hold it out until the card lands.
         TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
@@ -151,23 +155,54 @@ public partial class HomeView
         // detached view runs from the run queue when that view attaches,
         // which is the next traversal that can actually take focus.
         var card = TvCardFocusRegistry.TryGet(gameKey);
-        if (card is not null)
+        if (StreamExitFocusRetry.Choose(card is not null) == StreamExitFocusRetry.Wait.PostOnCard)
         {
-            card.Post(() => TryFocusPostedCard(
+            card!.Post(() => TryFocusPostedCard(
                 card, gameKey, railIndex, watchedGame, attemptsLeft, generation));
             return;
         }
 
-        if (RowsList.Handler?.PlatformView is RecyclerView recycler)
+        ScheduleStreamExitFocusAfterLayout(gameKey, railIndex, watchedGame, attemptsLeft, generation);
+    }
+
+    /// <summary>
+    /// The card has not been created yet. The rows list is already attached,
+    /// so <c>View.Post</c> would drain the budget before the next traversal.
+    /// One global-layout callback is one layout pass; the listener is removed
+    /// when it runs. If the list is not in a window yet, one choreographer
+    /// frame is the same kind of wait.
+    /// </summary>
+    private void ScheduleStreamExitFocusAfterLayout(
+        string gameKey, int railIndex, bool watchedGame, int attemptsLeft, int generation)
+    {
+        _streamExitLayoutPass?.Cancel();
+        _streamExitLayoutPass = null;
+
+        void Continue()
         {
-            recycler.Post(() =>
-                FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation));
+            if (generation != _streamExitFocusGeneration)
+            {
+                return;
+            }
+
+            FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation);
+        }
+
+        if (RowsList.Handler?.PlatformView is RecyclerView recycler
+            && recycler.ViewTreeObserver is { IsAlive: true } observer)
+        {
+            _streamExitLayoutPass = new StreamExitLayoutPass(observer, Continue);
             return;
         }
 
-        // Nothing to post on. Do not spin the dispatcher; ask for the card
-        // if it is already attached, then put Menu back.
-        FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
+        var choreographer = global::Android.Views.Choreographer.Instance;
+        if (choreographer is null)
+        {
+            FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
+            return;
+        }
+
+        _streamExitLayoutPass = new StreamExitFramePass(choreographer, Continue);
     }
 
     private void TryFocusPostedCard(
@@ -536,6 +571,114 @@ public partial class HomeView
         ring.SetStroke((int)(3 * density), AColor.Rgb(0xE2, 0xEC, 0xFF));
         ring.SetCornerRadius(10 * density);
         view.Foreground = ring;
+    }
+
+    private interface IStreamExitPass
+    {
+        void Cancel();
+    }
+
+    /// <summary>
+    /// One rows-list layout pass. The listener is removed the first time it
+    /// runs, or when a newer stream exit replaces this wait.
+    /// </summary>
+    private sealed class StreamExitLayoutPass : IStreamExitPass
+    {
+        private readonly global::Android.Views.ViewTreeObserver _observer;
+        private readonly LayoutListener _listener;
+        private bool _finished;
+
+        public StreamExitLayoutPass(global::Android.Views.ViewTreeObserver observer, Action next)
+        {
+            _observer = observer;
+            _listener = new LayoutListener(() =>
+            {
+                if (!Finish())
+                {
+                    return;
+                }
+
+                next();
+            });
+            observer.AddOnGlobalLayoutListener(_listener);
+        }
+
+        public void Cancel() => Finish();
+
+        private bool Finish()
+        {
+            if (_finished)
+            {
+                return false;
+            }
+
+            _finished = true;
+            if (_observer.IsAlive)
+            {
+                _observer.RemoveOnGlobalLayoutListener(_listener);
+            }
+
+            return true;
+        }
+
+        private sealed class LayoutListener : Java.Lang.Object, global::Android.Views.ViewTreeObserver.IOnGlobalLayoutListener
+        {
+            private readonly Action _onLayout;
+
+            public LayoutListener(Action onLayout) => _onLayout = onLayout;
+
+            public void OnGlobalLayout() => _onLayout();
+        }
+    }
+
+    /// <summary>
+    /// One choreographer frame, used only when the rows list is not in a
+    /// window yet. <see cref="global::Android.Views.Choreographer.IFrameCallback"/>
+    /// runs once per frame, not once per looper message.
+    /// </summary>
+    private sealed class StreamExitFramePass : IStreamExitPass
+    {
+        private readonly global::Android.Views.Choreographer _choreographer;
+        private readonly FrameListener _listener;
+        private bool _finished;
+
+        public StreamExitFramePass(global::Android.Views.Choreographer choreographer, Action next)
+        {
+            _choreographer = choreographer;
+            _listener = new FrameListener(() =>
+            {
+                if (!Finish())
+                {
+                    return;
+                }
+
+                next();
+            });
+            choreographer.PostFrameCallback(_listener);
+        }
+
+        public void Cancel() => Finish();
+
+        private bool Finish()
+        {
+            if (_finished)
+            {
+                return false;
+            }
+
+            _finished = true;
+            _choreographer.RemoveFrameCallback(_listener);
+            return true;
+        }
+
+        private sealed class FrameListener : Java.Lang.Object, global::Android.Views.Choreographer.IFrameCallback
+        {
+            private readonly Action _onFrame;
+
+            public FrameListener(Action onFrame) => _onFrame = onFrame;
+
+            public void DoFrame(long frameTimeNanos) => _onFrame();
+        }
     }
 }
 #endif
