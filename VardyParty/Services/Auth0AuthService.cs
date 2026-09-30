@@ -231,6 +231,10 @@ public class Auth0AuthService : Auth0TokenSession
 
     private static bool OpenSystemBrowser(string url)
     {
+        // Process.Start is unsupported on iOS and Mac Catalyst (CA1416).
+        if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
+            return false;
+
         try
         {
             Process.Start(new ProcessStartInfo
