@@ -156,13 +156,12 @@ public class Auth0AuthService : Auth0TokenSession
                 await SecureStorage.Default.SetAsync(AccessTokenKey, AccessToken);
             await SecureStorage.Default.SetAsync(ExpiresAtKey, ExpiresAt.ToUnixTimeSeconds().ToString());
             await SecureStorage.Default.SetAsync(LastRefreshedAtKey, LastRefreshedAt.ToUnixTimeSeconds().ToString());
-            var refreshWritten = !string.IsNullOrWhiteSpace(RefreshToken);
-            if (refreshWritten)
+            if (!string.IsNullOrWhiteSpace(RefreshToken))
                 await SecureStorage.Default.SetAsync(RefreshTokenKey, RefreshToken);
             Logger.LogInformation(
                 "[Auth0] Persisted tokens. AccessTokenWritten={Access}, RefreshTokenWritten={Refresh}",
                 !string.IsNullOrWhiteSpace(AccessToken),
-                refreshWritten);
+                !string.IsNullOrWhiteSpace(RefreshToken));
         }
         catch (Exception ex)
         {
