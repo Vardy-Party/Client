@@ -5,6 +5,14 @@ public class Game
     public string Href { get; set; } = string.Empty;
     public string Home { get; set; } = string.Empty;
     public string Away { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Fixture identity shared by the catalog grace clock and the homepage
+    /// board. Trimmed raw home and away names, uppercased so a display-name
+    /// change from BBC enrichment does not split one match into two keys.
+    /// </summary>
+    public string FixtureKey =>
+        $"{(Home ?? string.Empty).Trim()}|{(Away ?? string.Empty).Trim()}".ToUpperInvariant();
     public DateTime Start { get; set; }
 
     // BBC enrichment

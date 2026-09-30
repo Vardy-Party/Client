@@ -360,6 +360,32 @@ and cards in the top row.
   first card of the first row on the empty→non-empty edge; the view consumes
   it once and calls `RequestFocus()` on the native view, so the app opens
   with a visibly focused card. Later refreshes never steal the highlight.
+  The retry is `View.Post` (`MatchCardView.RequestInitialFocusWhenReady`),
+  one attempt per traversal, not a burst of dispatcher messages.
+- Leaving a stream: `PlaybackExitFocus` picks the watched card, or the first
+  card of the first rail that still has a game. `HomeView` holds Menu out of
+  the focus order until that card takes focus. A miss posts on the card
+  itself when `TvCardFocusRegistry` still has it (Android runs that from
+  the view run queue on attach). A card that has not been created yet waits
+  for one `OnGlobalLayout` on the rows list after
+  `ScrollToPositionWithOffset`; posting on that already-attached recycler
+  would spend the budget before the row binds. The listener is removed when
+  it runs. When the budget is spent, an attached card is focused before Menu
+  is put back in the focus order.
+
+```mermaid
+flowchart TD
+  exit[Player closes] --> choose[PlaybackExitFocus.Choose]
+  choose --> hold[Hold Menu out of the focus order]
+  hold --> lookup{Card view in the registry?}
+  lookup -->|yes, even if detached| postCard[Post on that view]
+  lookup -->|not created yet| layout[Scroll the row, then one OnGlobalLayout]
+  postCard --> ready{Attached, shown, and laid out?}
+  layout --> ready
+  ready -->|yes| focus[RequestFocus and release Menu]
+  ready -->|no, budget left| lookup
+  ready -->|budget spent| last[RequestFocus if attached, then release Menu]
+```
 
 Key routing: `RemoteKeyHandler` (activity level) still has **no D-pad
 direction cases** — direction keys are owned by the dispatch-stage router
@@ -367,6 +393,30 @@ above; `RemoteKeyHandler` only consumes media keys, Menu, Back and
 (conditionally) Enter. `Activity.OnKeyDown` logging a `DpadUp/Down/...`
 press now means the dispatch-stage router declined it (non-TV, non-board
 focus, or the open menu panel's items own it).
+
+### Catalog session recovery
+
+A catalog HTTP 401 is not an empty night. `ApiService.GetAllGamesAsync`
+throws `ApiUnauthorizedException` and leaves the last board in place.
+`EnrichedGameService` publishes `CatalogUnauthorized` under the same lock
+as other reactive updates, and it coalesces overlapping API polls the same
+way it coalesces BBC fetches. A 403 throws `ApiForbiddenException` and is
+shown on the error banner; a 404 is still an empty board.
+
+`CatalogSessionRecovery` decides what the homepage does next. `HomeHostPage`
+and `LinuxHomePage` only paint that decision. A token check that throws is
+a dead session: it opens sign-in. It is not treated as a refresh token that
+is still present.
+
+```mermaid
+flowchart TD
+  signal[Catalog 401 or resume recheck] --> idle{Signed-in home and not already signing in?}
+  idle -->|no| stop[Do nothing]
+  idle -->|yes| probe{Token probe}
+  probe -->|still signed in, catalog 401| banner[Keep the board and show the recovery banner]
+  probe -->|still signed in, resume| stay[Stay on the board]
+  probe -->|signed out or the check threw| signin[Open sign-in]
+```
 
 ### The brand logo (3D, metallic, animated)
 
