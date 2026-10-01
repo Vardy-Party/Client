@@ -37,7 +37,7 @@ public interface ILocalLanPlayService
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>True when this device is paired to a remote compute host.</summary>
-    bool UsesRemoteCompute => false;
+    bool UsesRemoteCompute { get; }
 
     /// <summary>
     /// User-facing fault from the last resolve that used the remote host.

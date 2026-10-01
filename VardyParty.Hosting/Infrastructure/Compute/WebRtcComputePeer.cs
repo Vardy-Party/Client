@@ -42,6 +42,8 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
                 sdpMLineIndex = candidate.sdpMLineIndex
             });
         };
+        _pc.oniceconnectionstatechange += state => NotifyConnectionLost(state is RTCIceConnectionState.failed or RTCIceConnectionState.disconnected);
+        _pc.onconnectionstatechange += state => NotifyConnectionLost(state is RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected);
     }
 
     public event Action<RTCIceCandidateInit>? IceCandidate;
@@ -51,6 +53,12 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
     public event Action? Opened;
 
     public event Action? Closed;
+
+    /// <summary>
+    /// ICE or the peer connection reached <c>failed</c> or <c>disconnected</c>
+    /// without the data channel having to close.
+    /// </summary>
+    public event Action? ConnectionLost;
 
     public static async Task<WebRtcComputePeer> CreateOffererAsync(bool useStun = true)
     {
@@ -190,6 +198,16 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
         {
             Opened?.Invoke();
         }
+    }
+
+    private void NotifyConnectionLost(bool lost)
+    {
+        if (!lost || Volatile.Read(ref _closed) != 0)
+        {
+            return;
+        }
+
+        ConnectionLost?.Invoke();
     }
 
     private async Task SetRemoteAsync(RTCSessionDescriptionInit description)

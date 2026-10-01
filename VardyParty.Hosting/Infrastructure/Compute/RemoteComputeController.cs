@@ -47,136 +47,157 @@ public sealed class RemoteComputeController : IRemoteComputeController
 
     public async Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
     {
-        if (!enabled)
+        string? correlationId = null;
+        try
         {
-            await StopHostAsync(cancellationToken).ConfigureAwait(false);
-            preferences.SaveShareEnabled(false);
-            SetStatus("Sharing stopped.");
-            return;
-        }
+            if (!enabled)
+            {
+                await StopHostAsync(cancellationToken).ConfigureAwait(false);
+                AbandonShare();
+                SetStatus("Sharing stopped.");
+                return;
+            }
 
-        var api = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(api))
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("This device", "API address is not configured");
-            return;
-        }
+            var api = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(api))
+            {
+                AbandonShare();
+                Fail("This device", "API address is not configured");
+                return;
+            }
 
-        var correlationId = Guid.NewGuid().ToString("N");
-        using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs")
-        {
-            Content = new StringContent("")
-        };
-        createRequest.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
-        using var create = await http.SendAsync(createRequest, cancellationToken).ConfigureAwait(false);
-        if (create.StatusCode == HttpStatusCode.Forbidden)
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Relay", "This account needs the relay-user role", correlationId);
-            return;
-        }
+            correlationId = Guid.NewGuid().ToString("N");
+            using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs")
+            {
+                Content = new StringContent("")
+            };
+            createRequest.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+            using var create = await http.SendAsync(createRequest, cancellationToken).ConfigureAwait(false);
+            if (create.StatusCode == HttpStatusCode.Forbidden)
+            {
+                AbandonShare();
+                Fail("Relay", "This account needs the relay-user role", correlationId);
+                return;
+            }
 
-        if (!create.IsSuccessStatusCode)
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Relay", "Could not create an invite code", correlationId);
-            logger.LogWarning("[RemoteCompute] {CorrelationId} pair create returned {Status}", correlationId, (int)create.StatusCode);
-            return;
-        }
+            if (!create.IsSuccessStatusCode)
+            {
+                AbandonShare();
+                Fail("Relay", "Could not create an invite code", correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} pair create returned {Status}", correlationId, (int)create.StatusCode);
+                return;
+            }
 
-        var created = await create.Content.ReadFromJsonAsync<PairCreated>(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(created?.Code))
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Relay", "Could not create an invite code", correlationId);
-            return;
-        }
+            var created = await create.Content.ReadFromJsonAsync<PairCreated>(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(created?.Code))
+            {
+                AbandonShare();
+                Fail("Relay", "Could not create an invite code", correlationId);
+                return;
+            }
 
-        preferences.SaveInviteCode(created.Code);
-        var local = await lan.GetServiceBaseUrlAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(local))
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Local service", "No local service on this network", correlationId);
-            return;
-        }
+            var local = await lan.GetServiceBaseUrlAsync(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(local))
+            {
+                AbandonShare();
+                Fail("Local service", "No local service on this network", correlationId);
+                return;
+            }
 
-        using var start = new HttpRequestMessage(HttpMethod.Post, $"{local.TrimEnd('/')}/compute/host/start")
-        {
-            Content = JsonContent.Create(new { apiBaseUrl = api, correlationId })
-        };
-        using var started = await http.SendAsync(start, cancellationToken).ConfigureAwait(false);
-        if (started.StatusCode == HttpStatusCode.Forbidden)
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Relay", "This account needs the relay-user role", correlationId);
-            return;
-        }
+            using var start = new HttpRequestMessage(HttpMethod.Post, $"{local.TrimEnd('/')}/compute/host/start")
+            {
+                Content = JsonContent.Create(new { apiBaseUrl = api, correlationId })
+            };
+            using var started = await http.SendAsync(start, cancellationToken).ConfigureAwait(false);
+            if (started.StatusCode == HttpStatusCode.Forbidden)
+            {
+                AbandonShare();
+                Fail("Relay", "This account needs the relay-user role", correlationId);
+                return;
+            }
 
-        if (!started.IsSuccessStatusCode)
-        {
-            preferences.SaveShareEnabled(false);
-            Fail("Local service", "The local service did not start sharing", correlationId);
-            logger.LogWarning("[RemoteCompute] {CorrelationId} host start returned {Status}", correlationId, (int)started.StatusCode);
-            return;
-        }
+            if (!started.IsSuccessStatusCode)
+            {
+                AbandonShare();
+                Fail("Local service", "The local service did not start sharing", correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} host start returned {Status}", correlationId, (int)started.StatusCode);
+                return;
+            }
 
-        preferences.SaveShareEnabled(true);
-        SetStatus($"Sharing. Give this code to the phone. ({correlationId})");
+            preferences.SaveInviteCode(created.Code);
+            preferences.SaveShareEnabled(true);
+            SetStatus($"Sharing. Give this code to the phone. ({correlationId})");
+        }
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException)
+                                   && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} share failed", correlationId);
+            AbandonShare();
+            Fail("Relay", "Could not reach the compute relay", correlationId);
+        }
     }
 
     public async Task RedeemAsync(string code, CancellationToken cancellationToken = default)
     {
-        var trimmed = code?.Trim() ?? "";
-        if (trimmed.Length == 0)
+        string? correlationId = null;
+        try
         {
-            SetStatus("Enter an invite code.");
-            return;
-        }
+            var trimmed = code?.Trim() ?? "";
+            if (trimmed.Length == 0)
+            {
+                SetStatus("Enter an invite code.");
+                return;
+            }
 
-        var api = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(api))
-        {
-            Fail("This device", "API address is not configured");
-            return;
-        }
+            var api = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(api))
+            {
+                Fail("This device", "API address is not configured");
+                return;
+            }
 
-        var correlationId = Guid.NewGuid().ToString("N");
-        using var redeem = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs/redeem")
-        {
-            Content = JsonContent.Create(new { code = trimmed })
-        };
-        redeem.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
-        using var response = await http.SendAsync(redeem, cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.Forbidden)
-        {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            Fail("Relay",
-                text.Contains("relay-user", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("relay user", StringComparison.OrdinalIgnoreCase)
-                    ? "This account needs the relay-user role"
-                    : "Invite code is invalid or expired",
-                correlationId);
-            logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 403", correlationId);
-            return;
-        }
+            correlationId = Guid.NewGuid().ToString("N");
+            using var redeem = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs/redeem")
+            {
+                Content = JsonContent.Create(new { code = trimmed })
+            };
+            redeem.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+            using var response = await http.SendAsync(redeem, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                Fail("Relay",
+                    text.Contains("relay-user", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("relay user", StringComparison.OrdinalIgnoreCase)
+                        ? "This account needs the relay-user role"
+                        : "Invite code is invalid or expired",
+                    correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 403", correlationId);
+                return;
+            }
 
-        if (!response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
+            {
+                Fail("Relay", "Could not redeem that invite code", correlationId);
+                return;
+            }
+
+            var paired = await response.Content.ReadFromJsonAsync<PairRedeemed>(cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(paired?.HostSub))
+            {
+                Fail("Relay", "Could not redeem that invite code", correlationId);
+                return;
+            }
+
+            preferences.SavePairedHostSub(paired.HostSub);
+            SetStatus("Paired with a remote compute host.");
+        }
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException)
+                                   && !cancellationToken.IsCancellationRequested)
         {
+            logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} redeem failed", correlationId);
             Fail("Relay", "Could not redeem that invite code", correlationId);
-            return;
         }
-
-        var paired = await response.Content.ReadFromJsonAsync<PairRedeemed>(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(paired?.HostSub))
-        {
-            Fail("Relay", "Could not redeem that invite code", correlationId);
-            return;
-        }
-
-        preferences.SavePairedHostSub(paired.HostSub);
-        SetStatus("Paired with a remote compute host.");
     }
 
     private async Task StopHostAsync(CancellationToken cancellationToken)
@@ -196,6 +217,12 @@ public sealed class RemoteComputeController : IRemoteComputeController
         {
             logger.LogDebug(ex, "[RemoteCompute] Stop sharing failed");
         }
+    }
+
+    private void AbandonShare()
+    {
+        preferences.SaveShareEnabled(false);
+        preferences.SaveInviteCode("");
     }
 
     private void Fail(string component, string message, string? correlationId = null) =>

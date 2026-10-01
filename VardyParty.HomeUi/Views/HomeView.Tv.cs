@@ -168,9 +168,10 @@ public partial class HomeView
     /// <summary>
     /// The card has not been created yet. The rows list is already attached,
     /// so <c>View.Post</c> would drain the budget before the next traversal.
-    /// One global-layout callback is one layout pass; the listener is removed
-    /// when it runs. If the list is not in a window yet, one choreographer
-    /// frame is the same kind of wait.
+    /// One global-layout callback is one layout pass. A quiet hierarchy never
+    /// lays out, so a choreographer frame is armed beside that listener and
+    /// either signal consumes one attempt. Cancel drops both. If the list is
+    /// not in a window yet, the frame alone is the same kind of wait.
     /// </summary>
     private void ScheduleStreamExitFocusAfterLayout(
         string gameKey, int railIndex, bool watchedGame, int attemptsLeft, int generation)
@@ -178,31 +179,46 @@ public partial class HomeView
         _streamExitLayoutPass?.Cancel();
         _streamExitLayoutPass = null;
 
+        var attempt = new StreamExitFocusRetry.LayoutAttempt();
+        IStreamExitPass? mine = null;
+
         void Continue()
         {
-            if (generation != _streamExitFocusGeneration)
+            if (generation != _streamExitFocusGeneration || !attempt.TryContinue())
             {
                 return;
             }
 
+            if (ReferenceEquals(_streamExitLayoutPass, mine))
+            {
+                _streamExitLayoutPass = null;
+            }
+
+            mine?.Cancel();
             FocusCardAfterStreamExit(gameKey, railIndex, watchedGame, attemptsLeft - 1, generation);
         }
 
         if (RowsList.Handler?.PlatformView is RecyclerView recycler
             && recycler.ViewTreeObserver is { IsAlive: true } observer)
         {
-            _streamExitLayoutPass = new StreamExitLayoutPass(observer, Continue);
+            var layout = new StreamExitLayoutPass(observer, Continue);
+            var choreographer = global::Android.Views.Choreographer.Instance;
+            mine = choreographer is null
+                ? layout
+                : new StreamExitPassPair(layout, new StreamExitFramePass(choreographer, Continue));
+            _streamExitLayoutPass = mine;
             return;
         }
 
-        var choreographer = global::Android.Views.Choreographer.Instance;
-        if (choreographer is null)
+        var frameClock = global::Android.Views.Choreographer.Instance;
+        if (frameClock is null)
         {
             FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
             return;
         }
 
-        _streamExitLayoutPass = new StreamExitFramePass(choreographer, Continue);
+        mine = new StreamExitFramePass(frameClock, Continue);
+        _streamExitLayoutPass = mine;
     }
 
     private void TryFocusPostedCard(
@@ -579,6 +595,27 @@ public partial class HomeView
     }
 
     /// <summary>
+    /// Layout listener and frame callback for one attempt. Cancel removes both.
+    /// </summary>
+    private sealed class StreamExitPassPair : IStreamExitPass
+    {
+        private readonly IStreamExitPass _layout;
+        private readonly IStreamExitPass _frame;
+
+        public StreamExitPassPair(IStreamExitPass layout, IStreamExitPass frame)
+        {
+            _layout = layout;
+            _frame = frame;
+        }
+
+        public void Cancel()
+        {
+            _layout.Cancel();
+            _frame.Cancel();
+        }
+    }
+
+    /// <summary>
     /// One rows-list layout pass. The listener is removed the first time it
     /// runs, or when a newer stream exit replaces this wait.
     /// </summary>
@@ -632,8 +669,10 @@ public partial class HomeView
     }
 
     /// <summary>
-    /// One choreographer frame, used only when the rows list is not in a
-    /// window yet. <see cref="global::Android.Views.Choreographer.IFrameCallback"/>
+    /// One choreographer frame. Armed beside the layout listener so a quiet
+    /// hierarchy still consumes an attempt, and alone when the rows list is
+    /// not in a window yet.
+    /// <see cref="global::Android.Views.Choreographer.IFrameCallback"/>
     /// runs once per frame, not once per looper message.
     /// </summary>
     private sealed class StreamExitFramePass : IStreamExitPass

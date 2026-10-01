@@ -6,15 +6,76 @@ namespace VardyParty.Hosting.Tests;
 public class RemoteComputeDirectDropTests
 {
     [Fact]
-    public void DirectConnectionDrop_NamesThisPhoneAndTheCorrelationId()
+    public void Close_BeforeReady_SignalsFailedAndDoesNotFault()
     {
-        var fault = new RemoteComputeFault(
-            "This phone",
-            RemoteComputePlayClient.DirectConnectionDroppedMessage,
-            "abc12345");
+        // Arrange
+        const string correlationId = "abc12345";
 
+        // Act
+        var decision = DirectChannelClose.Decide(
+            readyAnnounced: false,
+            useDirect: false,
+            resultSeen: false,
+            correlationId);
+
+        // Assert
+        Assert.True(decision.SignalFailed);
+        Assert.Null(decision.Fault);
+    }
+
+    [Fact]
+    public void Close_AfterReadyBeforeDirect_SignalsFailedAndDoesNotFault()
+    {
+        // Arrange
+        const string correlationId = "abc12345";
+
+        // Act
+        var decision = DirectChannelClose.Decide(
+            readyAnnounced: true,
+            useDirect: false,
+            resultSeen: false,
+            correlationId);
+
+        // Assert
+        Assert.True(decision.SignalFailed);
+        Assert.Null(decision.Fault);
+    }
+
+    [Fact]
+    public void Close_WhileDirectBeforeResult_NamesThisPhoneAndTheCorrelationId()
+    {
+        // Arrange
+        const string correlationId = "abc12345";
+
+        // Act
+        var decision = DirectChannelClose.Decide(
+            readyAnnounced: true,
+            useDirect: true,
+            resultSeen: false,
+            correlationId);
+
+        // Assert
+        Assert.False(decision.SignalFailed);
         Assert.Equal(
             "This phone failed: direct connection dropped. Correlation id: abc12345",
-            fault.Display);
+            decision.Fault?.Display);
+    }
+
+    [Fact]
+    public void Close_AfterResult_DoesNotFault()
+    {
+        // Arrange
+        const string correlationId = "abc12345";
+
+        // Act
+        var decision = DirectChannelClose.Decide(
+            readyAnnounced: true,
+            useDirect: true,
+            resultSeen: true,
+            correlationId);
+
+        // Assert
+        Assert.False(decision.SignalFailed);
+        Assert.Null(decision.Fault);
     }
 }

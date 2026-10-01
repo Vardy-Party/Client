@@ -372,7 +372,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            _ = _remote.SetShareEnabledAsync(value);
+            _ = ObserveRemoteAsync(() => _remote.SetShareEnabledAsync(value));
         }
     }
 
@@ -397,7 +397,20 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     public string RemoteComputeStatus => _remote?.Status ?? "";
 
-    public void RedeemRemoteCompute() => _ = _remote?.RedeemAsync(_remoteGuestCode);
+    public void RedeemRemoteCompute() => _ = ObserveRemoteAsync(() =>
+        _remote?.RedeemAsync(_remoteGuestCode) ?? Task.CompletedTask);
+
+    private async Task ObserveRemoteAsync(Func<Task> work)
+    {
+        try
+        {
+            await work().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Remote compute settings failed");
+        }
+    }
 
     private void OnRemoteComputeChanged()
     {

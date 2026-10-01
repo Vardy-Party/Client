@@ -16,7 +16,8 @@ public class StreamResolutionOrchestrator(
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
-    ILocalLanPlayService? localLanPlayService = null) : IStreamResolutionOrchestrator
+    ILocalLanPlayService? localLanPlayService = null,
+    IRemoteComputeKeepAlive? keepAlive = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -140,6 +141,13 @@ public class StreamResolutionOrchestrator(
             PublishProgress();
             return outcome;
         }
+
+        // LAN discovery stays the fast path. The foreground service is only
+        // held while this session is actually resolving through the paired host,
+        // and it stays up across every candidate in the loop below.
+        var relayed = localLanPlayService?.UsesRemoteCompute == true
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        using var relayKeepAlive = RelayKeepAliveHold.Start(keepAlive, relayed);
 
         try
         {
@@ -729,5 +737,29 @@ public class StreamResolutionOrchestrator(
             StreamsTested = _streamsTested,
             HealthyStreams = _healthyStreamCount
         });
+    }
+
+    /// <summary>
+    /// Starts <see cref="IRemoteComputeKeepAlive"/> for one relayed resolve
+    /// session and stops it when <see cref="StartCoreAsync"/> returns.
+    /// </summary>
+    private sealed class RelayKeepAliveHold : IDisposable
+    {
+        private readonly IRemoteComputeKeepAlive? _keepAlive;
+
+        private RelayKeepAliveHold(IRemoteComputeKeepAlive? keepAlive) => _keepAlive = keepAlive;
+
+        public static RelayKeepAliveHold Start(IRemoteComputeKeepAlive? keepAlive, bool hold)
+        {
+            if (!hold)
+            {
+                return new RelayKeepAliveHold(null);
+            }
+
+            keepAlive?.Start();
+            return new RelayKeepAliveHold(keepAlive);
+        }
+
+        public void Dispose() => _keepAlive?.Stop();
     }
 }

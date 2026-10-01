@@ -368,10 +368,12 @@ and cards in the top row.
   itself when `TvCardFocusRegistry` still has it (Android runs that from
   the view run queue on attach). A card that has not been created yet waits
   for one `OnGlobalLayout` on the rows list after
-  `ScrollToPositionWithOffset`; posting on that already-attached recycler
-  would spend the budget before the row binds. The listener is removed when
-  it runs. When the budget is spent, an attached card is focused before Menu
-  is put back in the focus order.
+  `ScrollToPositionWithOffset`. A frame callback is armed beside that
+  listener: a hierarchy that does not lay out still consumes one attempt,
+  and either signal continues. Cancel drops both. Posting on that
+  already-attached recycler would spend the budget before the row binds.
+  When the budget is spent, an attached card is focused before Menu is put
+  back in the focus order.
 
 ```mermaid
 flowchart TD
@@ -379,7 +381,7 @@ flowchart TD
   choose --> hold[Hold Menu out of the focus order]
   hold --> lookup{Card view in the registry?}
   lookup -->|yes, even if detached| postCard[Post on that view]
-  lookup -->|not created yet| layout[Scroll the row, then one OnGlobalLayout]
+  lookup -->|not created yet| layout[Scroll the row, then layout or one frame]
   postCard --> ready{Attached, shown, and laid out?}
   layout --> ready
   ready -->|yes| focus[RequestFocus and release Menu]

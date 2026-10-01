@@ -23,13 +23,18 @@ public sealed class RemoteComputePlayClient(
     IOptions<APISettings> apiSettings,
     IHostNameResolver resolver,
     IDnsPreferencesStore dnsPreferences,
-    IRemoteComputeKeepAlive keepAlive,
     ILogger<RemoteComputePlayClient> logger,
     IDnsOverHttpsEndpoint? dnsEndpoint = null) : IRemoteComputePlay
 {
     internal const string DirectConnectionDroppedMessage = "direct connection dropped";
 
     private static readonly TimeSpan MpTimeout = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// How long to wait for the data channel before telling the host ICE failed.
+    /// The host gives up on a direct channel after 3s, so this stays inside that budget.
+    /// </summary>
+    private static readonly TimeSpan DirectOpenBudget = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public bool IsPaired => !string.IsNullOrWhiteSpace(preferences.LoadPairedHostSub());
@@ -57,7 +62,6 @@ public sealed class RemoteComputePlayClient(
             return Fail(correlationId, "This device", "Not signed in");
         }
         logger.LogInformation("[RemoteCompute] {CorrelationId} resolving {Url}", correlationId, streamUrl);
-        keepAlive.Start();
         try
         {
             using var socket = new ClientWebSocket();
@@ -149,10 +153,6 @@ public sealed class RemoteComputePlayClient(
         {
             logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
             return Fail(correlationId, "Relay", "Could not reach the compute relay");
-        }
-        finally
-        {
-            keepAlive.Stop();
         }
     }
 
@@ -279,6 +279,8 @@ public sealed class RemoteComputePlayClient(
         private volatile bool _useDirect;
         private int _announcedReady;
         private int _resultSeen;
+        private int _failedSent;
+        private int _dropArmed;
         private CancellationTokenSource? _dropGrace;
 
         public string? EgressProblem { get; private set; }
@@ -640,6 +642,8 @@ public sealed class RemoteComputePlayClient(
             peer.Received += data => OnDirect(data, _stop.Token);
             peer.Opened += AnnounceReady;
             peer.Closed += OnPeerClosed;
+            peer.ConnectionLost += OnIceLostBeforeReady;
+            _ = WatchUntilOpenAsync(peer);
 
             foreach (var ice in queued)
             {
@@ -653,7 +657,7 @@ public sealed class RemoteComputePlayClient(
 
         private void AnnounceReady()
         {
-            if (_transportMode == "relay")
+            if (_transportMode == "relay" || Volatile.Read(ref _failedSent) == 1)
             {
                 return;
             }
@@ -666,6 +670,28 @@ public sealed class RemoteComputePlayClient(
             _ = SendAsync(new { t = "signal", kind = "ready", cid = correlationId }, CancellationToken.None);
         }
 
+        private async Task WatchUntilOpenAsync(WebRtcComputePeer peer)
+        {
+            try
+            {
+                await peer.WaitUntilOpenAsync(DirectOpenBudget, _stop.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                OnIceLostBeforeReady();
+            }
+        }
+
+        private void OnIceLostBeforeReady()
+        {
+            if (_stop.IsCancellationRequested || Volatile.Read(ref _announcedReady) != 0)
+            {
+                return;
+            }
+
+            ApplyClose(DirectChannelClose.Decide(false, false, Volatile.Read(ref _resultSeen) == 1, correlationId));
+        }
+
         private void OnPeerClosed()
         {
             if (_stop.IsCancellationRequested)
@@ -673,13 +699,27 @@ public sealed class RemoteComputePlayClient(
                 return;
             }
 
-            if (Volatile.Read(ref _announcedReady) == 0)
+            ApplyClose(DirectChannelClose.Decide(
+                Volatile.Read(ref _announcedReady) != 0,
+                _useDirect,
+                Volatile.Read(ref _resultSeen) == 1,
+                correlationId));
+        }
+
+        private void ApplyClose(DirectChannelClose.Decision decision)
+        {
+            if (decision.SignalFailed)
             {
+                if (Interlocked.Exchange(ref _failedSent, 1) != 0)
+                {
+                    return;
+                }
+
                 _ = SendAsync(new { t = "signal", kind = "failed", cid = correlationId, reason = "ice" }, CancellationToken.None);
                 return;
             }
 
-            if (Volatile.Read(ref _resultSeen) == 1 || !_useDirect)
+            if (decision.Fault is null || Interlocked.Exchange(ref _dropArmed, 1) != 0)
             {
                 return;
             }
