@@ -102,9 +102,11 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var token = await Oauth.ExchangeDeviceCodeAsync(Settings, deviceCode.DeviceCode, cancellationToken);
-            Logger.LogInformation("[Auth0] Device flow poll response. IsSuccess: {IsSuccess}, HasToken: {HasToken}",
+            Logger.LogInformation(
+                "[Auth0] Device flow poll response. IsSuccess: {IsSuccess}, AccessTokenPresent: {Access}, RefreshTokenPresent: {Refresh}",
                 token.IsSuccess,
-                !string.IsNullOrWhiteSpace(token.AccessToken));
+                !string.IsNullOrWhiteSpace(token.AccessToken),
+                !string.IsNullOrWhiteSpace(token.RefreshToken));
 
             if (token.IsSuccess && !string.IsNullOrWhiteSpace(token.AccessToken))
             {
@@ -227,8 +229,20 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
                     LastRefreshedAt = DateTimeOffset.UtcNow;
             }
 
-            if (string.IsNullOrWhiteSpace(RefreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
+            if (string.IsNullOrWhiteSpace(RefreshToken))
+            {
+                if (!HasValidToken)
+                {
+                    Logger.LogWarning("[Auth0] No refresh token stored; cannot renew the access token");
+                }
+
                 return;
+            }
+
+            if (!NeedsAccessTokenRefresh(forceRefresh))
+                return;
+
+            Logger.LogInformation("[Auth0] Refreshing access token");
 
             if (AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, HasValidToken, refreshDue: true))
             {
@@ -306,6 +320,12 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn > 0 ? expiresIn : 3600);
         RefreshToken = AuthTokenLifetime.CoalesceRefreshToken(refreshToken, RefreshToken);
         LastRefreshedAt = DateTimeOffset.UtcNow;
+        Logger.LogInformation(
+            "[Auth0] Tokens applied. AccessTokenPresent={Access}, RefreshTokenPresent={Refresh}, IncomingRefreshTokenPresent={Incoming}, ExpiresIn={ExpiresIn}s",
+            !string.IsNullOrWhiteSpace(AccessToken),
+            !string.IsNullOrWhiteSpace(RefreshToken),
+            !string.IsNullOrWhiteSpace(refreshToken),
+            expiresIn);
         await PersistTokensAsync();
     }
 
@@ -316,6 +336,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         ExpiresAt = DateTimeOffset.MinValue;
         LastRefreshedAt = DateTimeOffset.MinValue;
         TokenLoaded = true;
+        Logger.LogWarning("[Auth0] Cleared access token and refresh token from memory and secure storage");
         await ClearPersistedTokensAsync();
     }
 

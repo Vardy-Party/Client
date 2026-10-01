@@ -123,6 +123,10 @@ public class LinuxAuthService : Auth0TokenSession
             LastRefreshedAt = payload.LastRefreshedAtUnixSeconds > 0
                 ? DateTimeOffset.FromUnixTimeSeconds(payload.LastRefreshedAtUnixSeconds)
                 : DateTimeOffset.MinValue;
+            Logger.LogInformation(
+                "[Auth0/Linux] Loaded tokens. AccessTokenPresent={Access}, RefreshTokenPresent={Refresh}",
+                !string.IsNullOrWhiteSpace(AccessToken),
+                !string.IsNullOrWhiteSpace(RefreshToken));
         }
         catch (Exception ex)
         {
@@ -143,6 +147,10 @@ public class LinuxAuthService : Auth0TokenSession
             };
 
             await SaveEncryptedJsonAsync(JsonSerializer.Serialize(payload));
+            Logger.LogInformation(
+                "[Auth0/Linux] Persisted tokens. AccessTokenWritten={Access}, RefreshTokenWritten={Refresh}",
+                !string.IsNullOrWhiteSpace(AccessToken),
+                !string.IsNullOrWhiteSpace(RefreshToken));
         }
         catch (Exception ex)
         {

@@ -35,6 +35,8 @@ public class HomeBoardDifferTests
 
         // Assert
         Assert.Equal(keyA, keyB);
+        Assert.Equal(a.FixtureKey, keyA);
+        Assert.Equal(b.FixtureKey, keyB);
         Assert.True(HomePlaybackIntent.SameGame(a, b));
     }
 

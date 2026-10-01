@@ -143,16 +143,21 @@ public class ApiService(
 
                     if (response.StatusCode == HttpStatusCode.Unauthorized)
                     {
-                        // 401 Unauthorized means credentials/token issue - retrying is futile and causes UI delays
+                        // 401 is a dead session, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like, and
+                        // the homepage renders that as "no games".
                         logger.LogWarning("[Api] Received 401 Unauthorized for {Url} - user not authenticated or token expired, aborting without retry", url);
-                        return new Dictionary<string, List<Game>>();
+                        throw new ApiUnauthorizedException(
+                            $"Games catalog returned 401 Unauthorized for {url}");
                     }
 
                     if (response.StatusCode == HttpStatusCode.Forbidden)
                     {
-                        // 403 Forbidden means insufficient permissions - retrying is futile
+                        // 403 is a missing role, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like.
                         logger.LogWarning("[Api] Received 403 Forbidden for {Url} - user lacks stream-viewer role or permissions, aborting without retry", url);
-                        return new Dictionary<string, List<Game>>();
+                        throw new ApiForbiddenException(
+                            $"Games catalog returned 403 Forbidden for {url}");
                     }
 
                     response.EnsureSuccessStatusCode();
@@ -176,6 +181,14 @@ public class ApiService(
                     var total = parsed.Values.Sum(list => list?.Count ?? 0);
                     logger.LogInformation("[Api] Fetched {Count} games", total);
                     return parsed;
+                }
+                catch (ApiUnauthorizedException)
+                {
+                    throw;
+                }
+                catch (ApiForbiddenException)
+                {
+                    throw;
                 }
                 catch (HttpRequestException ex) when (attempt <= _maxRetries &&
                                                       ex.StatusCode == HttpStatusCode.InternalServerError)
@@ -207,6 +220,14 @@ public class ApiService(
         catch (ApiSystemDownException)
         {
             // Re-throw to allow caller to handle
+            throw;
+        }
+        catch (ApiUnauthorizedException)
+        {
+            throw;
+        }
+        catch (ApiForbiddenException)
+        {
             throw;
         }
         catch (Exception ex)

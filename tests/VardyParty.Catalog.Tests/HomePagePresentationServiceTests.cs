@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reactive;
+using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using AutoFixture;
 using VardyParty.Kernel;
@@ -20,6 +22,7 @@ namespace VardyParty.Catalog.Tests
             private Dictionary<string, List<Game>>? _latest;
             public IObservable<Dictionary<string, List<Game>>?> GamesStream => _subject;
             public IObservable<string?> ErrorStream => new Subject<string?>();
+            public IObservable<Unit> CatalogUnauthorized => Observable.Never<Unit>();
 
             public Dictionary<string, List<Game>>? GetLatestGames() => _latest;
 

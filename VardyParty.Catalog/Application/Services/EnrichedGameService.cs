@@ -1,3 +1,4 @@
+using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,7 @@ public class EnrichedGameService(
     private readonly int _apiTtl = gamesApiSettings.Value?.RefreshSchedule ?? 300;
     private readonly int _bbcTtl = bbcFixturesSettings.Value?.RefreshSchedule ?? 300;
     private readonly BehaviorSubject<string?> _errorSubject = new(null);
+    private readonly Subject<Unit> _catalogUnauthorized = new();
     private readonly Dictionary<string, List<Game>> _latestApiGames = new();
     private readonly object _startLock = new();
     private readonly object _stateLock = new();
@@ -44,6 +46,7 @@ public class EnrichedGameService(
     private readonly BehaviorSubject<Dictionary<string, List<Game>>?> _subject = new(null);
     private Timer? _apiTimer;
     private Timer? _bbcTimer;
+    private int _apiFetchInFlight;
     private int _bbcFetchInFlight;
     private bool _hasFetchedApi;
     private bool _initialBbcCompleted;
@@ -58,10 +61,12 @@ public class EnrichedGameService(
         _bbcTimer?.Dispose();
         _subject?.Dispose();
         _errorSubject?.Dispose();
+        _catalogUnauthorized.Dispose();
     }
 
     public IObservable<Dictionary<string, List<Game>>?> GamesStream => _subject.AsObservable();
     public IObservable<string?> ErrorStream => _errorSubject.AsObservable();
+    public IObservable<Unit> CatalogUnauthorized => _catalogUnauthorized.AsObservable();
 
     public Dictionary<string, List<Game>>? GetLatestGames() => _subject.Value;
 
@@ -73,7 +78,14 @@ public class EnrichedGameService(
             {
                 lock (_startLock)
                 {
-                    if (_timersStarted) return;
+                    if (_timersStarted)
+                    {
+                        // Sign-in after a dead session resubscribes while the
+                        // timers are already running. Fetch now so the board
+                        // does not wait out the API TTL.
+                        _ = FetchApiGames();
+                        return;
+                    }
 
                     logger.LogInformation("[Enriched] Starting background pollers. API TTL={Api}s, BBC TTL={Bbc}s",
                         _apiTtl, _bbcTtl);
@@ -98,31 +110,65 @@ public class EnrichedGameService(
 
     private async Task FetchApiGames()
     {
+        if (Interlocked.CompareExchange(ref _apiFetchInFlight, 1, 0) != 0)
+        {
+            logger.LogInformation("[Enriched] Skipping API poll; previous fetch still in progress");
+            return;
+        }
+
         try
         {
-            logger.LogInformation("[Enriched] Polling API games...");
-            var games = await api.GetAllGamesAsync(true);
-
-            // Clear any previous error on successful fetch
-            _errorSubject.OnNext(null);
-
-            lock (_stateLock)
+            try
             {
-                _latestApiGames.Clear();
-                foreach (var kvp in games) _latestApiGames[kvp.Key] = kvp.Value;
-                _hasFetchedApi = true;
-            }
+                logger.LogInformation("[Enriched] Polling API games...");
+                var games = await api.GetAllGamesAsync(true);
 
-            RunMatching(fromApiFetch: true);
+                // Clear any previous error on successful fetch
+                _errorSubject.OnNext(null);
+
+                lock (_stateLock)
+                {
+                    _latestApiGames.Clear();
+                    foreach (var kvp in games) _latestApiGames[kvp.Key] = kvp.Value;
+                    _hasFetchedApi = true;
+                }
+
+                RunMatching(fromApiFetch: true);
+            }
+            catch (ApiUnauthorizedException ex)
+            {
+                // Keep the last good board. An empty publish is what the homepage
+                // renders as "no games", which is how an expired session presented
+                // after the process had stayed alive overnight.
+                logger.LogWarning(ex, "[Enriched] Catalog unauthorized; leaving the current board in place");
+                // Same lock as _subject.OnNext: a Subject has no cross-thread guarantee,
+                // and the timer plus "timers already started, fetch now" used to overlap.
+                lock (_publishLock)
+                {
+                    _catalogUnauthorized.OnNext(Unit.Default);
+                }
+            }
+            catch (ApiForbiddenException ex)
+            {
+                logger.LogWarning(ex, "[Enriched] Catalog forbidden; leaving the current board in place");
+                lock (_publishLock)
+                {
+                    _errorSubject.OnNext("This account does not have permission to view matches.");
+                }
+            }
+            catch (ApiSystemDownException ex)
+            {
+                logger.LogError(ex, "[Enriched] API system is down");
+                _errorSubject.OnNext("The system is down right now. Try again later");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[Enriched] Background API fetch failed");
+            }
         }
-        catch (ApiSystemDownException ex)
+        finally
         {
-            logger.LogError(ex, "[Enriched] API system is down");
-            _errorSubject.OnNext("The system is down right now. Try again later");
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[Enriched] Background API fetch failed");
+            Interlocked.Exchange(ref _apiFetchInFlight, 0);
         }
     }
 
