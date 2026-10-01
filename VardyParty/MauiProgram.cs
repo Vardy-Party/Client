@@ -244,6 +244,10 @@ public static class MauiProgram
 #if ANDROID || WINDOWS
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
         builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore, MauiDnsPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputePreferences, MauiRemoteComputePreferences>();
+#if ANDROID
+        builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputeKeepAlive, VardyParty.Platforms.Android.AndroidRemoteComputeKeepAlive>();
+#endif
         if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
         {
             Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");

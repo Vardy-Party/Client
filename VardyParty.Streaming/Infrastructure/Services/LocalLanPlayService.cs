@@ -40,7 +40,8 @@ public class LocalLanPlayService(
     IEnumerable<IPlaybackTransportPlugin> transportPlugins,
     ILogger<LocalLanPlayService> logger,
     IDnsPreferencesStore? dnsPreferences = null,
-    IDnsOverHttpsEndpoint? dnsEndpoint = null) : ILocalLanPlayService
+    IDnsOverHttpsEndpoint? dnsEndpoint = null,
+    IRemoteComputePlay? remoteCompute = null) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -81,6 +82,13 @@ public class LocalLanPlayService(
 
     private static bool SupportsPlayStreamQuery(IEnumerable<string> capabilities) =>
         capabilities.Any(c => string.Equals(c, "play.stream", StringComparison.OrdinalIgnoreCase));
+
+    private bool _usedRemote;
+
+    public bool UsesRemoteCompute => remoteCompute?.IsPaired == true;
+
+    public string? LastRemoteComputeError =>
+        _usedRemote ? remoteCompute?.LastFault?.Display : null;
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
     {
@@ -123,9 +131,16 @@ public class LocalLanPlayService(
         if (string.IsNullOrWhiteSpace(streamUrl))
             return null;
 
+        _usedRemote = false;
         var baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
+            var remote = await ResolveViaRemoteAsync(streamUrl, playerStreamName, resolutionStrategy, source, cancellationToken);
+            if (remote is not null || remoteCompute?.IsPaired == true)
+            {
+                return remote;
+            }
+
             logger.LogWarning("[LocalLanPlay] Could not resolve local service endpoint for stream URL {Url}", streamUrl);
             return null;
         }
@@ -153,7 +168,9 @@ public class LocalLanPlayService(
         InvalidateDiscoveryCache();
         baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(baseUrl))
-            return null;
+        {
+            return await ResolveViaRemoteAsync(streamUrl, playerStreamName, resolutionStrategy, source, cancellationToken);
+        }
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
         useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
@@ -164,6 +181,24 @@ public class LocalLanPlayService(
                 streamUrl,
                 SupportsPlayStreamQuery(_cachedCapabilities) ? playerStreamName : null,
                 cancellationToken);
+    }
+
+    private Task<M3U8Response?> ResolveViaRemoteAsync(
+        string streamUrl,
+        string? playerStreamName,
+        string? resolutionStrategy,
+        string? source,
+        CancellationToken cancellationToken)
+    {
+        if (remoteCompute?.IsPaired != true)
+        {
+            return Task.FromResult<M3U8Response?>(null);
+        }
+
+        _usedRemote = true;
+        logger.LogInformation("[LocalLanPlay] No LAN service; resolving {Url} via paired compute host", streamUrl);
+        var useMp = ShouldUseMpEndpoint(resolutionStrategy, source, ["play.stream", "mp", "mp.chrome"]);
+        return remoteCompute.ResolveAsync(useMp, streamUrl, playerStreamName, cancellationToken);
     }
 
     /// <summary>

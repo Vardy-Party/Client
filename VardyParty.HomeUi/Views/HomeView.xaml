@@ -277,6 +277,35 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="Share this PC for remote compute"
+                               TextColor="#E5E7EB"
+                               FontSize="15"
+                               VerticalOptions="Center" />
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding ShareComputeEnabled, Mode=TwoWay}"
+                                Focused="OnMenuItemFocused"
+                                OnColor="#34D399"
+                                VerticalOptions="Center" />
+                    </Grid>
+                    <Label Text="{Binding RemoteInviteCode, StringFormat='Invite code: {0}'}"
+                           TextColor="#FDE68A"
+                           FontSize="15"
+                           IsVisible="{Binding HasRemoteInvite}" />
+                    <Entry Placeholder="Invite code from another PC"
+                           Text="{Binding RemoteGuestCode}"
+                           TextColor="White"
+                           PlaceholderColor="#9CA3AF"
+                           BackgroundColor="#1F2937" />
+                    <Button Text="Use remote compute"
+                            Clicked="OnRedeemRemoteComputeClicked"
+                            Focused="OnMenuItemFocused"
+                            BackgroundColor="#1C4A3A"
+                            TextColor="#34D399"
+                            CornerRadius="10" />
+                    <Label Text="{Binding RemoteComputeStatus}"
+                           TextColor="#9CA3AF"
+                           FontSize="13" />
                     <Button Text="{Binding UpdateButtonLabel}"
                             Clicked="OnUpdateClicked"
                             Focused="OnMenuItemFocused"

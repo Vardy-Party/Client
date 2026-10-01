@@ -63,6 +63,11 @@ public static class MauiProgram
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "VardyParty",
                 "dns-preferences.json")));
+        builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputePreferences>(_ =>
+            new VardyParty.Ports.FileRemoteComputePreferences(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VardyParty",
+                "remote-compute.json")));
         builder.Services.AddVardyPartyHttpClients(apiSettings?.IgnoreSslCertificateErrors ?? false);
 
         builder.Services.AddSingleton<IHomeAssetLocator, LinuxHomeAssetLocator>();

@@ -81,7 +81,9 @@ public class StreamResolutionOrchestrator(
         var streamCount = 0;
         Task<PlaybackResult?>? playbackTask = null;
 
-        if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+        if (localLanPlayService != null
+            && !localLanPlayService.UsesRemoteCompute
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken))
         {
             logger.LogWarning("[StreamResolution] Local LAN service is unavailable — aborting stream resolution");
             _status = "Local service unavailable";
@@ -243,7 +245,13 @@ public class StreamResolutionOrchestrator(
 
         if (_healthyStreamCount == 0)
         {
-            if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+            var remoteError = localLanPlayService?.LastRemoteComputeError;
+            if (!string.IsNullOrWhiteSpace(remoteError))
+            {
+                _status = remoteError;
+                outcome.RemoteComputeError = remoteError;
+            }
+            else if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
             {
                 _status = "Local service unavailable";
                 outcome.LocalServiceUnavailable = true;

@@ -31,6 +31,16 @@ public class StreamResolutionOutcomeUxTests
     }
 
     [Fact]
+    public void Plan_RemoteComputeError_ShowsComponentReasonAndCorrelationId()
+    {
+        const string message = "This phone failed: Could not resolve cdn.example. Correlation id: abc123def456";
+        var plan = StreamResolutionOutcomeUx.Plan(new StreamResolutionOutcome { RemoteComputeError = message });
+
+        Assert.True(plan.ClearSelection);
+        Assert.Equal(message, plan.ErrorMessage);
+    }
+
+    [Fact]
     public void Plan_LocalServiceUnavailable_ClearsSelectionAndSaysLocalServiceUnavailable()
     {
         var plan = StreamResolutionOutcomeUx.Plan(new StreamResolutionOutcome { LocalServiceUnavailable = true });

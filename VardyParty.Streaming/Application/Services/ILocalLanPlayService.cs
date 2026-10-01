@@ -36,6 +36,15 @@ public interface ILocalLanPlayService
 
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>True when this device is paired to a remote compute host.</summary>
+    bool UsesRemoteCompute => false;
+
+    /// <summary>
+    /// User-facing fault from the last resolve that used the remote host.
+    /// Null when that resolve did not use the relay, or it succeeded.
+    /// </summary>
+    string? LastRemoteComputeError => null;
+
     /// <summary>
     /// Base URL of the discovered LAN resolver, using the same discovery cache
     /// as <c>/play</c> and <c>/mp</c>. Null when nothing is on the network.

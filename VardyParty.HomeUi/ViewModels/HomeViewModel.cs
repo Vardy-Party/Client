@@ -50,6 +50,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
     private readonly IDesktopUpdateService _updates;
+    private readonly IRemoteComputeController? _remote;
     private DesktopUpdateOffer? _offer;
     private bool _updateBusy;
 
@@ -87,7 +88,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MatchEventBus events,
         SelectionState selection,
         ILogger<HomeViewModel> logger,
-        IDesktopUpdateService updates)
+        IDesktopUpdateService updates,
+        IRemoteComputeController? remoteCompute = null)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -99,6 +101,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
+        _remote = remoteCompute;
+        if (_remote is not null)
+        {
+            _remote.Changed += OnRemoteComputeChanged;
+        }
+
         Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
@@ -352,6 +360,61 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private string _remoteGuestCode = "";
+
+    public bool ShareComputeEnabled
+    {
+        get => _remote?.ShareEnabled ?? false;
+        set
+        {
+            if (_remote is null || _remote.ShareEnabled == value)
+            {
+                return;
+            }
+
+            _ = _remote.SetShareEnabledAsync(value);
+        }
+    }
+
+    public string RemoteInviteCode => _remote?.InviteCode ?? "";
+
+    public bool HasRemoteInvite => RemoteInviteCode.Length > 0;
+
+    public string RemoteGuestCode
+    {
+        get => _remoteGuestCode;
+        set
+        {
+            if (_remoteGuestCode == value)
+            {
+                return;
+            }
+
+            _remoteGuestCode = value ?? "";
+            Raise(nameof(RemoteGuestCode));
+        }
+    }
+
+    public string RemoteComputeStatus => _remote?.Status ?? "";
+
+    public void RedeemRemoteCompute() => _ = _remote?.RedeemAsync(_remoteGuestCode);
+
+    private void OnRemoteComputeChanged()
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                Raise(nameof(ShareComputeEnabled));
+                Raise(nameof(RemoteInviteCode));
+                Raise(nameof(HasRemoteInvite));
+                Raise(nameof(RemoteComputeStatus));
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
     private bool _canSignOut;
 
     /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>
@@ -468,6 +531,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _leagueFilter.Changed -= OnFilterChanged;
         _updates.OfferChanged -= OnUpdateOfferChanged;
         _updates.ApplyFailed -= OnUpdateApplyFailed;
+        if (_remote is not null)
+        {
+            _remote.Changed -= OnRemoteComputeChanged;
+        }
     }
 
     private void OnFilterChanged() => Rebuild();
