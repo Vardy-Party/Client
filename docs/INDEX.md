@@ -18,7 +18,8 @@ superseded phase plans were removed.
 | Doc | What it is |
 |-----|------------|
 | [LINUX_SUPPORT.md](LINUX_SUPPORT.md) | .NET 11 RC1 SDK + `VardyParty.Linux` / WSL |
-| [LOCAL_ANDROID_BUILD.md](LOCAL_ANDROID_BUILD.md) | Local APK with user-secrets (`package-android.ps1`) |
+| [LOCAL_ANDROID_BUILD.md](LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1`, `-Api preview` or `local`) |
+| [REMOTE_COMPUTE_PREVIEW_USB.md](REMOTE_COMPUTE_PREVIEW_USB.md) | Preview relay test: phone on USB, Wi-Fi off |
 | [WINDOWS_INSTALL.md](WINDOWS_INSTALL.md) | Windows sideload / install notes |
 
 ## Versioning & release

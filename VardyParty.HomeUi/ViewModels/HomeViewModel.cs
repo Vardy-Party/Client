@@ -361,6 +361,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private string _remoteGuestCode = "";
+    private bool _useOtherLocalService;
 
     public bool ShareComputeEnabled
     {
@@ -379,6 +380,55 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     public string RemoteInviteCode => _remote?.InviteCode ?? "";
 
     public bool HasRemoteInvite => RemoteInviteCode.Length > 0;
+
+    private bool CanUseRemoteCompute =>
+        _remote?.HasRelayUser == true && _remote.OffersRemoteCompute;
+
+    /// <summary>Share switch. Hidden while using another user's local-service, without relay-user, or on a 404.</summary>
+    public bool ShowHostCompute => CanUseRemoteCompute && !UseOtherLocalService;
+
+    /// <summary>The other-user switch. Hidden while this computer is sharing.</summary>
+    public bool ShowGuestCompute => CanUseRemoteCompute && _remote?.ShareEnabled != true;
+
+    /// <summary>
+    /// On only while this device is using another user's local-service.
+    /// Off is neither: both choices stay available and neither is engaged.
+    /// </summary>
+    public bool UseOtherLocalService
+    {
+        get => _useOtherLocalService || _remote?.IsGuestPaired == true;
+        set
+        {
+            if (value == UseOtherLocalService)
+            {
+                return;
+            }
+
+            if (!value)
+            {
+                _useOtherLocalService = false;
+                if (_remote?.IsGuestPaired != true)
+                {
+                    Raise(nameof(UseOtherLocalService));
+                    Raise(nameof(ShowHostCompute));
+                    Raise(nameof(ShowGuestEntry));
+                }
+
+                _ = ObserveRemoteAsync(() => _remote?.StopUsingRemoteAsync() ?? Task.CompletedTask);
+                return;
+            }
+
+            _useOtherLocalService = true;
+            Raise(nameof(UseOtherLocalService));
+            Raise(nameof(ShowHostCompute));
+            Raise(nameof(ShowGuestEntry));
+        }
+    }
+
+    public bool ShowGuestEntry => ShowGuestCompute && UseOtherLocalService;
+
+    public void RefreshRemoteComputeAccess() =>
+        _ = ObserveRemoteAsync(() => _remote?.RefreshAccessAsync() ?? Task.CompletedTask);
 
     public string RemoteGuestCode
     {
@@ -418,9 +468,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingUpdateUi.Enqueue(() =>
             {
+                if (_remote?.ShareEnabled == true)
+                {
+                    _useOtherLocalService = false;
+                }
+
                 Raise(nameof(ShareComputeEnabled));
                 Raise(nameof(RemoteInviteCode));
                 Raise(nameof(HasRemoteInvite));
+                Raise(nameof(UseOtherLocalService));
+                Raise(nameof(ShowHostCompute));
+                Raise(nameof(ShowGuestCompute));
+                Raise(nameof(ShowGuestEntry));
                 Raise(nameof(RemoteComputeStatus));
             });
         }

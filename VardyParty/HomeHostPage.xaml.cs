@@ -230,6 +230,10 @@ public partial class HomeHostPage : ContentPage
         // helped the system decide the app was ANR.
         _isAuthenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
         _viewModel.CanSignOut = _isAuthenticated;
+        if (_isAuthenticated)
+        {
+            _viewModel.RefreshRemoteComputeAccess();
+        }
 
         if (_isAuthenticated)
         {
@@ -394,7 +398,11 @@ public partial class HomeHostPage : ContentPage
             _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
         }
 
-        PostUi(() => _viewModel.CanSignOut = false);
+        PostUi(() =>
+        {
+            _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
+        });
         StopGamesFeed();
         _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
         ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
@@ -508,6 +516,7 @@ public partial class HomeHostPage : ContentPage
     {
         _isAuthenticated = true;
         _viewModel.CanSignOut = true;
+        _viewModel.RefreshRemoteComputeAccess();
         SetAuthStatus(null);
         StartGamesFeed();
         SetAuthOverlayVisible(false);
@@ -568,6 +577,7 @@ public partial class HomeHostPage : ContentPage
         PostUi(() =>
         {
             _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
             _viewModel.ClearErrors();

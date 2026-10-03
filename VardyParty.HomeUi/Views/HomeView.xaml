@@ -277,32 +277,54 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
-                    <Grid ColumnDefinitions="*,Auto">
-                        <Label Text="Share this PC for remote compute"
-                               TextColor="#E5E7EB"
-                               FontSize="15"
-                               VerticalOptions="Center" />
-                        <Switch Grid.Column="1"
-                                IsToggled="{Binding ShareComputeEnabled, Mode=TwoWay}"
+                    <VerticalStackLayout Spacing="10"
+                                          IsVisible="{OnPlatform Android=False, Default=True}">
+                        <VerticalStackLayout Spacing="10"
+                                              IsVisible="{Binding ShowHostCompute}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <Label Text="Share my local-service"
+                                       TextColor="#E5E7EB"
+                                       FontSize="15"
+                                       VerticalOptions="Center" />
+                                <Switch Grid.Column="1"
+                                        IsToggled="{Binding ShareComputeEnabled, Mode=TwoWay}"
+                                        Focused="OnMenuItemFocused"
+                                        OnColor="#34D399"
+                                        VerticalOptions="Center" />
+                            </Grid>
+                            <Label Text="{Binding RemoteInviteCode, StringFormat='Invite code: {0}'}"
+                                   TextColor="#FDE68A"
+                                   FontSize="15"
+                                   IsVisible="{Binding HasRemoteInvite}" />
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+                    <VerticalStackLayout Spacing="10"
+                                          IsVisible="{Binding ShowGuestCompute}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="Use another user's local-service"
+                                   TextColor="#E5E7EB"
+                                   FontSize="15"
+                                   VerticalOptions="Center" />
+                            <Switch Grid.Column="1"
+                                    IsToggled="{Binding UseOtherLocalService, Mode=TwoWay}"
+                                    Focused="OnMenuItemFocused"
+                                    OnColor="#34D399"
+                                    VerticalOptions="Center" />
+                        </Grid>
+                        <Entry Placeholder="Their invite code"
+                               Text="{Binding RemoteGuestCode}"
+                               TextColor="White"
+                               PlaceholderColor="#9CA3AF"
+                               BackgroundColor="#1F2937"
+                               IsVisible="{Binding ShowGuestEntry}" />
+                        <Button Text="Use their local-service"
+                                Clicked="OnRedeemRemoteComputeClicked"
                                 Focused="OnMenuItemFocused"
-                                OnColor="#34D399"
-                                VerticalOptions="Center" />
-                    </Grid>
-                    <Label Text="{Binding RemoteInviteCode, StringFormat='Invite code: {0}'}"
-                           TextColor="#FDE68A"
-                           FontSize="15"
-                           IsVisible="{Binding HasRemoteInvite}" />
-                    <Entry Placeholder="Invite code from another PC"
-                           Text="{Binding RemoteGuestCode}"
-                           TextColor="White"
-                           PlaceholderColor="#9CA3AF"
-                           BackgroundColor="#1F2937" />
-                    <Button Text="Use remote compute"
-                            Clicked="OnRedeemRemoteComputeClicked"
-                            Focused="OnMenuItemFocused"
-                            BackgroundColor="#1C4A3A"
-                            TextColor="#34D399"
-                            CornerRadius="10" />
+                                BackgroundColor="#1C4A3A"
+                                TextColor="#34D399"
+                                CornerRadius="10"
+                                IsVisible="{Binding ShowGuestEntry}" />
+                    </VerticalStackLayout>
                     <Label Text="{Binding RemoteComputeStatus}"
                            TextColor="#9CA3AF"
                            FontSize="13" />

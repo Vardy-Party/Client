@@ -512,6 +512,10 @@ public partial class LinuxHomePage : ContentPage
         _logger.LogInformation("[LinuxHome] Initialize start");
         _isAuthenticated = await _authTokens.IsAuthenticatedAsync();
         _viewModel.CanSignOut = _isAuthenticated;
+        if (_isAuthenticated)
+        {
+            _viewModel.RefreshRemoteComputeAccess();
+        }
 
         if (_isAuthenticated)
         {
@@ -686,7 +690,11 @@ public partial class LinuxHomePage : ContentPage
             _logger.LogDebug(ex, "[LinuxHome] ClearSelection during session expiration failed");
         }
 
-        Dispatcher.Dispatch(() => _viewModel.CanSignOut = false);
+        Dispatcher.Dispatch(() =>
+        {
+            _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
+        });
         StopGamesFeed();
         _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
         ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
@@ -827,6 +835,7 @@ public partial class LinuxHomePage : ContentPage
     {
         _isAuthenticated = true;
         _viewModel.CanSignOut = true;
+        _viewModel.RefreshRemoteComputeAccess();
         SetAuthStatus(null);
         StartGamesFeed();
         SetAuthOverlayVisible(false);
@@ -885,6 +894,7 @@ public partial class LinuxHomePage : ContentPage
         Dispatcher.Dispatch(() =>
         {
             _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
             _viewModel.ClearErrors();

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using VardyParty.Auth;
 using VardyParty.Kernel;
 using VardyParty.Ports;
 using VardyParty.Streaming;
@@ -16,7 +17,13 @@ public sealed class RemoteComputeController : IRemoteComputeController
     private readonly ILocalLanPlayService lan;
     private readonly IRemoteComputePreferences preferences;
     private readonly ILogger<RemoteComputeController> logger;
+    private readonly IAuthTokenProvider? tokens;
+    private readonly IOptions<Auth0Settings>? authSettings;
     private string _status = "";
+    private bool _offersRemoteCompute = true;
+    private bool _hasRelayUser;
+
+    private const string ApiHasNoRemoteCompute = "This API does not offer remote compute";
 
     public RemoteComputeController(
         HttpClient http,
@@ -24,13 +31,17 @@ public sealed class RemoteComputeController : IRemoteComputeController
         ILocalLanPlayService lan,
         IRemoteComputePreferences preferences,
         ILogger<RemoteComputeController> logger,
-        IRemoteComputePlay? remotePlay = null)
+        IRemoteComputePlay? remotePlay = null,
+        IAuthTokenProvider? tokens = null,
+        IOptions<Auth0Settings>? authSettings = null)
     {
         this.http = http;
         this.apiSettings = apiSettings;
         this.lan = lan;
         this.preferences = preferences;
         this.logger = logger;
+        this.tokens = tokens;
+        this.authSettings = authSettings;
         if (remotePlay is not null)
         {
             remotePlay.Faulted += fault => SetStatus(fault.Display);
@@ -38,6 +49,12 @@ public sealed class RemoteComputeController : IRemoteComputeController
     }
 
     public bool ShareEnabled => preferences.LoadShareEnabled();
+
+    public bool IsGuestPaired => !string.IsNullOrWhiteSpace(preferences.LoadPairedHostSub());
+
+    public bool OffersRemoteCompute => _offersRemoteCompute;
+
+    public bool HasRelayUser => _hasRelayUser;
 
     public string InviteCode => preferences.LoadInviteCode();
 
@@ -73,6 +90,15 @@ public sealed class RemoteComputeController : IRemoteComputeController
             };
             createRequest.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
             using var create = await http.SendAsync(createRequest, cancellationToken).ConfigureAwait(false);
+            if (create.StatusCode == HttpStatusCode.NotFound)
+            {
+                NoteMissingRoute();
+                AbandonShare();
+                Fail("Relay", ApiHasNoRemoteCompute, correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} pair create returned 404", correlationId);
+                return;
+            }
+
             if (create.StatusCode == HttpStatusCode.Forbidden)
             {
                 AbandonShare();
@@ -124,9 +150,10 @@ public sealed class RemoteComputeController : IRemoteComputeController
                 return;
             }
 
+            preferences.SavePairedHostSub("");
             preferences.SaveInviteCode(created.Code);
             preferences.SaveShareEnabled(true);
-            SetStatus($"Sharing. Give this code to the phone. ({correlationId})");
+            SetStatus($"Sharing your local-service. Give this code to the other device. ({correlationId})");
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException)
                                    && !cancellationToken.IsCancellationRequested)
@@ -163,6 +190,14 @@ public sealed class RemoteComputeController : IRemoteComputeController
             };
             redeem.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
             using var response = await http.SendAsync(redeem, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                NoteMissingRoute();
+                Fail("Relay", ApiHasNoRemoteCompute, correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 404", correlationId);
+                return;
+            }
+
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
                 var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -179,6 +214,7 @@ public sealed class RemoteComputeController : IRemoteComputeController
             if (!response.IsSuccessStatusCode)
             {
                 Fail("Relay", "Could not redeem that invite code", correlationId);
+                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned {Status}", correlationId, (int)response.StatusCode);
                 return;
             }
 
@@ -189,8 +225,14 @@ public sealed class RemoteComputeController : IRemoteComputeController
                 return;
             }
 
+            if (ShareEnabled)
+            {
+                await StopHostAsync(cancellationToken).ConfigureAwait(false);
+                AbandonShare();
+            }
+
             preferences.SavePairedHostSub(paired.HostSub);
-            SetStatus("Paired with a remote compute host.");
+            SetStatus("Using another user's local-service.");
         }
         catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException)
                                    && !cancellationToken.IsCancellationRequested)
@@ -198,6 +240,53 @@ public sealed class RemoteComputeController : IRemoteComputeController
             logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} redeem failed", correlationId);
             Fail("Relay", "Could not redeem that invite code", correlationId);
         }
+    }
+
+    public Task StopUsingRemoteAsync(CancellationToken cancellationToken = default)
+    {
+        preferences.SavePairedHostSub("");
+        SetStatus("Stopped using their local-service.");
+        return Task.CompletedTask;
+    }
+
+    public async Task RefreshAccessAsync(CancellationToken cancellationToken = default)
+    {
+        var token = tokens is null
+            ? null
+            : await tokens.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        var rolesClaim = authSettings?.Value.RequiredRoleClaimType;
+        _hasRelayUser = HasRelayClaim(token, rolesClaim);
+        Changed?.Invoke();
+    }
+
+    private static bool HasRelayClaim(string? token, string? rolesClaim)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        if (AuthAccessTokenRoles.HasRequiredRole(token, rolesClaim, "relay-user"))
+        {
+            return true;
+        }
+
+        if (AuthAccessTokenRoles.HasRequiredRole(token, "permissions", "relay-user"))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(rolesClaim)
+            && rolesClaim.EndsWith("/roles", StringComparison.OrdinalIgnoreCase))
+        {
+            var permissionsClaim = string.Concat(rolesClaim.AsSpan(0, rolesClaim.Length - "roles".Length), "permissions");
+            if (AuthAccessTokenRoles.HasRequiredRole(token, permissionsClaim, "relay-user"))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task StopHostAsync(CancellationToken cancellationToken)
@@ -218,6 +307,8 @@ public sealed class RemoteComputeController : IRemoteComputeController
             logger.LogDebug(ex, "[RemoteCompute] Stop sharing failed");
         }
     }
+
+    private void NoteMissingRoute() => _offersRemoteCompute = false;
 
     private void AbandonShare()
     {

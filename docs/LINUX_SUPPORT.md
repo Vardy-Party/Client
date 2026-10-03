@@ -160,6 +160,12 @@ dotnet user-secrets set "Auth0:Audience" "your-audience" --project VardyParty.Li
 #   RequiredRoleClaimType, RequiredRole, Api:HeadlessBaseUrl — see docs/LOCAL_ANDROID_BUILD.md
 ```
 
+Point this process at another deployment without editing the stored
+`Api:HeadlessBaseUrl`: `VARDYPARTY_LINUX_API=local|preview|production` (reads
+`Api:HeadlessBaseUrl-Local` or `Api:HeadlessBaseUrl-Preview`). Android packages
+use `pwsh ./package-android.ps1 -Api preview` instead. Debug Windows uses
+`VARDYPARTY_DEBUG_API`. Details: [LOCAL_ANDROID_BUILD.md](LOCAL_ANDROID_BUILD.md).
+
 Or pass `-p:PatchAppSettings=true` on restore/run after the secrets exist:
 
 ```bash

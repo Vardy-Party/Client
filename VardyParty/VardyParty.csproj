@@ -507,9 +507,10 @@
             Condition="'$(PatchAppSettings)' == 'true' AND ('$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0')">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
+            <ApiTargetArg Condition="'$(ApiTarget)' != ''">-ApiTarget &quot;$(ApiTarget)&quot;</ApiTargetArg>
         </PropertyGroup>
         <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE CoreCompile/MauiAssets" Importance="high" />
-        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot; $(ApiTargetArg)" />
         <ItemGroup>
             <CustomAdditionalCompileInputs Include="$(SourceAppSettingsPath)" />
         </ItemGroup>

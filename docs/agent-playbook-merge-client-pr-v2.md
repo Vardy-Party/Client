@@ -236,7 +236,7 @@ gh release list --limit 3                # expect 2.0.0-b156 as Latest
 git fetch origin main
 git checkout main
 git reset --hard origin/main     # agents force-push; reset rather than pull
-pwsh ./package-android.ps1       # -Mode all for the fat/store APK
+pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview|local to bake that API
 ```
 
   The APK version comes from the same `Version.props`, so it should report `2.0.0`. If the

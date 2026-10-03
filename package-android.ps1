@@ -5,6 +5,7 @@
 # Usage:
 #   pwsh ./package-android.ps1                  # device APK (default)
 #   pwsh ./package-android.ps1 -Mode all        # store/emulator fat APK
+#   pwsh ./package-android.ps1 -Api preview     # bake Api:HeadlessBaseUrl-Preview
 #   pwsh ./package-android.ps1 -KeepPatchedAppSettings
 #
 # Default (device): one APK for 32-bit ARM TVs (armeabi-v7a) and 64-bit ARM
@@ -26,6 +27,12 @@
 param(
     [ValidateSet('device', 'all')]
     [string]$Mode = 'device',
+
+    # Bake a different API address for this package only. Reads
+    # Api:HeadlessBaseUrl-Local or Api:HeadlessBaseUrl-Preview from user-secrets
+    # and writes it into Api:HeadlessBaseUrl. Does not change the stored secret.
+    [ValidateSet('local', 'preview', 'production')]
+    [string]$Api,
 
     # After a successful build, leave secrets in source appsettings.json.
     # Default is also leave them (no auto git restore). Kept for compat.
@@ -111,6 +118,10 @@ $buildArgs = @(
     '-p:AndroidKeyStore=false',
     '-p:PatchAppSettings=true'
 )
+if ($Api) {
+    Write-Host "API target: $Api (this package only; user-secrets are not changed)"
+    $buildArgs += "-p:ApiTarget=$Api"
+}
 
 $buildFailed = $false
 $buildLog = New-Object System.Collections.Generic.List[string]
