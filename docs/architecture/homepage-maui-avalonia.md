@@ -389,6 +389,18 @@ flowchart TD
   ready -->|budget spent| last[RequestFocus if attached, then release Menu]
 ```
 
+### Remote compute
+
+Guest resolve over the compute relay:
+
+- A clean ICE miss stays on the relay. The guest sends `signal kind=failed` and does not raise a banner.
+- A drop after transport `webrtc` and before `rpc-result` banners `This phone failed: direct connection dropped. Correlation id: {id}`.
+- CONNECT DNS is DoH-first when DoH is enabled. Carrier DNS on 4G often answers and would skip DoH.
+- Leftover MP chips after the first `/mp` keep resolving like LAN.
+- Leave always cancels headed Chrome.
+
+`RemoteComputeController` orchestrates share, redeem, and the host watches. Claim checks go through `AuthAccessTokenRoles`. CONNECT logs reason and DNS via (`dns` / `connect failed` / `port not allowed`) only — never host, port, IP, SDP, or a full ICE candidate.
+
 Key routing: `RemoteKeyHandler` (activity level) still has **no D-pad
 direction cases** — direction keys are owned by the dispatch-stage router
 above; `RemoteKeyHandler` only consumes media keys, Menu, Back and

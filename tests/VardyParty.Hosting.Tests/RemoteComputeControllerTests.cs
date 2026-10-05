@@ -454,6 +454,25 @@ public class RemoteComputeControllerTests
     }
 
     [Fact]
+    public async Task Share_WhenTurnedOffMidStart_LeavesTheInviteCodeEmpty()
+    {
+        var handler = new ArriveThenGateHandler(Json(HttpStatusCode.OK, """{"code":"ABCD2345","expiresAt":9999999999999}"""));
+        var preferences = new InMemoryRemoteComputePreferences();
+        var sut = Create(handler, lanBase: "http://127.0.0.1:9", preferences);
+
+        var start = sut.SetShareEnabledAsync(true);
+        await handler.Arrived.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var stop = sut.SetShareEnabledAsync(false);
+        handler.Release.SetResult();
+        await start;
+        await stop;
+
+        Assert.False(sut.ShareEnabled);
+        Assert.Equal("", sut.InviteCode);
+        Assert.Contains("Sharing stopped", sut.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Share_WhenTheCallerCancels_DoesNotSetStatus()
     {
         // Arrange
@@ -556,6 +575,20 @@ public class RemoteComputeControllerTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             await gate.WaitAsync(cancellationToken);
+            return response;
+        }
+    }
+
+    private sealed class ArriveThenGateHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public TaskCompletionSource Arrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Arrived.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
             return response;
         }
     }

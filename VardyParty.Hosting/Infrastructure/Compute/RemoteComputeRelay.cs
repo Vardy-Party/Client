@@ -457,7 +457,8 @@ public sealed class RemoteComputePlayClient(
         {
             if (port is not (80 or 443) || string.IsNullOrWhiteSpace(host))
             {
-                NoteEgress($"Blocked a connection to {host}:{port}");
+                logger.LogInformation("[RemoteCompute] {CorrelationId} open-failed reason={Reason}", correlationId, "port not allowed");
+                NoteEgress("Could not connect");
                 await SendEgressAsync(new { t = "open-failed", id = streamId, cid = correlationId, host, port, error = "port not allowed" }, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -483,7 +484,7 @@ public sealed class RemoteComputePlayClient(
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         tcp.Dispose();
-                        logger.LogDebug(ex, "[RemoteCompute] Connect failed for {Host}:{Port}", host, port);
+                        logger.LogDebug(ex, "[RemoteCompute] Connect failed reason={Reason}", "connect failed");
                     }
                 }
 
@@ -492,20 +493,18 @@ public sealed class RemoteComputePlayClient(
                     var dnsMiss = lookup.Addresses.Length == 0;
                     var error = dnsMiss ? "dns" : "connect failed";
                     logger.LogInformation(
-                        "[RemoteCompute] {CorrelationId} open-failed {Host} reason={Reason} dns={Dns}",
+                        "[RemoteCompute] {CorrelationId} open-failed reason={Reason} dns={Dns}",
                         correlationId,
-                        host,
                         error,
                         lookup.Via);
-                    NoteEgress(dnsMiss ? $"Could not resolve {host}" : $"Could not connect to {host}:{port}");
+                    NoteEgress("Could not connect");
                     await SendEgressAsync(new { t = "open-failed", id = streamId, cid = correlationId, host, port, error }, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
                 logger.LogInformation(
-                    "[RemoteCompute] {CorrelationId} opened {Host} dns={Dns}",
+                    "[RemoteCompute] {CorrelationId} opened dns={Dns}",
                     correlationId,
-                    host,
                     lookup.Via);
                 _clients[streamId] = connected;
                 await SendEgressAsync(new { t = "opened", id = streamId, cid = correlationId, host, port }, cancellationToken).ConfigureAwait(false);
@@ -513,8 +512,8 @@ public sealed class RemoteComputePlayClient(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogInformation(ex, "[RemoteCompute] Could not open {Host}:{Port}", host, port);
-                NoteEgress($"Could not connect to {host}:{port}");
+                logger.LogInformation(ex, "[RemoteCompute] Could not open reason={Reason}", "connect failed");
+                NoteEgress("Could not connect");
                 await SendEgressAsync(new { t = "open-failed", id = streamId, cid = correlationId, host, port, error = "connect failed" }, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -673,7 +672,7 @@ public sealed class RemoteComputePlayClient(
             peer.Received += data => OnDirect(data, _stop.Token);
             peer.Opened += AnnounceReady;
             peer.Closed += OnPeerClosed;
-            peer.ConnectionLost += OnIceLostBeforeReady;
+            peer.ConnectionLost += OnPeerClosed;
             _ = WatchUntilOpenAsync(peer);
 
             foreach (var ice in queued)

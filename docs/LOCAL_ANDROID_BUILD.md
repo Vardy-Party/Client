@@ -31,7 +31,7 @@ that package only. The stored secret is not changed.
 | `-Api preview` | `Api:HeadlessBaseUrl-Preview` |
 | `-Api local` | `Api:HeadlessBaseUrl-Local` |
 
-The build log prints the address, for example `API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.jonbreen.workers.dev/`. The preview or local key must already be in user-secrets or the package fails.
+The build log prints the baked address, for example `API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.example.test/`. The preview or local key must already be in user-secrets or the package fails.
 
 Other heads, same user-secrets keys:
 

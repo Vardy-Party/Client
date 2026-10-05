@@ -2,7 +2,7 @@
 
 Prove that an Android phone with Wi-Fi off can use the Windows local-service through the preview relay. The phone is on mobile data. USB is only for install and `adb logcat`. It is not the compute path.
 
-Both sides must call the same API. The invite is created on that API and is useless against any other host. Production `https://headless-m3u8.jonbreen.workers.dev` does not serve `/compute/pairs`. Preview does: `https://headless-m3u8-preview.jonbreen.workers.dev` (custom host `https://vardyparty-preview.jonbreen.uk` is the same worker when DNS points there).
+Both sides must call the same API. The invite is created on that API and is useless against any other host. Production (`Api:HeadlessBaseUrl`) does not serve `/compute/pairs`. Preview (`Api:HeadlessBaseUrl-Preview`) does. Use `https://headless-m3u8-preview.example.test` as the stand-in; `package-android.ps1` prints the baked address.
 
 ## What you need
 
@@ -47,7 +47,7 @@ Confirm the client log, not the Application event log. HTTP lines go to:
 
 `%LOCALAPPDATA%\VardyParty\logs\vardyparty-yyyyMMdd.log`
 
-A share attempt must say `POST https://headless-m3u8-preview.jonbreen.workers.dev/compute/pairs`. A `404` on `headless-m3u8.jonbreen.workers.dev` means this process is still on production.
+A share attempt must say `POST https://headless-m3u8-preview.example.test/compute/pairs` (or whatever `package-android.ps1` / the Windows debug log printed for preview). A `404` on the production stand-in `https://headless-m3u8.example.test` means this process is still on production.
 
 Sign in, open the menu, turn on **Share my local-service**. The log should then show `200` on `/compute/pairs` and `200` on `POST http://…:5019/compute/host/start`. The menu shows an 8-character invite code. The local-service console logs `Compute relay {correlationId} host connected`.
 
@@ -61,7 +61,7 @@ pwsh ./package-android.ps1 -Api preview
 
 ILLink wants a lot of RAM. The build log must contain:
 
-`API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.jonbreen.workers.dev/`
+`API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.example.test/`
 
 `package-android.ps1` can leave secrets in `VardyParty/appsettings.json`. Restore that file before any commit:
 
@@ -77,7 +77,7 @@ adb install -r VardyParty/bin/Release/net11.0-android/com.vardyparty-Signed.apk
 
 Sign out on the phone and sign back in so the token includes `relay-user`. Turn on **Use another user's local-service**, enter the code from the PC, and confirm. The phone log must show:
 
-`POST https://headless-m3u8-preview.jonbreen.workers.dev/compute/pairs/redeem`
+`POST https://headless-m3u8-preview.example.test/compute/pairs/redeem`
 
 and `200`. The status is `Using another user's local-service.` The code is single-use. A `404` from redeem does not consume it, but it does mean the phone is on the wrong host. `Could not redeem that invite code` on a non-404 means the code was rejected for another reason. A `404` specifically is `This API does not offer remote compute` on a build that includes that message.
 
@@ -101,7 +101,7 @@ On the phone, pick a match. LAN discovery will time out on UDP ports `40129`, `4
 
 | What you see | Cause |
 | --- | --- |
-| `POST …jonbreen.workers.dev/compute/pairs` `404` | That app is on production. Windows: `VARDYPARTY_DEBUG_API=preview` and relaunch. Phone: `package-android.ps1 -Api preview` and reinstall. |
+| `POST …example.test/compute/pairs` `404` | That app is on production. Windows: `VARDYPARTY_DEBUG_API=preview` and relaunch. Phone: `package-android.ps1 -Api preview` and reinstall. |
 | `This account needs the relay-user role` | Token has no `relay-user`. Add the role, then sign out and in. |
 | Redeem `404` while the PC created the code on preview | Phone and PC are on different hosts. The code was not consumed. |
 | Phone UDP discovery timeouts | Expected with Wi-Fi off. |
