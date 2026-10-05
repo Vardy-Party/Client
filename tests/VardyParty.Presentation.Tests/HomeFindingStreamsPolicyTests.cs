@@ -12,10 +12,10 @@ public class HomeFindingStreamsPolicyTests
         Assert.Equal(expected, HomeFindingStreamsPolicy.HardwareBackShouldCancelFinding(owned));
 
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    public void PlaybackLeaveShouldStopFinding_WhenDiscoveryStillRunning(bool findingActive, bool expected) =>
-        Assert.Equal(expected, HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive));
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PlaybackLeaveShouldStopFinding_Always_EvenWhenOverlayAlreadyDismissed(bool findingActive) =>
+        Assert.True(HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive));
 
     [Fact]
     public void IsFindingActive_WhenAnyOwnershipFlagSet()

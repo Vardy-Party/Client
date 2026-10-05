@@ -40,6 +40,21 @@ public sealed class FileRemoteComputePreferences : IRemoteComputePreferences
         }
     }
 
+    public long LoadInviteExpiresAt()
+    {
+        lock (_gate) return Load().InviteExpiresAt;
+    }
+
+    public void SaveInviteExpiresAt(long unixMilliseconds)
+    {
+        lock (_gate)
+        {
+            var model = Load();
+            model.InviteExpiresAt = unixMilliseconds;
+            Save(model);
+        }
+    }
+
     public string LoadPairedHostSub()
     {
         lock (_gate) return Load().PairedHostSub ?? "";
@@ -87,6 +102,7 @@ public sealed class FileRemoteComputePreferences : IRemoteComputePreferences
     {
         public bool ShareEnabled { get; set; }
         public string InviteCode { get; set; } = "";
+        public long InviteExpiresAt { get; set; }
         public string PairedHostSub { get; set; } = "";
     }
 }

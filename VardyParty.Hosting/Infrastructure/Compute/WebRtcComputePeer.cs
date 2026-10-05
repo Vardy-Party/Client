@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using SIPSorcery.Net;
 
 namespace VardyParty.Hosting;
@@ -15,6 +17,14 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
     private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<RTCIceCandidateInit> _earlyIce = new();
     private readonly object _iceGate = new();
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly object _statsGate = new();
+    private readonly Dictionary<string, int> _localKinds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _remoteKinds = new(StringComparer.Ordinal);
+    private string _lastIceState = "new";
+    private string _lastConnectionState = "new";
+    private long _remoteSdpMs = -1;
+    private long _openMs = -1;
     private RTCDataChannel? _channel;
     private bool _remoteDescriptionSet;
     private int _closed;
@@ -35,6 +45,7 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
                 return;
             }
 
+            RecordCandidate(_localKinds, "local", candidate.candidate);
             IceCandidate?.Invoke(new RTCIceCandidateInit
             {
                 candidate = candidate.candidate,
@@ -42,8 +53,26 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
                 sdpMLineIndex = candidate.sdpMLineIndex
             });
         };
-        _pc.oniceconnectionstatechange += state => NotifyConnectionLost(state is RTCIceConnectionState.failed or RTCIceConnectionState.disconnected);
-        _pc.onconnectionstatechange += state => NotifyConnectionLost(state is RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected);
+        _pc.oniceconnectionstatechange += state =>
+        {
+            lock (_statsGate)
+            {
+                _lastIceState = state.ToString();
+            }
+
+            Emit("ice " + state);
+            NotifyConnectionLost(state is RTCIceConnectionState.failed or RTCIceConnectionState.disconnected);
+        };
+        _pc.onconnectionstatechange += state =>
+        {
+            lock (_statsGate)
+            {
+                _lastConnectionState = state.ToString();
+            }
+
+            Emit("connection " + state);
+            NotifyConnectionLost(state is RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected);
+        };
     }
 
     public event Action<RTCIceCandidateInit>? IceCandidate;
@@ -59,6 +88,45 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
     /// without the data channel having to close.
     /// </summary>
     public event Action? ConnectionLost;
+
+    /// <summary>
+    /// Short progress lines for logs: candidate kinds, ICE and connection
+    /// state changes, remote description applied, channel open. Each line
+    /// ends with the elapsed time since the peer was created. Lines never
+    /// contain addresses, ports, or SDP.
+    /// </summary>
+    public event Action<string>? Diagnostic;
+
+    public string ChannelState => _channel == null ? "none" : _channel.readyState.ToString();
+
+    /// <summary>
+    /// One line describing where ICE got to, for the open and did-not-open
+    /// log lines. Candidate kinds and counts only, no addresses.
+    /// </summary>
+    public string Summary
+    {
+        get
+        {
+            string ice;
+            string conn;
+            string local;
+            string remote;
+            long remoteSdpMs;
+            long openMs;
+            lock (_statsGate)
+            {
+                ice = _lastIceState;
+                conn = _lastConnectionState;
+                local = FormatKinds(_localKinds);
+                remote = FormatKinds(_remoteKinds);
+                remoteSdpMs = _remoteSdpMs;
+                openMs = _openMs;
+            }
+
+            return $"ice={ice} conn={conn} channel={ChannelState} local={local} remote={remote} "
+                + $"remote-sdp={FormatMs(remoteSdpMs)} open={FormatMs(openMs)} elapsed={_clock.ElapsedMilliseconds}ms";
+        }
+    }
 
     public static async Task<WebRtcComputePeer> CreateOffererAsync(bool useStun = true)
     {
@@ -104,6 +172,7 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
             return;
         }
 
+        RecordCandidate(_remoteKinds, "remote", candidate.candidate);
         lock (_iceGate)
         {
             if (!_remoteDescriptionSet)
@@ -196,6 +265,12 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
     {
         if (_opened.TrySetResult())
         {
+            lock (_statsGate)
+            {
+                _openMs = _clock.ElapsedMilliseconds;
+            }
+
+            Emit("channel open");
             Opened?.Invoke();
         }
     }
@@ -210,6 +285,47 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
         ConnectionLost?.Invoke();
     }
 
+    private void RecordCandidate(Dictionary<string, int> counts, string side, string candidate)
+    {
+        var kind = IceCandidateKind.Of(candidate);
+        lock (_statsGate)
+        {
+            counts[kind] = counts.TryGetValue(kind, out var n) ? n + 1 : 1;
+        }
+
+        Emit($"{side} {kind} candidate");
+    }
+
+    private void Emit(string what) => Diagnostic?.Invoke($"{what} +{_clock.ElapsedMilliseconds}ms");
+
+    private static string FormatMs(long ms) => ms < 0 ? "-" : $"+{ms}ms";
+
+    private static string FormatKinds(Dictionary<string, int> counts)
+    {
+        if (counts.Count == 0)
+        {
+            return "[]";
+        }
+
+        var sb = new StringBuilder("[");
+        foreach (var kind in new[] { "host", "srflx", "prflx", "relay", IceCandidateKind.Unknown })
+        {
+            if (!counts.TryGetValue(kind, out var n))
+            {
+                continue;
+            }
+
+            if (sb.Length > 1)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append(kind).Append(" x").Append(n);
+        }
+
+        return sb.Append(']').ToString();
+    }
+
     private async Task SetRemoteAsync(RTCSessionDescriptionInit description)
     {
         var result = _pc.setRemoteDescription(description);
@@ -217,6 +333,13 @@ internal sealed class WebRtcComputePeer : IAsyncDisposable
         {
             throw new InvalidOperationException($"Remote description was rejected ({result}).");
         }
+
+        lock (_statsGate)
+        {
+            _remoteSdpMs = _clock.ElapsedMilliseconds;
+        }
+
+        Emit($"remote {description.type} applied");
 
         List<RTCIceCandidateInit> queued;
         lock (_iceGate)

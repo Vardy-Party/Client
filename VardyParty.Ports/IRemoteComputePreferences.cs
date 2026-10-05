@@ -14,6 +14,11 @@ public interface IRemoteComputePreferences
 
     void SaveInviteCode(string code);
 
+    /// <summary>Unix milliseconds when the displayed invite stops being valid. Zero when unknown.</summary>
+    long LoadInviteExpiresAt();
+
+    void SaveInviteExpiresAt(long unixMilliseconds);
+
     /// <summary>Auth0 <c>sub</c> of the host this device redeemed. Empty when unpaired.</summary>
     string LoadPairedHostSub();
 

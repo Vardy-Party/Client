@@ -296,6 +296,10 @@
                                    TextColor="#FDE68A"
                                    FontSize="15"
                                    IsVisible="{Binding HasRemoteInvite}" />
+                            <Label Text="One device can use this code. It leaves this screen once that device connects, or when it expires."
+                                   TextColor="#9CA3AF"
+                                   FontSize="13"
+                                   IsVisible="{Binding HasRemoteInvite}" />
                         </VerticalStackLayout>
                     </VerticalStackLayout>
                     <VerticalStackLayout Spacing="10"
@@ -316,18 +320,33 @@
                                TextColor="White"
                                PlaceholderColor="#9CA3AF"
                                BackgroundColor="#1F2937"
+                               IsEnabled="{Binding CanRedeem}"
                                IsVisible="{Binding ShowGuestEntry}" />
-                        <Button Text="Use their local-service"
+                        <Button Text="{Binding RedeemButtonText}"
                                 Clicked="OnRedeemRemoteComputeClicked"
                                 Focused="OnMenuItemFocused"
                                 BackgroundColor="#1C4A3A"
                                 TextColor="#34D399"
                                 CornerRadius="10"
+                                IsEnabled="{Binding CanRedeem}"
                                 IsVisible="{Binding ShowGuestEntry}" />
                     </VerticalStackLayout>
                     <Label Text="{Binding RemoteComputeStatus}"
                            TextColor="#9CA3AF"
-                           FontSize="13" />
+                           FontSize="13">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label"
+                                         Binding="{Binding RemoteStatusIsFault}"
+                                         Value="True">
+                                <Setter Property="TextColor" Value="#FDE68A" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Label"
+                                         Binding="{Binding RemoteStatusIsPaired}"
+                                         Value="True">
+                                <Setter Property="TextColor" Value="#34D399" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
                     <Button Text="{Binding UpdateButtonLabel}"
                             Clicked="OnUpdateClicked"
                             Focused="OnMenuItemFocused"

@@ -71,6 +71,12 @@ public sealed class LocalLanServiceAvailabilityMonitor(
     {
         try
         {
+            if (localLanPlayService.UsesRemoteCompute)
+            {
+                _warningSubject.OnNext(null);
+                return true;
+            }
+
             var available = await localLanPlayService.IsAvailableAsync(cancellationToken);
             if (available)
             {

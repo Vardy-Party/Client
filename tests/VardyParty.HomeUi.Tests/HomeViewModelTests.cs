@@ -694,6 +694,109 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Contains("River Town", _sut.Toast.Current!.Headline, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RemoteSettings_WhileCheckingAnInvite_ChangesTheButtonAndThenSaysPaired()
+    {
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+        sut.UseOtherLocalService = true;
+
+        Assert.Equal("Use their local-service", sut.RedeemButtonText);
+        Assert.True(sut.CanRedeem);
+        Assert.True(sut.ShowGuestEntry);
+
+        remote.RedeemBusy = true;
+        remote.Status = "Checking that invite code...";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.Equal("Checking…", sut.RedeemButtonText);
+        Assert.False(sut.CanRedeem);
+
+        remote.RedeemBusy = false;
+        remote.IsGuestPaired = true;
+        remote.Status = "Paired. This device uses that computer to find streams.";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.True(sut.CanRedeem);
+        Assert.True(sut.RemoteStatusIsPaired);
+        Assert.False(sut.RemoteStatusIsFault);
+        Assert.False(sut.ShowGuestEntry);
+        Assert.True(sut.UseOtherLocalService);
+        Assert.False(sut.ShowHostCompute);
+    }
+
+    [Fact]
+    public void RemoteSettings_WhenTheRelayFails_MarksTheStatusAsAFault()
+    {
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+        remote.Status = "Relay failed: Invite code is invalid or expired. Correlation id: abc";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.True(sut.RemoteStatusIsFault);
+        Assert.False(sut.RemoteStatusIsPaired);
+    }
+
+    private HomeViewModel NewShell(SettingsRemote remote)
+    {
+        var preferences = new InMemorySoundPreferencesStore();
+        var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
+        var notifications = new MatchEventNotificationPolicy(preferences);
+        var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns);
+        return new HomeViewModel(
+            _filter.Object,
+            menu,
+            _images.Object,
+            _assets.Object,
+            sounds,
+            notifications,
+            _bus,
+            _selection,
+            NullLogger<HomeViewModel>.Instance,
+            new NullDesktopUpdateService(),
+            remote);
+    }
+
+    private sealed class SettingsRemote : IRemoteComputeController
+    {
+        public bool ShareEnabled { get; set; }
+
+        public bool IsGuestPaired { get; set; }
+
+        public bool OffersRemoteCompute { get; set; } = true;
+
+        public bool HasRelayUser { get; set; }
+
+        public string InviteCode { get; set; } = "";
+
+        public string Status { get; set; } = "";
+
+        public bool RedeemBusy { get; set; }
+
+        public event Action? Changed;
+
+        public void Notify() => Changed?.Invoke();
+
+        public Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task RedeemAsync(string code, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task StopUsingRemoteAsync(CancellationToken cancellationToken = default)
+        {
+            IsGuestPaired = false;
+            return Task.CompletedTask;
+        }
+
+        public Task RefreshAccessAsync(CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
     private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
     {
         var game = _fixture.Build<Game>()

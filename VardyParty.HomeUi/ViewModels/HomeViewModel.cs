@@ -425,7 +425,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool ShowGuestEntry => ShowGuestCompute && UseOtherLocalService;
+    public bool ShowGuestEntry =>
+        ShowGuestCompute && UseOtherLocalService && _remote?.IsGuestPaired != true;
 
     public void RefreshRemoteComputeAccess() =>
         _ = ObserveRemoteAsync(() => _remote?.RefreshAccessAsync() ?? Task.CompletedTask);
@@ -446,6 +447,16 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public string RemoteComputeStatus => _remote?.Status ?? "";
+
+    public bool RemoteStatusIsFault =>
+        RemoteComputeStatus.Contains("failed:", StringComparison.OrdinalIgnoreCase);
+
+    public bool RemoteStatusIsPaired =>
+        RemoteComputeStatus.StartsWith("Paired.", StringComparison.Ordinal);
+
+    public bool CanRedeem => _remote?.RedeemBusy != true;
+
+    public string RedeemButtonText => CanRedeem ? "Use their local-service" : "Checking…";
 
     public void RedeemRemoteCompute() => _ = ObserveRemoteAsync(() =>
         _remote?.RedeemAsync(_remoteGuestCode) ?? Task.CompletedTask);
@@ -481,6 +492,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 Raise(nameof(ShowGuestCompute));
                 Raise(nameof(ShowGuestEntry));
                 Raise(nameof(RemoteComputeStatus));
+                Raise(nameof(RemoteStatusIsFault));
+                Raise(nameof(RemoteStatusIsPaired));
+                Raise(nameof(CanRedeem));
+                Raise(nameof(RedeemButtonText));
             });
         }
 

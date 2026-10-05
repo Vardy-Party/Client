@@ -242,6 +242,7 @@ namespace VardyParty.Platforms.Android
         {
             base.OnResume();
             HideSystemUI();
+            VardyParty.AndroidScreenAwake.HoldPlayerWindow(Window);
             if (_matchEventPolicy != null) _matchEventPolicy.IsAppForegrounded = true;
         }
 

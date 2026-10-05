@@ -107,4 +107,19 @@ public class StreamResolveOverlayProgressTests
     {
         Assert.Equal(expected, StreamResolveOverlayProgress.ShouldShowStatusSubtitle(status));
     }
+
+    [Fact]
+    public void DetailLine_KeepsTheMatchupWhenTheStatusOnlyRepeatsTheTitle()
+    {
+        Assert.Null(StreamResolveOverlayProgress.DetailLine("Searching for streams..."));
+        Assert.Null(StreamResolveOverlayProgress.DetailLine("Finding streams..."));
+    }
+
+    [Fact]
+    public void DetailLine_ShowsThePairedWaitSoTheSpinnerIsNotABlankTitle()
+    {
+        const string status = "Using the paired computer. A slow link can take several minutes.";
+
+        Assert.Equal(status, StreamResolveOverlayProgress.DetailLine(status));
+    }
 }

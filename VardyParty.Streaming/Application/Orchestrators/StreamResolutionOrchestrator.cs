@@ -29,6 +29,14 @@ public class StreamResolutionOrchestrator(
     /// </summary>
     private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// Shown for the whole paired search. A mobile link can sit on the second
+    /// page for minutes before chips appear, and the title "Finding streams"
+    /// alone looked like a stall.
+    /// </summary>
+    public const string PairedFindingStatus =
+        "Using the paired computer. A slow link can take several minutes.";
+
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
     private readonly SemaphoreSlim _startGate = new(1, 1);
@@ -74,7 +82,9 @@ public class StreamResolutionOrchestrator(
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
 
         _isResolving = true;
-        _status = "Searching for streams...";
+        _status = localLanPlayService?.UsesRemoteCompute == true
+            ? PairedFindingStatus
+            : "Searching for streams...";
         PublishProgress();
 
         var outcome = new StreamResolutionOutcome();
@@ -258,6 +268,11 @@ public class StreamResolutionOrchestrator(
             {
                 _status = remoteError;
                 outcome.RemoteComputeError = remoteError;
+            }
+            else if (localLanPlayService?.UsesRemoteCompute == true)
+            {
+                _status = "No working streams found";
+                outcome.NoWorkingStreams = true;
             }
             else if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
             {

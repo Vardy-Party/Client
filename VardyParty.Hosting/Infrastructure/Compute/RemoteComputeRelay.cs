@@ -14,8 +14,8 @@ using VardyParty.Streaming;
 namespace VardyParty.Hosting;
 
 /// <summary>
-/// Guest side of the compute relay. Browser CONNECT targets are resolved here,
-/// with the same system-DNS-then-DoH policy as playback.
+/// Guest side of the compute relay. Browser CONNECT targets are resolved
+/// here with DoH first (carrier DNS on 4G often answers and would skip DoH).
 /// </summary>
 public sealed class RemoteComputePlayClient(
     IRemoteComputePreferences preferences,
@@ -23,18 +23,23 @@ public sealed class RemoteComputePlayClient(
     IOptions<APISettings> apiSettings,
     IHostNameResolver resolver,
     IDnsPreferencesStore dnsPreferences,
+    IDnsOverHttpsClient doh,
     ILogger<RemoteComputePlayClient> logger,
-    IDnsOverHttpsEndpoint? dnsEndpoint = null) : IRemoteComputePlay
+    IDnsOverHttpsEndpoint? dnsEndpoint = null,
+    LocalServiceConnection? connection = null) : IRemoteComputePlay
 {
     internal const string DirectConnectionDroppedMessage = "direct connection dropped";
 
-    private static readonly TimeSpan MpTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan MpTimeout = RemoteComputeHttp.FindingStreamsTimeout;
 
     /// <summary>
     /// How long to wait for the data channel before telling the host ICE failed.
-    /// The host gives up on a direct channel after 3s, so this stays inside that budget.
+    /// On 4G the channel needs the answer to travel back through the relay,
+    /// STUN on both sides, ICE connectivity checks, then the DTLS handshake and
+    /// SCTP open; 2 s never succeeded. The host waits 12 s for "ready", so this
+    /// stays inside that budget and the phone's "failed" signal arrives first.
     /// </summary>
-    private static readonly TimeSpan DirectOpenBudget = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DirectOpenBudget = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public bool IsPaired => !string.IsNullOrWhiteSpace(preferences.LoadPairedHostSub());
@@ -67,7 +72,13 @@ public sealed class RemoteComputePlayClient(
             using var socket = new ClientWebSocket();
             socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
             await socket.ConnectAsync(RelayUri(apiBase, correlationId), cancellationToken).ConfigureAwait(false);
-            var session = new GuestSession(socket, resolver, logger, correlationId);
+            var session = new GuestSession(
+                socket,
+                resolver,
+                doh,
+                dnsPreferences.LoadDnsOverHttpsFallbackEnabled(),
+                logger,
+                correlationId);
             var receive = session.ReceiveAsync(cancellationToken);
             try
             {
@@ -127,7 +138,9 @@ public sealed class RemoteComputePlayClient(
                         cid = correlationId,
                         level = "error",
                         source = "guest",
-                        message = useMp ? "Guest timed out after 90s" : "Guest timed out after 30s"
+                        message = useMp
+                            ? $"Guest timed out after {(int)MpTimeout.TotalSeconds}s"
+                            : "Guest timed out after 30s"
                     }, CancellationToken.None).ConfigureAwait(false);
                     return Fail(correlationId, "Local service", "Timed out waiting for the remote PC");
                 }
@@ -165,6 +178,10 @@ public sealed class RemoteComputePlayClient(
             ["X-Correlation-Id"] = correlationId,
             ["X-Vardy-Doh"] = enabled ? "1" : "0"
         };
+        if (!string.IsNullOrWhiteSpace(connection?.Id))
+        {
+            headers[LocalServiceConnection.HeaderName] = connection.Id;
+        }
         if (enabled && dnsEndpoint?.Address is not null)
         {
             headers["X-Vardy-Doh-Resolver"] = dnsEndpoint.Address.ToString();
@@ -204,18 +221,7 @@ public sealed class RemoteComputePlayClient(
             return Fail(correlationId, "This phone", egressProblem);
         }
 
-        var error = ErrorText(body);
-        if (status == 403)
-        {
-            return Fail(correlationId, "Local service", error ?? "The remote PC refused this account");
-        }
-
-        if (status == 409)
-        {
-            return Fail(correlationId, "Local service", error ?? "The remote PC is already resolving a stream");
-        }
-
-        return Fail(correlationId, "Local service", error ?? $"The remote PC returned HTTP {status}");
+        return Fail(correlationId, "Local service", RemoteComputeHttp.LocalServiceMessage(status, ErrorText(body)));
     }
 
     private M3U8Response? Fail(string correlationId, string component, string message)
@@ -265,7 +271,13 @@ public sealed class RemoteComputePlayClient(
 
     private sealed class DirectConnectionDroppedException : Exception;
 
-    private sealed class GuestSession(ClientWebSocket socket, IHostNameResolver resolver, ILogger logger, string correlationId)
+    private sealed class GuestSession(
+        ClientWebSocket socket,
+        IHostNameResolver resolver,
+        IDnsOverHttpsClient doh,
+        bool dohEnabled,
+        ILogger logger,
+        string correlationId)
     {
         private readonly SemaphoreSlim _send = new(1, 1);
         private readonly ConcurrentDictionary<string, TaskCompletionSource<(int Status, string Body)>> _pending = new(StringComparer.Ordinal);
@@ -281,6 +293,7 @@ public sealed class RemoteComputePlayClient(
         private int _resultSeen;
         private int _failedSent;
         private int _dropArmed;
+        private int _didNotOpenLogged;
         private CancellationTokenSource? _dropGrace;
 
         public string? EgressProblem { get; private set; }
@@ -451,9 +464,14 @@ public sealed class RemoteComputePlayClient(
 
             try
             {
-                var addresses = await resolver.ResolveAsync(host, cancellationToken).ConfigureAwait(false);
+                var lookup = await PhonePathDns.ResolveAsync(
+                    host,
+                    dohEnabled,
+                    doh.ResolveAsync,
+                    resolver.ResolveAsync,
+                    cancellationToken).ConfigureAwait(false);
                 TcpClient? connected = null;
-                foreach (var address in addresses)
+                foreach (var address in lookup.Addresses)
                 {
                     var tcp = new TcpClient();
                     try
@@ -465,18 +483,30 @@ public sealed class RemoteComputePlayClient(
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         tcp.Dispose();
-                        logger.LogDebug(ex, "[RemoteCompute] Connect {Address}:{Port} failed", address, port);
+                        logger.LogDebug(ex, "[RemoteCompute] Connect failed for {Host}:{Port}", host, port);
                     }
                 }
 
                 if (connected is null)
                 {
-                    var dnsMiss = addresses.Length == 0;
+                    var dnsMiss = lookup.Addresses.Length == 0;
+                    var error = dnsMiss ? "dns" : "connect failed";
+                    logger.LogInformation(
+                        "[RemoteCompute] {CorrelationId} open-failed {Host} reason={Reason} dns={Dns}",
+                        correlationId,
+                        host,
+                        error,
+                        lookup.Via);
                     NoteEgress(dnsMiss ? $"Could not resolve {host}" : $"Could not connect to {host}:{port}");
-                    await SendEgressAsync(new { t = "open-failed", id = streamId, cid = correlationId, host, port, error = dnsMiss ? "dns" : "connect failed" }, cancellationToken).ConfigureAwait(false);
+                    await SendEgressAsync(new { t = "open-failed", id = streamId, cid = correlationId, host, port, error }, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
+                logger.LogInformation(
+                    "[RemoteCompute] {CorrelationId} opened {Host} dns={Dns}",
+                    correlationId,
+                    host,
+                    lookup.Via);
                 _clients[streamId] = connected;
                 await SendEgressAsync(new { t = "opened", id = streamId, cid = correlationId, host, port }, cancellationToken).ConfigureAwait(false);
                 _ = PumpAsync(streamId, connected, cancellationToken);
@@ -627,6 +657,7 @@ public sealed class RemoteComputePlayClient(
                 _earlyIce.Clear();
             }
 
+            peer.Diagnostic += line => logger.LogInformation("[RemoteCompute] {CorrelationId} direct: {Line}", correlationId, line);
             peer.IceCandidate += candidate =>
             {
                 _ = SendAsync(new
@@ -657,6 +688,7 @@ public sealed class RemoteComputePlayClient(
 
         private void AnnounceReady()
         {
+            logger.LogInformation("[RemoteCompute] {CorrelationId} direct channel open: {Summary}", correlationId, CurrentPeerSummary());
             if (_transportMode == "relay" || Volatile.Read(ref _failedSent) == 1)
             {
                 return;
@@ -678,6 +710,11 @@ public sealed class RemoteComputePlayClient(
             }
             catch (OperationCanceledException)
             {
+                if (!_stop.IsCancellationRequested)
+                {
+                    LogDirectDidNotOpen();
+                }
+
                 OnIceLostBeforeReady();
             }
         }
@@ -689,7 +726,29 @@ public sealed class RemoteComputePlayClient(
                 return;
             }
 
+            LogDirectDidNotOpen();
             ApplyClose(DirectChannelClose.Decide(false, false, Volatile.Read(ref _resultSeen) == 1, correlationId));
+        }
+
+        private void LogDirectDidNotOpen()
+        {
+            if (Interlocked.Exchange(ref _didNotOpenLogged, 1) != 0)
+            {
+                return;
+            }
+
+            logger.LogInformation("[RemoteCompute] {CorrelationId} direct channel did not open: {Summary}", correlationId, CurrentPeerSummary());
+        }
+
+        private string CurrentPeerSummary()
+        {
+            WebRtcComputePeer? peer;
+            lock (_directGate)
+            {
+                peer = _peer;
+            }
+
+            return peer?.Summary ?? "no peer";
         }
 
         private void OnPeerClosed()

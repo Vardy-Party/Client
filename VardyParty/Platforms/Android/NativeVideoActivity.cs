@@ -289,6 +289,10 @@ namespace VardyParty.Platforms.Android
         {
             base.OnCreate(savedInstanceState);
 
+            // This Activity's window is not the MAUI homepage. Keep-screen-on
+            // must be set here or the phone dims mid-watch.
+            VardyParty.AndroidScreenAwake.HoldPlayerWindow(Window);
+
             // Hide system UI (status bar and navigation bar) for full-screen video experience
             HideSystemUI();
 
@@ -736,6 +740,8 @@ namespace VardyParty.Platforms.Android
             root.AddView(_menuButton, menuButtonParams);
 
             SetContentView(root);
+            root.KeepScreenOn = true;
+            VardyParty.AndroidScreenAwake.HoldPlayerWindow(Window);
 
             SubscribeToGamesSnapshot();
             SubscribeToStreamSwitching();

@@ -18,6 +18,9 @@ public interface IRemoteComputeController
 
     string Status { get; }
 
+    /// <summary>True while an invite code is being checked with the relay.</summary>
+    bool RedeemBusy { get; }
+
     event Action? Changed;
 
     Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default);
@@ -44,6 +47,8 @@ public sealed class NullRemoteComputeController : IRemoteComputeController
     public string InviteCode => "";
 
     public string Status => "";
+
+    public bool RedeemBusy => false;
 
     public event Action? Changed
     {

@@ -149,6 +149,8 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
                 outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
             yield return outcome.Enriched;
+
+            cancellationToken.ThrowIfCancellationRequested();
             FillWindow();
         }
 
@@ -223,7 +225,9 @@ public class StreamResolver(
             {
                 V2StreamExpander.ApplySelectedChip(stream, m3u8Response?.SelectedStream);
                 enriched.Status = StreamResolutionStatus.Failed;
-                enriched.ErrorMessage = "No m3u8 URL returned from local LAN play service";
+                enriched.ErrorMessage = localLanPlayService.UsesRemoteCompute
+                    ? localLanPlayService.LastRemoteComputeError ?? "No playlist from the paired computer"
+                    : "No m3u8 URL returned from local LAN play service";
                 logger.LogWarning("[StreamResolver] Failed to get m3u8 URL for {Channel}: {Error}",
                     stream.Channel, enriched.ErrorMessage);
                 return new ResolveOutcome(enriched, SiblingsFrom(stream, m3u8Response));

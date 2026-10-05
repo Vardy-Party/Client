@@ -21,6 +21,7 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<Auth0ApiTokenHandler>();
         services.AddTransient<M3U8HttpHandler>();
 
+        services.TryAddSingleton<LocalServiceConnection>();
         services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
         services.TryAddSingleton<IRemoteComputePreferences, InMemoryRemoteComputePreferences>();
         services.TryAddSingleton<IRemoteComputeKeepAlive, NoopRemoteComputeKeepAlive>();

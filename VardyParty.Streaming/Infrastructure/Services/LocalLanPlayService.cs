@@ -41,7 +41,8 @@ public class LocalLanPlayService(
     ILogger<LocalLanPlayService> logger,
     IDnsPreferencesStore? dnsPreferences = null,
     IDnsOverHttpsEndpoint? dnsEndpoint = null,
-    IRemoteComputePlay? remoteCompute = null) : ILocalLanPlayService
+    IRemoteComputePlay? remoteCompute = null,
+    LocalServiceConnection? connection = null) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -483,6 +484,10 @@ public class LocalLanPlayService(
                 streamUrl, result.SelectedStream ?? "(none)", chips);
             return result;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
@@ -563,6 +568,10 @@ public class LocalLanPlayService(
             logger.LogInformation("[LocalLanPlay] Resolved m3u8 via local service for {StreamUrl}", streamUrl);
             return result;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogInformation(ex, "[LocalLanPlay] Failed to resolve m3u8 via local service endpoint {BaseUrl}. " +
@@ -577,6 +586,9 @@ public class LocalLanPlayService(
 
     private void ApplyDohHeaders(HttpRequestMessage request)
     {
+        if (!string.IsNullOrWhiteSpace(connection?.Id))
+            request.Headers.TryAddWithoutValidation(LocalServiceConnection.HeaderName, connection.Id);
+
         if (dnsPreferences is null)
             return;
 
