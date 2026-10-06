@@ -1,3 +1,5 @@
+using System;
+using VardyParty.Hosting;
 using VardyParty.Streaming;
 using Xunit;
 
@@ -59,6 +61,18 @@ public class RemoteComputeDirectDropTests
         Assert.Equal(
             "This phone failed: direct connection dropped. Correlation id: abc12345",
             decision.Fault?.Display);
+    }
+
+    [Fact]
+    public void RelayPingInterval_StaysInsideAMinute()
+    {
+        // Arrange
+        // Act
+        var interval = RemoteComputePlayClient.RelayPingInterval;
+
+        // Assert
+        Assert.True(interval > TimeSpan.Zero);
+        Assert.True(interval < TimeSpan.FromMinutes(1));
     }
 
     [Fact]

@@ -484,6 +484,7 @@ public partial class LinuxHomePage : ContentPage
         _ = Task.Run(() => _soundPlayer.InitializeAsync());
 
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
 
         if (UseSampleData)
         {
@@ -903,6 +904,7 @@ public partial class LinuxHomePage : ContentPage
 
         // The LAN warning stream keeps running across sign-in sessions.
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
     }
 
     private void ShowDeviceCode(AuthDeviceCode deviceCode)
@@ -1021,6 +1023,9 @@ public partial class LinuxHomePage : ContentPage
         _lanWarning = warning;
         _viewModel.SetLanWarning(warning);
     }
+
+    private void ApplyLocalServiceFound(bool found) =>
+        _viewModel.SetLocalServiceFound(found);
 
     private async Task StartStreamResolutionAsync(Game game)
     {

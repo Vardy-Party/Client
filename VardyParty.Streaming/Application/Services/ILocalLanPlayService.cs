@@ -24,6 +24,13 @@ public interface ILocalLanPlayService
     Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Whether the discovered local service can share this machine as a compute host
+    /// (<c>compute.host</c> in cached <c>/health</c> capabilities, or a non-404
+    /// <c>/compute/host/status</c> probe for older builds that already have the route).
+    /// </summary>
+    Task<bool> SupportsComputeHostAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Package version reported by the discovered LocalService (<c>/health</c> <c>version</c>),
     /// or null if unknown / unavailable.
     /// </summary>

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -58,6 +59,9 @@ public class LocalLanPlayService(
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
+    private readonly object _mpHarvestGate = new();
+    private MpHarvestSession? _mpHarvest;
+    private string? _mpHarvestPage;
 
     public HttpStatusCode? LastHealthStatus { get; private set; }
 
@@ -67,6 +71,19 @@ public class LocalLanPlayService(
     {
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
         return SupportsPlayStreamQuery(_cachedCapabilities);
+    }
+
+    public async Task<bool> SupportsComputeHostAsync(CancellationToken cancellationToken = default)
+    {
+        await RefreshCapabilitiesIfNeededAsync(cancellationToken);
+        if (HasComputeHostCapability(_cachedCapabilities))
+            return true;
+
+        var baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return false;
+
+        return await ProbeComputeHostStatusAsync(baseUrl, cancellationToken);
     }
 
     public async Task<string?> GetDiscoveredServiceVersionAsync(CancellationToken cancellationToken = default)
@@ -83,6 +100,40 @@ public class LocalLanPlayService(
 
     private static bool SupportsPlayStreamQuery(IEnumerable<string> capabilities) =>
         capabilities.Any(c => string.Equals(c, "play.stream", StringComparison.OrdinalIgnoreCase));
+
+    private static bool HasComputeHostCapability(IEnumerable<string> capabilities) =>
+        capabilities.Any(c => string.Equals(c, "compute.host", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Older hosts have <c>/compute/host/*</c> but do not advertise <c>compute.host</c>.
+    /// Any non-404 status means the route exists.
+    /// </summary>
+    private async Task<bool> ProbeComputeHostStatusAsync(string baseUrl, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+            using var request = new HttpRequestMessage(HttpMethod.Get, CombineLocalPath(baseUrl, "/compute/host/status"));
+            var response = await httpClient.SendAsync(request, cts.Token);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                logger.LogDebug("[LocalLanPlay] Compute host status probe returned 404; sharing is not advertised");
+                return false;
+            }
+
+            logger.LogDebug("[LocalLanPlay] Compute host status probe returned {StatusCode}", (int)response.StatusCode);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[LocalLanPlay] Compute host status probe failed");
+            return false;
+        }
+    }
+
+    private static string CombineLocalPath(string baseUrl, string path) =>
+        $"{baseUrl.TrimEnd('/')}{path}";
 
     private bool _usedRemote;
 
@@ -389,110 +440,153 @@ public class LocalLanPlayService(
         }
     }
 
-    private static readonly TimeSpan MpCallTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan MpHarvestTimeout = TimeSpan.FromSeconds(330);
 
-    private static bool HasDiscoveredChips(M3U8Response? result) =>
-        result?.Streams is { Count: > 0 };
-
-    private async Task<M3U8Response?> CallMpEndpointAsync(
+    private Task<M3U8Response?> CallMpEndpointAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
+        CancellationToken cancellationToken)
+    {
+        lock (_mpHarvestGate)
+        {
+            if (_mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true)
+            {
+                return _mpHarvest.WaitForAsync(playerStreamName, cancellationToken);
+            }
+        }
+
+        return StartMpHarvestAsync(baseUrl, streamUrl, playerStreamName, cancellationToken);
+    }
+
+    private async Task<M3U8Response?> StartMpHarvestAsync(
+        string baseUrl,
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken)
+    {
+        var harvest = new MpHarvestSession();
+        lock (_mpHarvestGate)
+        {
+            _mpHarvest = harvest;
+            _mpHarvestPage = streamUrl;
+        }
+
+        _ = ReadMpHarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, cancellationToken);
+        return await harvest.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ReadMpHarvestAsync(
+        string baseUrl,
+        string streamUrl,
+        string? playerStreamName,
+        MpHarvestSession harvest,
         CancellationToken cancellationToken)
     {
         var url = $"{baseUrl.TrimEnd('/')}/mp";
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(MpCallTimeout);
+            cts.CancelAfter(MpHarvestTimeout);
 
             var payload = JsonSerializer.Serialize(new
             {
                 pageUrl = streamUrl,
-                stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
+                stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim(),
+                streamResults = true
             });
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
             ApplyDohHeaders(request);
+            request.Headers.TryAddWithoutValidation(MpNdjson.RequestHeaderName, "1");
+            request.Headers.Accept.ParseAdd(MpNdjson.ContentType);
             logger.LogInformation(
-                "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix}",
+                "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix} (stream)",
                 url,
                 string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName.Trim()})");
-            var response = await httpClient.SendAsync(request, cts.Token);
-            var json = response.Content != null
-                ? await response.Content.ReadAsStringAsync(cts.Token)
-                : string.Empty;
-
-            M3U8Response? result = null;
-            if (!string.IsNullOrWhiteSpace(json))
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                try
-                {
-                    result = JsonSerializer.Deserialize<M3U8Response>(json,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                }
-                catch (JsonException ex)
-                {
-                    logger.LogDebug(ex, "[LocalLanPlay] Failed to deserialize POST /mp response body as JSON");
-                }
+                logger.LogWarning(
+                    "[LocalLanPlay] POST /mp rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
+                    streamUrl);
+                harvest.Complete(failed: true);
+                return;
             }
 
-            var chips = result?.Streams is { Count: > 0 }
-                ? string.Join(", ", result.Streams)
-                : "(none)";
-
-            if (!response.IsSuccessStatusCode)
+            if (response.StatusCode == HttpStatusCode.Forbidden)
             {
-                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                logger.LogWarning(
+                    "[LocalLanPlay] POST /mp rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
+                    streamUrl);
+                harvest.Complete(failed: true);
+                return;
+            }
+
+            if (response.Content is null)
+            {
+                harvest.Complete(failed: true);
+                return;
+            }
+
+            if (!MpNdjson.IsNdjson(response.Content.Headers.ContentType?.MediaType))
+            {
+                var json = await response.Content.ReadAsStringAsync(cts.Token);
+                M3U8Response? result = null;
+                if (!string.IsNullOrWhiteSpace(json))
                 {
-                    logger.LogWarning(
-                        "[LocalLanPlay] POST /mp rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
-                        streamUrl);
+                    try
+                    {
+                        result = JsonSerializer.Deserialize<M3U8Response>(json,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    }
+                    catch (JsonException ex)
+                    {
+                        logger.LogDebug(ex, "[LocalLanPlay] Failed to deserialize POST /mp response body as JSON");
+                    }
                 }
-                else if (response.StatusCode == HttpStatusCode.Forbidden)
+
+                if (result is not null)
                 {
-                    logger.LogWarning(
-                        "[LocalLanPlay] POST /mp rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
-                        streamUrl);
+                    harvest.ApplyLegacy(result);
                 }
                 else
                 {
-                    logger.LogInformation(
-                        "[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}; chips={Chips}",
-                        response.StatusCode, streamUrl, chips);
+                    harvest.Complete(failed: true);
                 }
 
-                return HasDiscoveredChips(result) ? result : null;
+                return;
             }
 
-            if (result == null)
+            await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+            await foreach (var line in MpNdjson.ReadLinesAsync(stream, cts.Token))
             {
-                logger.LogWarning("[LocalLanPlay] POST /mp returned success but no body");
-                return null;
+                var ev = MpNdjson.ParseLine(line);
+                if (ev is not null)
+                {
+                    harvest.Apply(ev);
+                }
             }
 
-            if (string.IsNullOrWhiteSpace(result.Url))
+            if (!harvest.IsCompleted)
             {
-                logger.LogWarning(
-                    "[LocalLanPlay] POST /mp returned success but no m3u8 URL; chips={Chips} selected={Selected}",
-                    chips, result.SelectedStream ?? "(none)");
-                return HasDiscoveredChips(result) ? result : null;
+                harvest.Complete(failed: false);
             }
 
             logger.LogInformation(
-                "[LocalLanPlay] Resolved MP m3u8 via local service for {StreamUrl} selected={Selected} chips={Chips}",
-                streamUrl, result.SelectedStream ?? "(none)", chips);
-            return result;
+                "[LocalLanPlay] Finished MP harvest for {StreamUrl} chips={Chips}",
+                streamUrl,
+                harvest.Streams.Count == 0 ? "(none)" : string.Join(", ", harvest.Streams));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            harvest.Complete(failed: true);
         }
         catch (Exception ex)
         {
             logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
                 baseUrl, streamUrl);
-            return null;
+            harvest.Complete(failed: true);
         }
     }
 

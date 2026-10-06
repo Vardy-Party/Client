@@ -29,8 +29,20 @@ public sealed class RemoteComputePlayClient(
     LocalServiceConnection? connection = null) : IRemoteComputePlay
 {
     internal const string DirectConnectionDroppedMessage = "direct connection dropped";
+    internal const string RelayClosedBeforePlaylistMessage =
+        "The compute relay closed before a playlist arrived";
+
+    /// <summary>
+    /// Guest ping interval. The host already pings; the phone did not, so a
+    /// long chip wait could idle-close the guest socket and fail the harvest.
+    /// Stay well under a minute.
+    /// </summary>
+    internal static readonly TimeSpan RelayPingInterval = TimeSpan.FromSeconds(20);
 
     private static readonly TimeSpan MpTimeout = RemoteComputeHttp.FindingStreamsTimeout;
+    private readonly object _harvestGate = new();
+    private MpHarvestSession? _mpHarvest;
+    private string? _mpHarvestPage;
 
     /// <summary>
     /// How long to wait for the data channel before telling the host ICE failed.
@@ -66,10 +78,27 @@ public sealed class RemoteComputePlayClient(
         {
             return Fail(correlationId, "This device", "Not signed in");
         }
+        if (useMp)
+        {
+            MpHarvestSession? existing = null;
+            lock (_harvestGate)
+            {
+                if (_mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true)
+                {
+                    existing = _mpHarvest;
+                }
+            }
+
+            if (existing is not null)
+            {
+                return await existing.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         logger.LogInformation("[RemoteCompute] {CorrelationId} resolving {Url}", correlationId, streamUrl);
         try
         {
-            using var socket = new ClientWebSocket();
+            var socket = new ClientWebSocket();
             socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
             await socket.ConnectAsync(RelayUri(apiBase, correlationId), cancellationToken).ConfigureAwait(false);
             var session = new GuestSession(
@@ -94,7 +123,8 @@ public sealed class RemoteComputePlayClient(
                     body = JsonSerializer.Serialize(new
                     {
                         pageUrl = streamUrl,
-                        stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim()
+                        stream = string.IsNullOrWhiteSpace(playerStreamName) ? null : playerStreamName.Trim(),
+                        streamResults = true
                     });
                 }
                 else
@@ -107,15 +137,69 @@ public sealed class RemoteComputePlayClient(
                     }
                 }
 
+                if (useMp)
+                {
+                    var harvest = session.ArmHarvest(id);
+                    lock (_harvestGate)
+                    {
+                        _mpHarvest = harvest;
+                        _mpHarvestPage = streamUrl;
+                    }
+
+                    await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(MpTimeout);
+                    try
+                    {
+                        var first = await harvest.WaitForAsync(playerStreamName, timeout.Token).ConfigureAwait(false);
+                        if (first is null || string.IsNullOrWhiteSpace(first.Url))
+                        {
+                            if (!string.IsNullOrWhiteSpace(session.EgressProblem))
+                            {
+                                return Fail(correlationId, "This phone", session.EgressProblem);
+                            }
+
+                            return Fail(correlationId, "Local service", harvest.Error ?? "The remote PC returned no playlist");
+                        }
+
+                        LastFault = null;
+                        return first;
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        await session.SendAsync(new
+                        {
+                            t = "log",
+                            cid = correlationId,
+                            level = "error",
+                            source = "guest",
+                            message = $"Guest timed out after {(int)MpTimeout.TotalSeconds}s"
+                        }, CancellationToken.None).ConfigureAwait(false);
+                        harvest.Complete(failed: true);
+                        return Fail(correlationId, "Local service", "Timed out waiting for the remote PC");
+                    }
+                    catch (DirectConnectionDroppedException)
+                    {
+                        harvest.Complete(failed: true);
+                        return Fail(correlationId, "This phone", DirectConnectionDroppedMessage);
+                    }
+                    finally
+                    {
+                        _ = FinishMpHarvestAsync(session, receive, harvest, socket);
+                    }
+                }
+
                 var pending = session.Arm(id);
                 await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
                     .ConfigureAwait(false);
 
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(useMp ? MpTimeout : TimeSpan.FromSeconds(30));
+                using var playTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                playTimeout.CancelAfter(TimeSpan.FromSeconds(30));
                 try
                 {
-                    var result = await pending.WaitAsync(timeout.Token).ConfigureAwait(false);
+                    var result = await pending.WaitAsync(playTimeout.Token).ConfigureAwait(false);
                     if (result.Status is < 200 or >= 300)
                     {
                         await session.SendAsync(new
@@ -138,9 +222,7 @@ public sealed class RemoteComputePlayClient(
                         cid = correlationId,
                         level = "error",
                         source = "guest",
-                        message = useMp
-                            ? $"Guest timed out after {(int)MpTimeout.TotalSeconds}s"
-                            : "Guest timed out after 30s"
+                        message = "Guest timed out after 30s"
                     }, CancellationToken.None).ConfigureAwait(false);
                     return Fail(correlationId, "Local service", "Timed out waiting for the remote PC");
                 }
@@ -151,14 +233,19 @@ public sealed class RemoteComputePlayClient(
             }
             finally
             {
-                session.Stop();
-                try
+                if (!useMp)
                 {
-                    await receive.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // session ended
+                    session.Stop();
+                    try
+                    {
+                        await receive.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // session ended
+                    }
+
+                    socket.Dispose();
                 }
             }
         }
@@ -166,6 +253,32 @@ public sealed class RemoteComputePlayClient(
         {
             logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
             return Fail(correlationId, "Relay", "Could not reach the compute relay");
+        }
+    }
+
+    private async Task FinishMpHarvestAsync(GuestSession session, Task receive, MpHarvestSession harvest, ClientWebSocket socket)
+    {
+        try
+        {
+            await harvest.WhenCompleted.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[RemoteCompute] Harvest wait ended");
+        }
+        finally
+        {
+            session.Stop();
+            try
+            {
+                await receive.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // session ended
+            }
+
+            socket.Dispose();
         }
     }
 
@@ -178,6 +291,7 @@ public sealed class RemoteComputePlayClient(
             ["X-Correlation-Id"] = correlationId,
             ["X-Vardy-Doh"] = enabled ? "1" : "0"
         };
+        headers[MpNdjson.RequestHeaderName] = "1";
         if (!string.IsNullOrWhiteSpace(connection?.Id))
         {
             headers[LocalServiceConnection.HeaderName] = connection.Id;
@@ -281,6 +395,7 @@ public sealed class RemoteComputePlayClient(
     {
         private readonly SemaphoreSlim _send = new(1, 1);
         private readonly ConcurrentDictionary<string, TaskCompletionSource<(int Status, string Body)>> _pending = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, MpHarvestSession> _harvests = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<int, TcpClient> _clients = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly object _directGate = new();
@@ -314,9 +429,17 @@ public sealed class RemoteComputePlayClient(
             return pending.Task;
         }
 
+        public MpHarvestSession ArmHarvest(string id)
+        {
+            var harvest = new MpHarvestSession();
+            _harvests[id] = harvest;
+            return harvest;
+        }
+
         public async Task ReceiveAsync(CancellationToken cancellationToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+            var ping = PingLoopAsync(linked.Token);
             var buffer = new byte[RelayWire.MaxPayload + 64];
             try
             {
@@ -365,9 +488,26 @@ public sealed class RemoteComputePlayClient(
             }
             finally
             {
+                linked.Cancel();
+                try
+                {
+                    await ping.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // ping stopped with the socket
+                }
+
                 foreach (var pending in _pending.Values)
                 {
                     pending.TrySetCanceled();
+                }
+
+                foreach (var harvest in _harvests.Values)
+                {
+                    harvest.Complete(
+                        failed: !harvest.HasPlaylist,
+                        error: harvest.HasPlaylist ? null : RelayClosedBeforePlaylistMessage);
                 }
 
                 foreach (var client in _clients.Values)
@@ -394,6 +534,35 @@ public sealed class RemoteComputePlayClient(
         public Task SendAsync(object payload, CancellationToken cancellationToken) =>
             SendRawAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)), WebSocketMessageType.Text, cancellationToken);
 
+        private async Task PingLoopAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(RelayPingInterval, cancellationToken).ConfigureAwait(false);
+                    if (socket.State != WebSocketState.Open)
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        await SendAsync(new { t = "ping" }, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        logger.LogDebug(ex, "[RemoteCompute] Guest ping failed");
+                        return;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // session ended
+            }
+        }
+
         private void HandleText(string json, CancellationToken cancellationToken, bool fromSocket = true)
         {
             JsonElement frame;
@@ -408,6 +577,29 @@ public sealed class RemoteComputePlayClient(
             }
 
             var kind = frame.TryGetProperty("t", out var kindEl) ? kindEl.GetString() : null;
+            if (kind is "ping" or "pong")
+            {
+                return;
+            }
+
+            if (kind == "rpc-part")
+            {
+                Interlocked.Exchange(ref _resultSeen, 1);
+                _dropGrace?.Cancel();
+                var partId = frame.TryGetProperty("id", out var partIdEl) ? partIdEl.ToString().Trim('"') : "";
+                var partBody = frame.TryGetProperty("body", out var partBodyEl) ? partBodyEl.GetString() ?? "" : "";
+                if (_harvests.TryGetValue(partId, out var partHarvest))
+                {
+                    var ev = MpNdjson.ParseLine(partBody);
+                    if (ev is not null)
+                    {
+                        partHarvest.Apply(ev);
+                    }
+                }
+
+                return;
+            }
+
             if (kind == "rpc-result")
             {
                 Interlocked.Exchange(ref _resultSeen, 1);
@@ -418,6 +610,30 @@ public sealed class RemoteComputePlayClient(
                 if (_pending.TryGetValue(id, out var pending))
                 {
                     pending.TrySetResult((status, body));
+                }
+
+                if (_harvests.TryGetValue(id, out var harvest))
+                {
+                    if (!string.IsNullOrWhiteSpace(body))
+                    {
+                        try
+                        {
+                            var legacy = JsonSerializer.Deserialize<M3U8Response>(body, JsonOptions);
+                            if (legacy is not null)
+                            {
+                                harvest.ApplyLegacy(legacy);
+                            }
+                        }
+                        catch (JsonException)
+                        {
+                            // streamed parts already applied
+                        }
+                    }
+
+                    if (!harvest.IsCompleted)
+                    {
+                        harvest.Complete(status is < 200 or >= 300);
+                    }
                 }
 
                 return;
@@ -808,6 +1024,11 @@ public sealed class RemoteComputePlayClient(
             foreach (var pending in _pending.Values)
             {
                 pending.TrySetException(error);
+            }
+
+            foreach (var harvest in _harvests.Values)
+            {
+                harvest.Complete(failed: true);
             }
         }
 

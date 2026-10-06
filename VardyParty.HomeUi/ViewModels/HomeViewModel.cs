@@ -362,6 +362,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
 
     private string _remoteGuestCode = "";
     private bool _useOtherLocalService;
+    private bool _localServiceFound;
 
     public bool ShareComputeEnabled
     {
@@ -373,8 +374,45 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
+            if (value && (!_localServiceFound || UseOtherLocalService))
+            {
+                return;
+            }
+
             _ = ObserveRemoteAsync(() => _remote.SetShareEnabledAsync(value));
         }
+    }
+
+    /// <summary>
+    /// A host-share-capable local-service was found on this LAN. Share stays
+    /// off until then; an already-on switch stays usable so sharing can be
+    /// turned off.
+    /// </summary>
+    public bool CanShareLocalService =>
+        ShowHostCompute && (_localServiceFound || ShareComputeEnabled);
+
+    public bool ShowShareNeedLocalService =>
+        ShowHostCompute && !_localServiceFound && !ShareComputeEnabled;
+
+    /// <summary>Host-share-capable LAN result. Safe to call from any thread.</summary>
+    public void SetLocalServiceFound(bool found)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                if (_localServiceFound == found)
+                {
+                    return;
+                }
+
+                _localServiceFound = found;
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
+            });
+        }
+
+        NotifyWorkQueued();
     }
 
     public string RemoteInviteCode => _remote?.InviteCode ?? "";
@@ -412,6 +450,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                     Raise(nameof(UseOtherLocalService));
                     Raise(nameof(ShowHostCompute));
                     Raise(nameof(ShowGuestEntry));
+                    Raise(nameof(CanShareLocalService));
+                    Raise(nameof(ShowShareNeedLocalService));
                 }
 
                 _ = ObserveRemoteAsync(() => _remote?.StopUsingRemoteAsync() ?? Task.CompletedTask);
@@ -422,6 +462,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             Raise(nameof(UseOtherLocalService));
             Raise(nameof(ShowHostCompute));
             Raise(nameof(ShowGuestEntry));
+            Raise(nameof(CanShareLocalService));
+            Raise(nameof(ShowShareNeedLocalService));
         }
     }
 
@@ -491,6 +533,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 Raise(nameof(ShowHostCompute));
                 Raise(nameof(ShowGuestCompute));
                 Raise(nameof(ShowGuestEntry));
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
                 Raise(nameof(RemoteComputeStatus));
                 Raise(nameof(RemoteStatusIsFault));
                 Raise(nameof(RemoteStatusIsPaired));

@@ -288,12 +288,18 @@
                                        VerticalOptions="Center" />
                                 <Switch Grid.Column="1"
                                         IsToggled="{Binding ShareComputeEnabled, Mode=TwoWay}"
+                                        IsEnabled="{Binding CanShareLocalService}"
                                         Focused="OnMenuItemFocused"
                                         OnColor="#34D399"
                                         VerticalOptions="Center" />
                             </Grid>
+                            <Label Text="A local-service that can share must be found on this network before you can share it."
+                                   TextColor="#9CA3AF"
+                                   FontSize="13"
+                                   IsVisible="{Binding ShowShareNeedLocalService}" />
                             <Label Text="{Binding RemoteInviteCode, StringFormat='Invite code: {0}'}"
                                    TextColor="#FDE68A"
+                                   FontFamily="Consolas"
                                    FontSize="15"
                                    IsVisible="{Binding HasRemoteInvite}" />
                             <Label Text="One device can use this code. It leaves this screen once that device connects, or when it expires."
@@ -318,6 +324,7 @@
                         <Entry Placeholder="Their invite code"
                                Text="{Binding RemoteGuestCode}"
                                TextColor="White"
+                               FontFamily="Consolas"
                                PlaceholderColor="#9CA3AF"
                                BackgroundColor="#1F2937"
                                IsEnabled="{Binding CanRedeem}"

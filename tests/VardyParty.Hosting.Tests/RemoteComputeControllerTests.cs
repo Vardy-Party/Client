@@ -36,7 +36,17 @@ public class RemoteComputeControllerTests
     public async Task Share_WhenNoLocalService_LeavesTheInviteCodeEmpty()
     {
         // Arrange
-        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK, """{"code":"ABCD2345","expiresAt":1}"""));
+        var pairCreates = 0;
+        var handler = new ScriptedHandler(request =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.EndsWith("/compute/pairs", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref pairCreates);
+            }
+
+            return Json(HttpStatusCode.OK, """{"code":"ABCD2345","expiresAt":1}""");
+        });
         var preferences = new InMemoryRemoteComputePreferences();
         preferences.SaveInviteCode("ABCD2345");
         var sut = Create(handler, lanBase: null, preferences);
@@ -47,9 +57,74 @@ public class RemoteComputeControllerTests
         // Assert
         Assert.False(sut.ShareEnabled);
         Assert.Equal("", sut.InviteCode);
+        Assert.Equal(0, pairCreates);
         Assert.Contains("Local service failed", sut.Status, StringComparison.Ordinal);
         Assert.Contains("No local service", sut.Status, StringComparison.Ordinal);
         Assert.Contains("Correlation id:", sut.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Share_WhenLanServiceExists_CreatesAPair()
+    {
+        // Arrange
+        var pairCreates = 0;
+        var handler = new ScriptedHandler(request =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.EndsWith("/compute/pairs", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref pairCreates);
+            }
+
+            if (path.EndsWith("/compute/host/start", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{"ok":true}""");
+            }
+
+            return Json(HttpStatusCode.OK, """{"code":"HOST2345","expiresAt":9999999999999}""");
+        });
+        var sut = Create(handler, lanBase: "http://127.0.0.1:9");
+
+        // Act
+        await sut.SetShareEnabledAsync(true);
+
+        // Assert
+        Assert.Equal(1, pairCreates);
+        Assert.True(sut.ShareEnabled);
+        Assert.Equal("HOST2345", sut.InviteCode);
+        Assert.Contains("Sharing your local-service", sut.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Share_WhenLocalServiceDoesNotSupportSharing_DoesNotCreateAPair()
+    {
+        // Arrange
+        var pairCreates = 0;
+        var handler = new ScriptedHandler(request =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.EndsWith("/compute/pairs", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref pairCreates);
+            }
+
+            return Json(HttpStatusCode.OK, """{"code":"HOST2345","expiresAt":1}""");
+        });
+        var lan = new Mock<ILocalLanPlayService>();
+        lan.Setup(service => service.GetServiceBaseUrlAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("http://127.0.0.1:9");
+        lan.Setup(service => service.SupportsComputeHostAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var sut = Create(handler, lanBase: "http://127.0.0.1:9", lan: lan.Object);
+
+        // Act
+        await sut.SetShareEnabledAsync(true);
+
+        // Assert
+        Assert.Equal(0, pairCreates);
+        Assert.False(sut.ShareEnabled);
+        Assert.Equal("", sut.InviteCode);
+        Assert.Contains("does not support sharing", sut.Status, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -87,7 +162,7 @@ public class RemoteComputeControllerTests
         var handler = new ScriptedHandler(_ => throw new HttpRequestException("down"));
         var preferences = new InMemoryRemoteComputePreferences();
         preferences.SaveInviteCode("STALE234");
-        var sut = Create(handler, lanBase: null, preferences);
+        var sut = Create(handler, lanBase: "http://127.0.0.1:9", preferences);
 
         // Act
         await sut.SetShareEnabledAsync(true);
@@ -120,7 +195,7 @@ public class RemoteComputeControllerTests
     public async Task Share_WhenTheRouteIsMissing_SaysTheApiDoesNotOfferRemoteCompute()
     {
         var handler = new ScriptedHandler(_ => Json(HttpStatusCode.NotFound, """{"error":"not found"}"""));
-        var sut = Create(handler, lanBase: null);
+        var sut = Create(handler, lanBase: "http://127.0.0.1:9");
 
         await sut.SetShareEnabledAsync(true);
 
@@ -315,6 +390,8 @@ public class RemoteComputeControllerTests
         var lan = new Mock<ILocalLanPlayService>();
         lan.Setup(service => service.GetServiceBaseUrlAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Interlocked.Increment(ref calls) == 1 ? null : "http://127.0.0.1:9");
+        lan.Setup(service => service.SupportsComputeHostAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         var handler = new ScriptedHandler(request =>
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
@@ -510,6 +587,8 @@ public class RemoteComputeControllerTests
             var mock = new Mock<ILocalLanPlayService>();
             mock.Setup(service => service.GetServiceBaseUrlAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(lanBase);
+            mock.Setup(service => service.SupportsComputeHostAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(!string.IsNullOrWhiteSpace(lanBase));
             lan = mock.Object;
         }
         return new RemoteComputeController(

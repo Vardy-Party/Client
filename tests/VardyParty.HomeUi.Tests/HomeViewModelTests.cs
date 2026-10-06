@@ -740,6 +740,62 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.False(sut.RemoteStatusIsPaired);
     }
 
+    [Fact]
+    public void RemoteSettings_ShareStaysOffUntilALocalServiceIsFound()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+
+        // Act
+        sut.ShareComputeEnabled = true;
+        var beforeFound = remote.ShareSetCount;
+        sut.SetLocalServiceFound(true);
+        sut.FlushPendingApply();
+        sut.ShareComputeEnabled = true;
+
+        // Assert
+        Assert.Equal(0, beforeFound);
+        Assert.True(sut.CanShareLocalService);
+        Assert.False(sut.ShowShareNeedLocalService);
+        Assert.Equal(1, remote.ShareSetCount);
+        Assert.True(remote.ShareEnabled);
+    }
+
+    [Fact]
+    public void RemoteSettings_ShareSwitchStaysUsableWhileAlreadySharing()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true, ShareEnabled = true };
+
+        // Act
+        using var sut = NewShell(remote);
+
+        // Assert
+        Assert.True(sut.CanShareLocalService);
+        Assert.False(sut.ShowShareNeedLocalService);
+    }
+
+    [Fact]
+    public void RemoteSettings_GuestUsingOtherLocalService_CannotShare()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true, IsGuestPaired = true };
+        using var sut = NewShell(remote);
+
+        // Act
+        sut.SetLocalServiceFound(true);
+        sut.FlushPendingApply();
+        sut.ShareComputeEnabled = true;
+
+        // Assert
+        Assert.True(sut.UseOtherLocalService);
+        Assert.False(sut.ShowHostCompute);
+        Assert.False(sut.CanShareLocalService);
+        Assert.Equal(0, remote.ShareSetCount);
+        Assert.False(remote.ShareEnabled);
+    }
+
     private HomeViewModel NewShell(SettingsRemote remote)
     {
         var preferences = new InMemorySoundPreferencesStore();
@@ -777,12 +833,18 @@ public sealed class HomeViewModelTests : IDisposable
 
         public bool RedeemBusy { get; set; }
 
+        public int ShareSetCount { get; private set; }
+
         public event Action? Changed;
 
         public void Notify() => Changed?.Invoke();
 
-        public Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
+        public Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+        {
+            ShareSetCount++;
+            ShareEnabled = enabled;
+            return Task.CompletedTask;
+        }
 
         public Task RedeemAsync(string code, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;

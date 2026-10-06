@@ -170,6 +170,7 @@ public partial class HomeHostPage : ContentPage
 #endif
 
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
 
         // Yield past the first layout pass before Keystore + catalog start —
         // SecureStorage on Android can stall while the main thread is jammed,
@@ -582,6 +583,7 @@ public partial class HomeHostPage : ContentPage
 
         // The LAN warning stream keeps running across sign-in sessions.
         _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
     }
 
     private void ShowDeviceCode(AuthDeviceCode deviceCode)
@@ -647,6 +649,9 @@ public partial class HomeHostPage : ContentPage
         _lanWarning = warning;
         _viewModel.SetLanWarning(warning);
     }
+
+    private void ApplyLocalServiceFound(bool found) =>
+        _viewModel.SetLocalServiceFound(found);
 
     private void OnGamePicked(Game game) => _ = StartStreamResolutionAsync(game);
 

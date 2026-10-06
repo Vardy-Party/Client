@@ -3,9 +3,11 @@ namespace VardyParty.Hosting;
 /// <summary>
 /// Guest-side rules for one relayed find-streams call.
 /// The phone Chrome run waits 120s for chips, then 180s for a playlist, then 60s
-/// for segments (360s). This wait is longer so the phone does not give up while
-/// that Chrome run is still going. The host HTTP client waits 450s so it outlasts
-/// this phone. Keep those three budgets in that order.
+/// for segments (360s) on the first chip. This wait is longer so the phone does
+/// not give up while that first capture is still going. Later chips stream on
+/// the same session. The host HTTP client waits 630s so the harvest can finish
+/// after the guest has already started playback. First chip finishes inside
+/// the guest wait; the guest wait finishes inside the host HTTP timeout.
 /// </summary>
 internal static class RemoteComputeHttp
 {

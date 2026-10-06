@@ -281,6 +281,29 @@ public sealed class RemoteComputeController : IRemoteComputeController
                 return;
             }
 
+            var local = await lan.GetServiceBaseUrlAsync(cancellationToken).ConfigureAwait(false);
+            if (ShareRequestCancelled(generation))
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(local))
+            {
+                FailStart("Local service", "No local service on this network");
+                return;
+            }
+
+            if (!await lan.SupportsComputeHostAsync(cancellationToken).ConfigureAwait(false))
+            {
+                FailStart("Local service", "This local service does not support sharing");
+                return;
+            }
+
+            if (ShareRequestCancelled(generation))
+            {
+                return;
+            }
+
             correlationId = Guid.NewGuid().ToString("N");
             using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs")
             {
@@ -323,18 +346,6 @@ public sealed class RemoteComputeController : IRemoteComputeController
             if (string.IsNullOrWhiteSpace(created?.Code))
             {
                 FailStart("Relay", "Could not create an invite code", correlationId);
-                return;
-            }
-
-            var local = await lan.GetServiceBaseUrlAsync(cancellationToken).ConfigureAwait(false);
-            if (ShareRequestCancelled(generation))
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(local))
-            {
-                FailStart("Local service", "No local service on this network", correlationId);
                 return;
             }
 
