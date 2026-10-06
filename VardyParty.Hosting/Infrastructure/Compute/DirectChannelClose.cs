@@ -33,4 +33,42 @@ internal static class DirectChannelClose
                 RemoteComputePlayClient.DirectConnectionDroppedMessage,
                 correlationId));
     }
+
+    /// <summary>
+    /// Harvest chips arrive as <c>rpc-part</c> long before <c>rpc-result</c>.
+    /// Only a chip with a playlist URL counts as a finished resolve.
+    /// </summary>
+    public static bool MarksResultSeen(MpPlayEvent? ev) =>
+        ev is not null
+        && string.Equals(ev.Type, "chip", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(ev.Url);
+
+    /// <summary>
+    /// Empty first-chip wait: a mid-harvest drop must keep the correlation-id
+    /// banner. CONNECT/DNS problems stay on this phone; a quiet miss does not.
+    /// </summary>
+    public static RemoteComputeFault EmptyHarvestFault(
+        bool directDropped,
+        string? egressProblem,
+        string? harvestError,
+        string correlationId)
+    {
+        if (directDropped)
+        {
+            return new RemoteComputeFault(
+                "This phone",
+                RemoteComputePlayClient.DirectConnectionDroppedMessage,
+                correlationId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(egressProblem))
+        {
+            return new RemoteComputeFault("This phone", egressProblem, correlationId);
+        }
+
+        return new RemoteComputeFault(
+            "Local service",
+            string.IsNullOrWhiteSpace(harvestError) ? "The remote PC returned no playlist" : harvestError,
+            correlationId);
+    }
 }

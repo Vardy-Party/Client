@@ -131,17 +131,22 @@ public sealed class MpHarvestSession
             return await _firstChip.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        var key = label.Trim();
         if (_done)
         {
-            return _byLabel.TryGetValue(label.Trim(), out var late) ? late : null;
+            return _byLabel.TryGetValue(key, out var late) ? late : null;
         }
 
         var waiter = _waiters.GetOrAdd(
-            label.Trim(),
+            key,
             _ => new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (_byLabel.TryGetValue(label.Trim(), out cached))
+        if (_byLabel.TryGetValue(key, out cached))
         {
             waiter.TrySetResult(cached);
+        }
+        else if (_done)
+        {
+            waiter.TrySetResult(_byLabel.TryGetValue(key, out var afterClear) ? afterClear : null);
         }
 
         return await waiter.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -155,7 +160,7 @@ public sealed class MpHarvestSession
         }
 
         _done = true;
-        if (failed && !_firstChip.Task.IsCompleted)
+        if (!_firstChip.Task.IsCompleted)
         {
             _firstChip.TrySetResult(null);
         }

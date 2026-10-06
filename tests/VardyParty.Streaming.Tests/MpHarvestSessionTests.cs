@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using VardyParty.Streaming;
@@ -73,6 +74,54 @@ public sealed class MpHarvestSessionTests
         // Assert
         Assert.Null(result);
         Assert.True(harvest.IsCompleted);
+    }
+
+    [Fact]
+    public async Task Complete_EmptyDone_UnblocksFirstChipWait()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var waiting = harvest.WaitForAsync(null, timeout.Token);
+
+        // Act
+        harvest.Complete(failed: false);
+        var first = await waiting;
+
+        // Assert
+        Assert.Null(first);
+        Assert.True(harvest.IsCompleted);
+        Assert.False(harvest.HasPlaylist);
+    }
+
+    [Fact]
+    public void Complete_EmptyDone_RejectsReuseOnTheSamePage()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        harvest.Complete(failed: false);
+        const string page = "https://page.example.test/match/1";
+
+        // Act
+        var reuse = harvest.CanReuseFor(page, page);
+
+        // Assert
+        Assert.False(reuse);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_NamedChip_AfterComplete_ReturnsNull()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        harvest.Complete(failed: false);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        // Act
+        var result = await harvest.WaitForAsync("Chip B", timeout.Token);
+
+        // Assert
+        Assert.Null(result);
     }
 
     [Fact]

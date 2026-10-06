@@ -156,12 +156,12 @@ public sealed class RemoteComputePlayClient(
                         var first = await harvest.WaitForAsync(playerStreamName, timeout.Token).ConfigureAwait(false);
                         if (first is null || string.IsNullOrWhiteSpace(first.Url))
                         {
-                            if (!string.IsNullOrWhiteSpace(session.EgressProblem))
-                            {
-                                return Fail(correlationId, "This phone", session.EgressProblem);
-                            }
-
-                            return Fail(correlationId, "Local service", harvest.Error ?? "The remote PC returned no playlist");
+                            var miss = DirectChannelClose.EmptyHarvestFault(
+                                session.DirectDropped,
+                                session.EgressProblem,
+                                harvest.Error,
+                                correlationId);
+                            return Fail(correlationId, miss.Component, miss.Message);
                         }
 
                         LastFault = null;
@@ -584,8 +584,6 @@ public sealed class RemoteComputePlayClient(
 
             if (kind == "rpc-part")
             {
-                Interlocked.Exchange(ref _resultSeen, 1);
-                _dropGrace?.Cancel();
                 var partId = frame.TryGetProperty("id", out var partIdEl) ? partIdEl.ToString().Trim('"') : "";
                 var partBody = frame.TryGetProperty("body", out var partBodyEl) ? partBodyEl.GetString() ?? "" : "";
                 if (_harvests.TryGetValue(partId, out var partHarvest))
@@ -594,6 +592,11 @@ public sealed class RemoteComputePlayClient(
                     if (ev is not null)
                     {
                         partHarvest.Apply(ev);
+                        if (DirectChannelClose.MarksResultSeen(ev))
+                        {
+                            Interlocked.Exchange(ref _resultSeen, 1);
+                            _dropGrace?.Cancel();
+                        }
                     }
                 }
 
