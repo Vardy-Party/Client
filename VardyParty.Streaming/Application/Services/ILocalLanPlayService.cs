@@ -24,6 +24,13 @@ public interface ILocalLanPlayService
     Task<bool> SupportsPlayStreamQueryAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Whether the discovered local service can share this machine as a compute host
+    /// (<c>compute.host</c> in cached <c>/health</c> capabilities, or a non-404
+    /// <c>/compute/host/status</c> probe for older builds that already have the route).
+    /// </summary>
+    Task<bool> SupportsComputeHostAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Package version reported by the discovered LocalService (<c>/health</c> <c>version</c>),
     /// or null if unknown / unavailable.
     /// </summary>
@@ -35,6 +42,15 @@ public interface ILocalLanPlayService
     Task<string?> GetDiscoveredServiceVersionAsync(CancellationToken cancellationToken = default);
 
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>True when this device is paired to a remote compute host.</summary>
+    bool UsesRemoteCompute { get; }
+
+    /// <summary>
+    /// User-facing fault from the last resolve that used the remote host.
+    /// Null when that resolve did not use the relay, or it succeeded.
+    /// </summary>
+    string? LastRemoteComputeError => null;
 
     /// <summary>
     /// Base URL of the discovered LAN resolver, using the same discovery cache

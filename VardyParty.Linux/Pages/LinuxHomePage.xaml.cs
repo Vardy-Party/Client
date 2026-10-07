@@ -37,6 +37,7 @@ public partial class LinuxHomePage : ContentPage
     private readonly IAuthTokenProvider _authTokens;
     private readonly IAuthLoginService _authLogin;
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
+    private readonly ILocalLanPlayService _localLan;
     private readonly SelectionState _selection;
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
@@ -102,6 +103,7 @@ public partial class LinuxHomePage : ContentPage
         IAuthTokenProvider authTokens,
         IAuthLoginService authLogin,
         ILocalLanServiceAvailabilityMonitor lanMonitor,
+        ILocalLanPlayService localLan,
         SelectionState selection,
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
@@ -118,6 +120,7 @@ public partial class LinuxHomePage : ContentPage
         _authTokens = authTokens;
         _authLogin = authLogin;
         _lanMonitor = lanMonitor;
+        _localLan = localLan;
         _selection = selection;
         _sounds = sounds;
         _notifications = notifications;
@@ -480,11 +483,8 @@ public partial class LinuxHomePage : ContentPage
         // the startup path. Headless machines log-and-degrade to silence.
         _ = Task.Run(() => _soundPlayer.InitializeAsync());
 
-        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
-        {
-            _lanWarning = warning;
-            _viewModel.SetLanWarning(warning);
-        }));
+        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
 
         if (UseSampleData)
         {
@@ -512,6 +512,10 @@ public partial class LinuxHomePage : ContentPage
         _logger.LogInformation("[LinuxHome] Initialize start");
         _isAuthenticated = await _authTokens.IsAuthenticatedAsync();
         _viewModel.CanSignOut = _isAuthenticated;
+        if (_isAuthenticated)
+        {
+            _viewModel.RefreshRemoteComputeAccess();
+        }
 
         if (_isAuthenticated)
         {
@@ -686,7 +690,11 @@ public partial class LinuxHomePage : ContentPage
             _logger.LogDebug(ex, "[LinuxHome] ClearSelection during session expiration failed");
         }
 
-        Dispatcher.Dispatch(() => _viewModel.CanSignOut = false);
+        Dispatcher.Dispatch(() =>
+        {
+            _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
+        });
         StopGamesFeed();
         _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
         ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
@@ -827,6 +835,7 @@ public partial class LinuxHomePage : ContentPage
     {
         _isAuthenticated = true;
         _viewModel.CanSignOut = true;
+        _viewModel.RefreshRemoteComputeAccess();
         SetAuthStatus(null);
         StartGamesFeed();
         SetAuthOverlayVisible(false);
@@ -885,6 +894,7 @@ public partial class LinuxHomePage : ContentPage
         Dispatcher.Dispatch(() =>
         {
             _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
             _viewModel.ClearErrors();
@@ -893,11 +903,8 @@ public partial class LinuxHomePage : ContentPage
         });
 
         // The LAN warning stream keeps running across sign-in sessions.
-        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
-        {
-            _lanWarning = warning;
-            _viewModel.SetLanWarning(warning);
-        }));
+        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
     }
 
     private void ShowDeviceCode(AuthDeviceCode deviceCode)
@@ -1006,12 +1013,34 @@ public partial class LinuxHomePage : ContentPage
         }
     }
 
+    private void ApplyLanWarning(string? warning)
+    {
+        if (_localLan.UsesRemoteCompute)
+        {
+            warning = null;
+        }
+
+        _lanWarning = warning;
+        _viewModel.SetLanWarning(warning);
+    }
+
+    private void ApplyLocalServiceFound(bool found) =>
+        _viewModel.SetLocalServiceFound(found);
+
     private async Task StartStreamResolutionAsync(Game game)
     {
         _logger.LogInformation(
             "[LinuxHome] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
 
-        if (!string.IsNullOrWhiteSpace(_lanWarning))
+        if (_localLan.UsesRemoteCompute)
+        {
+            if (!string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                _lanWarning = null;
+                _viewModel.SetLanWarning(null);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_lanWarning))
         {
             _logger.LogInformation("[LinuxHome] Refusing stream resolution: local service unavailable ({Warning})", _lanWarning);
             _serviceError = _lanWarning;
@@ -1723,8 +1752,13 @@ public partial class LinuxHomePage : ContentPage
             ? string.Empty
             : progress.Status == "Playing..." ? "Now Playing" : "Finding streams...";
         ResolveTitleLabel.IsVisible = ResolveTitleLabel.Text.Length > 0;
-        ResolveStatusLabel.Text = progress.Status;
-        ResolveStatusLabel.IsVisible = StreamResolveOverlayProgress.ShouldShowStatusSubtitle(progress.Status);
+        var detail = StreamResolveOverlayProgress.DetailLine(progress.Status);
+        if (detail is not null)
+        {
+            ResolveStatusLabel.Text = detail;
+            ResolveStatusLabel.IsVisible = true;
+        }
+
         ApplyResolveWaitVisual(
             indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));

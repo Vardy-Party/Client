@@ -50,6 +50,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
     private readonly IDesktopUpdateService _updates;
+    private readonly IRemoteComputeController? _remote;
     private DesktopUpdateOffer? _offer;
     private bool _updateBusy;
 
@@ -87,7 +88,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         MatchEventBus events,
         SelectionState selection,
         ILogger<HomeViewModel> logger,
-        IDesktopUpdateService updates)
+        IDesktopUpdateService updates,
+        IRemoteComputeController? remoteCompute = null)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -99,6 +101,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
+        _remote = remoteCompute;
+        if (_remote is not null)
+        {
+            _remote.Changed += OnRemoteComputeChanged;
+        }
+
         Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
@@ -352,6 +360,192 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private string _remoteGuestCode = "";
+    private bool _useOtherLocalService;
+    private bool _localServiceFound;
+
+    public bool ShareComputeEnabled
+    {
+        get => _remote?.ShareEnabled ?? false;
+        set
+        {
+            if (_remote is null || _remote.ShareEnabled == value)
+            {
+                return;
+            }
+
+            if (value && (!_localServiceFound || UseOtherLocalService))
+            {
+                return;
+            }
+
+            _ = ObserveRemoteAsync(() => _remote.SetShareEnabledAsync(value));
+        }
+    }
+
+    /// <summary>
+    /// A host-share-capable local-service was found on this LAN. Share stays
+    /// off until then; an already-on switch stays usable so sharing can be
+    /// turned off.
+    /// </summary>
+    public bool CanShareLocalService =>
+        ShowHostCompute && (_localServiceFound || ShareComputeEnabled);
+
+    public bool ShowShareNeedLocalService =>
+        ShowHostCompute && !_localServiceFound && !ShareComputeEnabled;
+
+    /// <summary>Host-share-capable LAN result. Safe to call from any thread.</summary>
+    public void SetLocalServiceFound(bool found)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                if (_localServiceFound == found)
+                {
+                    return;
+                }
+
+                _localServiceFound = found;
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
+    public string RemoteInviteCode => _remote?.InviteCode ?? "";
+
+    public bool HasRemoteInvite => RemoteInviteCode.Length > 0;
+
+    private bool CanUseRemoteCompute =>
+        _remote?.HasRelayUser == true && _remote.OffersRemoteCompute;
+
+    /// <summary>Share switch. Hidden while using another user's local-service, without relay-user, or on a 404.</summary>
+    public bool ShowHostCompute => CanUseRemoteCompute && !UseOtherLocalService;
+
+    /// <summary>The other-user switch. Hidden while this computer is sharing.</summary>
+    public bool ShowGuestCompute => CanUseRemoteCompute && _remote?.ShareEnabled != true;
+
+    /// <summary>
+    /// On only while this device is using another user's local-service.
+    /// Off is neither: both choices stay available and neither is engaged.
+    /// </summary>
+    public bool UseOtherLocalService
+    {
+        get => _useOtherLocalService || _remote?.IsGuestPaired == true;
+        set
+        {
+            if (value == UseOtherLocalService)
+            {
+                return;
+            }
+
+            if (!value)
+            {
+                _useOtherLocalService = false;
+                if (_remote?.IsGuestPaired != true)
+                {
+                    Raise(nameof(UseOtherLocalService));
+                    Raise(nameof(ShowHostCompute));
+                    Raise(nameof(ShowGuestEntry));
+                    Raise(nameof(CanShareLocalService));
+                    Raise(nameof(ShowShareNeedLocalService));
+                }
+
+                _ = ObserveRemoteAsync(() => _remote?.StopUsingRemoteAsync() ?? Task.CompletedTask);
+                return;
+            }
+
+            _useOtherLocalService = true;
+            Raise(nameof(UseOtherLocalService));
+            Raise(nameof(ShowHostCompute));
+            Raise(nameof(ShowGuestEntry));
+            Raise(nameof(CanShareLocalService));
+            Raise(nameof(ShowShareNeedLocalService));
+        }
+    }
+
+    public bool ShowGuestEntry =>
+        ShowGuestCompute && UseOtherLocalService && _remote?.IsGuestPaired != true;
+
+    public void RefreshRemoteComputeAccess() =>
+        _ = ObserveRemoteAsync(() => _remote?.RefreshAccessAsync() ?? Task.CompletedTask);
+
+    public string RemoteGuestCode
+    {
+        get => _remoteGuestCode;
+        set
+        {
+            if (_remoteGuestCode == value)
+            {
+                return;
+            }
+
+            _remoteGuestCode = value ?? "";
+            Raise(nameof(RemoteGuestCode));
+        }
+    }
+
+    public string RemoteComputeStatus => _remote?.Status ?? "";
+
+    public bool RemoteStatusIsFault =>
+        RemoteComputeStatus.Contains("failed:", StringComparison.OrdinalIgnoreCase);
+
+    public bool RemoteStatusIsPaired =>
+        RemoteComputeStatus.StartsWith("Paired.", StringComparison.Ordinal);
+
+    public bool CanRedeem => _remote?.RedeemBusy != true;
+
+    public string RedeemButtonText => CanRedeem ? "Use their local-service" : "Checking…";
+
+    public void RedeemRemoteCompute() => _ = ObserveRemoteAsync(() =>
+        _remote?.RedeemAsync(_remoteGuestCode) ?? Task.CompletedTask);
+
+    private async Task ObserveRemoteAsync(Func<Task> work)
+    {
+        try
+        {
+            await work().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Remote compute settings failed");
+        }
+    }
+
+    private void OnRemoteComputeChanged()
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                if (_remote?.ShareEnabled == true)
+                {
+                    _useOtherLocalService = false;
+                }
+
+                Raise(nameof(ShareComputeEnabled));
+                Raise(nameof(RemoteInviteCode));
+                Raise(nameof(HasRemoteInvite));
+                Raise(nameof(UseOtherLocalService));
+                Raise(nameof(ShowHostCompute));
+                Raise(nameof(ShowGuestCompute));
+                Raise(nameof(ShowGuestEntry));
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
+                Raise(nameof(RemoteComputeStatus));
+                Raise(nameof(RemoteStatusIsFault));
+                Raise(nameof(RemoteStatusIsPaired));
+                Raise(nameof(CanRedeem));
+                Raise(nameof(RedeemButtonText));
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
     private bool _canSignOut;
 
     /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>
@@ -468,6 +662,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _leagueFilter.Changed -= OnFilterChanged;
         _updates.OfferChanged -= OnUpdateOfferChanged;
         _updates.ApplyFailed -= OnUpdateApplyFailed;
+        if (_remote is not null)
+        {
+            _remote.Changed -= OnRemoteComputeChanged;
+        }
     }
 
     private void OnFilterChanged() => Rebuild();

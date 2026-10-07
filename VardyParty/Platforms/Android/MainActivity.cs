@@ -123,6 +123,7 @@ namespace VardyParty
             ((MainApplication)MauiApplication.Current).EnsureMauiApp();
 
             base.OnCreate(savedInstanceState);
+            AndroidScreenAwake.BindHomepage(this);
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");
 
@@ -166,9 +167,19 @@ namespace VardyParty
         /// pull focus off the page. Do not mark the decor view
         /// <c>FocusableInTouchMode</c> — that makes the root eat the OK.
         /// </summary>
+        protected override void OnResume()
+        {
+            base.OnResume();
+            AndroidScreenAwake.BindHomepage(this);
+        }
+
         public override void OnWindowFocusChanged(bool hasFocus)
         {
             base.OnWindowFocusChanged(hasFocus);
+            if (hasFocus)
+            {
+                AndroidScreenAwake.BindHomepage(this);
+            }
 
             var decor = Window?.DecorView;
             if (decor is null)

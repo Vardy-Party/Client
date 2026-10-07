@@ -59,6 +59,35 @@ public static class AuthAccessTokenRoles
         return false;
     }
 
+    /// <summary>
+    /// Relay-user on the configured roles claim, <c>permissions</c>, or the
+    /// sibling permissions claim when <paramref name="rolesClaim"/> ends in
+    /// <c>/roles</c>.
+    /// </summary>
+    public static bool HasRelayUser(string? accessToken, string? rolesClaim)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(rolesClaim)
+            && HasRequiredRole(accessToken, rolesClaim, "relay-user"))
+            return true;
+
+        if (HasRequiredRole(accessToken, "permissions", "relay-user"))
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(rolesClaim)
+            && rolesClaim.EndsWith("/roles", StringComparison.OrdinalIgnoreCase))
+        {
+            var permissionsClaim = string.Concat(
+                rolesClaim.AsSpan(0, rolesClaim.Length - "roles".Length),
+                "permissions");
+            return HasRequiredRole(accessToken, permissionsClaim, "relay-user");
+        }
+
+        return false;
+    }
+
     internal static byte[] Base64UrlDecode(string input)
     {
         var padded = input.Replace('-', '+').Replace('_', '/');

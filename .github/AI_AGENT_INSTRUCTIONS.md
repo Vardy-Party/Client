@@ -30,6 +30,7 @@ docs/
 ├─ architecture/homepage-maui-avalonia.md
 ├─ STREAM_PLAYBACK_RULES.md / STREAM_HEALTH_PROTOCOL.md
 ├─ LINUX_SUPPORT.md / LOCAL_ANDROID_BUILD.md / WINDOWS_INSTALL.md
+├─ REMOTE_COMPUTE_PREVIEW_USB.md   (-Api preview, phone on USB, Wi-Fi off)
 ├─ VERSION_MANAGEMENT.md
 ├─ agent-playbook-merge-client-pr-v2.md
 └─ reviews/PR-74-flagship-review.md
@@ -97,6 +98,10 @@ dotnet test
 
 # Build MAUI app
 dotnet build VardyParty/VardyParty.csproj -c Release -f net11.0-android
+
+# Local device APK. -Api preview|local overrides Api:HeadlessBaseUrl for
+# that package only (release ignores VARDYPARTY_DEBUG_API). See docs/LOCAL_ANDROID_BUILD.md.
+# pwsh ./package-android.ps1 -Api preview
 
 # Build Linux head
 dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release

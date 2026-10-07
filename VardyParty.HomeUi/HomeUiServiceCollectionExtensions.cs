@@ -26,6 +26,7 @@ public static class HomeUiServiceCollectionExtensions
         services.TryAddSingleton<UiSoundService>();
         services.TryAddSingleton<MatchEventNotificationPolicy>();
         services.TryAddSingleton<DnsOverHttpsPreference>();
+        services.TryAddSingleton<IRemoteComputeController, NullRemoteComputeController>();
         services.TryAddSingleton<MatchEventBus>();
         services.AddSingleton<HomeViewModel>();
         services.AddSingleton<Views.HomePage>();

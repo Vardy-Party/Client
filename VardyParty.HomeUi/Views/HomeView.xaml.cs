@@ -368,6 +368,8 @@ public partial class HomeView : ContentView
 
     private void OnUpdateClicked(object? sender, EventArgs e) => ViewModel?.RequestUpdate();
 
+    private void OnRedeemRemoteComputeClicked(object? sender, EventArgs e) => ViewModel?.RedeemRemoteCompute();
+
     private void OnSignOutClicked(object? sender, EventArgs e) => ViewModel?.RequestSignOut();
 
     private void OnMenuItemFocused(object? sender, FocusEventArgs e)

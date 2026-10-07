@@ -17,4 +17,18 @@ public static class StreamExitFocusRetry
 
     public static Wait Choose(bool cardViewExists) =>
         cardViewExists ? Wait.PostOnCard : Wait.NextLayoutPass;
+
+    /// <summary>
+    /// One wait for a card that has not been created yet. A quiet rows list
+    /// never lays out, so a frame beside the layout listener still consumes
+    /// the attempt. The first signal continues; <see cref="Cancel"/> drops both.
+    /// </summary>
+    public sealed class LayoutAttempt
+    {
+        private int _state;
+
+        public void Cancel() => Interlocked.Exchange(ref _state, 2);
+
+        public bool TryContinue() => Interlocked.CompareExchange(ref _state, 1, 0) == 0;
+    }
 }

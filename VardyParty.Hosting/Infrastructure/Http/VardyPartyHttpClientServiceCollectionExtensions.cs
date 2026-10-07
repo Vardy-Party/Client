@@ -21,7 +21,13 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<Auth0ApiTokenHandler>();
         services.AddTransient<M3U8HttpHandler>();
 
+        services.TryAddSingleton<LocalServiceConnection>();
         services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
+        services.TryAddSingleton<IRemoteComputePreferences, InMemoryRemoteComputePreferences>();
+        services.TryAddSingleton<IRemoteComputeKeepAlive, NoopRemoteComputeKeepAlive>();
+        services.AddSingleton<IRemoteComputePlay, RemoteComputePlayClient>();
+        services.AddHttpClient<IRemoteComputeController, RemoteComputeController>()
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
         services.TryAddSingleton<IDnsOverHttpsEndpoint, CloudflareDnsOverHttpsEndpoint>();
         services.AddSingleton<CloudflareDnsOverHttpsClient>();
         services.AddSingleton<IDnsOverHttpsClient>(sp => sp.GetRequiredService<CloudflareDnsOverHttpsClient>());

@@ -16,7 +16,8 @@ public class StreamResolutionOrchestrator(
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
-    ILocalLanPlayService? localLanPlayService = null) : IStreamResolutionOrchestrator
+    ILocalLanPlayService? localLanPlayService = null,
+    IRemoteComputeKeepAlive? keepAlive = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -27,6 +28,14 @@ public class StreamResolutionOrchestrator(
     /// never a silent empty outcome.
     /// </summary>
     private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Shown for the whole paired search. A mobile link can sit on the second
+    /// page for minutes before chips appear, and the title "Finding streams"
+    /// alone looked like a stall.
+    /// </summary>
+    public const string PairedFindingStatus =
+        "Using the paired computer. A slow link can take several minutes.";
 
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
@@ -73,7 +82,9 @@ public class StreamResolutionOrchestrator(
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
 
         _isResolving = true;
-        _status = "Searching for streams...";
+        _status = localLanPlayService?.UsesRemoteCompute == true
+            ? PairedFindingStatus
+            : "Searching for streams...";
         PublishProgress();
 
         var outcome = new StreamResolutionOutcome();
@@ -81,7 +92,9 @@ public class StreamResolutionOrchestrator(
         var streamCount = 0;
         Task<PlaybackResult?>? playbackTask = null;
 
-        if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+        if (localLanPlayService != null
+            && !localLanPlayService.UsesRemoteCompute
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken))
         {
             logger.LogWarning("[StreamResolution] Local LAN service is unavailable — aborting stream resolution");
             _status = "Local service unavailable";
@@ -138,6 +151,13 @@ public class StreamResolutionOrchestrator(
             PublishProgress();
             return outcome;
         }
+
+        // LAN discovery stays the fast path. The foreground service is only
+        // held while this session is actually resolving through the paired host,
+        // and it stays up across every candidate in the loop below.
+        var relayed = localLanPlayService?.UsesRemoteCompute == true
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        using var relayKeepAlive = RelayKeepAliveHold.Start(keepAlive, relayed);
 
         try
         {
@@ -243,7 +263,18 @@ public class StreamResolutionOrchestrator(
 
         if (_healthyStreamCount == 0)
         {
-            if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+            var remoteError = localLanPlayService?.LastRemoteComputeError;
+            if (!string.IsNullOrWhiteSpace(remoteError))
+            {
+                _status = remoteError;
+                outcome.RemoteComputeError = remoteError;
+            }
+            else if (localLanPlayService?.UsesRemoteCompute == true)
+            {
+                _status = "No working streams found";
+                outcome.NoWorkingStreams = true;
+            }
+            else if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
             {
                 _status = "Local service unavailable";
                 outcome.LocalServiceUnavailable = true;
@@ -721,5 +752,29 @@ public class StreamResolutionOrchestrator(
             StreamsTested = _streamsTested,
             HealthyStreams = _healthyStreamCount
         });
+    }
+
+    /// <summary>
+    /// Starts <see cref="IRemoteComputeKeepAlive"/> for one relayed resolve
+    /// session and stops it when <see cref="StartCoreAsync"/> returns.
+    /// </summary>
+    private sealed class RelayKeepAliveHold : IDisposable
+    {
+        private readonly IRemoteComputeKeepAlive? _keepAlive;
+
+        private RelayKeepAliveHold(IRemoteComputeKeepAlive? keepAlive) => _keepAlive = keepAlive;
+
+        public static RelayKeepAliveHold Start(IRemoteComputeKeepAlive? keepAlive, bool hold)
+        {
+            if (!hold)
+            {
+                return new RelayKeepAliveHold(null);
+            }
+
+            keepAlive?.Start();
+            return new RelayKeepAliveHold(keepAlive);
+        }
+
+        public void Dispose() => _keepAlive?.Stop();
     }
 }

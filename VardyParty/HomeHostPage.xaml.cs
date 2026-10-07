@@ -29,6 +29,7 @@ public partial class HomeHostPage : ContentPage
     private readonly IAuthTokenProvider _authTokens;
     private readonly IAuthLoginService _authLogin;
     private readonly ILocalLanServiceAvailabilityMonitor _lanMonitor;
+    private readonly ILocalLanPlayService _localLan;
     private readonly SelectionState _selection;
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
@@ -59,6 +60,7 @@ public partial class HomeHostPage : ContentPage
     /// app on Android TV instead of canceling discovery.
     /// </summary>
     private bool _resolveOverlayOpen;
+    private bool _playbackVisible;
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
     private int _resolutionGeneration;
@@ -74,6 +76,7 @@ public partial class HomeHostPage : ContentPage
         IAuthTokenProvider authTokens,
         IAuthLoginService authLogin,
         ILocalLanServiceAvailabilityMonitor lanMonitor,
+        ILocalLanPlayService localLan,
         SelectionState selection,
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
@@ -88,6 +91,7 @@ public partial class HomeHostPage : ContentPage
         _authTokens = authTokens;
         _authLogin = authLogin;
         _lanMonitor = lanMonitor;
+        _localLan = localLan;
         _selection = selection;
         _sounds = sounds;
         _notifications = notifications;
@@ -165,16 +169,8 @@ public partial class HomeHostPage : ContentPage
         }
 #endif
 
-        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
-        {
-            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
-            {
-                return;
-            }
-
-            _lanWarning = warning;
-            _viewModel.SetLanWarning(warning);
-        }));
+        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
 
         // Yield past the first layout pass before Keystore + catalog start —
         // SecureStorage on Android can stall while the main thread is jammed,
@@ -230,6 +226,10 @@ public partial class HomeHostPage : ContentPage
         // helped the system decide the app was ANR.
         _isAuthenticated = await Task.Run(_authTokens.IsAuthenticatedAsync).ConfigureAwait(true);
         _viewModel.CanSignOut = _isAuthenticated;
+        if (_isAuthenticated)
+        {
+            _viewModel.RefreshRemoteComputeAccess();
+        }
 
         if (_isAuthenticated)
         {
@@ -394,7 +394,11 @@ public partial class HomeHostPage : ContentPage
             _logger.LogDebug(ex, "[HomeHost] ClearSelection during session expiration failed");
         }
 
-        PostUi(() => _viewModel.CanSignOut = false);
+        PostUi(() =>
+        {
+            _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
+        });
         StopGamesFeed();
         _viewModel.UpdateGames(new Dictionary<string, List<Game>>());
         ShowUnauthenticatedOverlay("Your session expired. Sign in to see today's matches.");
@@ -508,6 +512,7 @@ public partial class HomeHostPage : ContentPage
     {
         _isAuthenticated = true;
         _viewModel.CanSignOut = true;
+        _viewModel.RefreshRemoteComputeAccess();
         SetAuthStatus(null);
         StartGamesFeed();
         SetAuthOverlayVisible(false);
@@ -568,6 +573,7 @@ public partial class HomeHostPage : ContentPage
         PostUi(() =>
         {
             _viewModel.CanSignOut = false;
+            _viewModel.RefreshRemoteComputeAccess();
             _viewModel.CloseMenu();
             _viewModel.UpdateGames(null);
             _viewModel.ClearErrors();
@@ -576,16 +582,8 @@ public partial class HomeHostPage : ContentPage
         });
 
         // The LAN warning stream keeps running across sign-in sessions.
-        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(warning =>
-        {
-            if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
-            {
-                return;
-            }
-
-            _lanWarning = warning;
-            _viewModel.SetLanWarning(warning);
-        }));
+        _subscriptions.Add(_lanMonitor.WarningStream.Subscribe(ApplyLanWarning));
+        _subscriptions.Add(_lanMonitor.FoundStream.Subscribe(ApplyLocalServiceFound));
     }
 
     private void ShowDeviceCode(AuthDeviceCode deviceCode)
@@ -636,6 +634,25 @@ public partial class HomeHostPage : ContentPage
 
     // --------------------------------------------------- stream resolution --
 
+    private void ApplyLanWarning(string? warning)
+    {
+        if (_localLan.UsesRemoteCompute)
+        {
+            warning = null;
+        }
+
+        if (warning is null && string.IsNullOrWhiteSpace(_lanWarning))
+        {
+            return;
+        }
+
+        _lanWarning = warning;
+        _viewModel.SetLanWarning(warning);
+    }
+
+    private void ApplyLocalServiceFound(bool found) =>
+        _viewModel.SetLocalServiceFound(found);
+
     private void OnGamePicked(Game game) => _ = StartStreamResolutionAsync(game);
 
     private async Task StartStreamResolutionAsync(Game game)
@@ -643,7 +660,15 @@ public partial class HomeHostPage : ContentPage
         _logger.LogInformation(
             "[HomeHost] Starting stream resolution for {Home} vs {Away}", game.DisplayHome, game.DisplayAway);
 
-        if (!string.IsNullOrWhiteSpace(_lanWarning))
+        if (_localLan.UsesRemoteCompute)
+        {
+            if (!string.IsNullOrWhiteSpace(_lanWarning))
+            {
+                _lanWarning = null;
+                _viewModel.SetLanWarning(null);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_lanWarning))
         {
             _logger.LogInformation("[HomeHost] Refusing stream resolution: local service unavailable ({Warning})", _lanWarning);
             _serviceError = _lanWarning;
@@ -757,6 +782,7 @@ public partial class HomeHostPage : ContentPage
                     PostUi(() =>
                     {
                         ResolveOverlay.IsVisible = false;
+                        HoldScreen(ScreenAwakePolicy.Hold(findingStreams: false, playing: _playbackVisible));
                         UpdateBackSuppression();
                         TryResumeAfterPlayer();
                     });
@@ -814,6 +840,7 @@ public partial class HomeHostPage : ContentPage
         PostUi(() =>
         {
             ResolveOverlay.IsVisible = false;
+            HoldScreen(ScreenAwakePolicy.Hold(findingStreams: false, playing: _playbackVisible));
             UpdateBackSuppression();
             // Overlay Cancel held focus — without this, Android TV lands on
             // the Menu button instead of the game that opened finding-streams.
@@ -827,52 +854,25 @@ public partial class HomeHostPage : ContentPage
     }
 
     /// <summary>
-    /// User left the native player — stop any in-flight finding-streams and
-    /// dismiss the modal (same end state as Cancel).
+    /// User left the native player — cancel in-flight finding-streams (and the
+    /// headed Chrome <c>/mp</c> it owns) and dismiss the modal.
     /// </summary>
     private void StopFindingStreamsAfterPlaybackLeft()
     {
-        var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
-            _resolveOverlayOpen,
-            _isResolvingStreams,
-            _resolutionStartClaimed,
-            _resolutionTask is { IsCompleted: false })
-            || ResolveOverlay.IsVisible;
-
         // Always terminal for this pick so TryResumeAfterPlayer cannot restart.
         _resolutionExhausted = true;
-
-        if (HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive)
-            || _homeShell.PlayerSessionStarted)
-        {
-            var watched = _selection.CurrentGame ?? _homeShell.SelectedGame;
-            _logger.LogInformation("[HomeHost] Stopping finding-streams after playback left");
-            CancelStreamDiscoveryFromUser(playCancelSound: false, restoreOverlayFocus: false);
-            PostUi(() => HomeSurface.RestoreFocusAfterStreamExit(watched));
-            return;
-        }
-
-        _selection.CurrentGame = null;
-        try
-        {
-            _homeShell.ClearSelection();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "[HomeHost] ClearSelection after playback left failed");
-        }
-
-        PostUi(() =>
-        {
-            ResolveOverlay.IsVisible = false;
-            UpdateBackSuppression();
-        });
+        var watched = _selection.CurrentGame ?? _homeShell.SelectedGame;
+        _logger.LogInformation("[HomeHost] Stopping finding-streams after playback left");
+        CancelStreamDiscoveryFromUser(playCancelSound: false, restoreOverlayFocus: false);
+        PostUi(() => HomeSurface.RestoreFocusAfterStreamExit(watched));
     }
 
     private void OnResolveCancelClicked(object? sender, EventArgs e) => CancelStreamDiscoveryFromUser();
 
     private async void OnPlaybackVisibilityChanged(object? sender, bool visible)
     {
+        _playbackVisible = visible;
+        HoldScreen(ScreenAwakePolicy.Hold(findingStreams: _resolveOverlayOpen, playing: visible));
         PlaybackAudioSession.Apply(visible, _sounds, _soundPlayer);
 
         // The homepage stops being the active surface while a stream plays:
@@ -936,6 +936,20 @@ public partial class HomeHostPage : ContentPage
         }
     }
 
+    /// <summary>
+    /// The window flag is a view change, so it runs on the UI thread. Playback
+    /// visibility arrives on a pool thread, and a flag change from there aborts
+    /// the process.
+    /// </summary>
+    private void HoldScreen(bool on)
+    {
+#if ANDROID
+        ScreenAwakePolicy.Apply(on, PostUi, AndroidScreenAwake.Set);
+#else
+        _ = on;
+#endif
+    }
+
     private void ShowResolveOverlay(string subtitle) => PostUi(() =>
     {
         ResolveTitleLabel.Text = "Finding streams...";
@@ -947,6 +961,7 @@ public partial class HomeHostPage : ContentPage
         ResolveCountLabel.Text = count;
         ResolveCountLabel.IsVisible = count.Length > 0;
         ResolveOverlay.IsVisible = true;
+        HoldScreen(ScreenAwakePolicy.Hold(findingStreams: true, playing: _playbackVisible));
         // Re-assert suppression on the UI thread with the overlay actually
         // visible — covers any race where a prior session's finally cleared
         // flags before this paint.
@@ -964,8 +979,13 @@ public partial class HomeHostPage : ContentPage
             ? string.Empty
             : progress.Status == "Playing..." ? "Now Playing" : "Finding streams...";
         ResolveTitleLabel.IsVisible = ResolveTitleLabel.Text.Length > 0;
-        ResolveStatusLabel.Text = progress.Status;
-        ResolveStatusLabel.IsVisible = StreamResolveOverlayProgress.ShouldShowStatusSubtitle(progress.Status);
+        var detail = StreamResolveOverlayProgress.DetailLine(progress.Status);
+        if (detail is not null)
+        {
+            ResolveStatusLabel.Text = detail;
+            ResolveStatusLabel.IsVisible = true;
+        }
+
         ApplyResolveWaitVisual(
             indeterminate,
             StreamResolveOverlayProgress.Fraction(progress.StreamsTested, progress.TotalStreams));
@@ -1004,7 +1024,6 @@ public partial class HomeHostPage : ContentPage
         PostUi(() =>
         {
             ResolveOverlay.IsVisible = false;
-            UpdateBackSuppression();
         });
     }
 

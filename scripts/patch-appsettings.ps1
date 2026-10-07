@@ -13,10 +13,17 @@
 
 .PARAMETER UserSecretsId
   The project's UserSecretsId (GUID folder under the user-secrets root).
+
+.PARAMETER ApiTarget
+  Optional package override. local or preview copies Api:HeadlessBaseUrl-Local
+  or Api:HeadlessBaseUrl-Preview onto Api:HeadlessBaseUrl for this file only.
+  production leaves Api:HeadlessBaseUrl as stored. Does not write user-secrets.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$AppSettingsPath,
-    [Parameter(Mandatory = $true)][string]$UserSecretsId
+    [Parameter(Mandatory = $true)][string]$UserSecretsId,
+    [ValidateSet('', 'local', 'preview', 'production')]
+    [string]$ApiTarget = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,6 +89,17 @@ if ($appsettings.Auth0.PSObject.Properties['TokenLeewaySeconds']) {
 }
 if ($appsettings.PSObject.Properties['AllowUserSecrets']) {
     $appsettings.PSObject.Properties.Remove('AllowUserSecrets')
+}
+
+if ($ApiTarget -eq 'local' -or $ApiTarget -eq 'preview') {
+    $sourceKey = if ($ApiTarget -eq 'preview') { 'HeadlessBaseUrl-Preview' } else { 'HeadlessBaseUrl-Local' }
+    $override = [string]$appsettings.Api.PSObject.Properties[$sourceKey].Value
+    if ([string]::IsNullOrWhiteSpace($override)) {
+        throw "Api:$sourceKey is empty in user-secrets, so -Api $ApiTarget cannot override Api:HeadlessBaseUrl."
+    }
+
+    $appsettings.Api | Add-Member -NotePropertyName 'HeadlessBaseUrl' -NotePropertyValue $override -Force
+    Write-Host "[BUILD] API target ${ApiTarget}: Api:HeadlessBaseUrl = $override" -ForegroundColor Green
 }
 
 # Fail closed: an "successful" patch that leaves Auth0 empty produces a signed-in-broken APK.

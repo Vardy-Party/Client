@@ -14,10 +14,13 @@ public sealed class LocalLanServiceAvailabilityMonitor(
     private static readonly TimeSpan UnavailableNormalInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan UnavailableFastWindow = TimeSpan.FromMinutes(1);
     private readonly BehaviorSubject<string?> _warningSubject = new(null);
+    private readonly BehaviorSubject<bool> _foundSubject = new(false);
     private CancellationTokenSource? _cts;
     private int _started;
 
     public IObservable<string?> WarningStream => _warningSubject.AsObservable();
+
+    public IObservable<bool> FoundStream => _foundSubject.AsObservable();
 
     public void Start()
     {
@@ -33,6 +36,7 @@ public sealed class LocalLanServiceAvailabilityMonitor(
         _cts?.Cancel();
         _cts?.Dispose();
         _warningSubject.Dispose();
+        _foundSubject.Dispose();
     }
 
     private async Task MonitorLoopAsync(CancellationToken cancellationToken)
@@ -72,6 +76,15 @@ public sealed class LocalLanServiceAvailabilityMonitor(
         try
         {
             var available = await localLanPlayService.IsAvailableAsync(cancellationToken);
+            var capable = available && await localLanPlayService.SupportsComputeHostAsync(cancellationToken);
+            _foundSubject.OnNext(capable);
+
+            if (localLanPlayService.UsesRemoteCompute)
+            {
+                _warningSubject.OnNext(null);
+                return true;
+            }
+
             if (available)
             {
                 _warningSubject.OnNext(null);
@@ -98,6 +111,7 @@ public sealed class LocalLanServiceAvailabilityMonitor(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[LocalLanMonitor] Availability verification failed");
+            _foundSubject.OnNext(false);
             _warningSubject.OnNext("Unable to verify local service availability right now.");
             return false;
         }

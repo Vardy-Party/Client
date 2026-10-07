@@ -30,6 +30,10 @@ scrape plugins advertise `mp.chrome` but fail `/mp` with `v2 scrape plugin not r
 
 Never commit `packageSourceCredentials` / clear-text PATs into repo `NuGet.config`.
 
+## API preview deploy
+
+The API preview Worker is connected to GitHub. Pushing an API pull-request branch deploys `headless-m3u8-preview` through Cloudflare Workers Builds. Do not follow that push with a local `npm run deploy` or `wrangler deploy`. Uncommitted API files are not on the worker until they are committed and pushed. See `AGENTS.md` in the API repo.
+
 ## ⚠️ `GH_TOKEN` expires every ~90 days — rotate it
 
 `GH_TOKEN` is a GitHub Personal Access Token issued **2026-09-02**. It

@@ -53,6 +53,13 @@ public static class StreamResolveOverlayProgress
     }
 
     /// <summary>
+    /// Line that replaces the matchup under the title. Generic searching copy
+    /// is already the title, so null keeps the matchup on screen.
+    /// </summary>
+    public static string? DetailLine(string? status) =>
+        ShouldShowStatusSubtitle(status) ? status!.Trim() : null;
+
+    /// <summary>
     /// Count line for the finding-streams modal. Before testing begins while the
     /// candidate total is unknown, "0 tested • 0 healthy" is meaningless — return
     /// empty so hosts hide the label. Once streams are being tested, display progress.

@@ -12,11 +12,33 @@ CI/CD (`.github/workflows/cd.yml`) and local packaging (`package-android.ps1` /
 
 ```powershell
 pwsh ./package-android.ps1
+pwsh ./package-android.ps1 -Api preview
 ```
 
-That script restores, patches secrets into `appsettings.json` for the build, and
-produces `armeabi-v7a` (TV) + `arm64-v8a` (phones) outputs. See script help for
-`-Mode`. The rest of this doc is the manual user-secrets / MSBuild path.
+That script patches secrets into `appsettings.json` for the build and produces
+`armeabi-v7a` (TV) + `arm64-v8a` (phones). See script help for `-Mode`. The rest
+of this doc is the manual user-secrets / MSBuild path.
+
+## Which API this APK calls
+
+Release Android ignores `VARDYPARTY_DEBUG_API`. The address baked into the APK
+is `Api:HeadlessBaseUrl` from user-secrets, unless `-Api` overrides it for
+that package only. The stored secret is not changed.
+
+| Flag | Baked `Api:HeadlessBaseUrl` |
+|------|-----------------------------|
+| (omit) or `-Api production` | `Api:HeadlessBaseUrl` |
+| `-Api preview` | `Api:HeadlessBaseUrl-Preview` |
+| `-Api local` | `Api:HeadlessBaseUrl-Local` |
+
+The build log prints the baked address, for example `API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.example.test/`. The preview or local key must already be in user-secrets or the package fails.
+
+Other heads, same user-secrets keys:
+
+- Debug Windows: user env `VARDYPARTY_DEBUG_API=local|preview|production`, then relaunch. Unset means production. Release Windows ignores it.
+- Linux: `VARDYPARTY_LINUX_API=local|preview|production` at process start. See [LINUX_SUPPORT.md](LINUX_SUPPORT.md).
+
+Phone-over-USB against preview, Wi-Fi off: [REMOTE_COMPUTE_PREVIEW_USB.md](REMOTE_COMPUTE_PREVIEW_USB.md).
 
 ## Problem
 

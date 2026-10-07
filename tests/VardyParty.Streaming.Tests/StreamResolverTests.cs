@@ -24,6 +24,7 @@ public class StreamResolverTests
     {
         _healthChecker = _fixture.GetMock<IStreamHealthChecker>();
         _localLanPlay = _fixture.GetMock<ILocalLanPlayService>();
+        _localLanPlay.SetupGet(s => s.UsesRemoteCompute).Returns(false);
         _fixture.Inject<IDiscoveredChipNormalizer>(new V2PlaybackTransportPlugin());
     }
 
@@ -320,6 +321,38 @@ public class StreamResolverTests
     }
 
     [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_PairedEmptyPlaylist_SaysThePairedComputer()
+    {
+        var stream = _fixture.Build<Stream>().With(s => s.StreamStatus, "live").Create();
+        _localLanPlay.SetupGet(s => s.UsesRemoteCompute).Returns(true);
+        _localLanPlay.SetupGet(s => s.LastRemoteComputeError).Returns((string?)null);
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((M3U8Response?)null);
+
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        Assert.Equal("No playlist from the paired computer", results[0].ErrorMessage);
+        Assert.DoesNotContain("local LAN", results[0].ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_PairedFault_UsesThatFaultInsteadOfTheLanSentence()
+    {
+        var stream = _fixture.Build<Stream>().With(s => s.StreamStatus, "live").Create();
+        const string fault = "Local service failed: This computer is still finding a stream. Tap the game again to start a new search. Correlation id: abc";
+        _localLanPlay.SetupGet(s => s.UsesRemoteCompute).Returns(true);
+        _localLanPlay.SetupGet(s => s.LastRemoteComputeError).Returns(fault);
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((M3U8Response?)null);
+
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        Assert.Equal(fault, results[0].ErrorMessage);
+    }
+
+    [Fact]
     public async Task ResolveStreamsIncrementallyAsync_CancelledDuringLocalService_PropagatesWithoutFailedYield()
     {
         // Arrange — Cancel during POST /mp must surface as OCE, not a Failed candidate.
@@ -367,6 +400,71 @@ public class StreamResolverTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => consume);
         Assert.Empty(yielded);
         Assert.DoesNotContain(yielded, e => e.Status == StreamResolutionStatus.Failed);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_CancelAfterFirstMp_DoesNotStartSiblingScrape()
+    {
+        var page = "https://www.example-mp.test/football/match.html";
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, page)
+            .With(s => s.Channel, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .With(s => s.PlayerStreams, new List<string>())
+            .Create();
+
+        var first = new M3U8Response
+        {
+            Url = "https://cdn.example.test/chip-a.m3u8",
+            Streams = ["Chip A", "Chip B"],
+            SelectedStream = "Chip A",
+            RewrittenSegments = ["https://cdn.example.test/seg.exe?_s2=1"]
+        };
+        var siblingEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(page, null, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(first);
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string? _, string? _, string? _, CancellationToken token) =>
+            {
+                siblingEntered.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                return (M3U8Response?)null;
+            });
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string url, string _, StreamHealthProbe? _, CancellationToken _) =>
+                new StreamHealth { Status = StreamHealthStatus.Healthy, Url = url });
+
+        var yielded = new List<EnrichedStream>();
+        async Task ConsumeAsync()
+        {
+            await foreach (var enriched in Sut.ResolveStreamsIncrementallyAsync(
+                               [stream],
+                               batchSize: 1,
+                               cancellationToken: cts.Token))
+            {
+                yielded.Add(enriched);
+                cts.Cancel();
+            }
+        }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ConsumeAsync());
+        Assert.Single(yielded);
+        Assert.Equal(StreamResolutionStatus.Healthy, yielded[0].Status);
+        Assert.False(siblingEntered.Task.IsCompleted);
+        _localLanPlay.Verify(
+            s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -542,6 +640,60 @@ public class StreamResolverTests
         Assert.Equal("Chip B", results[1].Stream.Channel);
         Assert.DoesNotContain(1, totals);
         Assert.Contains(2, totals);
+        _localLanPlay.Verify(
+            s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_RemoteCompute_EnqueuesRemainingMpChipsLikeLan()
+    {
+        var page = "https://www.example-mp.test/football/match.html";
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, page)
+            .With(s => s.Channel, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
+            .With(s => s.PlayerStreams, new List<string>())
+            .Create();
+
+        var first = new M3U8Response
+        {
+            Url = "https://cdn.example.test/chip-a.m3u8",
+            Streams = ["Chip A", "Chip B"],
+            SelectedStream = "Chip A",
+            RewrittenSegments = ["https://cdn.example.test/seg.exe?_s2=1"]
+        };
+        var second = new M3U8Response
+        {
+            Url = "https://cdn.example.test/chip-b.m3u8",
+            Streams = ["Chip A", "Chip B"],
+            SelectedStream = "Chip B",
+            RewrittenSegments = ["https://cdn.example.test/seg2.exe?_s2=1"]
+        };
+
+        _localLanPlay.SetupGet(s => s.UsesRemoteCompute).Returns(true);
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(page, null, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(first);
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(second);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string url, string _, StreamHealthProbe? _, CancellationToken _) =>
+                new StreamHealth { Status = StreamHealthStatus.Healthy, Url = url });
+
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream], batchSize: 1));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Chip A", results[0].Stream.Channel);
+        Assert.Equal("Chip B", results[1].Stream.Channel);
         _localLanPlay.Verify(
             s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Once);

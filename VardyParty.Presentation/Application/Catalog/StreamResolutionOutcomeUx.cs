@@ -56,6 +56,11 @@ public static class StreamResolutionOutcomeUx
             return new StreamResolutionOutcomePlan(ClearSelection: true, ErrorMessage: null);
         }
 
+        if (!string.IsNullOrWhiteSpace(outcome.RemoteComputeError))
+        {
+            return new StreamResolutionOutcomePlan(ClearSelection: true, outcome.RemoteComputeError);
+        }
+
         if (outcome.LocalServiceUnavailable)
         {
             return new StreamResolutionOutcomePlan(ClearSelection: true, LocalServiceUnavailableMessage);

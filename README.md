@@ -13,7 +13,8 @@ You need the **.NET 11 RC1 SDK** on every head (distro/apt .NET 10 fails with
   `HomeUiTargetFrameworks=net11.0` for restore and run.
 - **Windows** — [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md)
 - **Android (mobile)** and **Android TV** — [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md)
-  (`package-android.ps1` produces `arm64-v8a` phones and `armeabi-v7a` TV)
+  (`package-android.ps1` produces `arm64-v8a` phones and `armeabi-v7a` TV;
+  `-Api preview` or `-Api local` picks the API for that APK)
 
 Architecture, playback, versioning, and the merge playbook stay in the
 [Documentation](#documentation) table below — they are not the first step.
@@ -54,7 +55,8 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 | [docs/STREAM_PLAYBACK_RULES.md](docs/STREAM_PLAYBACK_RULES.md) | Playback session / engine contract |
 | [docs/STREAM_HEALTH_PROTOCOL.md](docs/STREAM_HEALTH_PROTOCOL.md) | Health-check protocol |
 | [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 RC1 + run Desktop / WSL |
-| [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1`) |
+| [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1 -Api preview`) |
+| [docs/REMOTE_COMPUTE_PREVIEW_USB.md](docs/REMOTE_COMPUTE_PREVIEW_USB.md) | Preview test with a phone on USB, Wi-Fi off |
 | [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md) | Windows install / sideload |
 | [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) | Semver + build counter (`Version.props`) |
 | [docs/agent-playbook-merge-client-pr-v2.md](docs/agent-playbook-merge-client-pr-v2.md) | Land a PR so main releases **v2.0.0** |

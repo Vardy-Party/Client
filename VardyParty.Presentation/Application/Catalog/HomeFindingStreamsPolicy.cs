@@ -13,11 +13,15 @@ public static class HomeFindingStreamsPolicy
         findingModalOwned;
 
     /// <summary>
-    /// Leaving playback (Back / close stream) while discovery is still running
-    /// must stop the operation and dismiss the modal.
+    /// Leaving playback (Back / close stream) always cancels discovery so headed
+    /// Chrome <c>/mp</c> stops with the player, even if the finding overlay
+    /// already dismissed and sibling chips are still in flight.
     /// </summary>
-    public static bool PlaybackLeaveShouldStopFinding(bool findingActive) =>
-        findingActive;
+    public static bool PlaybackLeaveShouldStopFinding(bool findingActive)
+    {
+        _ = findingActive;
+        return true;
+    }
 
     /// <summary>
     /// True when any host flag says the finding-streams session is still owned
