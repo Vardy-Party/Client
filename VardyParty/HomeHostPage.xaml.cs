@@ -1024,7 +1024,6 @@ public partial class HomeHostPage : ContentPage
         PostUi(() =>
         {
             ResolveOverlay.IsVisible = false;
- 
         });
     }
 
