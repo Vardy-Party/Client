@@ -139,59 +139,59 @@ public sealed class RemoteComputeController : IRemoteComputeController
             SetStatus(CheckingInviteStatus);
             try
             {
-            using var redeem = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs/redeem")
-            {
-                Content = JsonContent.Create(new { code = trimmed })
-            };
-            redeem.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
-            using var response = await http.SendAsync(redeem, cancellationToken).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                NoteMissingRoute();
-                Fail("Relay", ApiHasNoRemoteCompute, correlationId);
-                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 404", correlationId);
-                return;
-            }
+                using var redeem = new HttpRequestMessage(HttpMethod.Post, $"{api}/compute/pairs/redeem")
+                {
+                    Content = JsonContent.Create(new { code = trimmed })
+                };
+                redeem.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+                using var response = await http.SendAsync(redeem, cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    NoteMissingRoute();
+                    Fail("Relay", ApiHasNoRemoteCompute, correlationId);
+                    logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 404", correlationId);
+                    return;
+                }
 
-            if (response.StatusCode == HttpStatusCode.Forbidden)
-            {
-                var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                Fail("Relay",
-                    text.Contains("relay-user", StringComparison.OrdinalIgnoreCase)
-                    || text.Contains("relay user", StringComparison.OrdinalIgnoreCase)
-                        ? "This account needs the relay-user role"
-                        : "Invite code is invalid or expired",
-                    correlationId);
-                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 403", correlationId);
-                return;
-            }
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    Fail("Relay",
+                        text.Contains("relay-user", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("relay user", StringComparison.OrdinalIgnoreCase)
+                            ? "This account needs the relay-user role"
+                            : "Invite code is invalid or expired",
+                        correlationId);
+                    logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned 403", correlationId);
+                    return;
+                }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                Fail("Relay", "Could not redeem that invite code", correlationId);
-                logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned {Status}", correlationId, (int)response.StatusCode);
-                return;
-            }
+                if (!response.IsSuccessStatusCode)
+                {
+                    Fail("Relay", "Could not redeem that invite code", correlationId);
+                    logger.LogWarning("[RemoteCompute] {CorrelationId} redeem returned {Status}", correlationId, (int)response.StatusCode);
+                    return;
+                }
 
-            var paired = await response.Content.ReadFromJsonAsync<PairRedeemed>(cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(paired?.HostSub))
-            {
-                Fail("Relay", "Could not redeem that invite code", correlationId);
-                return;
-            }
+                var paired = await response.Content.ReadFromJsonAsync<PairRedeemed>(cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(paired?.HostSub))
+                {
+                    Fail("Relay", "Could not redeem that invite code", correlationId);
+                    return;
+                }
 
-            if (ShareEnabled)
-            {
-                await StopHostAsync(cancellationToken).ConfigureAwait(false);
-                _hostSessionLive = false;
-                AbandonShare();
-            }
+                if (ShareEnabled)
+                {
+                    await StopHostAsync(cancellationToken).ConfigureAwait(false);
+                    _hostSessionLive = false;
+                    AbandonShare();
+                }
 
-            preferences.SavePairedHostSub(paired.HostSub);
-            if (IsGuestPaired)
-            {
-                SetStatus(PairedStatus);
-            }
+                preferences.SavePairedHostSub(paired.HostSub);
+                if (IsGuestPaired)
+                {
+                    SetStatus(PairedStatus);
+                }
             }
             finally
             {
