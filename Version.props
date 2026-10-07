@@ -11,10 +11,10 @@
   -->
   <PropertyGroup>
     <!-- Internal build counter — bumped on the PR branch before merge to main -->
-    <ApplicationVersion>184</ApplicationVersion>
+    <ApplicationVersion>185</ApplicationVersion>
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->
-    <ApplicationDisplayVersion>3.1.1</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>3.2.0</ApplicationDisplayVersion>
     
     <!-- Product name for versioning -->
     <Product>VardyParty</Product>
