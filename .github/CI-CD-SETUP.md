@@ -120,7 +120,7 @@ Installers will be automatically created and attached to the GitHub Release.
 - Output: macOS application
 
 ### Linux / WSL (`VardyParty.Linux`)
-- Builds on: `ubuntu-latest`
+- Builds on: `ubuntu-24.04` (x64) and `ubuntu-24.04-arm`. The snap base is `core24`, so the publish stays on Ubuntu 24's glibc.
 - Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
 - Architectures: x64, ARM64
 - Output: Desktop publish artifacts / snaps (see `cd.yml` package-linux jobs)

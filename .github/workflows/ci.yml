@@ -1,12 +1,12 @@
 name: CI - Build & Test
 
 env:
-  # Everything targets net11.0(-*) now, so every job uses the same .NET 11
-  # RC1 SDK pin.
+  # Everything targets net11.0(-*). 11.0.x is the latest SDK on the 11.0
+  # channel, including release candidates until general availability.
   # There is deliberately no repo global.json: with no pin, dotnet picks the
   # newest installed SDK (previews included), which is what the local build
-  # scripts need, while CI jobs pin per-job via setup-dotnet.
-  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
+  # scripts need, while CI jobs select the channel via setup-dotnet.
+  DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"
@@ -83,17 +83,16 @@ jobs:
       # Flows into HomeUi as an MSBuild property (not stripped on ProjectReference).
       HomeUiTargetFrameworks: net11.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Display version info
         run: |
           APP_VERSION=$(grep -oP '(?<=<ApplicationVersion>)\d+(?=</ApplicationVersion>)' Version.props)
           DISPLAY_VERSION=$(grep -oP '(?<=<ApplicationDisplayVersion>)\K[^<]+(?=</ApplicationDisplayVersion>)' Version.props)
-          echo "::notice::Building with ApplicationVersion=${APP_VERSION}, ApplicationDisplayVersion=${DISPLAY_VERSION}"
+          echo "Building with ApplicationVersion=${APP_VERSION}, ApplicationDisplayVersion=${DISPLAY_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -126,12 +125,11 @@ jobs:
       - test
     if: ${{ needs.resolve-flags.outputs.skip_codequality != 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -184,12 +182,11 @@ jobs:
       - code-quality
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -200,7 +197,7 @@ jobs:
       - name: Build Windows app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-windows10.0.19041.0
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-windows
           path: |
@@ -242,19 +239,18 @@ jobs:
       - code-quality
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: "17"
           distribution: temurin
@@ -276,7 +272,7 @@ jobs:
       - name: Build Android app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-android --no-restore -p:RuntimeIdentifiers=android-arm64 -r android-arm64 -p:AndroidKeyStore=false
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-android
           path: |
@@ -318,12 +314,11 @@ jobs:
       - code-quality
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -351,7 +346,7 @@ jobs:
       - name: Build iOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-ios -r iossimulator-x64 --no-restore
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-ios
           path: |
@@ -393,12 +388,11 @@ jobs:
       - code-quality
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -425,7 +419,7 @@ jobs:
       - name: Build macOS app
         run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-x64 --no-restore
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-macos
           path: |
@@ -463,19 +457,20 @@ jobs:
   # docs/architecture/homepage-maui-avalonia.md.
   build-linux:
     name: Build Linux (MAUI-Avalonia)
-    runs-on: ubuntu-latest
+    # Stay on 24.04: the publish is packed into a core24 snap. Ubuntu 26's
+    # glibc would make that binary fail on core24 and on Ubuntu 24 hosts.
+    runs-on: ubuntu-24.04
     needs:
       - resolve-flags
       - test
       - code-quality
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -492,7 +487,7 @@ jobs:
           HomeUiTargetFrameworks: net11.0
         run: dotnet build VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-restore
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-linux
           path: |
@@ -503,15 +498,15 @@ jobs:
   # start against sample data and stay alive for 20s under a virtual display.
   linux-runtime-smoke:
     name: Linux Runtime Smoke
-    runs-on: ubuntu-latest
+    # Same image as build-linux so the smoke test matches the shipped glibc.
+    runs-on: ubuntu-24.04
     needs: build-linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
