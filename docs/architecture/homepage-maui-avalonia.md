@@ -122,7 +122,7 @@ net11.0, matching the MAUI/Linux heads. The
 `Configuration.Abstractions` packages are framework-provided on .NET 11 and
 their explicit `PackageReference`s were removed (they fired NU1510; the
 packaging flows are zero-warning again). CI/CD pins a single
-`DOTNET_VERSION: "11.0.100-rc.1.26425.128"` with `dotnet-quality: preview` for every job —
+`DOTNET_VERSION: "11.0.100-rc.1.26425.128"` for every job —
 `DOTNET_PREVIEW_VERSION` is gone.
 
 ### The Netflix-style UI in XAML terms
