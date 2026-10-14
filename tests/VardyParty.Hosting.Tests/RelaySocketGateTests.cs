@@ -11,18 +11,15 @@ public class RelaySocketGateTests
     [Fact]
     public async Task Dispose_LetsTheNextCallerOpenASocket()
     {
-        // Arrange — a /play call holds the only guest socket until it closes.
+        // Arrange
         var gate = new RelaySocketGate();
         var first = await gate.AcquireAsync(CancellationToken.None);
         var waiting = gate.AcquireAsync(CancellationToken.None);
 
         // Act
-        await Task.Delay(50);
-
-        // Assert — the next stream cannot connect yet.
-        Assert.False(waiting.IsCompleted);
-
         await first.DisposeAsync();
+
+        // Assert
         var second = await waiting.WaitAsync(TimeSpan.FromSeconds(2));
         await second.DisposeAsync();
     }
@@ -36,16 +33,54 @@ public class RelaySocketGateTests
         var harvestClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var waiting = gate.AcquireAsync(CancellationToken.None);
 
-        // Act — returning the first chip must not open a second socket.
+        // Act
         first.HandOff(harvestClosed.Task);
-        await first.DisposeAsync();
-        await Task.Delay(50);
 
         // Assert
         Assert.False(waiting.IsCompleted);
-
         harvestClosed.SetResult();
         var second = await waiting.WaitAsync(TimeSpan.FromSeconds(2));
         await second.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task HandOff_FaultedTask_LetsTheNextAcquireComplete()
+    {
+        // Arrange
+        var gate = new RelaySocketGate();
+        var first = await gate.AcquireAsync(CancellationToken.None);
+        var dropped = Task.FromException(new InvalidOperationException("socket dropped"));
+
+        // Act
+        first.HandOff(dropped);
+
+        // Assert
+        var second = await gate.AcquireAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        await second.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Dispose_AfterHandOff_DoesNotThrow()
+    {
+        // Arrange
+        var gate = new RelaySocketGate();
+        var first = await gate.AcquireAsync(CancellationToken.None);
+        var harvestClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = gate.AcquireAsync(CancellationToken.None);
+        first.HandOff(harvestClosed.Task);
+
+        // Act
+        var disposing = first.DisposeAsync();
+
+        // Assert
+        await disposing;
+        Assert.False(waiting.IsCompleted);
+        harvestClosed.SetResult();
+        var second = await waiting.WaitAsync(TimeSpan.FromSeconds(2));
+        var third = gate.AcquireAsync(CancellationToken.None);
+        Assert.False(third.IsCompleted);
+        await second.DisposeAsync();
+        var released = await third.WaitAsync(TimeSpan.FromSeconds(2));
+        await released.DisposeAsync();
     }
 }
