@@ -213,7 +213,9 @@ jobs:
   build-linux-release:
     name: Build & Package Linux
     if: always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: ubuntu-latest
+    # core24 snap. Build on 24.04 so the self-contained binary's glibc
+    # matches the snap base and Ubuntu 24 hosts.
+    runs-on: ubuntu-24.04
     needs: create-release
     env:
       HomeUiTargetFrameworks: net11.0

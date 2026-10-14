@@ -457,7 +457,9 @@ jobs:
   # docs/architecture/homepage-maui-avalonia.md.
   build-linux:
     name: Build Linux (MAUI-Avalonia)
-    runs-on: ubuntu-latest
+    # Stay on 24.04: the publish is packed into a core24 snap. Ubuntu 26's
+    # glibc would make that binary fail on core24 and on Ubuntu 24 hosts.
+    runs-on: ubuntu-24.04
     needs:
       - resolve-flags
       - test
@@ -496,7 +498,8 @@ jobs:
   # start against sample data and stay alive for 20s under a virtual display.
   linux-runtime-smoke:
     name: Linux Runtime Smoke
-    runs-on: ubuntu-latest
+    # Same image as build-linux so the smoke test matches the shipped glibc.
+    runs-on: ubuntu-24.04
     needs: build-linux
     steps:
       - uses: actions/checkout@v7
