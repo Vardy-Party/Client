@@ -160,6 +160,10 @@
 		<_SplashLines Include="&lt;/svg&gt;" />
 	  </ItemGroup>
       <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
+      <!-- Resizetizer 11 RC2 crashes on SVG <text> (dotnet/maui#38507) on
+           Windows, iOS, and Mac Catalyst. Outline the labels before assets run. -->
+      <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)..\Tools\SvgTextOutliner\SvgTextOutliner.csproj&quot; -c Release --no-launch-profile -- &quot;$(SplashFile)&quot;"
+            WorkingDirectory="$(MSBuildThisFileDirectory).." />
     </Target>
 
     <!-- Auto-sync Package.appxmanifest version from .csproj properties for Windows builds -->
@@ -192,7 +196,8 @@
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
         
-        <!-- Android TV Banner (wide asset — not the phone launcher icon) -->
+        <!-- Android TV Banner (wide asset — not the phone launcher icon).
+             The title is a path, not <text>: Resizetizer crashes on SVG text. -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
 
 
