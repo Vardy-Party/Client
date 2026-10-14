@@ -12,4 +12,12 @@
 		<PackageReference Include="SkiaSharp" Version="4.148.0" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<!-- SIL OFL 1.1. Reserved font name Liberation. See Fonts/LICENSE. -->
+		<None Include="Fonts\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\LiberationSans-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\LICENSE" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\AUTHORS" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

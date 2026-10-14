@@ -37,10 +37,8 @@ internal static partial class SvgTextOutliner
         var weight = int.TryParse(Attr(attrs, "font-weight"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : 400;
-        var families = (Attr(attrs, "font-family") ?? "Arial")
-            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-        using var typeface = ResolveTypeface(families, weight);
+        using var typeface = LoadBundledTypeface(weight);
         using var font = new SKFont(typeface, size);
         var advance = font.MeasureText(text);
         var originX = anchor switch
@@ -57,31 +55,18 @@ internal static partial class SvgTextOutliner
         return $"<path d='{data}' fill='{fill}'/>";
     }
 
-    private static SKTypeface ResolveTypeface(string[] families, int weight)
+    private static SKTypeface LoadBundledTypeface(int weight)
     {
-        var styleWeight = weight switch
-        {
-            >= 700 => SKFontStyleWeight.Bold,
-            >= 600 => SKFontStyleWeight.SemiBold,
-            >= 500 => SKFontStyleWeight.Medium,
-            _ => SKFontStyleWeight.Normal,
-        };
-        var style = new SKFontStyle(styleWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
+        // Liberation Sans has Regular and Bold only. Weight 600 (the splash
+        // version line) uses Bold. Host fonts are ignored: GitHub runners do
+        // not have Segoe UI or Arial.
+        var fileName = weight >= 600 ? "LiberationSans-Bold.ttf" : "LiberationSans-Regular.ttf";
+        var path = Path.Combine(AppContext.BaseDirectory, "Fonts", fileName);
+        if (!File.Exists(path))
+            throw new InvalidOperationException($"Bundled font was not copied next to the tool: {path}");
 
-        foreach (var family in families)
-        {
-            if (family is "sans-serif" or "serif" or "monospace")
-                continue;
-
-            var face = SKTypeface.FromFamilyName(family, style);
-            if (face is not null && face.FamilyName.Equals(family, StringComparison.OrdinalIgnoreCase))
-                return face;
-
-            face?.Dispose();
-        }
-
-        throw new InvalidOperationException(
-            "None of the requested fonts are installed: " + string.Join(", ", families));
+        return SKTypeface.FromFile(path)
+            ?? throw new InvalidOperationException($"Skia could not read the bundled font '{path}'.");
     }
 
     private static string Required(string attrs, string name) =>
