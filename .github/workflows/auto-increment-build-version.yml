@@ -12,14 +12,14 @@ on:
 
 jobs:
   increment-version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       new_version: ${{ steps.version.outputs.new_version }}
       new_display_version: ${{ steps.version.outputs.new_display_version }}
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
