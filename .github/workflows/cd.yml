@@ -533,7 +533,8 @@ jobs:
 
   package-ios:
     name: Package iOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     steps:
@@ -658,7 +659,8 @@ jobs:
 
   package-macos:
     name: Package macOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
