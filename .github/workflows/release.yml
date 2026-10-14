@@ -1,5 +1,9 @@
 name: Release - Build & Package
 
+env:
+  # Latest SDK on the 11.0 channel, including release candidates until GA.
+  DOTNET_VERSION: "11.0.x"
+
 on:
   push:
     tags:
@@ -46,7 +50,7 @@ jobs:
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.100-rc.1.26425.128'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -91,7 +95,7 @@ jobs:
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.100-rc.1.26425.128'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -136,7 +140,7 @@ jobs:
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.100-rc.1.26425.128'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -175,7 +179,7 @@ jobs:
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.100-rc.1.26425.128'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -222,7 +226,7 @@ jobs:
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.100-rc.1.26425.128'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}

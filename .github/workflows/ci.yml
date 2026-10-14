@@ -1,12 +1,12 @@
 name: CI - Build & Test
 
 env:
-  # Everything targets net11.0(-*) now, so every job uses the same .NET 11
-  # RC1 SDK pin.
+  # Everything targets net11.0(-*). 11.0.x is the latest SDK on the 11.0
+  # channel, including release candidates until general availability.
   # There is deliberately no repo global.json: with no pin, dotnet picks the
   # newest installed SDK (previews included), which is what the local build
-  # scripts need, while CI jobs pin per-job via setup-dotnet.
-  DOTNET_VERSION: "11.0.100-rc.1.26425.128"
+  # scripts need, while CI jobs select the channel via setup-dotnet.
+  DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"

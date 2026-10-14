@@ -121,9 +121,8 @@ net11.0, matching the MAUI/Linux heads. The
 `Microsoft.Extensions.Logging.Abstractions` / `Options` /
 `Configuration.Abstractions` packages are framework-provided on .NET 11 and
 their explicit `PackageReference`s were removed (they fired NU1510; the
-packaging flows are zero-warning again). CI/CD pins a single
-`DOTNET_VERSION: "11.0.100-rc.1.26425.128"` for every job —
-`DOTNET_PREVIEW_VERSION` is gone.
+packaging flows are zero-warning again). CI/CD installs the latest SDK on
+the `11.0.x` channel for every job — `DOTNET_PREVIEW_VERSION` is gone.
 
 ### The Netflix-style UI in XAML terms
 
@@ -875,7 +874,7 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
 
 | Risk | Notes |
 |---|---|
-| .NET 11 **RC1** SDK | GA expected November 2026; `11.0.100-rc.1.26425.128` used here. |
+| .NET 11 SDK channel | CI installs `11.0.x` (latest on the channel). GA is expected November 10, 2026. The Linux stack below was verified on RC1 `11.0.100-rc.1.26425.128`. |
 | MAUI-Avalonia is **Preview 1** | APIs and package names may change; desktop-only today, WASM promised. |
 | Avalonia 12 is itself preview | The backend rides on it; the SkiaSharp pin will need revisiting each bump. |
 | Package drift | All packages come from nuget.org today; if previews move to a nightly feed, `NuGet.config` needs the feed added. |
