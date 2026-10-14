@@ -41,6 +41,7 @@ public sealed class RemoteComputePlayClient(
 
     private static readonly TimeSpan MpTimeout = RemoteComputeHttp.FindingStreamsTimeout;
     private readonly object _harvestGate = new();
+    private readonly RelaySocketGate _socketGate = new();
     private MpHarvestSession? _mpHarvest;
     private string? _mpHarvestPage;
 
@@ -96,21 +97,26 @@ public sealed class RemoteComputePlayClient(
         }
 
         logger.LogInformation("[RemoteCompute] {CorrelationId} resolving {Url}", correlationId, streamUrl);
+        var lease = await _socketGate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+        var harvestOwnsSocket = false;
+        ClientWebSocket? socket = null;
+        GuestSession? session = null;
+        Task? receive = null;
         try
         {
-            var socket = new ClientWebSocket();
+            try
+            {
+            socket = new ClientWebSocket();
             socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
             await socket.ConnectAsync(RelayUri(apiBase, correlationId), cancellationToken).ConfigureAwait(false);
-            var session = new GuestSession(
+            session = new GuestSession(
                 socket,
                 resolver,
                 doh,
                 dnsPreferences.LoadDnsOverHttpsFallbackEnabled(),
                 logger,
                 correlationId);
-            var receive = session.ReceiveAsync(cancellationToken);
-            try
-            {
+            receive = session.ReceiveAsync(cancellationToken);
                 var id = Guid.NewGuid().ToString("N");
                 var headers = BuildHeaders(token, correlationId);
                 string path;
@@ -146,13 +152,13 @@ public sealed class RemoteComputePlayClient(
                         _mpHarvestPage = streamUrl;
                     }
 
-                    await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
-                        .ConfigureAwait(false);
-
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     timeout.CancelAfter(MpTimeout);
                     try
                     {
+                        await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
+                            .ConfigureAwait(false);
+
                         var first = await harvest.WaitForAsync(playerStreamName, timeout.Token).ConfigureAwait(false);
                         if (first is null || string.IsNullOrWhiteSpace(first.Url))
                         {
@@ -185,9 +191,15 @@ public sealed class RemoteComputePlayClient(
                         harvest.Complete(failed: true);
                         return Fail(correlationId, "This phone", DirectConnectionDroppedMessage);
                     }
+                    catch
+                    {
+                        harvest.Complete(failed: true);
+                        throw;
+                    }
                     finally
                     {
-                        _ = FinishMpHarvestAsync(session, receive, harvest, socket);
+                        harvestOwnsSocket = true;
+                        lease.HandOff(FinishMpHarvestAsync(session, receive, harvest, socket));
                     }
                 }
 
@@ -231,28 +243,19 @@ public sealed class RemoteComputePlayClient(
                     return Fail(correlationId, "This phone", DirectConnectionDroppedMessage);
                 }
             }
-            finally
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (!useMp)
-                {
-                    session.Stop();
-                    try
-                    {
-                        await receive.ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // session ended
-                    }
-
-                    socket.Dispose();
-                }
+                logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
+                return Fail(correlationId, "Relay", "Could not reach the compute relay");
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
-            return Fail(correlationId, "Relay", "Could not reach the compute relay");
+            if (!harvestOwnsSocket)
+            {
+                await CloseGuestSocketAsync(session, receive, socket).ConfigureAwait(false);
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -268,18 +271,29 @@ public sealed class RemoteComputePlayClient(
         }
         finally
         {
-            session.Stop();
-            try
-            {
-                await receive.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // session ended
-            }
-
-            socket.Dispose();
+            await CloseGuestSocketAsync(session, receive, socket).ConfigureAwait(false);
         }
+    }
+
+    private static async Task CloseGuestSocketAsync(GuestSession? session, Task? receive, ClientWebSocket? socket)
+    {
+        if (session is not null)
+        {
+            session.Stop();
+            if (receive is not null)
+            {
+                try
+                {
+                    await receive.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // session ended
+                }
+            }
+        }
+
+        socket?.Dispose();
     }
 
     private Dictionary<string, string> BuildHeaders(string token, string correlationId)
