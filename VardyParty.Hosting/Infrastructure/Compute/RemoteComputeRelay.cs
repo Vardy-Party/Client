@@ -14,6 +14,15 @@ using VardyParty.Streaming;
 namespace VardyParty.Hosting;
 
 /// <summary>
+/// Opens the guest relay socket. Production connects a <see cref="ClientWebSocket"/>.
+/// Tests pass an already-open socket so resolve can run without the network.
+/// </summary>
+internal delegate Task<WebSocket> GuestSocketConnect(
+    string authorizationHeader,
+    Uri relayUri,
+    CancellationToken cancellationToken);
+
+/// <summary>
 /// Guest side of the compute relay. Browser CONNECT targets are resolved
 /// here with DoH first (carrier DNS on 4G often answers and would skip DoH).
 /// </summary>
@@ -28,6 +37,7 @@ public sealed class RemoteComputePlayClient(
     IDnsOverHttpsEndpoint? dnsEndpoint = null,
     LocalServiceConnection? connection = null) : IRemoteComputePlay
 {
+    private GuestSocketConnect _guestSockets = ConnectGuestSocketAsync;
     internal const string DirectConnectionDroppedMessage = "direct connection dropped";
     internal const string RelayClosedBeforePlaylistMessage =
         "The compute relay closed before a playlist arrived";
@@ -41,6 +51,7 @@ public sealed class RemoteComputePlayClient(
 
     private static readonly TimeSpan MpTimeout = RemoteComputeHttp.FindingStreamsTimeout;
     private readonly object _harvestGate = new();
+    private readonly RelaySocketGate _socketGate = new();
     private MpHarvestSession? _mpHarvest;
     private string? _mpHarvestPage;
 
@@ -59,6 +70,23 @@ public sealed class RemoteComputePlayClient(
     public RemoteComputeFault? LastFault { get; private set; }
 
     public event Action<RemoteComputeFault>? Faulted;
+
+    /// <summary>
+    /// True when another resolve of <paramref name="streamUrl"/> would wait on
+    /// the open harvest instead of taking the guest socket gate.
+    /// </summary>
+    internal bool CanReuseHarvest(string streamUrl)
+    {
+        lock (_harvestGate)
+        {
+            return _mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true;
+        }
+    }
+
+    /// <summary>
+    /// Replaces the production connect. Tests supply an already-open socket.
+    /// </summary>
+    internal void UseGuestSockets(GuestSocketConnect connect) => _guestSockets = connect;
 
     public async Task<M3U8Response?> ResolveAsync(
         bool useMp,
@@ -96,21 +124,27 @@ public sealed class RemoteComputePlayClient(
         }
 
         logger.LogInformation("[RemoteCompute] {CorrelationId} resolving {Url}", correlationId, streamUrl);
+        var lease = await _socketGate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+        var harvestOwnsSocket = false;
+        WebSocket? socket = null;
+        GuestSession? session = null;
+        Task? receive = null;
         try
         {
-            var socket = new ClientWebSocket();
-            socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
-            await socket.ConnectAsync(RelayUri(apiBase, correlationId), cancellationToken).ConfigureAwait(false);
-            var session = new GuestSession(
-                socket,
-                resolver,
-                doh,
-                dnsPreferences.LoadDnsOverHttpsFallbackEnabled(),
-                logger,
-                correlationId);
-            var receive = session.ReceiveAsync(cancellationToken);
             try
             {
+                socket = await _guestSockets(
+                    "Bearer " + token,
+                    RelayUri(apiBase, correlationId),
+                    cancellationToken).ConfigureAwait(false);
+                session = new GuestSession(
+                    socket,
+                    resolver,
+                    doh,
+                    dnsPreferences.LoadDnsOverHttpsFallbackEnabled(),
+                    logger,
+                    correlationId);
+                receive = session.ReceiveAsync(cancellationToken);
                 var id = Guid.NewGuid().ToString("N");
                 var headers = BuildHeaders(token, correlationId);
                 string path;
@@ -146,13 +180,13 @@ public sealed class RemoteComputePlayClient(
                         _mpHarvestPage = streamUrl;
                     }
 
-                    await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
-                        .ConfigureAwait(false);
-
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     timeout.CancelAfter(MpTimeout);
                     try
                     {
+                        await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
+                            .ConfigureAwait(false);
+
                         var first = await harvest.WaitForAsync(playerStreamName, timeout.Token).ConfigureAwait(false);
                         if (first is null || string.IsNullOrWhiteSpace(first.Url))
                         {
@@ -185,9 +219,15 @@ public sealed class RemoteComputePlayClient(
                         harvest.Complete(failed: true);
                         return Fail(correlationId, "This phone", DirectConnectionDroppedMessage);
                     }
+                    catch
+                    {
+                        harvest.Complete(failed: true);
+                        throw;
+                    }
                     finally
                     {
-                        _ = FinishMpHarvestAsync(session, receive, harvest, socket);
+                        harvestOwnsSocket = true;
+                        lease.HandOff(FinishMpHarvestAsync(session, receive, harvest, socket));
                     }
                 }
 
@@ -231,32 +271,31 @@ public sealed class RemoteComputePlayClient(
                     return Fail(correlationId, "This phone", DirectConnectionDroppedMessage);
                 }
             }
-            finally
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (!useMp)
+                logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
+                return Fail(correlationId, "Relay", "Could not reach the compute relay");
+            }
+        }
+        finally
+        {
+            // Close can throw when the receive task faulted. The lease still has
+            // to go, or every later remote resolve waits on the gate forever.
+            if (!harvestOwnsSocket)
+            {
+                try
                 {
-                    session.Stop();
-                    try
-                    {
-                        await receive.ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // session ended
-                    }
-
-                    socket.Dispose();
+                    await CloseGuestSocketAsync(session, receive, socket).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await lease.DisposeAsync().ConfigureAwait(false);
                 }
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "[RemoteCompute] {CorrelationId} relay resolve failed for {Url}", correlationId, streamUrl);
-            return Fail(correlationId, "Relay", "Could not reach the compute relay");
-        }
     }
 
-    private async Task FinishMpHarvestAsync(GuestSession session, Task receive, MpHarvestSession harvest, ClientWebSocket socket)
+    private async Task FinishMpHarvestAsync(GuestSession session, Task receive, MpHarvestSession harvest, WebSocket socket)
     {
         try
         {
@@ -268,17 +307,59 @@ public sealed class RemoteComputePlayClient(
         }
         finally
         {
-            session.Stop();
-            try
-            {
-                await receive.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // session ended
-            }
+            await CloseGuestSocketAsync(session, receive, socket).ConfigureAwait(false);
+        }
+    }
 
+    /// <summary>
+    /// Stops the session, observes the receive task, then disposes the socket.
+    /// Receive faults (<see cref="WebSocketException"/>, <see cref="ObjectDisposedException"/>)
+    /// are swallowed so the single dispose still runs. Callers release the gate
+    /// after this returns. This is the only dispose site.
+    /// </summary>
+    private static async Task CloseGuestSocketAsync(GuestSession? session, Task? receive, WebSocket? socket)
+    {
+        try
+        {
+            if (session is not null)
+            {
+                session.Stop();
+                if (receive is not null)
+                {
+                    try
+                    {
+                        await receive.ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // A dropped socket faults receive after its own finally.
+                        // Swallowing that fault is what lets the caller release the gate.
+                    }
+                }
+            }
+        }
+        finally
+        {
+            socket?.Dispose();
+        }
+    }
+
+    private static async Task<WebSocket> ConnectGuestSocketAsync(
+        string authorizationHeader,
+        Uri relayUri,
+        CancellationToken cancellationToken)
+    {
+        var socket = new ClientWebSocket();
+        try
+        {
+            socket.Options.SetRequestHeader("Authorization", authorizationHeader);
+            await socket.ConnectAsync(relayUri, cancellationToken).ConfigureAwait(false);
+            return socket;
+        }
+        catch
+        {
             socket.Dispose();
+            throw;
         }
     }
 
@@ -386,7 +467,7 @@ public sealed class RemoteComputePlayClient(
     private sealed class DirectConnectionDroppedException : Exception;
 
     private sealed class GuestSession(
-        ClientWebSocket socket,
+        WebSocket socket,
         IHostNameResolver resolver,
         IDnsOverHttpsClient doh,
         bool dohEnabled,
