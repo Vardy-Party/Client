@@ -5,8 +5,8 @@
     <UseMaui>true</UseMaui>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-rc.1.26451.6" />
-    <PackageReference Update="Microsoft.Extensions.Configuration" Version="11.0.0-rc.1.26425.128" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.*-*" />
+    <PackageReference Update="Microsoft.Extensions.Configuration" Version="11.0.*-*" />
     <ProjectReference Include="..\..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
       <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
       <AdditionalProperties>TargetFrameworks=net11.0;HomeUiTargetFrameworks=net11.0</AdditionalProperties>

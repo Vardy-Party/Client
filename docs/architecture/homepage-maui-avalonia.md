@@ -557,12 +557,12 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 | Component | Version |
 |---|---|
-| .NET SDK | `11.0.100-rc.1.26425.128` (channel 11.0, quality rc.1) |
-| `Microsoft.Maui.Controls` | `11.0.0-rc.1.26451.6` (nuget.org) |
-| `Avalonia.Controls.Maui.Desktop` | `11.0.0-rc.1.26252.343` (nuget.org; Avalonia 12 preview underneath) |
+| .NET SDK | `11.0.x` in CI (latest on the channel). This table was verified on RC1 `11.0.100-rc.1.26425.128`. |
+| `Microsoft.Maui.Controls` | `11.0.*-*` (nuget.org; RC2 `11.0.0-rc.2.26505.5` until `11.0.0`) |
+| `Avalonia.Controls.Maui.Desktop` | `11.0.*-*` (nuget.org; Avalonia 12 underneath) |
 | MAUI workload on Linux | `maui-tizen` (the only workload that carries the plain-TFM MAUI SDK on Linux) |
 | `Svg.Skia` | `5.2.2` |
-| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas; Avalonia RC1) |
+| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas) |
 
 ### Repo-specific gotchas (hard-won, do not rediscover)
 
