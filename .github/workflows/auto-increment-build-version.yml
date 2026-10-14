@@ -12,7 +12,7 @@ on:
 
 jobs:
   increment-version:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       new_version: ${{ steps.version.outputs.new_version }}
       new_display_version: ${{ steps.version.outputs.new_display_version }}

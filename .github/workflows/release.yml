@@ -19,7 +19,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
@@ -84,7 +84,7 @@ jobs:
   build-android-release:
     name: Build & Package Android (APK)
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: create-release
     steps:
       - uses: actions/checkout@v7
@@ -213,7 +213,7 @@ jobs:
   build-linux-release:
     name: Build & Package Linux
     if: always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: create-release
     env:
       HomeUiTargetFrameworks: net11.0

@@ -63,7 +63,7 @@ jobs:
     # Product CI only. Skip github-actions[bot] / ci/increment-application-version-*
     # / "ci: auto-increment*" PRs, and version commits already on main.
     if: "${{ !((github.event_name == 'pull_request' && (github.event.pull_request.user.login == 'github-actions[bot]' || startsWith(github.head_ref, 'ci/increment-application-version-') || startsWith(github.event.pull_request.title, 'ci: auto-increment'))) || (github.event_name == 'merge_group' && startsWith(github.head_ref, 'ci/increment-application-version-')) || (github.event_name == 'push' && (startsWith(github.event.head_commit.message, 'ci: auto-increment') || startsWith(github.event.head_commit.message, 'ci: bump')))) }}"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       skip_unittests: ${{ steps.flags.outputs.skip_unittests }}
       skip_codequality: ${{ steps.flags.outputs.skip_codequality }}
@@ -76,7 +76,7 @@ jobs:
 
   test:
     name: Run Unit Tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: resolve-flags
     if: ${{ needs.resolve-flags.outputs.skip_unittests != 'true' }}
     env:
@@ -119,7 +119,7 @@ jobs:
 
   code-quality:
     name: Code Quality
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - resolve-flags
       - test
@@ -232,7 +232,7 @@ jobs:
 
   build-android:
     name: Build Android
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - resolve-flags
       - test
@@ -457,7 +457,7 @@ jobs:
   # docs/architecture/homepage-maui-avalonia.md.
   build-linux:
     name: Build Linux (MAUI-Avalonia)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - resolve-flags
       - test
@@ -496,7 +496,7 @@ jobs:
   # start against sample data and stay alive for 20s under a virtual display.
   linux-runtime-smoke:
     name: Linux Runtime Smoke
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: build-linux
     steps:
       - uses: actions/checkout@v7
@@ -546,7 +546,7 @@ jobs:
 
   ci-complete:
     name: CI Complete
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - test
       - code-quality

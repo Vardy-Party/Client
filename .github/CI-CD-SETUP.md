@@ -104,7 +104,7 @@ Installers will be automatically created and attached to the GitHub Release.
 - Output: Self-contained Windows package
 
 ### Android (APK)
-- Builds on: `ubuntu-24.04`
+- Builds on: `ubuntu-latest`
 - Framework: `net11.0-android`
 - Requirements: Java 17
 - Output: Multi-architecture APK (arm, arm64, x86, x86_64)
@@ -120,7 +120,7 @@ Installers will be automatically created and attached to the GitHub Release.
 - Output: macOS application
 
 ### Linux / WSL (`VardyParty.Linux`)
-- Builds on: `ubuntu-24.04`
+- Builds on: `ubuntu-latest`
 - Framework: `net11.0` (MAUI XAML drawn by Avalonia; pin `HomeUiTargetFrameworks=net11.0`)
 - Architectures: x64, ARM64
 - Output: Desktop publish artifacts / snaps (see `cd.yml` package-linux jobs)

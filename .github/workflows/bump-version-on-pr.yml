@@ -24,7 +24,7 @@ jobs:
           && github.event.pull_request.user.login != 'github-actions[bot]'
           && !startsWith(github.head_ref, 'ci/increment-application-version-')
           && !startsWith(github.event.pull_request.title, 'ci:') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:

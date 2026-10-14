@@ -328,7 +328,7 @@ jobs:
 
   package-android:
     name: Package Android
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
@@ -789,7 +789,7 @@ jobs:
 
   package-linux-x64:
     name: Package Linux x64 Snap
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       HomeUiTargetFrameworks: net11.0
@@ -1275,7 +1275,7 @@ jobs:
 
   release-summary:
     name: Release Summary
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - package-windows
       - package-android
