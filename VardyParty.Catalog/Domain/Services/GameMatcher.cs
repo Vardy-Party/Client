@@ -326,8 +326,11 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         g.BBCHome = bbc.Home ?? string.Empty;
         g.BBCAway = bbc.Away ?? string.Empty;
 
+        // BBCLeague keeps BBC's own name. The reconciled display name (which may be the API's spelling of the
+        // same competition, so matched and unmatched games group together) is kept separately.
+        g.BBCLeague = (bbc.League ?? string.Empty).Trim();
         var resolvedLeague = ResolveDisplayLeague(g, bbc.League);
-        g.BBCLeague = resolvedLeague;
+        g.ResolveLeague(resolvedLeague);
         if (!string.IsNullOrEmpty(resolvedLeague))
         {
             g.League = resolvedLeague;

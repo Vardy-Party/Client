@@ -7,7 +7,8 @@ public static class LeagueLogoMapper
 {
     public static string GetLogoForLeague(Game game)
     {
-        var name = !string.IsNullOrEmpty(game.BBCLeague) ? game.BBCLeague :
+        // DisplayLeague is the reconciled league, then BBC's name, then the API league.
+        var name = !string.IsNullOrEmpty(game.DisplayLeague) ? game.DisplayLeague :
                   !string.IsNullOrEmpty(game.League) ? game.League :
                   string.Empty;
 

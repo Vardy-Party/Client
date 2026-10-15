@@ -746,8 +746,11 @@ namespace VardyParty.Catalog.Tests
             // Act
             matcher.EnrichGames([game], [fixture], "x");
 
-            // Assert
+            // Assert: the section name is the API's, and BBCLeague still holds BBC's own spelling.
             Assert.Equal(apiLeague, game.DisplayLeague);
+            Assert.Equal(apiLeague, game.ResolvedLeague);
+            Assert.Equal(bbcLeague, game.BBCLeague);
+            Assert.Equal(apiLeague, game.ApiLeague);
         }
 
         [Theory]
@@ -768,6 +771,9 @@ namespace VardyParty.Catalog.Tests
 
             // Assert
             Assert.Equal(bbcLeague, game.DisplayLeague);
+            Assert.Equal(bbcLeague, game.ResolvedLeague);
+            Assert.Equal(bbcLeague, game.BBCLeague);
+            Assert.Equal(apiLeague, game.ApiLeague);
         }
 
         [Fact]
@@ -791,6 +797,33 @@ namespace VardyParty.Catalog.Tests
             Assert.Equal(apiLeague, matched.DisplayLeague);
             Assert.Equal(apiLeague, unmatched.DisplayLeague);
             Assert.Single(new[] { matched, unmatched }.Select(g => g.DisplayLeague).Distinct(StringComparer.OrdinalIgnoreCase));
+
+            // BBCLeague is BBC's name only: the API league never leaks into it, and an unmatched game has none.
+            Assert.Equal("UEFA Conference League", matched.BBCLeague);
+            Assert.Equal(apiLeague, matched.ResolvedLeague);
+            Assert.Equal(string.Empty, unmatched.BBCLeague);
+            Assert.Equal(apiLeague, matched.ApiLeague);
+        }
+
+        [Theory]
+        [InlineData("Important Games")]
+        [InlineData("")]
+        public void ImportantGamesInternationalFixture_ResolvesToWorldCup_WithoutWritingItIntoBbcLeague(string bbcLeague)
+        {
+            // Arrange: national sides under the API's "Important Games" bucket.
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var game = BuildLeagueGame("Brazil", "Argentina", kickoff, "Important Games");
+            var fixture = BuildBbcFixture("Brazil", "Argentina", kickoff, bbcLeague);
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames([game], [fixture], "x");
+
+            // Assert
+            Assert.Equal("FIFA World Cup", game.DisplayLeague);
+            Assert.Equal("FIFA World Cup", game.ResolvedLeague);
+            Assert.Equal(bbcLeague, game.BBCLeague);
+            Assert.Equal("Important Games", game.ApiLeague);
         }
 
         private Game BuildLeagueGame(string home, string away, DateTime kickoff, string apiLeague) =>
@@ -1228,7 +1261,9 @@ namespace VardyParty.Catalog.Tests
 
             // Assert
             var g = games.First();
-            Assert.Equal("Northern League Alpha", g.BBCLeague);
+            Assert.Equal("League Alpha", g.BBCLeague); // BBC's own name, not the API's
+            Assert.Equal("Northern League Alpha", g.ResolvedLeague);
+            Assert.Equal("Northern League Alpha", g.DisplayLeague);
             Assert.Equal("Northern League Alpha", g.League);
         }
 

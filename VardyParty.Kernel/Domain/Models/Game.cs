@@ -36,12 +36,32 @@ public class Game
     // BBC source fields
     public string BBCHome { get; set; } = string.Empty;
     public string BBCAway { get; set; } = string.Empty;
+
+    /// <summary>
+    /// BBC's own (canonical) name for the competition, exactly as BBC supplies it, for BBC-matched games.
+    /// Never holds the API league name: that lives in <see cref="ApiLeague"/>.
+    /// </summary>
     public string BBCLeague { get; set; } = string.Empty;
 
-    // Display helpers prefer BBC-provided value when available
+    /// <summary>
+    /// The league name this game is shown and grouped under once BBC enrichment has been reconciled with the
+    /// API league (the API's name when BBC spells the same competition differently, so matched and unmatched
+    /// games share one section; a canonical name for international fixtures; otherwise BBC's name). Set only
+    /// by the matcher through <see cref="ResolveLeague"/>, which is why the setter is private: it is not part
+    /// of the API payload and is not populated by deserialisation.
+    /// </summary>
+    public string ResolvedLeague { get; private set; } = string.Empty;
+
+    /// <summary>Records the reconciled display league (see <see cref="ResolvedLeague"/>).</summary>
+    public void ResolveLeague(string? resolvedLeague) => ResolvedLeague = (resolvedLeague ?? string.Empty).Trim();
+
+    // Display helpers prefer the reconciled league, then the BBC-provided values, when available
     public string DisplayHome => string.IsNullOrWhiteSpace(BBCHome) ? (Home ?? string.Empty).Trim() : BBCHome.Trim();
     public string DisplayAway => string.IsNullOrWhiteSpace(BBCAway) ? (Away ?? string.Empty).Trim() : BBCAway.Trim();
-    public string DisplayLeague => string.IsNullOrWhiteSpace(BBCLeague) ? (League ?? string.Empty).Trim() : BBCLeague.Trim();
+    public string DisplayLeague =>
+        !string.IsNullOrWhiteSpace(ResolvedLeague) ? ResolvedLeague.Trim()
+        : !string.IsNullOrWhiteSpace(BBCLeague) ? BBCLeague.Trim()
+        : (League ?? string.Empty).Trim();
     public bool IsOlympicLeague => !string.IsNullOrWhiteSpace(DisplayLeague)
         && DisplayLeague.Contains("Olympic", StringComparison.OrdinalIgnoreCase);
 
