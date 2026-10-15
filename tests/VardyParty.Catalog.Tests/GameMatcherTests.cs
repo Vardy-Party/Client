@@ -814,6 +814,7 @@ namespace VardyParty.Catalog.Tests
                 League = league,
                 HasProgress = false
             };
+
         [Fact]
         public void FutureKickoff_WithStaleMinuteZero_IsScheduledUpcoming()
         {

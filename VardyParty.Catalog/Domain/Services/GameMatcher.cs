@@ -416,6 +416,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         return normalised.Trim();
     }
+
     private static bool IsImportantGamesInternationalFixture(Game game, string apiLeague, string bbcLeague)
     {
         if (!apiLeague.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
