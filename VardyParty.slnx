@@ -42,7 +42,9 @@
   <Project Path="tests/VardyParty.HomeUi.Tests/VardyParty.HomeUi.Tests.csproj" />
   <Project Path="tests/VardyParty.Linux.Tests/VardyParty.Linux.Tests.csproj" />
   <Project Path="tests/VardyParty.Hosting.Tests/VardyParty.Hosting.Tests.csproj" />
+  <Project Path="tests/VardyParty.SvgTextOutliner.Tests/VardyParty.SvgTextOutliner.Tests.csproj" />
   <Project Path="Tools/StreamHealthCheckerTool/StreamHealthCheckerTool.csproj" />
+  <Project Path="Tools/SvgTextOutliner/SvgTextOutliner.csproj" />
   <Project Path="VardyParty.Auth/VardyParty.Auth.csproj" />
   <Project Path="VardyParty.Catalog/VardyParty.Catalog.csproj" />
   <Project Path="VardyParty.Kernel/VardyParty.Kernel.csproj" />

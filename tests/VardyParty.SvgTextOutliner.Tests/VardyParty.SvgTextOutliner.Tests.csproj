@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\Tools\SvgTextOutliner\SvgTextOutliner.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The outliner loads Liberation Sans from AppContext.BaseDirectory, which is this test host's output. -->
+    <None Include="..\..\Tools\SvgTextOutliner\Fonts\LiberationSans-Regular.ttf" Link="Fonts\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\Tools\SvgTextOutliner\Fonts\LiberationSans-Bold.ttf" Link="Fonts\LiberationSans-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

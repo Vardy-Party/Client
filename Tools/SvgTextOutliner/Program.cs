@@ -21,8 +21,15 @@ return 0;
 
 internal static partial class SvgTextOutliner
 {
-    public static string ReplaceTextElements(string svg) =>
-        TextElementRegex().Replace(svg, match => Outline(match.Groups[1].Value, match.Groups[2].Value));
+    public static string ReplaceTextElements(string svg)
+    {
+        var replaced = TextElementRegex().Replace(svg, match => Outline(match.Groups[1].Value, match.Groups[2].Value));
+        if (replaced.Contains("<text", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "The SVG still contains a text element after outlining, so Resizetizer would fail with MissingMethodException.");
+
+        return replaced;
+    }
 
     private static string Outline(string attrs, string text)
     {

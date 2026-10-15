@@ -129,11 +129,15 @@
          Liberation Sans (SIL OFL). Runners do not need Arial or fonts-liberation. -->
     <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" DependsOnTargets="GenerateBuildInfo" Condition="'$(RunGenerateSplash)' == 'true'">
       <PropertyGroup>
-        <SplashFile>$(MSBuildProjectDirectory)\Resources\Splash\vardyparty_splash_generated.svg</SplashFile>
+        <!-- Combine, not a backslash literal. Exec does not normalize separators,
+             and Linux treats '\' as a filename character. -->
+        <SplashDirectory>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'Resources', 'Splash'))</SplashDirectory>
+        <SplashFile>$([System.IO.Path]::Combine($(SplashDirectory), 'vardyparty_splash_generated.svg'))</SplashFile>
+        <SvgTextOutlinerProject>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(MSBuildThisFileDirectory), '..', 'Tools', 'SvgTextOutliner', 'SvgTextOutliner.csproj'))))</SvgTextOutlinerProject>
         <BuildTimestamp Condition="'$(BuildTimestamp)' == ''">$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) UTC</BuildTimestamp>
         <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
       </PropertyGroup>
-      <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
+      <MakeDir Directories="$(SplashDirectory)" />
       <ItemGroup>
         <_SplashLines Include="&lt;svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'&gt;" />
         <!-- No full-bleed rect: MauiSplashScreen Color paints the screen. A
@@ -158,8 +162,15 @@
 	  </ItemGroup>
       <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
       <!-- Resizetizer 11 RC2 crashes on SVG <text> (dotnet/maui#38507) on
-           Windows, iOS, and Mac Catalyst. Outline the labels before assets run. -->
-      <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)..\Tools\SvgTextOutliner\SvgTextOutliner.csproj&quot; -c Release --no-launch-profile -- &quot;$(SplashFile)&quot;"
+           Windows, iOS, and Mac Catalyst. Outline the labels before assets run.
+           Build in-process so publish does not start a second MSBuild node.
+           TargetFramework stays net11.0 when the app publish is Android. -->
+      <MSBuild Projects="$(SvgTextOutlinerProject)"
+               Targets="Build"
+               Properties="Configuration=Release;TargetFramework=net11.0">
+        <Output TaskParameter="TargetOutputs" ItemName="_SvgTextOutlinerAssembly" />
+      </MSBuild>
+      <Exec Command="dotnet exec &quot;%(_SvgTextOutlinerAssembly.Identity)&quot; &quot;$(SplashFile)&quot;"
             WorkingDirectory="$(MSBuildThisFileDirectory).." />
     </Target>
 
