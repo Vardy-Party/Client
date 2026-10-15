@@ -43,14 +43,25 @@ public class ApiService(
         return await GetM3U8UrlAsync(streamUrl, playerStreamName: null);
     }
 
-    public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName)
+    public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName) =>
+        await GetM3U8UrlAsync(streamUrl, playerStreamName, resolutionStrategy: null, source: null);
+
+    public async Task<M3U8Response?> GetM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        string? resolutionStrategy,
+        string? source)
     {
         try
         {
             logger.LogInformation("[Api] Fetching M3U8 from local LAN service for source {Url}{StreamSuffix}",
                 streamUrl,
                 string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName})");
-            var result = await localLanPlayService.ResolveM3U8UrlAsync(streamUrl, playerStreamName);
+            var result = await localLanPlayService.ResolveM3U8UrlAsync(
+                streamUrl,
+                playerStreamName,
+                resolutionStrategy,
+                source);
             if (!string.IsNullOrEmpty(result?.Url))
             {
                 logger.LogInformation("[Api] M3U8 fetched for {Url}", streamUrl);
@@ -76,10 +87,16 @@ public class ApiService(
         try
         {
             logger.LogInformation("[Api] Resolving m3u8 for playback: {Channel}", stream.Channel);
-            var playerStreamName = stream.RequiresV2StreamSelection && !stream.IsCountdown
-                ? (string.IsNullOrWhiteSpace(stream.PlayerStream) ? stream.Channel : stream.PlayerStream)
-                : null;
-            var m3u8Response = await GetM3U8UrlAsync(stream.Url, playerStreamName);
+            var playerStreamName = stream.RequiresV2StreamSelection
+                && !stream.IsCountdown
+                && !string.IsNullOrWhiteSpace(stream.PlayerStream)
+                    ? stream.PlayerStream.Trim()
+                    : null;
+            var m3u8Response = await GetM3U8UrlAsync(
+                stream.Url,
+                playerStreamName,
+                stream.ResolutionStrategy,
+                stream.Source);
 
             if (m3u8Response != null && !string.IsNullOrEmpty(m3u8Response.Url))
             {
@@ -124,8 +141,35 @@ public class ApiService(
                         return new Dictionary<string, List<Game>>();
                     }
 
+                    if (response.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        // 401 is a dead session, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like, and
+                        // the homepage renders that as "no games".
+                        logger.LogWarning("[Api] Received 401 Unauthorized for {Url} - user not authenticated or token expired, aborting without retry", url);
+                        throw new ApiUnauthorizedException(
+                            $"Games catalog returned 401 Unauthorized for {url}");
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        // 403 is a missing role, not an empty catalog. An empty
+                        // dictionary is what a genuine 404 night looks like.
+                        logger.LogWarning("[Api] Received 403 Forbidden for {Url} - user lacks stream-viewer role or permissions, aborting without retry", url);
+                        throw new ApiForbiddenException(
+                            $"Games catalog returned 403 Forbidden for {url}");
+                    }
+
                     response.EnsureSuccessStatusCode();
-                    var json = await response.Content.ReadAsStringAsync(cts.Token);
+                    var json = response.Content != null
+                        ? await response.Content.ReadAsStringAsync(cts.Token)
+                        : string.Empty;
+                    if (string.IsNullOrWhiteSpace(json))
+                    {
+                        logger.LogWarning("[Api] GetAllGamesAsync received empty response body from {Url}", url);
+                        return new Dictionary<string, List<Game>>();
+                    }
+
                     var parsed = JsonSerializer.Deserialize<Dictionary<string, List<Game>>>(json,
                         new JsonSerializerOptions
                         {
@@ -137,6 +181,14 @@ public class ApiService(
                     var total = parsed.Values.Sum(list => list?.Count ?? 0);
                     logger.LogInformation("[Api] Fetched {Count} games", total);
                     return parsed;
+                }
+                catch (ApiUnauthorizedException)
+                {
+                    throw;
+                }
+                catch (ApiForbiddenException)
+                {
+                    throw;
                 }
                 catch (HttpRequestException ex) when (attempt <= _maxRetries &&
                                                       ex.StatusCode == HttpStatusCode.InternalServerError)
@@ -170,6 +222,14 @@ public class ApiService(
             // Re-throw to allow caller to handle
             throw;
         }
+        catch (ApiUnauthorizedException)
+        {
+            throw;
+        }
+        catch (ApiForbiddenException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "[Api] GetAllGamesAsync error");
@@ -197,6 +257,13 @@ public class ApiService(
                     return null;
                 }
 
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    // Do not retry on 403 - permissions issue needs user action
+                    logger.LogWarning("[Api] Received 403 Forbidden for {Url} - aborting without retry", url);
+                    return null;
+                }
+
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
                     // 404 is a semantic answer from this API (no streams / no games
@@ -205,7 +272,11 @@ public class ApiService(
                     return null;
                 }
 
-                if (response.IsSuccessStatusCode) return await response.Content.ReadFromJsonAsync<T>(cts.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    if (response.Content == null) return null;
+                    return await response.Content.ReadFromJsonAsync<T>(cts.Token);
+                }
 
                 // For non-success status codes, throw to be handled by retry logic below
                 throw new HttpRequestException($"Request failed with status code {response.StatusCode}", null,

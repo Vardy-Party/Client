@@ -10,16 +10,38 @@ public class Auth0ApiTokenHandler(
 {
     internal static readonly TimeSpan TokenFetchTimeout = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// LocalService GET /health is anonymous; catalog crowd-health POSTs
+    /// (`/{league}/{match}/health`) still need the Auth0 bearer. Match only the
+    /// exact probe path — never <c>EndsWith("/health")</c>.
+    /// </summary>
+    internal static bool ShouldAttachAccessToken(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.AbsolutePath;
+        if (string.IsNullOrEmpty(path))
+            return true;
+
+        return !path.Equals("/health", StringComparison.OrdinalIgnoreCase);
+    }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        using var tokenCts = new CancellationTokenSource(TokenFetchTimeout);
+        if (!ShouldAttachAccessToken(request))
+            return await base.SendAsync(request, cancellationToken);
+
+        using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        tokenCts.CancelAfter(TokenFetchTimeout);
         var token = await tokenProvider.GetAccessTokenAsync(tokenCts.Token, forceRefresh: false);
         if (string.IsNullOrWhiteSpace(token))
         {
             logger.LogWarning("[Auth0] No access token available for {Method} {Url}", request.Method, request.RequestUri);
             return new HttpResponseMessage(HttpStatusCode.Unauthorized)
             {
-                RequestMessage = request
+                RequestMessage = request,
+                Content = new StringContent(
+                    """{"error":"unauthorized","error_description":"No Auth0 access token available."}""",
+                    System.Text.Encoding.UTF8,
+                    "application/json")
             };
         }
 
@@ -32,7 +54,8 @@ public class Auth0ApiTokenHandler(
             return response;
         }
 
-        using var refreshCts = new CancellationTokenSource(TokenFetchTimeout);
+        using var refreshCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        refreshCts.CancelAfter(TokenFetchTimeout);
         var refreshed = await tokenProvider.GetAccessTokenAsync(refreshCts.Token, forceRefresh: true);
         if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, token, StringComparison.Ordinal))
         {

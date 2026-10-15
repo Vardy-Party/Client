@@ -1,5 +1,6 @@
 using AutoFixture;
 using Moq;
+using VardyParty.Kernel;
 using VardyParty.Ports;
 using VardyParty.Presentation;
 using VardyParty.TestSupport;
@@ -133,5 +134,74 @@ public class MatchEventNotificationPolicyTests
 
         // Assert
         player.Verify(p => p.Play(UiSound.Goal), Times.Once);
+    }
+
+    [Fact]
+    public void ShouldPresentEvent_WhilePlayingWatchedGame_IsSilent()
+    {
+        var sut = CreateSut();
+        sut.IsAppForegrounded = true;
+        sut.IsPlaybackActive = true;
+        var watching = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var matchEvent = new MatchEvent(MatchEventKind.Goal, watching, 1, 0, GoalSide.Home);
+
+        Assert.True(sut.ShouldPresent);
+        Assert.False(sut.ShouldPresentEvent(matchEvent, watching));
+    }
+
+    [Fact]
+    public void ShouldPresentEvent_WhilePlayingOtherGame_StillPresents()
+    {
+        var sut = CreateSut();
+        sut.IsAppForegrounded = true;
+        sut.IsPlaybackActive = true;
+        var watching = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var other = _fixture.Build<Game>()
+            .With(g => g.Home, "River Town")
+            .With(g => g.Away, "Lake Borough")
+            .Create();
+        var matchEvent = new MatchEvent(MatchEventKind.Goal, other, 1, 0, GoalSide.Home);
+
+        Assert.True(sut.ShouldPresentEvent(matchEvent, watching));
+    }
+
+    [Fact]
+    public void ShouldPresentEvent_Homepage_StillPresentsWatchedFixture()
+    {
+        var sut = CreateSut();
+        sut.IsAppForegrounded = true;
+        sut.IsPlaybackActive = false;
+        var watching = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var matchEvent = new MatchEvent(MatchEventKind.Goal, watching, 1, 0, GoalSide.Home);
+
+        Assert.True(sut.ShouldPresentEvent(matchEvent, watching));
+    }
+
+    [Fact]
+    public void ShouldPresentEvent_Backgrounded_DropsEvenOtherGames()
+    {
+        var sut = CreateSut();
+        sut.IsAppForegrounded = false;
+        sut.IsPlaybackActive = true;
+        var watching = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        var other = _fixture.Build<Game>()
+            .With(g => g.Home, "River Town")
+            .With(g => g.Away, "Lake Borough")
+            .Create();
+        var matchEvent = new MatchEvent(MatchEventKind.Goal, other, 1, 0, GoalSide.Home);
+
+        Assert.False(sut.ShouldPresentEvent(matchEvent, watching));
     }
 }

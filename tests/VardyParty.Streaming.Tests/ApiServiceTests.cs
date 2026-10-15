@@ -233,6 +233,88 @@ namespace VardyParty.Streaming.Tests
             Assert.Equal(1, handler.RequestCount);
         }
 
+        [Fact]
+        public async Task GetStreamsAsync_Forbidden_ReturnsNullWithoutRetrying()
+        {
+            // Arrange: a 403 Forbidden means missing permission/role — should abort without retry
+            var handler = new FakeHttpMessageHandler(
+                """{"error":"Forbidden"}""", System.Net.HttpStatusCode.Forbidden);
+            var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
+            var apiSettings = _fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create();
+            var gameApiSettings = _fixture.Build<GamesApiSettings>()
+                .With(g => g.CallTimeoutSeconds, 10)
+                .With(g => g.MaxRetries, 2)
+                .Create();
+            var api = new ApiService(
+                client,
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(gameApiSettings),
+                Options.Create(apiSettings));
+
+            // Act
+            var response = await api.GetStreamsAsync("League Alpha", "Home United", "Away City");
+
+            // Assert
+            Assert.Null(response);
+            Assert.Equal(1, handler.RequestCount);
+        }
+
+        [Fact]
+        public async Task GetAllGamesAsync_Unauthorized401_ThrowsWithoutRetrying()
+        {
+            // Arrange: 401 Unauthorized from /new catalog endpoint. This must
+            // not look like an empty night (404), which the homepage renders
+            // as "no games".
+            var handler = new FakeHttpMessageHandler(
+                """{"error":"Unauthorized"}""", System.Net.HttpStatusCode.Unauthorized);
+            var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
+            var apiSettings = _fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create();
+            var gameApiSettings = _fixture.Build<GamesApiSettings>()
+                .With(g => g.CallTimeoutSeconds, 10)
+                .With(g => g.MaxRetries, 2)
+                .Create();
+            var api = new ApiService(
+                client,
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(gameApiSettings),
+                Options.Create(apiSettings));
+
+            // Act
+            await Assert.ThrowsAsync<ApiUnauthorizedException>(() => api.GetAllGamesAsync(forceRefresh: true));
+
+            // Assert
+            Assert.Equal(1, handler.RequestCount);
+        }
+
+        [Fact]
+        public async Task GetAllGamesAsync_Forbidden403_ThrowsWithoutRetrying()
+        {
+            // Arrange: 403 Forbidden from /new catalog endpoint. A missing
+            // stream-viewer role must not look like an empty night (404).
+            var handler = new FakeHttpMessageHandler(
+                """{"error":"Forbidden"}""", System.Net.HttpStatusCode.Forbidden);
+            var client = new HttpClient(handler) { BaseAddress = new Uri("https://test.local/") };
+            var apiSettings = _fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create();
+            var gameApiSettings = _fixture.Build<GamesApiSettings>()
+                .With(g => g.CallTimeoutSeconds, 10)
+                .With(g => g.MaxRetries, 2)
+                .Create();
+            var api = new ApiService(
+                client,
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(gameApiSettings),
+                Options.Create(apiSettings));
+
+            // Act
+            await Assert.ThrowsAsync<ApiForbiddenException>(() => api.GetAllGamesAsync(forceRefresh: true));
+
+            // Assert
+            Assert.Equal(1, handler.RequestCount);
+        }
+
         private class FakeHttpMessageHandler(
             string responseJson,
             System.Net.HttpStatusCode statusCode = System.Net.HttpStatusCode.OK) : HttpMessageHandler

@@ -1,12 +1,13 @@
 using Microsoft.Extensions.Logging;
 using System.Threading;
+using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Streaming;
 using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
-using HttpClientWin = Windows.Web.Http.HttpClient;
 
 namespace VardyParty.Platforms.Windows
 {
@@ -23,11 +24,78 @@ namespace VardyParty.Platforms.Windows
 
                 activeAdaptiveMediaSource = null;
                 activeDownloadHandler = null;
+                CancelPlaybackDownloads();
+                DisposeRootedPlaybackStreams();
+            }
 
-                if (activePlaybackClient != null)
+            private CancellationToken CurrentPlaybackDownloadToken
+            {
+                get
                 {
-                    try { activePlaybackClient.Dispose(); } catch { }
-                    activePlaybackClient = null;
+                    lock (playbackDownloadGate)
+                        return playbackDownloadsCts.Token;
+                }
+            }
+
+            private void CancelPlaybackDownloads()
+            {
+                lock (playbackDownloadGate)
+                {
+                    retiredPlaybackDownloads.Add(playbackDownloadsCts);
+                    try { playbackDownloadsCts.Cancel(); } catch { }
+                    playbackDownloadsCts = new CancellationTokenSource();
+                }
+            }
+
+            private void DisposePlaybackDownloadSources()
+            {
+                List<CancellationTokenSource> sources;
+                lock (playbackDownloadGate)
+                {
+                    sources = retiredPlaybackDownloads.ToList();
+                    retiredPlaybackDownloads.Clear();
+                    sources.Add(playbackDownloadsCts);
+                    playbackDownloadsCts = new CancellationTokenSource();
+                }
+
+                foreach (var source in sources)
+                {
+                    try { source.Cancel(); } catch { }
+                    try { source.Dispose(); } catch { }
+                }
+            }
+
+            /// <summary>
+            /// Keep <paramref name="stream"/> alive for Media Foundation. Returns false
+            /// when this attach is already over; the stream is disposed in that case.
+            /// </summary>
+            private bool TryRootPlaybackStream(IDisposable stream, int generation)
+            {
+                lock (rootedPlaybackStreamsGate)
+                {
+                    if (IsStaleAttach(generation))
+                    {
+                        try { stream.Dispose(); } catch { }
+                        return false;
+                    }
+
+                    rootedPlaybackStreams.Add(stream);
+                    return true;
+                }
+            }
+
+            private void DisposeRootedPlaybackStreams()
+            {
+                List<IDisposable> rooted;
+                lock (rootedPlaybackStreamsGate)
+                {
+                    rooted = rootedPlaybackStreams.ToList();
+                    rootedPlaybackStreams.Clear();
+                }
+
+                foreach (var stream in rooted)
+                {
+                    try { stream.Dispose(); } catch { }
                 }
             }
 
@@ -35,6 +103,7 @@ namespace VardyParty.Platforms.Windows
             {
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
+                CancelPlaybackDownloads();
 
                 try
                 {
@@ -79,6 +148,7 @@ namespace VardyParty.Platforms.Windows
                 catch { }
 
                 // Dispose the switch lock last so in-flight StartPlaybackAsync can exit Wait/Release safely.
+                DisposePlaybackDownloadSources();
                 try { playbackSwitchLock.Dispose(); } catch { }
             }
 
@@ -143,8 +213,99 @@ namespace VardyParty.Platforms.Windows
 
             private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
             {
+                // Intentional attach (switch / start) — reset soft live recoveries.
+                liveHlsRecoveries = 0;
+                liveHlsSoftRecoverInFlight = false;
                 SyncHealthyStreamCount();
                 ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
+            }
+
+            /// <summary>
+            /// Linux LibVLC reconnects; Android seeks to live edge on BehindLiveWindow.
+            /// WinUI has no BLWE API — rebuild AdaptiveMediaSource for the same URL instead of
+            /// raising Error (which removes the stream from the pool).
+            /// </summary>
+            private bool TryRecoverLiveHlsFailure(MediaPlayerFailedEventArgs? args)
+            {
+                if (!IsRecoverableMediaFailure(args))
+                    return false;
+
+                // Nested MediaFailed while soft-reattach is already queued — absorb without stacking.
+                if (liveHlsSoftRecoverInFlight)
+                {
+                    _host._logger.LogDebug(
+                        "Live HLS MediaFailed while soft-recover in flight — coalescing");
+                    return true;
+                }
+
+                if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(liveHlsRecoveries, currentPlaybackUrl))
+                {
+                    _host._logger.LogWarning(
+                        "Live HLS recoveries exhausted ({Count}) — escalating MediaFailed",
+                        liveHlsRecoveries);
+                    return false;
+                }
+
+                var url = currentPlaybackUrl;
+                liveHlsRecoveries++;
+                liveHlsSoftRecoverInFlight = true;
+                var errMsg = args?.ErrorMessage ?? "unknown";
+                _host._logger.LogWarning(
+                    "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
+                    liveHlsRecoveries,
+                    PlaybackPolicy.MaxLiveHlsRecoveries,
+                    errMsg);
+
+                try
+                {
+                    engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, true));
+                }
+                catch (Exception ex)
+                {
+                    _host._logger.LogDebug(ex, "Buffering raise during live recover failed");
+                }
+
+                // Do not BeginAttach — keep session generation / pool entry; only rebuild the OS source.
+                _ = SoftRecoverPlaybackAsync(url);
+                return true;
+            }
+
+            /// <summary>
+            /// Soft live reattach: clears <see cref="liveHlsSoftRecoverInFlight"/> when finished
+            /// so a later NetworkError can start another budgeted attempt.
+            /// </summary>
+            private async Task SoftRecoverPlaybackAsync(string url)
+            {
+                try
+                {
+                    await StartPlaybackAsync(url).ConfigureAwait(false);
+                }
+                finally
+                {
+                    liveHlsSoftRecoverInFlight = false;
+                }
+            }
+
+            private static bool IsRecoverableMediaFailure(MediaPlayerFailedEventArgs? args)
+            {
+                if (args == null)
+                {
+                    return PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+                        isNetworkError: true,
+                        isDecodingError: false,
+                        isUnknownError: false,
+                        isSourceNotSupported: false,
+                        isAborted: false);
+                }
+
+                var detail = $"{args.ErrorMessage} {args.ExtendedErrorCode?.Message}";
+                return PlaybackPolicy.IsRecoverableLiveHlsMediaFailure(
+                    isNetworkError: args.Error == MediaPlayerError.NetworkError,
+                    isDecodingError: args.Error == MediaPlayerError.DecodingError,
+                    isUnknownError: args.Error == MediaPlayerError.Unknown,
+                    isSourceNotSupported: args.Error == MediaPlayerError.SourceNotSupported,
+                    isAborted: args.Error == MediaPlayerError.Aborted,
+                    detailMessage: detail);
             }
 
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
@@ -171,9 +332,12 @@ namespace VardyParty.Platforms.Windows
                 public void ReportWorking()
                 {
                     var url = session.session.Snapshot.CurrentUrl;
+                    var stream = session.switchingService?.GetCurrentStream()?.Stream;
+                    var streamName = stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
                     _ = session._host._healthReporter.ReportPlaybackStartedAsync(
                         url,
                         session._refererUrl,
+                        streamName,
                         metrics: session._host.GetCurrentMetrics());
                 }
 
@@ -281,143 +445,144 @@ namespace VardyParty.Platforms.Windows
                     if (IsStaleAttach(generation))
                         return;
 
-                    // Build the adaptive source BEFORE clearing the current player source so a
-                    // failed switch does not leave the UI on a black frame.
-                    var client = new HttpClientWin();
-                    ConfigurePlaybackHttpClient(client, _refererUrl, _requestHeaders);
-
+                    // Manifest and every later segment go through the DoH-aware managed
+                    // client. WinRT HttpClient ignores that handler, so a host the
+                    // ISP cannot resolve never starts.
+                    var managedHttp = _host._httpClientFactory.CreateClient(PlaybackHttpClients.Media);
                     var uri = new Uri(url);
-                    var adaptiveResult = await _host.CreateAdaptiveMediaSourceAsync(client, uri);
+                    var manifestToken = CurrentPlaybackDownloadToken;
+                    var created = await _host.CreateAdaptiveMediaSourceAsync(
+                        managedHttp,
+                        uri,
+                        _refererUrl,
+                        _requestHeaders,
+                        manifestToken);
+                    var adaptiveResult = created.Result;
+                    var manifestStream = created.ManifestStream;
 
-                    if (IsStaleAttach(generation))
-                    {
-                        try { client.Dispose(); } catch { }
-                        return;
-                    }
-
-                    if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success || adaptiveResult.MediaSource == null)
-                    {
-                        try { client.Dispose(); } catch { }
-                        throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
-                    }
-
-                    await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
-                    if (IsStaleAttach(generation))
-                    {
-                        try { client.Dispose(); } catch { }
-                        return;
-                    }
-
-                    activePlaybackClient = client;
-
-                    // Attach handler to fix segment content types and ensure headers
-                    TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
+                    try
                     {
                         if (IsStaleAttach(generation))
                             return;
 
-                        // Intercept Manifest, MediaSegment, and InitializationSegment
-                        if (args.ResourceType == AdaptiveMediaSourceResourceType.Manifest ||
-                            args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment ||
-                            args.ResourceType == AdaptiveMediaSourceResourceType.InitializationSegment)
+                        if (adaptiveResult.Status != AdaptiveMediaSourceCreationStatus.Success
+                            || adaptiveResult.MediaSource == null
+                            || manifestStream == null)
                         {
+                            throw new InvalidOperationException($"Adaptive source failed: {adaptiveResult.Status}");
+                        }
+
+                        await MainThread.InvokeOnMainThreadAsync(() => PreparePlaybackSwitchOnUiThread(generation));
+                        if (IsStaleAttach(generation))
+                            return;
+
+                        if (!TryRootPlaybackStream(manifestStream, generation))
+                        {
+                            manifestStream = null;
+                            return;
+                        }
+
+                        manifestStream = null;
+
+                        var segmentToken = CurrentPlaybackDownloadToken;
+                        TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
+                        {
+                            if (IsStaleAttach(generation))
+                                return;
+
                             var deferral = args.GetDeferral();
+                            System.Net.Http.HttpRequestMessage? managedRequest = null;
+                            System.Net.Http.HttpResponseMessage? managedResponse = null;
                             try
                             {
                                 if (IsStaleAttach(generation))
                                     return;
-                                var request = new global::Windows.Web.Http.HttpRequestMessage(global::Windows.Web.Http.HttpMethod.Get, args.ResourceUri);
-                                ApplyPlaybackRequestHeaders(request, _refererUrl, _requestHeaders);
 
-                                var response = await client.SendRequestAsync(request);
-                                response.EnsureSuccessStatusCode();
+                                managedRequest = new System.Net.Http.HttpRequestMessage(
+                                    System.Net.Http.HttpMethod.Get,
+                                    args.ResourceUri.ToString());
+                                ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
+                                ApplyResourceByteRange(managedRequest, args);
 
-                                var contentType = response.Content.Headers.ContentType?.ToString();
-                                var path = args.ResourceUri.AbsolutePath;
+                                managedResponse = await managedHttp.SendAsync(
+                                    managedRequest,
+                                    System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                                    segmentToken);
+                                managedResponse.EnsureSuccessStatusCode();
 
-                                // Force correct content types
-                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment)
+                                if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                                    return;
+
+                                var contentType = PlaybackContentTypes.Resolve(
+                                    managedResponse.Content.Headers.ContentType?.MediaType,
+                                    args.ResourceUri.AbsolutePath,
+                                    ToPlaybackResourceKind(args.ResourceType));
+                                var winrtStream = await CopyToRandomAccessStreamAsync(managedResponse, segmentToken);
+                                if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
                                 {
-                                    // If it's a media segment, force video/MP2T if it's not a valid video type
-                                    // Many servers return text/plain or application/octet-stream for .ts
-                                    if (string.IsNullOrEmpty(contentType) ||
-                                        contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ||
-                                        contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) ||
-                                        path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        contentType = "video/MP2T";
-                                    }
-                                }
-                                else if (args.ResourceType == AdaptiveMediaSourceResourceType.Manifest)
-                                {
-                                    if (path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        contentType = "application/vnd.apple.mpegurl";
-                                    }
+                                    winrtStream.Dispose();
+                                    return;
                                 }
 
-                                args.Result.InputStream = await response.Content.ReadAsInputStreamAsync();
+                                if (!TryRootPlaybackStream(winrtStream, generation))
+                                    return;
+
+                                args.Result.InputStream = winrtStream.GetInputStreamAt(0);
                                 args.Result.ContentType = contentType;
                                 session.NotifyDownloadSuccess();
                             }
+                            catch (OperationCanceledException) when (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                            {
+                            }
+                            catch (ObjectDisposedException) when (cleanupInvoked || segmentToken.IsCancellationRequested)
+                            {
+                            }
                             catch (Exception ex)
                             {
-                                var statusCode = 0;
-                                try
-                                {
-                                    var msg = ex.Message?.ToLowerInvariant() ?? string.Empty;
-                                    if (msg.Contains("404")) statusCode = 404;
-                                    else if (msg.Contains("502")) statusCode = 502;
-                                    else if (msg.Contains("503")) statusCode = 503;
-                                    else if (msg.Contains("403")) statusCode = 403;
-                                    else if (msg.Contains("401")) statusCode = 401;
-                                    else if (msg.Contains("500")) statusCode = 500;
-                                }
-                                catch (Exception statusEx)
-                                {
-                                    _host._logger.LogWarning(statusEx, "Failed to parse download status");
-                                }
+                            var statusCode = StatusCodeFromDownloadException(ex);
 
-                                _host._logger.LogWarning(
-                                    ex,
-                                    "Segment download failed ({ResourceType}, status={StatusCode})",
-                                    args.ResourceType,
-                                    statusCode);
+                            _host._logger.LogWarning(
+                                ex,
+                                "Segment download failed ({ResourceType}, status={StatusCode}, uri={Uri})",
+                                args.ResourceType,
+                                statusCode,
+                                args.ResourceUri);
 
-                                var failureMessage =
-                                    $"Segment download failed ({args.ResourceType}, status={statusCode})";
-                                var downloadCmd = PlaybackCommand.FromEffects(
-                                    session.NotifyDownloadFailure(failureMessage));
-                                if (!downloadCmd.IsNoOp)
-                                {
-                                    MainThread.BeginInvokeOnMainThread(() =>
-                                    {
-                                        try
-                                        {
-                                            if (IsStaleAttach(generation))
-                                                return;
-                                            ApplyPlaybackCommand(downloadCmd);
-                                        }
-                                        catch (Exception marshalEx)
-                                        {
-                                            _host._logger.LogWarning(marshalEx, "Download-failure command failed");
-                                        }
-                                    });
-                                }
-
-                                try
-                                {
-                                    args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
-                                }
-                                catch (Exception statusEx)
-                                {
-                                    _host._logger.LogWarning(statusEx, "Failed to set download extended status");
-                                }
-                            }
-                            finally
+                            var failureMessage =
+                                $"Segment download failed ({args.ResourceType}, status={statusCode})";
+                            var downloadCmd = PlaybackCommand.FromEffects(
+                                session.NotifyDownloadFailure(failureMessage));
+                            if (!downloadCmd.IsNoOp)
                             {
-                                deferral.Complete();
+                                MainThread.BeginInvokeOnMainThread(() =>
+                                {
+                                    try
+                                    {
+                                        if (IsStaleAttach(generation))
+                                            return;
+                                        ApplyPlaybackCommand(downloadCmd);
+                                    }
+                                    catch (Exception marshalEx)
+                                    {
+                                        _host._logger.LogWarning(marshalEx, "Download-failure command failed");
+                                    }
+                                });
                             }
+
+                            try
+                            {
+                                args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
+                            }
+                            catch (Exception statusEx)
+                            {
+                                _host._logger.LogWarning(statusEx, "Failed to set download extended status");
+                            }
+                        }
+                        finally
+                        {
+                            managedResponse?.Dispose();
+                            managedRequest?.Dispose();
+                            deferral.Complete();
                         }
                     };
 
@@ -457,6 +622,10 @@ namespace VardyParty.Platforms.Windows
                             }
 
                             currentPlaybackUrl = url;
+                            // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
+                            // MediaPlaybackItem is assigned (before sustained play). Reset only in
+                            // AttachViaSession (intentional switch/start). Network-only recoverable
+                            // classification + this counter keeps MaxLiveHlsRecoveries effective.
                             engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
                             // Ensure the grid is visible and hit testable
@@ -484,6 +653,11 @@ namespace VardyParty.Platforms.Windows
                     });
 
                     // Do not set success result here. We wait for user close or media events;
+                    }
+                    finally
+                    {
+                        try { manifestStream?.Dispose(); } catch { }
+                    }
                 }
                 catch (Exception ex)
                 {

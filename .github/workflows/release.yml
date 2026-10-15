@@ -1,5 +1,9 @@
 name: Release - Build & Package
 
+env:
+  # Latest SDK on the 11.0 channel, including release candidates until GA.
+  DOTNET_VERSION: "11.0.x"
+
 on:
   push:
     tags:
@@ -7,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       linux_only:
-        description: Only the Linux Desktop publish (no GitHub Release). Uncheck to dry-run every platform.
+        description: Only the Linux publish (no GitHub Release). Uncheck to dry-run every platform.
         type: boolean
         default: true
 
@@ -19,7 +23,7 @@ jobs:
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - name: Create Release
         id: create_release
@@ -38,16 +42,15 @@ jobs:
     runs-on: windows-latest
     needs: create-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 RC1
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: preview
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -59,7 +62,7 @@ jobs:
         run: dotnet restore
       
       - name: Publish Windows app
-        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None /p:WindowsAppSDKSelfContained=true -o ./output/windows
+        run: dotnet publish VardyParty/VardyParty.csproj -c Release -f net11.0-windows10.0.19041.0 /p:WindowsPackageType=None -o ./output/windows
       
       - name: Package Windows
         run: |
@@ -84,16 +87,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: create-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 RC1
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: preview
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -102,7 +104,7 @@ jobs:
         run: dotnet workload restore
       
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -127,19 +129,18 @@ jobs:
   build-ios-release:
     name: Build & Package iOS (IPA)
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: macos-14
+    runs-on: xcode-27
     needs: create-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 RC1
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: preview
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -167,19 +168,18 @@ jobs:
   build-macos-release:
     name: Build & Package macOS
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: macos-14
+    runs-on: xcode-27
     needs: create-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 RC1
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: preview
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -213,21 +213,22 @@ jobs:
   build-linux-release:
     name: Build & Package Linux
     if: always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: ubuntu-latest
+    # core24 snap. Build on 24.04 so the self-contained binary's glibc
+    # matches the snap base and Ubuntu 24 hosts.
+    runs-on: ubuntu-24.04
     needs: create-release
     env:
       HomeUiTargetFrameworks: net11.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 RC1
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: preview
+          dotnet-version: ${{ env.DOTNET_VERSION }}
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -235,8 +236,8 @@ jobs:
       - name: Install MAUI workloads
         run: dotnet workload install maui-tizen --ignore-failed-sources
       
-      - name: Restore desktop head
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
+      - name: Restore Linux head
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
 
       - name: Generate appsettings.json for Linux
         env:
@@ -253,8 +254,8 @@ jobs:
           API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
           chmod +x scripts/merge-appsettings-secrets.sh
-          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
-          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
+          scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Linux/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
@@ -264,10 +265,10 @@ jobs:
         run: dotnet build VardyParty.Hosting/VardyParty.Hosting.csproj -c Release -f net11.0
       
       - name: Publish Linux app (x64)
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -f net11.0 --self-contained -r linux-x64 -o ./output/linux-x64
       
       - name: Publish Linux app (ARM64)
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -c Release -f net11.0 --self-contained -r linux-arm64 -o ./output/linux-arm64
       
       - name: Package Linux x64
         run: |

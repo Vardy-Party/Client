@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\Tools\SvgTextOutliner\SvgTextOutliner.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The outliner loads Liberation Sans from AppContext.BaseDirectory, which is this test host's output. -->
+    <None Include="..\..\Tools\SvgTextOutliner\Fonts\LiberationSans-Regular.ttf" Link="Fonts\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\Tools\SvgTextOutliner\Fonts\LiberationSans-Bold.ttf" Link="Fonts\LiberationSans-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unit tests run on ubuntu-latest. Native assets do not flow from the tool project reference. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.148.0" />
+  </ItemGroup>
+</Project>

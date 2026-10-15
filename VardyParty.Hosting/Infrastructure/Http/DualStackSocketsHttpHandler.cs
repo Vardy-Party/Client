@@ -47,17 +47,38 @@ public static class DualStackSocketsHttpHandler
         return new ConnectPlan(ipv6, ipv4);
     }
 
+    /// <summary>
+    /// WSL and some resolvers return AAAA only while A records exist. Happy
+    /// Eyeballs never starts, then IPv6 black-holes for <see cref="PerAddressTimeout"/>.
+    /// Merge A records when the first lookup had no IPv4.
+    /// </summary>
+    public static ConnectPlan WithSupplementalIpv4(ConnectPlan plan, IEnumerable<IPAddress> extraIpv4)
+    {
+        ArgumentNullException.ThrowIfNull(extraIpv4);
+
+        if (plan.Ipv4.Count > 0)
+            return plan;
+
+        var ipv4 = extraIpv4
+            .Where(address => address.AddressFamily == AddressFamily.InterNetwork)
+            .ToList();
+        return ipv4.Count == 0 ? plan : new ConnectPlan(plan.Ipv6, ipv4);
+    }
+
     public static SocketsHttpHandler Create(
         bool ignoreSslCertificateErrors = false,
-        bool useCookies = true)
+        bool useCookies = true,
+        IHostNameResolver? hostNameResolver = null)
     {
+        var resolver = hostNameResolver ?? SystemDnsHostNameResolver.Instance;
         var handler = new SocketsHttpHandler
         {
             ConnectTimeout = ConnectTimeout,
             AllowAutoRedirect = true,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             UseCookies = useCookies,
-            ConnectCallback = ConnectViaDnsAsync
+            ConnectCallback = (context, cancellationToken) =>
+                ConnectViaDnsAsync(context, resolver, cancellationToken)
         };
 
         if (ignoreSslCertificateErrors)
@@ -101,13 +122,41 @@ public static class DualStackSocketsHttpHandler
 
     private static async ValueTask<Stream> ConnectViaDnsAsync(
         SocketsHttpConnectionContext context,
+        IHostNameResolver hostNameResolver,
         CancellationToken cancellationToken)
     {
-        var resolved = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken)
+        var host = context.DnsEndPoint.Host;
+        var resolved = await hostNameResolver.ResolveAsync(host, cancellationToken)
             .ConfigureAwait(false);
         var plan = PlanConnect(resolved);
+        if (plan.Ipv4.Count == 0)
+        {
+            try
+            {
+                var ipv4Only = await Dns.GetHostAddressesAsync(
+                        host,
+                        AddressFamily.InterNetwork,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                plan = WithSupplementalIpv4(plan, ipv4Only);
+            }
+            catch (SocketException)
+            {
+                // No A records; keep the AAAA-only plan.
+            }
+        }
+
         return await ConnectAsync(plan, context.DnsEndPoint.Port, ConnectSocketAsync, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>System DNS only — used when no DoH resolver is registered.</summary>
+    private sealed class SystemDnsHostNameResolver : IHostNameResolver
+    {
+        public static readonly SystemDnsHostNameResolver Instance = new();
+
+        public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken = default) =>
+            Dns.GetHostAddressesAsync(host, cancellationToken);
     }
 
     private static async Task<Stream> ConnectSocketAsync(

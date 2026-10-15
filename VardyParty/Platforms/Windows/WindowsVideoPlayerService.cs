@@ -4,7 +4,6 @@ using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
 using Windows.Foundation;
-using HttpClientWin = Windows.Web.Http.HttpClient;
 using MauiApp = Microsoft.Maui.Controls.Application;
 using WinButton = Microsoft.UI.Xaml.Controls.Button;
 using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
@@ -12,6 +11,7 @@ using WinHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinThickness = Microsoft.UI.Xaml.Thickness;
 using WinVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using VardyParty.Catalog;
+using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
@@ -27,6 +27,7 @@ namespace VardyParty.Platforms.Windows
         private readonly IEnrichedGameService _enrichedGames;
         private readonly ResolveFreshPlaybackUrlAsync _resolveFresh;
         private readonly IStreamHealthReporter _healthReporter;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<WindowsVideoPlayerService> _logger;
 
         public WindowsVideoPlayerService(
@@ -35,6 +36,7 @@ namespace VardyParty.Platforms.Windows
             IEnrichedGameService enrichedGames,
             ResolveFreshPlaybackUrlAsync resolveFresh,
             IStreamHealthReporter healthReporter,
+            IHttpClientFactory httpClientFactory,
             ILogger<WindowsVideoPlayerService> logger)
         {
             _switchingService = switchingService;
@@ -42,6 +44,7 @@ namespace VardyParty.Platforms.Windows
             _enrichedGames = enrichedGames;
             _resolveFresh = resolveFresh;
             _healthReporter = healthReporter;
+            _httpClientFactory = httpClientFactory;
             _logger = logger;
         }
 

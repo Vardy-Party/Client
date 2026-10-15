@@ -67,6 +67,45 @@ public class AuthAccessTokenRolesTests
         Assert.False(accepted);
     }
 
+    [Fact]
+    public void HasRelayUser_WhenRolesClaimHasRelayUser_ReturnsTrue()
+    {
+        var token = CreateUnsignedJwt($$"""{"{{NorthgateRoleClaim}}":["{{OakLaneMember}}","relay-user"]}""");
+
+        Assert.True(AuthAccessTokenRoles.HasRelayUser(token, NorthgateRoleClaim));
+    }
+
+    [Fact]
+    public void HasRelayUser_WhenPermissionsClaimHasRelayUser_ReturnsTrue()
+    {
+        var token = CreateUnsignedJwt("""{"permissions":["relay-user"]}""");
+
+        Assert.True(AuthAccessTokenRoles.HasRelayUser(token, NorthgateRoleClaim));
+    }
+
+    [Fact]
+    public void HasRelayUser_WhenSiblingPermissionsClaimHasRelayUser_ReturnsTrue()
+    {
+        var token = CreateUnsignedJwt("""{"https://northgate.test/permissions":["relay-user"]}""");
+
+        Assert.True(AuthAccessTokenRoles.HasRelayUser(token, NorthgateRoleClaim));
+    }
+
+    [Fact]
+    public void HasRelayUser_WhenTokenLacksRelayUser_ReturnsFalse()
+    {
+        var token = CreateUnsignedJwt($$"""{"{{NorthgateRoleClaim}}":["{{OakLaneMember}}"]}""");
+
+        Assert.False(AuthAccessTokenRoles.HasRelayUser(token, NorthgateRoleClaim));
+    }
+
+    [Fact]
+    public void HasRelayUser_WhenTokenMissing_ReturnsFalse()
+    {
+        Assert.False(AuthAccessTokenRoles.HasRelayUser(accessToken: null, NorthgateRoleClaim));
+        Assert.False(AuthAccessTokenRoles.HasRelayUser(accessToken: " ", NorthgateRoleClaim));
+    }
+
     internal static string CreateUnsignedJwt(string payloadJson)
     {
         var header = Base64UrlEncode("""{"alg":"none","typ":"JWT"}""");

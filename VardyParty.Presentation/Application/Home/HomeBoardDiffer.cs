@@ -27,14 +27,10 @@ namespace VardyParty.Presentation;
 public static class HomeBoardDiffer
 {
     /// <summary>
-    /// Card identity across refreshes — the same fixture on consecutive polls.
-    /// Mirrors <see cref="HomePlaybackIntent.SameGame"/>: raw API home/away
-    /// names, case-insensitive (display names can change when BBC enrichment
-    /// lands; raw names are the stable key).
+    /// Card identity across refreshes — <see cref="Game.FixtureKey"/>.
+    /// Raw API home/away names, not BBC display names.
     /// </summary>
-    public static string GameKey(Game game) =>
-        $"{(game.Home ?? string.Empty).Trim()}|{(game.Away ?? string.Empty).Trim()}"
-            .ToUpperInvariant();
+    public static string GameKey(Game game) => game.FixtureKey;
 
     /// <summary>
     /// Plan the final ordered row list. Returns the row models from

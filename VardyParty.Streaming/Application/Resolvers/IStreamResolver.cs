@@ -11,11 +11,11 @@ public interface IStreamResolver
 {
     /// <summary>
     /// Incrementally resolves m3u8 URLs for a list of streams
-    /// Processes in parallel batches for efficiency
-    /// Yields enriched streams as they complete (resolved and tested)
+    /// Keeps up to <paramref name="batchSize"/> resolves in flight
+    /// Yields each enriched stream as soon as it completes (does not wait for the rest of the window)
     /// </summary>
     /// <param name="streams">Deduplicated streams from the API (without m3u8 metadata yet)</param>
-    /// <param name="batchSize">Number of streams to resolve in parallel (default: 3)</param>
+    /// <param name="batchSize">Maximum number of streams to resolve in parallel (default: 3)</param>
     /// <param name="cancellationToken">Cancellation token for stopping resolution</param>
     /// <param name="onTotalStreamsKnown">Callback to report the total stream count before testing begins</param>
     /// <returns>Async enumerable that yields enriched streams as they complete</returns>

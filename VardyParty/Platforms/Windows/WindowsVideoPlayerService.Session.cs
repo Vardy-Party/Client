@@ -2,16 +2,16 @@ using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Controls;
+using VardyParty.Catalog;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
-using VardyParty.Catalog;
 using Windows.Foundation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
-using HttpClientWin = Windows.Web.Http.HttpClient;
 using MauiApp = Microsoft.Maui.Controls.Application;
 using WinButton = Microsoft.UI.Xaml.Controls.Button;
 using WinGrid = Microsoft.UI.Xaml.Controls.Grid;
@@ -101,6 +101,7 @@ namespace VardyParty.Platforms.Windows
             private Microsoft.UI.Xaml.Media.SolidColorBrush nextBgNormal = null!;
             private Microsoft.UI.Xaml.Media.SolidColorBrush nextBgHover = null!;
             private IStreamResolutionOrchestrator streamResolutionOrchestrator = null!;
+            private PlaybackChromePresenter chrome = null!;
             private PlaybackSessionController session = null!;
             private DelegatingMediaEngine engine = null!;
             private PlaybackPoolCommandActions pool = null!;
@@ -116,9 +117,21 @@ namespace VardyParty.Platforms.Windows
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;
             private TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs>? activeDownloadHandler;
-            private HttpClientWin? activePlaybackClient;
+            /// <summary>
+            /// Manifest and segment streams Media Foundation reads after the download
+            /// handler returns. Released with the adaptive source.
+            /// </summary>
+            private readonly List<IDisposable> rootedPlaybackStreams = new();
+            private readonly object rootedPlaybackStreamsGate = new();
+            private readonly object playbackDownloadGate = new();
+            private readonly List<CancellationTokenSource> retiredPlaybackDownloads = new();
+            private CancellationTokenSource playbackDownloadsCts = new();
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
             private bool isClosingPlayer;
+            /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
+            private int liveHlsRecoveries;
+            /// <summary>True while a soft-recover <c>StartPlaybackAsync</c> is in flight — coalesce nested MediaFailed.</summary>
+            private bool liveHlsSoftRecoverInFlight;
 
             public PlayerSession(
                 WindowsVideoPlayerService host,
@@ -216,6 +229,12 @@ namespace VardyParty.Platforms.Windows
 
                     switchingService = _host._switchingService;
                     streamResolutionOrchestrator = _host._services.GetRequiredService<IStreamResolutionOrchestrator>();
+                    chrome = new PlaybackChromePresenter(
+                        reportBadStream: async (reason, _) =>
+                            await streamResolutionOrchestrator.ReportCurrentStreamAsBadAsync(reason),
+                        requestNext: _onNextStreamRequested,
+                        cleanupPool: () => switchingService.Cleanup());
+                    chrome.StateChanged += (_, __) => MainThread.BeginInvokeOnMainThread(ApplyChromeState);
                     session = new PlaybackSessionController();
                     engine = new DelegatingMediaEngine();
                     pool = new PlaybackPoolCommandActions(
@@ -474,20 +493,9 @@ namespace VardyParty.Platforms.Windows
                     tickerCycleButton.Click += (_, __) => CycleScoresTickerMode();
 
 
-                    menuButton.Click += (_, __) =>
-                    {
-                        menuPanel.Visibility = menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible
-                            ? Microsoft.UI.Xaml.Visibility.Collapsed
-                            : Microsoft.UI.Xaml.Visibility.Visible;
-                        RefreshDismissSurface();
-                    };
+                    menuButton.Click += (_, __) => chrome.ToggleMenu();
 
-                    sameLeagueTickerButton.Click += (_, __) =>
-                    {
-                        menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        ToggleScoresTicker();
-                        RefreshDismissSurface();
-                    };
+                    sameLeagueTickerButton.Click += (_, __) => chrome.ToggleScores();
 
                     alwaysOnTopButton.Click += (_, __) =>
                     {
@@ -503,37 +511,15 @@ namespace VardyParty.Platforms.Windows
                             }
                         }
                         catch (Exception ex) { _host.LogIgnored("ToggleAlwaysOnTop", ex); }
-                        menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        RefreshDismissSurface();
+                        chrome.HideMenu();
                     };
 
                     reportStreamButton.Click += async (_, __) =>
                     {
-                        reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                        reportStatusText.Text = "Reporting stream...";
-
-                        try
-                        {
-                            if (streamResolutionOrchestrator != null)
-                            {
-                                await streamResolutionOrchestrator.ReportCurrentStreamAsBadAsync("User reported bad stream");
-                                reportStatusText.Text = "Stream reported";
-                            }
-                            else
-                            {
-                                reportStatusText.Text = "Report unavailable";
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _host.LogIgnored("ReportCurrentStreamAsBad", ex);
-                            reportStatusText.Text = "Report failed";
-                        }
-
-                        await Task.Delay(900);
-                        reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        RefreshDismissSurface();
+                        await chrome.ReportBadStreamAsync();
+                        try { await Task.Delay(PlaybackChromePresenter.ReportStatusLinger); } catch { }
+                        chrome.ClearReportStatus();
+                        chrome.HideMenu();
                     };
 
                     infoPanel.PointerPressed += (_, e) =>
@@ -550,6 +536,9 @@ namespace VardyParty.Platforms.Windows
                         try
                         {
                             if (cleanupInvoked) return;
+
+                            if (TryRecoverLiveHlsFailure(e))
+                                return;
 
                             var errMsg = e?.ErrorMessage ?? "Unknown media error";
                             var ext = string.Empty;
@@ -754,47 +743,24 @@ namespace VardyParty.Platforms.Windows
                     playerGrid.KeyDown += (_, e) =>
                     {
                         if (e.Key != global::Windows.System.VirtualKey.Escape) return;
-
-                        if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                        {
-                            HideVideoInfoPanel();
+                        if (chrome.TryDismissLayer())
                             e.Handled = true;
-                            return;
-                        }
-
-                        if (menuPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                        {
-                            menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                            RefreshDismissSurface();
-                            e.Handled = true;
-                        }
                     };
 
 
-                    infoCloseButton.Click += (_, __) => HideVideoInfoPanel();
+                    infoCloseButton.Click += (_, __) => chrome.HideVideoInfo();
 
-                    videoInfoButton.Click += (_, __) =>
-                    {
-                        menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
-                        {
-                            HideVideoInfoPanel();
-                        }
-                        else
-                        {
-                            ShowVideoInfoPanel();
-                        }
-                    };
+                    videoInfoButton.Click += (_, __) => chrome.ToggleVideoInfo();
 
                     dismissSurface.PointerPressed += (_, __) =>
                     {
-                        menuPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        HideVideoInfoPanel();
+                        chrome.HideMenu();
+                        chrome.HideVideoInfo();
                     };
 
                     nextButton.Click += async (_, __) =>
                     {
-                        if (_onNextStreamRequested == null || isNextStreamRequestInProgress || cleanupInvoked)
+                        if (isNextStreamRequestInProgress || cleanupInvoked)
                             return;
 
                         isNextStreamRequestInProgress = true;
@@ -803,7 +769,7 @@ namespace VardyParty.Platforms.Windows
                         {
                             // SwitchToNextStream inside the callback publishes CurrentStreamIndexChanged,
                             // which triggers TrySwitchToCurrentStreamAsync — do not call it again here.
-                            await _onNextStreamRequested();
+                            await chrome.RequestNextStreamAsync();
                         }
                         catch (Exception ex)
                         {

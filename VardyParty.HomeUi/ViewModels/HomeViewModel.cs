@@ -23,10 +23,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private readonly UiSoundService _sounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly MatchEventBus _events;
+    private readonly SelectionState _selection;
     private readonly ILogger<HomeViewModel> _logger;
     private readonly MatchEventDetector _matchEvents = new();
     private readonly object _pendingLock = new();
     private readonly Queue<Action> _pendingUiAssign = new();
+    private readonly Queue<Action> _pendingUpdateUi = new();
     private readonly Queue<StagedStrip> _stagedStrips = new();
     private int _imageEpoch;
     private IDictionary<string, List<Game>>? _lastGames;
@@ -39,9 +41,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _isContentLoading = true;
     private Game? _resolvingGame;
     private PendingApply? _pendingApply;
-    private string? _pendingError;
+    private string? _pendingLanWarning;
+    private string? _pendingServiceError;
+    private bool _hasPendingLanWarning;
+    private bool _hasPendingServiceError;
+    private string _lanWarning = string.Empty;
+    private string _serviceError = string.Empty;
     private bool _pendingClearResolving;
     private bool _pendingResetScores;
+    private readonly IDesktopUpdateService _updates;
+    private readonly IRemoteComputeController? _remote;
+    private DesktopUpdateOffer? _offer;
+    private bool _updateBusy;
 
     /// <summary>
     /// Header subtitle until the first catalog WITH API data lands (the games
@@ -75,7 +86,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         UiSoundService sounds,
         MatchEventNotificationPolicy notifications,
         MatchEventBus events,
-        ILogger<HomeViewModel> logger)
+        SelectionState selection,
+        ILogger<HomeViewModel> logger,
+        IDesktopUpdateService updates,
+        IRemoteComputeController? remoteCompute = null)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -84,10 +98,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _sounds = sounds ?? throw new ArgumentNullException(nameof(sounds));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _events = events ?? throw new ArgumentNullException(nameof(events));
+        _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
+        _remote = remoteCompute;
+        if (_remote is not null)
+        {
+            _remote.Changed += OnRemoteComputeChanged;
+        }
+
         Toast = new MatchEventToastViewModel(Layout);
 
         _leagueFilter.Changed += OnFilterChanged;
+        _updates.OfferChanged += OnUpdateOfferChanged;
+        _updates.ApplyFailed += OnUpdateApplyFailed;
+        _updates.Start();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -118,10 +143,12 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             lock (_pendingLock)
             {
                 return _pendingApply != null
-                    || _pendingError != null
+                    || _hasPendingLanWarning
+                    || _hasPendingServiceError
                     || _pendingClearResolving
                     || _pendingResetScores
-                    || _pendingUiAssign.Count > 0;
+                    || _pendingUiAssign.Count > 0
+                    || _pendingUpdateUi.Count > 0;
             }
         }
     }
@@ -171,7 +198,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool HasError => _errorMessage.Length > 0;
+    public bool HasError => !string.IsNullOrWhiteSpace(_errorMessage);
 
     public bool HasGames
     {
@@ -229,15 +256,38 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         Rebuild();
     }
 
-    /// <summary>Surface a service error banner. Safe to call from any thread.</summary>
-    public void SetError(string? message)
+    /// <summary>Local-service discovery warning. Catalog success must not clear this.</summary>
+    public void SetLanWarning(string? message)
     {
         lock (_pendingLock)
         {
-            _pendingError = message ?? string.Empty;
+            _pendingLanWarning = message ?? string.Empty;
+            _hasPendingLanWarning = true;
         }
 
         NotifyWorkQueued();
+    }
+
+    /// <summary>Catalog / playback / update error. Null clears only this channel.</summary>
+    public void SetServiceError(string? message)
+    {
+        lock (_pendingLock)
+        {
+            _pendingServiceError = message ?? string.Empty;
+            _hasPendingServiceError = true;
+        }
+
+        NotifyWorkQueued();
+    }
+
+    /// <summary>Playback/update errors share the service-error channel.</summary>
+    public void SetError(string? message) => SetServiceError(message);
+
+    /// <summary>Sign-out / full reset.</summary>
+    public void ClearErrors()
+    {
+        SetLanWarning(null);
+        SetServiceError(null);
     }
 
     /// <summary>Reclassify the layout for a new viewport size / idiom.</summary>
@@ -295,6 +345,207 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// Settings: DNS over HTTPS fallback (default ON). When system DNS cannot
+    /// resolve a host, Cloudflare 1.1.1.1 is tried.
+    /// </summary>
+    public bool DnsOverHttpsFallbackEnabled
+    {
+        get => _menu.DnsOverHttpsFallbackEnabled;
+        set
+        {
+            if (_menu.DnsOverHttpsFallbackEnabled == value) return;
+            _menu.ToggleDnsOverHttpsFallback();
+            Raise(nameof(DnsOverHttpsFallbackEnabled));
+        }
+    }
+
+    private string _remoteGuestCode = "";
+    private bool _useOtherLocalService;
+    private bool _localServiceFound;
+
+    public bool ShareComputeEnabled
+    {
+        get => _remote?.ShareEnabled ?? false;
+        set
+        {
+            if (_remote is null || _remote.ShareEnabled == value)
+            {
+                return;
+            }
+
+            if (value && (!_localServiceFound || UseOtherLocalService))
+            {
+                return;
+            }
+
+            _ = ObserveRemoteAsync(() => _remote.SetShareEnabledAsync(value));
+        }
+    }
+
+    /// <summary>
+    /// A host-share-capable local-service was found on this LAN. Share stays
+    /// off until then; an already-on switch stays usable so sharing can be
+    /// turned off.
+    /// </summary>
+    public bool CanShareLocalService =>
+        ShowHostCompute && (_localServiceFound || ShareComputeEnabled);
+
+    public bool ShowShareNeedLocalService =>
+        ShowHostCompute && !_localServiceFound && !ShareComputeEnabled;
+
+    /// <summary>Host-share-capable LAN result. Safe to call from any thread.</summary>
+    public void SetLocalServiceFound(bool found)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                if (_localServiceFound == found)
+                {
+                    return;
+                }
+
+                _localServiceFound = found;
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
+    public string RemoteInviteCode => _remote?.InviteCode ?? "";
+
+    public bool HasRemoteInvite => RemoteInviteCode.Length > 0;
+
+    private bool CanUseRemoteCompute =>
+        _remote?.HasRelayUser == true && _remote.OffersRemoteCompute;
+
+    /// <summary>Share switch. Hidden while using another user's local-service, without relay-user, or on a 404.</summary>
+    public bool ShowHostCompute => CanUseRemoteCompute && !UseOtherLocalService;
+
+    /// <summary>The other-user switch. Hidden while this computer is sharing.</summary>
+    public bool ShowGuestCompute => CanUseRemoteCompute && _remote?.ShareEnabled != true;
+
+    /// <summary>
+    /// On only while this device is using another user's local-service.
+    /// Off is neither: both choices stay available and neither is engaged.
+    /// </summary>
+    public bool UseOtherLocalService
+    {
+        get => _useOtherLocalService || _remote?.IsGuestPaired == true;
+        set
+        {
+            if (value == UseOtherLocalService)
+            {
+                return;
+            }
+
+            if (!value)
+            {
+                _useOtherLocalService = false;
+                if (_remote?.IsGuestPaired != true)
+                {
+                    Raise(nameof(UseOtherLocalService));
+                    Raise(nameof(ShowHostCompute));
+                    Raise(nameof(ShowGuestEntry));
+                    Raise(nameof(CanShareLocalService));
+                    Raise(nameof(ShowShareNeedLocalService));
+                }
+
+                _ = ObserveRemoteAsync(() => _remote?.StopUsingRemoteAsync() ?? Task.CompletedTask);
+                return;
+            }
+
+            _useOtherLocalService = true;
+            Raise(nameof(UseOtherLocalService));
+            Raise(nameof(ShowHostCompute));
+            Raise(nameof(ShowGuestEntry));
+            Raise(nameof(CanShareLocalService));
+            Raise(nameof(ShowShareNeedLocalService));
+        }
+    }
+
+    public bool ShowGuestEntry =>
+        ShowGuestCompute && UseOtherLocalService && _remote?.IsGuestPaired != true;
+
+    public void RefreshRemoteComputeAccess() =>
+        _ = ObserveRemoteAsync(() => _remote?.RefreshAccessAsync() ?? Task.CompletedTask);
+
+    public string RemoteGuestCode
+    {
+        get => _remoteGuestCode;
+        set
+        {
+            if (_remoteGuestCode == value)
+            {
+                return;
+            }
+
+            _remoteGuestCode = value ?? "";
+            Raise(nameof(RemoteGuestCode));
+        }
+    }
+
+    public string RemoteComputeStatus => _remote?.Status ?? "";
+
+    public bool RemoteStatusIsFault =>
+        RemoteComputeStatus.Contains("failed:", StringComparison.OrdinalIgnoreCase);
+
+    public bool RemoteStatusIsPaired =>
+        RemoteComputeStatus.StartsWith("Paired.", StringComparison.Ordinal);
+
+    public bool CanRedeem => _remote?.RedeemBusy != true;
+
+    public string RedeemButtonText => CanRedeem ? "Use their local-service" : "Checking…";
+
+    public void RedeemRemoteCompute() => _ = ObserveRemoteAsync(() =>
+        _remote?.RedeemAsync(_remoteGuestCode) ?? Task.CompletedTask);
+
+    private async Task ObserveRemoteAsync(Func<Task> work)
+    {
+        try
+        {
+            await work().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Remote compute settings failed");
+        }
+    }
+
+    private void OnRemoteComputeChanged()
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                if (_remote?.ShareEnabled == true)
+                {
+                    _useOtherLocalService = false;
+                }
+
+                Raise(nameof(ShareComputeEnabled));
+                Raise(nameof(RemoteInviteCode));
+                Raise(nameof(HasRemoteInvite));
+                Raise(nameof(UseOtherLocalService));
+                Raise(nameof(ShowHostCompute));
+                Raise(nameof(ShowGuestCompute));
+                Raise(nameof(ShowGuestEntry));
+                Raise(nameof(CanShareLocalService));
+                Raise(nameof(ShowShareNeedLocalService));
+                Raise(nameof(RemoteComputeStatus));
+                Raise(nameof(RemoteStatusIsFault));
+                Raise(nameof(RemoteStatusIsPaired));
+                Raise(nameof(CanRedeem));
+                Raise(nameof(RedeemButtonText));
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
     private bool _canSignOut;
 
     /// <summary>Heads with a real auth session show the "Sign out" entry.</summary>
@@ -315,6 +566,77 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         SignOutRequested?.Invoke();
     }
 
+    public bool HasUpdateAvailable => _offer is not null;
+
+    public bool ShowUpdateButton => HasUpdateAvailable;
+
+    public bool UpdateIdle => !_updateBusy;
+
+    public string UpdateButtonLabel =>
+        _updateBusy ? "Updating…" : "Update";
+
+    public void RequestUpdate()
+    {
+        var offer = _offer;
+        if (offer is null || _updateBusy)
+        {
+            return;
+        }
+
+        _sounds.Play(UiSound.Select);
+        _updateBusy = true;
+        RaiseUpdateUi();
+        _ = InstallUpdateAsync(offer);
+    }
+
+    private async Task InstallUpdateAsync(DesktopUpdateOffer offer)
+    {
+        try
+        {
+            await _updates.InstallAsync(offer, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Desktop update install failed");
+            SetError("Could not apply the update.");
+        }
+        finally
+        {
+            lock (_pendingLock)
+            {
+                _pendingUpdateUi.Enqueue(() =>
+                {
+                    _updateBusy = false;
+                    RaiseUpdateUi();
+                });
+            }
+
+            NotifyWorkQueued();
+        }
+    }
+
+    private void OnUpdateOfferChanged(DesktopUpdateOffer? offer)
+    {
+        lock (_pendingLock)
+        {
+            _pendingUpdateUi.Enqueue(() =>
+            {
+                _offer = offer;
+                RaiseUpdateUi();
+            });
+        }
+
+        NotifyWorkQueued();
+    }
+
+    private void RaiseUpdateUi()
+    {
+        Raise(nameof(HasUpdateAvailable));
+        Raise(nameof(ShowUpdateButton));
+        Raise(nameof(UpdateIdle));
+        Raise(nameof(UpdateButtonLabel));
+    }
+
     /// <summary>Focus landed on a card or menu item (throttled tick).</summary>
     public void OnFocusPulse() => _sounds.Play(UiSound.FocusMove);
 
@@ -333,7 +655,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         NotifyWorkQueued();
     }
 
-    public void Dispose() => _leagueFilter.Changed -= OnFilterChanged;
+    private void OnUpdateApplyFailed(string message) => SetError(message);
+
+    public void Dispose()
+    {
+        _leagueFilter.Changed -= OnFilterChanged;
+        _updates.OfferChanged -= OnUpdateOfferChanged;
+        _updates.ApplyFailed -= OnUpdateApplyFailed;
+        if (_remote is not null)
+        {
+            _remote.Changed -= OnRemoteComputeChanged;
+        }
+    }
 
     private void OnFilterChanged() => Rebuild();
 
@@ -364,14 +697,23 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     public void FlushPendingApply()
     {
-        string? error;
+        string? pendingLan = null;
+        string? pendingService = null;
+        var hasLan = false;
+        var hasService = false;
         PendingApply? apply;
         var clearResolving = false;
         var resetScores = false;
         lock (_pendingLock)
         {
-            error = _pendingError;
-            _pendingError = null;
+            hasLan = _hasPendingLanWarning;
+            pendingLan = _pendingLanWarning;
+            _hasPendingLanWarning = false;
+            _pendingLanWarning = null;
+            hasService = _hasPendingServiceError;
+            pendingService = _pendingServiceError;
+            _hasPendingServiceError = false;
+            _pendingServiceError = null;
             apply = _pendingApply;
             _pendingApply = null;
             clearResolving = _pendingClearResolving;
@@ -385,16 +727,6 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             if (resetScores)
             {
                 _matchEvents.Reset();
-            }
-
-            if (error != null)
-            {
-                if (error.Length > 0 && _errorMessage.Length == 0)
-                {
-                    _sounds.Play(UiSound.Error);
-                }
-
-                ErrorMessage = error;
             }
 
             if (clearResolving)
@@ -416,7 +748,29 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
                 DeliverMatchEvents(events);
             }
 
+            if (hasLan)
+            {
+                _lanWarning = pendingLan ?? string.Empty;
+            }
+
+            if (hasService)
+            {
+                _serviceError = pendingService ?? string.Empty;
+            }
+
+            if (hasLan || hasService)
+            {
+                var banner = !string.IsNullOrWhiteSpace(_serviceError) ? _serviceError : _lanWarning;
+                if (banner.Length > 0 && _errorMessage.Length == 0)
+                {
+                    _sounds.Play(UiSound.Error);
+                }
+
+                ErrorMessage = banner;
+            }
+
             DrainPendingImageAssigns();
+            DrainPendingUpdateUi();
         }
         catch (Exception ex)
         {
@@ -427,9 +781,10 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>
     /// Deliver detected events AFTER the board applied, so the row/card VMs
     /// the toast borrows (league icon, badges) already carry the new state.
-    /// <see cref="MatchEventNotificationPolicy.ShouldPresent"/> gates
+    /// <see cref="MatchEventNotificationPolicy.ShouldPresentEvent"/> gates
     /// everything — backgrounded or toggled-off events are dropped here,
-    /// never queued for a catch-up. Audio additionally requires the homepage
+    /// never queued for a catch-up. The watched fixture is also dropped
+    /// while its stream is playing. Audio additionally requires the homepage
     /// to be the active surface (no stream playing): one sting per apply,
     /// however many events it carried, routed through UiSoundService which
     /// adds the "UI sounds" toggle + playback suppression on top.
@@ -441,12 +796,21 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        var watching = _selection.CurrentGame;
+        var deliverable = events
+            .Where(matchEvent => _notifications.ShouldPresentEvent(matchEvent, watching))
+            .ToList();
+        if (deliverable.Count == 0)
+        {
+            return;
+        }
+
         if (_notifications.ShouldPlayAudio)
         {
             _sounds.Play(UiSound.Goal);
         }
 
-        foreach (var matchEvent in events)
+        foreach (var matchEvent in deliverable)
         {
             // Delivered-event stream: the homepage toast consumes it below;
             // the playback overlays (Desktop panel, Android banner, Windows
@@ -798,6 +1162,28 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Homepage image assign failed");
+            }
+        }
+    }
+
+    private void DrainPendingUpdateUi()
+    {
+        while (true)
+        {
+            Action? assign;
+            lock (_pendingLock)
+            {
+                if (_pendingUpdateUi.Count == 0) return;
+                assign = _pendingUpdateUi.Dequeue();
+            }
+
+            try
+            {
+                assign();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Homepage update UI assign failed");
             }
         }
     }

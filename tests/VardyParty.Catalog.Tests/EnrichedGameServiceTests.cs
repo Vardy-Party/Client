@@ -4,6 +4,7 @@ using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -334,6 +335,128 @@ public class EnrichedGameServiceTests
     }
 
     [Fact]
+    public async Task StartBackgroundPolling_UnauthorizedCatalog_DoesNotPublishEmptyBoard()
+    {
+        // Arrange
+        var api = _fixture.GetMock<IGamesCatalogApi>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .ThrowsAsync(new ApiUnauthorizedException("no token"));
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var svc = CreateService(api, bbc);
+        var boards = new List<Dictionary<string, List<Game>>?>();
+        var unauthorized = 0;
+        using var gamesSub = svc.GamesStream.Subscribe(boards.Add);
+        using var authSub = svc.CatalogUnauthorized.Subscribe(_ => Interlocked.Increment(ref unauthorized));
+
+        try
+        {
+            // Act
+            svc.StartBackgroundPolling();
+
+            for (var i = 0; i < 50 && unauthorized == 0; i++)
+                await Task.Delay(100);
+
+            // Assert
+            Assert.True(unauthorized > 0);
+            Assert.All(boards, board => Assert.True(board == null || GameCount(board) > 0));
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task StartBackgroundPolling_OverlappingUnauthorizedPolls_SignalsOnceWithoutThrowing()
+    {
+        // Arrange
+        var api = _fixture.GetMock<IGamesCatalogApi>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .Returns(async () =>
+            {
+                Interlocked.Increment(ref calls);
+                entered.TrySetResult();
+                await release.Task;
+                throw new ApiUnauthorizedException("no token");
+            });
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var logger = new SkippingPollLogger();
+        var svc = CreateService(api, bbc, logger: logger);
+        var unauthorized = 0;
+        Exception? observerError = null;
+        using var authSub = svc.CatalogUnauthorized.Subscribe(
+            _ => Interlocked.Increment(ref unauthorized),
+            ex => observerError = ex);
+
+        try
+        {
+            // Act
+            svc.StartBackgroundPolling();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            svc.StartBackgroundPolling();
+            await logger.Skipped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            release.TrySetResult();
+
+            for (var i = 0; i < 50 && Volatile.Read(ref unauthorized) == 0; i++)
+                await Task.Delay(50);
+
+            // Assert
+            Assert.Null(observerError);
+            Assert.Equal(1, Volatile.Read(ref calls));
+            Assert.Equal(1, Volatile.Read(ref unauthorized));
+        }
+        finally
+        {
+            release.TrySetResult();
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task StartBackgroundPolling_ForbiddenCatalog_PublishesPermissionErrorAndKeepsBoard()
+    {
+        // Arrange
+        var api = _fixture.GetMock<IGamesCatalogApi>();
+        var bbc = _fixture.GetMock<IBbcFixturesService>();
+        api.Setup(x => x.GetAllGamesAsync(It.IsAny<bool>()))
+            .ThrowsAsync(new ApiForbiddenException("missing role"));
+        bbc.Setup(x => x.GetRollingWindowFixturesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var svc = CreateService(api, bbc);
+        var boards = new List<Dictionary<string, List<Game>>?>();
+        var errors = new List<string?>();
+        using var gamesSub = svc.GamesStream.Subscribe(boards.Add);
+        using var errorSub = svc.ErrorStream.Subscribe(errors.Add);
+
+        try
+        {
+            // Act
+            svc.StartBackgroundPolling();
+
+            for (var i = 0; i < 50 && !errors.Exists(static e => e != null); i++)
+                await Task.Delay(100);
+
+            // Assert
+            Assert.Contains(errors, static e => e != null && e.Contains("permission", StringComparison.OrdinalIgnoreCase));
+            Assert.All(boards, board => Assert.True(board == null || GameCount(board) > 0));
+        }
+        finally
+        {
+            svc.Dispose();
+        }
+    }
+
+    [Fact]
     public void InitialEnrichmentValve_CoversSlowTvBbcParse()
     {
         // Arrange: hung-BBC fallback must outlast a typical TV parse burst
@@ -346,11 +469,20 @@ public class EnrichedGameServiceTests
         Assert.Equal(TimeSpan.FromSeconds(30), valve);
     }
 
+    private static int GameCount(Dictionary<string, List<Game>> board)
+    {
+        var count = 0;
+        foreach (var list in board.Values)
+            count += list.Count;
+        return count;
+    }
+
     private EnrichedGameService CreateService(
         Mock<IGamesCatalogApi> api,
         Mock<IBbcFixturesService> bbc,
         int? apiRefreshSeconds = null,
-        TimeSpan? valve = null)
+        TimeSpan? valve = null,
+        ILogger<EnrichedGameService>? logger = null)
     {
         var apiSettings = _fixture.Create<GamesApiSettings>();
         if (apiRefreshSeconds.HasValue)
@@ -364,7 +496,32 @@ public class EnrichedGameServiceTests
             _fixture.Create<GameMatcher>(),
             Options.Create(_fixture.Create<BbcFixturesSettings>()),
             Options.Create(apiSettings),
-            NullLogger<EnrichedGameService>.Instance,
+            logger ?? NullLogger<EnrichedGameService>.Instance,
             valve);
+    }
+
+    /// <summary>
+    /// Signals when a second API poll is skipped because the first is still running.
+    /// </summary>
+    private sealed class SkippingPollLogger : ILogger<EnrichedGameService>
+    {
+        public TaskCompletionSource Skipped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (formatter(state, exception).Contains("Skipping API poll", StringComparison.Ordinal))
+            {
+                Skipped.TrySetResult();
+            }
+        }
     }
 }

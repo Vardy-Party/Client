@@ -36,6 +36,25 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
 
     protected virtual bool ThrowOnMissingDeviceConfig => true;
 
+    /// <summary>
+    /// Human-readable reason when Auth0 device login cannot start because
+    /// ClientId/Domain were never merged into the host's appsettings.
+    /// </summary>
+    protected string DescribeMissingAuth0DeviceConfig()
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(Settings.Domain))
+            missing.Add("Domain");
+        if (string.IsNullOrWhiteSpace(Settings.ClientId))
+            missing.Add("ClientId");
+
+        var fields = missing.Count > 0 ? string.Join(" and ", missing) : "ClientId/Domain";
+        return
+            $"Sign-in unavailable: Auth0 {fields} not configured or empty in this build. " +
+            "Merge user-secrets before launch " +
+            "(scripts/patch-appsettings.ps1, run-windows-debug.ps1, or launch-linux-app.ps1 / -p:PatchAppSettings=true).";
+    }
+
     protected virtual bool AcceptAccessToken(string accessToken)
     {
         if (AuthAccessTokenRoles.HasRequiredRole(accessToken, Settings.RequiredRoleClaimType, Settings.RequiredRole))
@@ -49,17 +68,21 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
     {
         if (string.IsNullOrWhiteSpace(Settings.ClientId) || string.IsNullOrWhiteSpace(Settings.Domain))
         {
-            Logger.LogWarning("[Auth0] Device login missing ClientId/Domain");
+            var missing = DescribeMissingAuth0DeviceConfig();
+            Logger.LogWarning("[Auth0] Device login blocked: {Reason}", missing);
             if (ThrowOnMissingDeviceConfig)
-                throw new InvalidOperationException("Auth0 is not configured on this device build.");
+                throw new InvalidOperationException(missing);
             return null;
         }
 
         var result = await Oauth.RequestDeviceCodeAsync(Settings, cancellationToken);
         if (!result.IsSuccess || result.DeviceCode is null)
         {
+            var oauthError = string.IsNullOrWhiteSpace(result.Error)
+                ? "Auth0 device sign-in failed."
+                : result.Error;
             if (ThrowOnMissingDeviceConfig)
-                throw new InvalidOperationException(result.Error ?? "Auth0 device sign-in failed.");
+                throw new InvalidOperationException(oauthError);
             return null;
         }
 
@@ -79,9 +102,11 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var token = await Oauth.ExchangeDeviceCodeAsync(Settings, deviceCode.DeviceCode, cancellationToken);
-            Logger.LogInformation("[Auth0] Device flow poll response. IsSuccess: {IsSuccess}, HasToken: {HasToken}",
+            Logger.LogInformation(
+                "[Auth0] Device flow poll response. IsSuccess: {IsSuccess}, AccessTokenPresent: {Access}, RefreshTokenPresent: {Refresh}",
                 token.IsSuccess,
-                !string.IsNullOrWhiteSpace(token.AccessToken));
+                !string.IsNullOrWhiteSpace(token.AccessToken),
+                !string.IsNullOrWhiteSpace(token.RefreshToken));
 
             if (token.IsSuccess && !string.IsNullOrWhiteSpace(token.AccessToken))
             {
@@ -204,8 +229,20 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
                     LastRefreshedAt = DateTimeOffset.UtcNow;
             }
 
-            if (string.IsNullOrWhiteSpace(RefreshToken) || !NeedsAccessTokenRefresh(forceRefresh))
+            if (string.IsNullOrWhiteSpace(RefreshToken))
+            {
+                if (!HasValidToken)
+                {
+                    Logger.LogWarning("[Auth0] No refresh token stored; cannot renew the access token");
+                }
+
                 return;
+            }
+
+            if (!NeedsAccessTokenRefresh(forceRefresh))
+                return;
+
+            Logger.LogInformation("[Auth0] Refreshing access token");
 
             if (AuthTokenLifetime.ShouldRefreshInBackground(forceRefresh, HasValidToken, refreshDue: true))
             {
@@ -283,6 +320,12 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn > 0 ? expiresIn : 3600);
         RefreshToken = AuthTokenLifetime.CoalesceRefreshToken(refreshToken, RefreshToken);
         LastRefreshedAt = DateTimeOffset.UtcNow;
+        Logger.LogInformation(
+            "[Auth0] Tokens applied. AccessTokenPresent={Access}, RefreshTokenPresent={Refresh}, IncomingRefreshTokenPresent={Incoming}, ExpiresIn={ExpiresIn}s",
+            !string.IsNullOrWhiteSpace(AccessToken),
+            !string.IsNullOrWhiteSpace(RefreshToken),
+            !string.IsNullOrWhiteSpace(refreshToken),
+            expiresIn);
         await PersistTokensAsync();
     }
 
@@ -293,6 +336,7 @@ public abstract class Auth0TokenSession : IAuthTokenProvider, IAuthLoginService
         ExpiresAt = DateTimeOffset.MinValue;
         LastRefreshedAt = DateTimeOffset.MinValue;
         TokenLoaded = true;
+        Logger.LogWarning("[Auth0] Cleared access token and refresh token from memory and secure storage");
         await ClearPersistedTokensAsync();
     }
 

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using VardyParty.Catalog;
 using VardyParty.Kernel;
+using VardyParty.LocalService.V1;
+using VardyParty.LocalService.V2;
 using VardyParty.Playback;
 using VardyParty.Ports;
 using VardyParty.Streaming;
@@ -15,6 +17,10 @@ public static class VardyPartyServiceCollectionExtensions
 {
     public static IServiceCollection AddVardyParty(this IServiceCollection services)
     {
+        services.AddV1TransportPlugin();
+        services.AddV2TransportPlugin();
+        services.AddSingleton<IPlaybackPlaylistProcessor, TransportPluginPlaylistProcessor>();
+
         services.AddSingleton<IGameMatcher, GameMatcher>();
         services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();

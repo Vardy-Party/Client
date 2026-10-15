@@ -11,16 +11,19 @@ public sealed class MenuViewModel
     private readonly ILeagueFilterService _leagueFilter;
     private readonly UiSoundService _uiSounds;
     private readonly MatchEventNotificationPolicy _notifications;
+    private readonly DnsOverHttpsPreference _dnsOverHttps;
     private List<string> _knownLeagues = new();
 
     public MenuViewModel(
         ILeagueFilterService leagueFilter,
         UiSoundService uiSounds,
-        MatchEventNotificationPolicy notifications)
+        MatchEventNotificationPolicy notifications,
+        DnsOverHttpsPreference dnsOverHttps)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _uiSounds = uiSounds ?? throw new ArgumentNullException(nameof(uiSounds));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+        _dnsOverHttps = dnsOverHttps ?? throw new ArgumentNullException(nameof(dnsOverHttps));
     }
 
     public IReadOnlyList<string> KnownLeagues => _knownLeagues;
@@ -51,4 +54,11 @@ public sealed class MenuViewModel
     /// <summary>Flips the switch. OFF suppresses sting, toast AND card flash.</summary>
     public void ToggleGoalNotifications() =>
         _notifications.SetNotificationsEnabled(!_notifications.NotificationsEnabled);
+
+    /// <summary>Settings: DNS over HTTPS fallback via Cloudflare 1.1.1.1 (default ON).</summary>
+    public bool DnsOverHttpsFallbackEnabled => _dnsOverHttps.Enabled;
+
+    /// <summary>Flips the DoH fallback switch.</summary>
+    public void ToggleDnsOverHttpsFallback() =>
+        _dnsOverHttps.SetEnabled(!_dnsOverHttps.Enabled);
 }

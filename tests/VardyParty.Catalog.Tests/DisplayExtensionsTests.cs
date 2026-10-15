@@ -186,5 +186,83 @@ namespace VardyParty.Catalog.Tests
             Assert.DoesNotContain(consumerVisible, g => g.League.Equals("League Hidden", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(consumerVisible, g => g.League.Equals("League Alpha", StringComparison.OrdinalIgnoreCase));
         }
+
+        [Fact]
+        public void ToDisplay_KeepsScoredFinishForThirtyMinutesAfterFirstObservation()
+        {
+            // Arrange
+            var now = new DateTime(2026, 9, 29, 18, 0, 0, DateTimeKind.Utc);
+            var finished = Make(
+                "Home United",
+                "Away City",
+                now.AddHours(-2),
+                isFinished: true,
+                homeScore: 2,
+                awayScore: 0,
+                statusText: "FT",
+                league: "League Alpha");
+            var upcoming = Make("North Rovers", "South Wanderers", now.AddHours(1), league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [finished, upcoming] };
+            var grace = new FinishedGameGrace();
+
+            // Act
+            var justFinished = dict.ToDisplay(now, grace);
+            var stillThere = dict.ToDisplay(now.AddMinutes(29), grace);
+            var dropped = dict.ToDisplay(now.AddMinutes(30), grace);
+
+            // Assert
+            Assert.Contains(finished, justFinished);
+            Assert.Contains(finished, stillThere);
+            Assert.Contains(upcoming, dropped);
+            Assert.DoesNotContain(finished, dropped);
+        }
+
+        [Fact]
+        public void ToDisplay_KeepsLateObservedFinishEvenWhenKickoffIsOlderThanThreeHours()
+        {
+            // Arrange
+            var now = new DateTime(2026, 9, 29, 20, 0, 0, DateTimeKind.Utc);
+            var finished = Make(
+                "Home United",
+                "Away City",
+                now.AddHours(-4),
+                isFinished: true,
+                homeScore: 1,
+                awayScore: 1,
+                statusText: "FT",
+                league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [finished] };
+            var grace = new FinishedGameGrace();
+
+            // Act
+            var ordered = dict.ToDisplay(now, grace);
+
+            // Assert
+            Assert.Contains(finished, ordered);
+        }
+
+        [Fact]
+        public void ToDisplay_ExcludesScorelessHeuristicFinished()
+        {
+            // Arrange
+            var now = DateTime.UtcNow;
+            var heuristic = Make(
+                "North FC",
+                "South FC",
+                now.AddHours(-3),
+                isFinished: true,
+                statusText: "FT",
+                league: "League Alpha");
+            var upcoming = Make("Home United", "Away City", now.AddHours(2), league: "League Alpha");
+            var dict = new Dictionary<string, List<Game>> { ["League Alpha"] = [heuristic, upcoming] };
+            var grace = new FinishedGameGrace();
+
+            // Act
+            var ordered = dict.ToDisplay(now, grace);
+
+            // Assert
+            Assert.DoesNotContain(heuristic, ordered);
+            Assert.Contains(upcoming, ordered);
+        }
     }
 }

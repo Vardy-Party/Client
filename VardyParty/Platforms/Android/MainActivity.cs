@@ -8,12 +8,12 @@ using VardyParty.Presentation;
 namespace VardyParty
 {
     [Activity(
-        Theme = "@style/Maui.SplashTheme",
-        MainLauncher = true,
+        Name = "com.vardyparty.MainActivity",
+        Theme = "@style/VardyParty.MauiTheme",
+        MainLauncher = false,
         LaunchMode = LaunchMode.SingleTop,
         Exported = true,
         ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation | ConfigChanges.UiMode | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
-    [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher, Android.Content.Intent.CategoryLeanbackLauncher })]
     public class MainActivity : MauiAppCompatActivity
     {
         private static bool _flyoutMenuOpen;
@@ -120,7 +120,10 @@ namespace VardyParty
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
+            ((MainApplication)MauiApplication.Current).EnsureMauiApp();
+
             base.OnCreate(savedInstanceState);
+            AndroidScreenAwake.BindHomepage(this);
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");
 
@@ -154,6 +157,41 @@ namespace VardyParty
                     Log.Warn("MainActivity", $"[MAIN] ReportFullyDrawn failed: {ex.Message}");
                 }
             });
+        }
+
+        /// <summary>
+        /// Leanback starts this activity before the window has focus.
+        /// <c>RequestFocus</c> earlier is ignored, and the first D-pad OK is
+        /// dropped. Ask only once the window has focus, and only when nothing
+        /// useful is focused, so a return from the video activity does not
+        /// pull focus off the page. Do not mark the decor view
+        /// <c>FocusableInTouchMode</c> — that makes the root eat the OK.
+        /// </summary>
+        protected override void OnResume()
+        {
+            base.OnResume();
+            AndroidScreenAwake.BindHomepage(this);
+        }
+
+        public override void OnWindowFocusChanged(bool hasFocus)
+        {
+            base.OnWindowFocusChanged(hasFocus);
+            if (hasFocus)
+            {
+                AndroidScreenAwake.BindHomepage(this);
+            }
+
+            var decor = Window?.DecorView;
+            if (decor is null)
+                return;
+
+            var current = CurrentFocus;
+            if (!MainActivityWindowFocus.ShouldRequestFocus(
+                    HasWindowFocus,
+                    current is null || current == decor))
+                return;
+
+            decor.RequestFocus();
         }
 
         protected override void OnDestroy()

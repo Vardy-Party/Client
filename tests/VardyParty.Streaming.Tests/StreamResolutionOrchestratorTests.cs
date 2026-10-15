@@ -18,6 +18,37 @@ public class StreamResolutionOrchestratorTests
 {
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
+    public StreamResolutionOrchestratorTests()
+    {
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.UsesRemoteCompute)
+            .Returns(false);
+    }
+
+    [Fact]
+    public async Task StartAsync_LocalServiceUnavailable_AbortsFastWithLocalServiceUnavailable()
+    {
+        // Arrange
+        var game = _fixture.Create<Game>();
+        var launcher = _fixture.GetMock<IPlaybackLauncher>();
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var outcome = await sut.StartAsync(game, launcher.Object);
+
+        // Assert
+        Assert.True(outcome.LocalServiceUnavailable);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Verify(c => c.InitializeAsync(It.IsAny<Game>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task StartAsync_CachedM3U8Fails_RetriesWithFreshUrl()
     {
@@ -286,6 +317,71 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
+    public async Task StartAsync_CancelledDuringResolve_ReleasesStartGateForNextStart()
+    {
+        // Arrange — Cancel while resolve is blocked must free the start-gate so
+        // the next pick is not StartRefused.
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var stream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.test/match.html")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        var resolveEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream).Create()
+            });
+
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                BlockedYield(resolveEntered, ct));
+
+        using var cts = new CancellationTokenSource();
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var first = sut.StartAsync(game, player.Object, cts.Token);
+        await resolveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>());
+        var second = await sut.StartAsync(game, player.Object);
+
+        Assert.False(second.StartRefused);
+        Assert.True(second.NoWorkingStreams);
+    }
+
+    [Fact]
     public async Task StartAsync_FirstHealthyInvokesPlayer_LaterHealthyJoinPoolOnly()
     {
         // Arrange
@@ -408,10 +504,298 @@ public class StreamResolutionOrchestratorTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task StartAsync_FasterLaterCandidate_PlaysEarlierCatalogIndex()
+    {
+        // Arrange
+        const string earlierUrl = "https://cdn.example.com/live/north.m3u8";
+        const string laterUrl = "https://cdn.example.com/live/south.m3u8";
+        const string pageUrl = "https://streams.example.com/match.html";
+
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var earlierStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl + "#north")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+        var laterStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl + "#south")
+            .With(s => s.Channel, "Channel South")
+            .Create();
+
+        var earlier = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, earlierStream)
+            .With(e => e.ResolvedM3U8Url, earlierUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+        var later = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, laterStream)
+            .With(e => e.ResolvedM3U8Url, laterUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, earlierStream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, laterStream).Create()
+            });
+
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() => Yield(later, earlier));
+
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        player.Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .ReturnsAsync(PlaybackResult.SuccessResult("Playing"));
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var outcome = await sut.StartAsync(game, player.Object);
+
+        // Assert
+        Assert.True(outcome.PlaybackResult?.Success);
+        Assert.Equal(earlierUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                earlierUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Once);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                laterUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StartAsync_RelayedResolve_HoldsKeepAliveAcrossCandidates()
+    {
+        // Arrange
+        var game = RemoteGame();
+        var first = FailedStream("https://streams.example.com/match.html#north", "Channel North");
+        var second = FailedStream("https://streams.example.com/match.html#south", "Channel South");
+        var events = new List<string>();
+        var keepAlive = _fixture.GetMock<IRemoteComputeKeepAlive>();
+        keepAlive.Setup(k => k.Start()).Callback(() => events.Add("start"));
+        keepAlive.Setup(k => k.Stop()).Callback(() => events.Add("stop"));
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.UsesRemoteCompute)
+            .Returns(true);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.LastRemoteComputeError)
+            .Returns((string?)null);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, first.Stream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, second.Stream).Create()
+            });
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() =>
+            {
+                events.Add("resolve");
+                return Yield(first, second);
+            });
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+
+        // Assert
+        Assert.Equal(new[] { "start", "resolve", "stop" }, events);
+        keepAlive.Verify(k => k.Start(), Times.Once);
+        keepAlive.Verify(k => k.Stop(), Times.Once);
+        Assert.False(outcome.LocalServiceUnavailable);
+        Assert.True(outcome.NoWorkingStreams);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenLanIsUp_DoesNotStartRelayKeepAlive()
+    {
+        // Arrange
+        var game = RemoteGame();
+        var stream = FailedStream("https://streams.example.com/match.html", "Channel North");
+        var keepAlive = _fixture.GetMock<IRemoteComputeKeepAlive>();
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.UsesRemoteCompute)
+            .Returns(true);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream.Stream).Create()
+            });
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() => Yield(stream));
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+
+        // Assert
+        keepAlive.Verify(k => k.Start(), Times.Never);
+        keepAlive.Verify(k => k.Stop(), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenPairedAndTheComputerIsBusy_DoesNotPutTheLanBannerBack()
+    {
+        var game = RemoteGame();
+        var stream = FailedStream("https://streams.example.test/match.html", "Channel North");
+        const string fault = "Local service failed: This computer is still finding a stream. Tap the game again to start a new search. Correlation id: abc";
+        var statuses = new List<string>();
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.UsesRemoteCompute)
+            .Returns(true);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .SetupGet(x => x.LastRemoteComputeError)
+            .Returns(fault);
+        _fixture.GetMock<ILocalLanPlayService>()
+            .Setup(x => x.IsAvailableAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream.Stream).Create()
+            });
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() => Yield(stream));
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
+
+        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+
+        Assert.Contains(StreamResolutionOrchestrator.PairedFindingStatus, statuses);
+        Assert.False(outcome.LocalServiceUnavailable);
+        Assert.False(outcome.NoWorkingStreams);
+        Assert.Equal(fault, outcome.RemoteComputeError);
+    }
+
+    private Game RemoteGame() =>
+        _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+    private EnrichedStream FailedStream(string pageUrl, string channel)
+    {
+        var stream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl)
+            .With(s => s.Channel, channel)
+            .Create();
+        return _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, stream)
+            .With(e => e.Status, StreamResolutionStatus.Failed)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+    }
+
     private static async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
     {
         foreach (var stream in streams)
             yield return stream;
         await Task.CompletedTask;
+    }
+
+    private static async IAsyncEnumerable<EnrichedStream> BlockedYield(
+        TaskCompletionSource entered,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        entered.TrySetResult();
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        yield break;
+    }
+
+    private sealed class StatusCapture(List<string> statuses) : IObserver<StreamResolutionProgress>
+    {
+        public void OnCompleted()
+        {
+        }
+
+        public void OnError(Exception error)
+        {
+        }
+
+        public void OnNext(StreamResolutionProgress value) => statuses.Add(value.Status);
     }
 }

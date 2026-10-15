@@ -65,58 +65,70 @@
     </ContentView.Resources>
 
     <Grid BackgroundColor="#0B0F1A">
-        <Grid RowDefinitions="Auto,Auto,*" Padding="{Binding Layout.PagePaddingThickness}">
+        <Grid RowDefinitions="Auto,*" Padding="{Binding Layout.PagePaddingThickness}">
 
-            <!-- Header: brand row (3D metallic crest + wordmark) and menu -->
-            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,18">
-                <views:BrandLogoView x:Name="BrandLogo"
-                                     Margin="0,0,14,0"
-                                     VerticalOptions="Center" />
-                <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                    <Label Text="Vardy Party"
-                           FontSize="{Binding Layout.PageTitleFontSize}"
-                           FontAttributes="Bold"
-                           TextColor="White">
-                        <Label.Shadow>
-                            <Shadow Brush="Black" Opacity="0.55" Radius="6" Offset="0,2" />
-                        </Label.Shadow>
-                    </Label>
-                    <Label Text="{Binding Subtitle}"
-                           FontSize="{Binding Layout.PageSubtitleFontSize}"
-                           TextColor="#8A93A6" />
-                </VerticalStackLayout>
-                <Button Grid.Column="2"
-                        x:Name="MenuButton"
-                        Text="Menu"
-                        Clicked="OnMenuClicked"
-                        Focused="OnMenuItemFocused"
-                        Unfocused="OnHeaderUnfocused"
-                        BackgroundColor="#1C2333"
-                        TextColor="#E5E7EB"
-                        CornerRadius="10"
-                        Padding="18,10"
-                        VerticalOptions="Center" />
-            </Grid>
+            <!-- Brand + menu + service/LAN banner share the Auto row. -->
+            <VerticalStackLayout Spacing="0">
+                <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,18">
+                    <views:BrandLogoView x:Name="BrandLogo"
+                                         Margin="0,0,14,0"
+                                         VerticalOptions="Center" />
+                    <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                        <Label Text="Vardy Party"
+                               FontSize="{Binding Layout.PageTitleFontSize}"
+                               FontAttributes="Bold"
+                               TextColor="White">
+                            <Label.Shadow>
+                                <Shadow Brush="Black" Opacity="0.55" Radius="6" Offset="0,2" />
+                            </Label.Shadow>
+                        </Label>
+                        <Label Text="{Binding Subtitle}"
+                               FontSize="{Binding Layout.PageSubtitleFontSize}"
+                               TextColor="#8A93A6" />
+                    </VerticalStackLayout>
+                    <Grid Grid.Column="2" VerticalOptions="Center">
+                        <Button x:Name="MenuButton"
+                                Text="Menu"
+                                Clicked="OnMenuClicked"
+                                Focused="OnMenuItemFocused"
+                                Unfocused="OnHeaderUnfocused"
+                                BackgroundColor="#1C2333"
+                                TextColor="#E5E7EB"
+                                CornerRadius="10"
+                                Padding="18,10"
+                                VerticalOptions="Center" />
+                        <Border HorizontalOptions="End"
+                                VerticalOptions="Start"
+                                Margin="0,-6,-6,0"
+                                Padding="0"
+                                WidthRequest="18"
+                                HeightRequest="18"
+                                BackgroundColor="#34D399"
+                                StrokeThickness="0"
+                                StrokeShape="RoundRectangle 9"
+                                IsVisible="{Binding HasUpdateAvailable}"
+                                InputTransparent="True">
+                            <Label Text="★"
+                                   FontSize="10"
+                                   TextColor="#0B0F1A"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center"
+                                   HorizontalTextAlignment="Center"
+                                   VerticalTextAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Grid>
 
-            <!-- Service error banner -->
-            <Border Grid.Row="1"
-                    Margin="0,0,0,14"
-                    Padding="14,10"
-                    BackgroundColor="#33BE1233"
-                    Stroke="#59FF6B7C"
-                    StrokeThickness="1"
-                    StrokeShape="RoundRectangle 10"
-                    IsVisible="{Binding HasError}">
-                <Label Text="{Binding ErrorMessage}" TextColor="#FECACA"
-                       FontSize="{Binding Layout.PageSubtitleFontSize}" />
-            </Border>
+                <views:ErrorBannerView Text="{Binding ErrorMessage}"
+                                       Margin="0,0,0,14" />
+            </VerticalStackLayout>
 
             <!-- Android: CollectionView (RecyclerView + TvDpadFocusRouter).
                  Desktop/Windows: ScrollView — WinUI/Avalonia CollectionView
                  stretched items even with VerticalOptions=Start; those heads
                  use BindableLayout. Android keeps CollectionView for D-pad;
                  LeagueRowHeight pins each item so the black slab is zero. -->
-            <Grid Grid.Row="2" x:Name="RowsHost" IsVisible="{Binding ShowGameRows}">
+            <Grid Grid.Row="1" x:Name="RowsHost" IsVisible="{Binding ShowGameRows}">
                 <CollectionView x:Name="RowsList"
                                 ItemTemplate="{StaticResource LeagueRowTemplate}"
                                 BackgroundColor="#0B0F1A"
@@ -136,7 +148,7 @@
             </Grid>
 
             <!-- Empty state -->
-            <VerticalStackLayout Grid.Row="2"
+            <VerticalStackLayout Grid.Row="1"
                                  Spacing="8"
                                  HorizontalOptions="Center"
                                  VerticalOptions="Center"
@@ -254,6 +266,102 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label Text="DNS over HTTPS fallback"
+                               TextColor="#E5E7EB"
+                               FontSize="15"
+                               VerticalOptions="Center" />
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding DnsOverHttpsFallbackEnabled, Mode=TwoWay}"
+                                Focused="OnMenuItemFocused"
+                                OnColor="#34D399"
+                                VerticalOptions="Center" />
+                    </Grid>
+                    <VerticalStackLayout Spacing="10"
+                                          IsVisible="{OnPlatform Android=False, Default=True}">
+                        <VerticalStackLayout Spacing="10"
+                                              IsVisible="{Binding ShowHostCompute}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <Label Text="Share my local-service"
+                                       TextColor="#E5E7EB"
+                                       FontSize="15"
+                                       VerticalOptions="Center" />
+                                <Switch Grid.Column="1"
+                                        IsToggled="{Binding ShareComputeEnabled, Mode=TwoWay}"
+                                        IsEnabled="{Binding CanShareLocalService}"
+                                        Focused="OnMenuItemFocused"
+                                        OnColor="#34D399"
+                                        VerticalOptions="Center" />
+                            </Grid>
+                            <Label Text="A local-service that can share must be found on this network before you can share it."
+                                   TextColor="#9CA3AF"
+                                   FontSize="13"
+                                   IsVisible="{Binding ShowShareNeedLocalService}" />
+                            <Label Text="{Binding RemoteInviteCode, StringFormat='Invite code: {0}'}"
+                                   TextColor="#FDE68A"
+                                   FontFamily="Consolas"
+                                   FontSize="15"
+                                   IsVisible="{Binding HasRemoteInvite}" />
+                            <Label Text="One device can use this code. It leaves this screen once that device connects, or when it expires."
+                                   TextColor="#9CA3AF"
+                                   FontSize="13"
+                                   IsVisible="{Binding HasRemoteInvite}" />
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+                    <VerticalStackLayout Spacing="10"
+                                          IsVisible="{Binding ShowGuestCompute}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="Use another user's local-service"
+                                   TextColor="#E5E7EB"
+                                   FontSize="15"
+                                   VerticalOptions="Center" />
+                            <Switch Grid.Column="1"
+                                    IsToggled="{Binding UseOtherLocalService, Mode=TwoWay}"
+                                    Focused="OnMenuItemFocused"
+                                    OnColor="#34D399"
+                                    VerticalOptions="Center" />
+                        </Grid>
+                        <Entry Placeholder="Their invite code"
+                               Text="{Binding RemoteGuestCode}"
+                               TextColor="White"
+                               FontFamily="Consolas"
+                               PlaceholderColor="#9CA3AF"
+                               BackgroundColor="#1F2937"
+                               IsEnabled="{Binding CanRedeem}"
+                               IsVisible="{Binding ShowGuestEntry}" />
+                        <Button Text="{Binding RedeemButtonText}"
+                                Clicked="OnRedeemRemoteComputeClicked"
+                                Focused="OnMenuItemFocused"
+                                BackgroundColor="#1C4A3A"
+                                TextColor="#34D399"
+                                CornerRadius="10"
+                                IsEnabled="{Binding CanRedeem}"
+                                IsVisible="{Binding ShowGuestEntry}" />
+                    </VerticalStackLayout>
+                    <Label Text="{Binding RemoteComputeStatus}"
+                           TextColor="#9CA3AF"
+                           FontSize="13">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label"
+                                         Binding="{Binding RemoteStatusIsFault}"
+                                         Value="True">
+                                <Setter Property="TextColor" Value="#FDE68A" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Label"
+                                         Binding="{Binding RemoteStatusIsPaired}"
+                                         Value="True">
+                                <Setter Property="TextColor" Value="#34D399" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+                    <Button Text="{Binding UpdateButtonLabel}"
+                            Clicked="OnUpdateClicked"
+                            Focused="OnMenuItemFocused"
+                            IsVisible="{Binding ShowUpdateButton}"
+                            IsEnabled="{Binding UpdateIdle}"
+                            BackgroundColor="#1C4A3A"
+                            TextColor="#34D399"
+                            CornerRadius="10" />
                     <Button Text="Sign out"
                             Clicked="OnSignOutClicked"
                             Focused="OnMenuItemFocused"
