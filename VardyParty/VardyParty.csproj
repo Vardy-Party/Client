@@ -163,11 +163,15 @@
       <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
       <!-- Resizetizer 11 RC2 crashes on SVG <text> (dotnet/maui#38507) on
            Windows, iOS, and Mac Catalyst. Outline the labels before assets run.
-           Build in-process so publish does not start a second MSBuild node.
-           TargetFramework stays net11.0 when the app publish is Android. -->
+           Publish does not restore this tool (it is not a ProjectReference).
+           Restore in its own process so project.assets.json exists, then build
+           in-process. Drop the app SelfContained flag and RID so the tool stays
+           a net11.0 exe when the publish is Windows or Android. -->
+      <Exec Command="dotnet restore &quot;$(SvgTextOutlinerProject)&quot;" />
       <MSBuild Projects="$(SvgTextOutlinerProject)"
                Targets="Build"
-               Properties="Configuration=Release;TargetFramework=net11.0">
+               Properties="Configuration=Release;TargetFramework=net11.0"
+               RemoveProperties="SelfContained;RuntimeIdentifier;RuntimeIdentifiers">
         <Output TaskParameter="TargetOutputs" ItemName="_SvgTextOutlinerAssembly" />
       </MSBuild>
       <Exec Command="dotnet exec &quot;%(_SvgTextOutlinerAssembly.Identity)&quot; &quot;$(SplashFile)&quot;"
