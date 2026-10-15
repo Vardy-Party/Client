@@ -92,60 +92,74 @@ public class StreamResolutionOrchestrator(
             return outcome;
         }
 
-        await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
-                           orderedStreams,
-                           2,
-                           cancellationToken,
-                           totalCount =>
-                           {
-                               _totalStreams = totalCount;
-                               PublishProgress();
-                           }))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+        // Candidate testing must stop the moment the user closes the player. Without this the loop below
+        // only noticed the close when the resolver next yielded a stream, so after Back the homepage kept
+        // showing the "Finding streams" modal for as long as the remaining candidates took to test.
+        using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-            // Check if playback was closed by user
-            if (playbackTask != null && playbackTask.IsCompleted)
+        try
+        {
+            await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
+                               orderedStreams,
+                               2,
+                               enumerationCts.Token,
+                               totalCount =>
+                               {
+                                   _totalStreams = totalCount;
+                                   PublishProgress();
+                               }).WithCancellation(enumerationCts.Token))
             {
-                var playbackResult = await playbackTask;
-                if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Check if playback was closed by user
+                if (playbackTask != null && playbackTask.IsCompleted)
                 {
-                    outcome.UserClosed = true;
-                    outcome.PlaybackResult = playbackResult;
-                    return outcome;
+                    var playbackResult = await playbackTask;
+                    if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        outcome.UserClosed = true;
+                        outcome.PlaybackResult = playbackResult;
+                        return outcome;
+                    }
+                }
+
+                streamCount++;
+                _streamsTested++;
+                PublishProgress();
+
+                if (enrichedStream.Status == StreamResolutionStatus.Failed)
+                {
+                    _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
+                        enrichedStream.Health, cancellationToken);
+                }
+                else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
+                {
+                    _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
+                        cancellationToken);
+                }
+
+                if (enrichedStream.Status != StreamResolutionStatus.Healthy)
+                {
+                    continue;
+                }
+
+                streamSwitchingService.AddHealthyStream(enrichedStream);
+                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                PublishProgress();
+
+                if (!hasPlayedFirstStream)
+                {
+                    hasPlayedFirstStream = true;
+                    // Start playback without awaiting so stream testing can continue
+                    playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
+                    CancelEnumerationWhenUserCloses(playbackTask, enumerationCts);
                 }
             }
-
-            streamCount++;
-            _streamsTested++;
-            PublishProgress();
-
-            if (enrichedStream.Status == StreamResolutionStatus.Failed)
-            {
-                _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
-                    enrichedStream.Health, cancellationToken);
             }
-            else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
-            {
-                _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
-                    cancellationToken);
-            }
-
-            if (enrichedStream.Status != StreamResolutionStatus.Healthy)
-            {
-                continue;
-            }
-
-            streamSwitchingService.AddHealthyStream(enrichedStream);
-            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-            PublishProgress();
-
-            if (!hasPlayedFirstStream)
-            {
-                hasPlayedFirstStream = true;
-                // Start playback without awaiting so stream testing can continue
-                playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
-            }
+        catch (OperationCanceledException) when (enumerationCts.IsCancellationRequested
+                                                 && !cancellationToken.IsCancellationRequested)
+        {
+            // Stopped because the player was closed by the user; the playback result is handled below.
         }
 
         // Wait for playback to complete if it was started
@@ -188,6 +202,21 @@ public class StreamResolutionOrchestrator(
             streamCount, _streamsTested, _healthyStreamCount);
         return outcome;
     }
+
+    private static bool IsUserClosed(PlaybackResult? result) =>
+        result?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static void CancelEnumerationWhenUserCloses(Task<PlaybackResult?> playbackTask, CancellationTokenSource enumerationCts) =>
+        _ = playbackTask.ContinueWith(
+            t =>
+            {
+                if (t.Status != TaskStatus.RanToCompletion || !IsUserClosed(t.Result)) return;
+                try { enumerationCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
 
     public void Reset()
     {

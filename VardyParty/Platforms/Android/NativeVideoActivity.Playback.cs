@@ -171,6 +171,9 @@ namespace VardyParty.Platforms.Android
 
                         _isPreparing = true;
                         _m3u8Url = m3u8Url;
+                        _playerFaulted = false;
+                        _statusTracker.Reset();
+                        StartStatusWatchdog();
 
                         var dataSourceFactory = new AndroidX.Media3.DataSource.DefaultHttpDataSource.Factory();
                         try

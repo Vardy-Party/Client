@@ -151,6 +151,10 @@ namespace VardyParty.Platforms.Android
         private const int OverlayTimeoutMs = 3000;
         private bool _overlayLocked;
         private bool _isBuffering;
+        private readonly PlaybackStatusTracker _statusTracker = new();
+        private bool _playerFaulted;
+        private global::Android.OS.Handler? _statusHandler;
+        private Java.Lang.Runnable? _statusRunnable;
         private string? _gameTitle;
         private bool _suppressOverlayShow;
         private int? _videoWidth;
@@ -759,6 +763,7 @@ namespace VardyParty.Platforms.Android
             {
                 if (_player == null) return;
 
+                StopStatusWatchdog();
                 try { _player.PlayWhenReady = false; } catch { }
                 try { _player.Pause(); } catch { }
                 try { _player.Stop(); } catch { }
@@ -818,6 +823,7 @@ namespace VardyParty.Platforms.Android
             try
             {
                 RemoveCallback(_tickerHandler, _tickerRunnable);
+                StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
@@ -1233,24 +1239,16 @@ namespace VardyParty.Platforms.Android
 
             public void OnPlaybackStateChanged(int playbackState)
             {
-                try
-                {
-                    _activity._playbackStateText = playbackState switch
-                    {
-                        PlayerStateIdle => VardyParty.Resources.Strings.Resources.StatusIdle,
-                        PlayerStateBuffering => VardyParty.Resources.Strings.Resources.StatusBuffering,
-                        PlayerStateReady => VardyParty.Resources.Strings.Resources.StatusPlaying,
-                        PlayerStateEnded => VardyParty.Resources.Strings.Resources.StatusEnded,
-                        _ => VardyParty.Resources.Strings.Resources.StatusPlaying
-                    };
-                }
-                catch (Exception ex) { _activity.LogIgnored("OnPlaybackStateChanged", ex); }
+                // A new prepare has begun (or finished): any earlier error no longer applies.
+                if (playbackState == PlayerStateBuffering || playbackState == PlayerStateReady)
+                    _activity._playerFaulted = false;
+
+                // Status text, spinner and overlay all follow one derivation (PlaybackStatusTracker).
+                _activity.RefreshPlaybackStatus();
 
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
-                    _activity._isBuffering = false;
-                    _activity.HideBufferingIndicator();
                     _activity._isPreparing = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
@@ -1273,18 +1271,6 @@ namespace VardyParty.Platforms.Android
                         catch (Exception ex) { _activity.LogIgnored("CaptureVideoSize", ex); }
                         _activity.RunOnUiThread(() => _activity.UpdateOverlayText(info));
                     }
-                }
-                else
-                {
-                    try
-                    {
-                        var last = _activity._lastOverlayInfo;
-                        if (last != null)
-                        {
-                            _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
-                        }
-                    }
-                    catch (Exception ex) { _activity.LogIgnored("UpdateOverlayOnStateChange", ex); }
                 }
 
                 if (playbackState == PlayerStateEnded)
@@ -1310,30 +1296,9 @@ namespace VardyParty.Platforms.Android
             public void OnVideoSizeChanged(VideoSize? videoSize) { }
             public void OnIsLoadingChanged(bool isLoading)
             {
-                try
-                {
-                    if (isLoading)
-                    {
-                        _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
-                        _activity._isBuffering = true;
-                        _activity.ShowBufferingIndicator();
-                        _activity.HideOverlayAnimated();
-                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
-                    }
-                    else if (_activity._player?.PlaybackState == PlayerStateReady)
-                    {
-                        _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
-                        _activity._isBuffering = false;
-                        _activity.HideBufferingIndicator();
-                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
-                    }
-
-                    var last = _activity._lastOverlayInfo;
-                    if (last != null)
-                    {
-                        _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
-                    }
-                }
+                // isLoading only means "fetching more media" (true for much of a healthy HLS stream, including
+                // while READY and playing). It is NOT a buffering signal, so it only triggers a re-derivation.
+                try { _activity.RefreshPlaybackStatus(); }
                 catch (Exception ex) { _activity.LogIgnored("OnIsLoadingChanged", ex); }
             }
             public void OnAudioAttributesChanged(AndroidX.Media3.Common.AudioAttributes? attributes) { }
@@ -1342,11 +1307,11 @@ namespace VardyParty.Platforms.Android
             public void OnCues(AndroidX.Media3.Common.Text.CueGroup? cueGroup) { }
             public void OnCues(IList<AndroidX.Media3.Common.Text.Cue>? cues) { }
             public void OnDeviceInfoChanged(AndroidX.Media3.Common.DeviceInfo? deviceInfo) { }
-            public void OnIsPlayingChanged(bool isPlaying) { }
+            public void OnIsPlayingChanged(bool isPlaying) => _activity.RefreshPlaybackStatus();
             public void OnMediaItemTransition(MediaItem? mediaItem, int reason) { }
             public void OnMediaMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
             public void OnMetadata(Metadata? metadata) { }
-            public void OnPlayWhenReadyChanged(bool playWhenReady, int reason) { }
+            public void OnPlayWhenReadyChanged(bool playWhenReady, int reason) => _activity.RefreshPlaybackStatus();
             public void OnPlaybackParametersChanged(PlaybackParameters? playbackParameters) { }
             public void OnPlaybackSuppressionReasonChanged(int playbackSuppressionReason) { }
             public void OnPlayerErrorChanged(PlaybackException? error)
@@ -1357,16 +1322,15 @@ namespace VardyParty.Platforms.Android
                 try
                 {
                     var message = error.Message ?? "Playback error";
-                    _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
-                    _activity._isBuffering = false;
+                    _activity._playerFaulted = true;
                     _activity._isPreparing = false;
-                    _activity.HideBufferingIndicator();
+                    _activity.RefreshPlaybackStatus();
                     _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnPlayerErrorChanged", ex); }
             }
             public void OnPlaylistMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
-            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) { }
+            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) => _activity.RefreshPlaybackStatus();
             public void OnRenderedFirstFrame() { }
             public void OnRepeatModeChanged(int repeatMode) { }
             public void OnSeekBackIncrementChanged(long seekBackIncrementMs) { }
