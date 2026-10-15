@@ -21,7 +21,7 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Ended, true, false)]
     public void ShouldShow_StatusByPreparing(PlaybackStatus status, bool isPreparing, bool expected)
     {
-        Assert.Equal(expected, PlaybackWaitChrome.ShouldShow(status, isPreparing, isClosing: false, failoverAgeMs: 0));
+        Assert.Equal(expected, PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: false, failoverAgeMs: 0));
     }
 
     [Theory]
@@ -34,7 +34,7 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Idle, false)]
     public void ShouldShow_WhileClosing_IsAlwaysHidden(PlaybackStatus status, bool isPreparing)
     {
-        Assert.False(PlaybackWaitChrome.ShouldShow(status, isPreparing, isClosing: true, failoverAgeMs: 0));
+        Assert.False(PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: true, failoverAgeMs: 0));
     }
 
     [Theory]
@@ -52,7 +52,7 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Error)]
     public void ShouldShow_IdleAndError_PastTheGrace_StillShowWhileAnAttachIsInFlight(PlaybackStatus status)
     {
-        Assert.True(PlaybackWaitChrome.ShouldShow(status, isPreparing: true, isClosing: false, failoverAgeMs: Grace * 10));
+        Assert.True(PlaybackWaitChrome.ShouldShow(status, isPreparing: true, chromeSuppressed: false, failoverAgeMs: Grace * 10));
     }
 
     [Fact]

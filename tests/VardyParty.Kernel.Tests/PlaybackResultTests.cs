@@ -11,6 +11,7 @@ public class PlaybackResultTests
     [InlineData(PlaybackCloseReasons.PlayerClosed, false, true, true)]
     [InlineData("User closed video player", true, false, true)]
     [InlineData("user closed", true, false, true)]
+    [InlineData(PlaybackCloseReasons.PlayerRecreated, false, false, false)]   // system recreate is not the viewer leaving
     [InlineData("Stream ended.", false, false, false)]
     [InlineData("Playback error: closed unexpectedly", false, false, false)]
     [InlineData("", false, false, false)]
@@ -21,6 +22,18 @@ public class PlaybackResultTests
         Assert.Equal(userClosed, result.IsUserClosed);
         Assert.Equal(playerClosed, result.IsPlayerClosed);
         Assert.Equal(viewerLeft, result.ViewerLeft);
+    }
+
+    [Theory]
+    [InlineData(false, PlaybackCloseReasons.PlayerClosed, true)]
+    [InlineData(true, PlaybackCloseReasons.PlayerRecreated, false)]
+    public void ForDestroy_OnlyADestroyThatIsNotARecreateCountsAsTheViewerLeaving(
+        bool isChangingConfigurations, string expectedReason, bool viewerLeft)
+    {
+        var reason = PlaybackCloseReasons.ForDestroy(isChangingConfigurations);
+
+        Assert.Equal(expectedReason, reason);
+        Assert.Equal(viewerLeft, PlaybackResult.Completed(reason).ViewerLeft);
     }
 
     [Fact]

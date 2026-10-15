@@ -1,5 +1,6 @@
 #if ANDROID
 using System;
+using Microsoft.Extensions.Logging;
 using VardyParty.Playback;
 
 namespace VardyParty.Platforms.Android
@@ -21,7 +22,9 @@ namespace VardyParty.Platforms.Android
         /// and no player callback may touch the UI: Stop() drops the player to IDLE, which would otherwise
         /// re-show the spinner over a closing activity.
         /// </summary>
-        private bool _isClosing;
+        private PlaybackLifecycle _lifecycle = PlaybackLifecycle.Active;
+
+        private bool IsLifecycleClosing => _lifecycle == PlaybackLifecycle.Closing;
 
         /// <summary>
         /// Marks the activity as closing and silences everything that reacts to the player: watchdog off,
@@ -29,11 +32,53 @@ namespace VardyParty.Platforms.Android
         /// </summary>
         private void BeginClosing()
         {
-            if (_isClosing) return;
-            _isClosing = true;
+            if (IsLifecycleClosing) return;
+            _lifecycle = PlaybackLifecycle.Closing;
             StopStatusWatchdog();
             DetachPlayerListener();
             ApplyWaitIndicator(false);
+        }
+
+        /// <summary>
+        /// Non-finishing pause (Home, another app, a TV system overlay). Stop() is about to drop the player to
+        /// IDLE on purpose, so before that: suspend (no wait chrome, watchdog off, listener detached, spinner
+        /// hidden). A finishing pause closes instead. <see cref="ResumePlaybackAfterSuspend"/> brings it back.
+        /// </summary>
+        private void BeginSuspend()
+        {
+            var next = PlaybackLifecycleRules.OnPause(_lifecycle, IsFinishing);
+            if (next == PlaybackLifecycle.Closing)
+            {
+                BeginClosing();
+                return;
+            }
+
+            if (_lifecycle == PlaybackLifecycle.Suspended) return;
+            _lifecycle = PlaybackLifecycle.Suspended;
+            _isPreparing = false;
+            StopStatusWatchdog();
+            DetachPlayerListener();
+            ApplyWaitIndicator(false);
+        }
+
+        /// <summary>
+        /// Back in the foreground after a suspend: the player was stopped on purpose, so re-attach the current
+        /// stream. AttachEngine re-adds the listener, restarts the watchdog and raises the spinner only while the
+        /// prepare is in flight. The decision is <see cref="PlaybackLifecycleRules.OnResumeAction"/>.
+        /// </summary>
+        private void ResumePlaybackAfterSuspend()
+        {
+            try
+            {
+                var before = _lifecycle;
+                _lifecycle = PlaybackLifecycleRules.OnResume(before);
+                var action = PlaybackLifecycleRules.OnResumeAction(before, _player != null, !string.IsNullOrEmpty(_m3u8Url));
+                if (action != ResumeAction.Reattach) return;
+
+                _logger?.LogInformation("[NativeVideoActivity] Resumed after suspend - re-attaching {Url}", _m3u8Url);
+                AttachEngine(_m3u8Url);
+            }
+            catch (Exception ex) { LogIgnored("ResumePlaybackAfterSuspend", ex); }
         }
 
         private void DetachPlayerListener()
@@ -71,7 +116,7 @@ namespace VardyParty.Platforms.Android
                     snapshot,
                     global::Android.OS.SystemClock.ElapsedRealtime(),
                     _isPreparing,
-                    _isClosing);
+                    PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle));
                 ApplyPlaybackStatus(view);
             }
             catch (Exception ex) { LogIgnored("RefreshPlaybackStatus", ex); }
@@ -101,7 +146,7 @@ namespace VardyParty.Platforms.Android
             if (buffering && bufferingChanged) HideOverlayAnimated();
 
             // Only genuine stall start / recovery reach the engine (see PlaybackStatusTracker.SignalFor).
-            if (!_isClosing)
+            if (!PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle))
             {
                 switch (view.Signal)
                 {
@@ -123,7 +168,7 @@ namespace VardyParty.Platforms.Android
 
         private void StartStatusWatchdog()
         {
-            if (_statusHandler != null || _isClosing) return;
+            if (_statusHandler != null || PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle)) return;
 
             // Locals, not fields: Stop can null the fields between a tick being queued and it running.
             var handler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
@@ -133,14 +178,14 @@ namespace VardyParty.Platforms.Android
                 var live = ReferenceEquals(_statusHandler, handler);
                 try
                 {
-                    if (!live || _isClosing || IsFinishing || IsDestroyed) return;
+                    if (!live || PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle) || IsFinishing || IsDestroyed) return;
                     RefreshPlaybackStatus();
                 }
                 catch (Exception ex) { LogIgnored("StatusWatchdogTick", ex); }
                 finally
                 {
                     // Keep ticking through a failed tick, but only while this watchdog is still the live one.
-                    if (live && ReferenceEquals(_statusHandler, handler) && !_isClosing && !IsFinishing && !IsDestroyed)
+                    if (live && ReferenceEquals(_statusHandler, handler) && !PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle) && !IsFinishing && !IsDestroyed)
                     {
                         try { handler.PostDelayed(runnable!, StatusWatchdogIntervalMs); }
                         catch (Exception ex) { LogIgnored("StatusWatchdogReschedule", ex); }

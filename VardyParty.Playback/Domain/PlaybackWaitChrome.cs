@@ -16,15 +16,15 @@ public static class PlaybackWaitChrome
 
     /// <param name="status">The tracker's verdict.</param>
     /// <param name="isPreparing">A new source is being attached (SetMediaSource / Prepare in flight).</param>
-    /// <param name="isClosing">The player is being closed or left (Back, Stop, pause, destroy). Never show.</param>
+    /// <param name="chromeSuppressed">The player is closing or suspended (see <see cref="PlaybackLifecycleRules.SuppressesWaitChrome"/>). Never show: there is no live player for a spinner to describe.</param>
     /// <param name="failoverAgeMs">How long the player has been Idle/Error (0 when it is not).</param>
     public static bool ShouldShow(
         PlaybackStatus status,
         bool isPreparing,
-        bool isClosing,
+        bool chromeSuppressed,
         long failoverAgeMs = 0)
     {
-        if (isClosing)
+        if (chromeSuppressed)
             return false;
 
         return status switch

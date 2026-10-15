@@ -213,15 +213,15 @@ public class PlaybackStatusTrackerTests
         // Realistic healthy HLS: READY from the start, isLoading flapping (not observable here, which is
         // the point), position advancing in real time, buffer at 100%.
         var tracker = new PlaybackStatusTracker();
-        tracker.Assess(Snap(Buffering, pos: 0), 0, isPreparing: true, isClosing: false);
-        var ready = tracker.Assess(Snap(Ready, pos: 0, buffered: 100), 200, isPreparing: false, isClosing: false);
+        tracker.Assess(Snap(Buffering, pos: 0), 0, isPreparing: true, chromeSuppressed: false);
+        var ready = tracker.Assess(Snap(Ready, pos: 0, buffered: 100), 200, isPreparing: false, chromeSuppressed: false);
         Assert.Equal(PlaybackStatus.Playing, ready.Status);
         Assert.False(ready.ShowSpinner);
 
         for (var tick = 1; tick <= 20; tick++)
         {
             var view = tracker.Assess(
-                Snap(Ready, pos: tick * 500, buffered: 100), 200 + tick * 500, isPreparing: false, isClosing: false);
+                Snap(Ready, pos: tick * 500, buffered: 100), 200 + tick * 500, isPreparing: false, chromeSuppressed: false);
 
             Assert.Equal(PlaybackStatus.Playing, view.Status);
             Assert.False(view.ShowSpinner);
@@ -234,11 +234,11 @@ public class PlaybackStatusTrackerTests
         // The review's P1: STATE_BUFFERING stuck, position moving. Text AND spinner must both follow
         // the verdict (previously the spinner stayed up for any non-READY state).
         var tracker = new PlaybackStatusTracker();
-        var first = tracker.Assess(Snap(Buffering, pos: 1000), 0, isPreparing: false, isClosing: false);
+        var first = tracker.Assess(Snap(Buffering, pos: 1000), 0, isPreparing: false, chromeSuppressed: false);
         Assert.Equal(PlaybackStatus.Buffering, first.Status);
         Assert.True(first.ShowSpinner);
 
-        var second = tracker.Assess(Snap(Buffering, pos: 1500), 500, isPreparing: false, isClosing: false);
+        var second = tracker.Assess(Snap(Buffering, pos: 1500), 500, isPreparing: false, chromeSuppressed: false);
 
         Assert.Equal(PlaybackStatus.Playing, second.Status);
         Assert.False(second.ShowSpinner);
@@ -288,7 +288,7 @@ public class PlaybackStatusTrackerTests
         tracker.Assess(Snap(Idle, error: true), 0, false, false);
         Assert.False(tracker.Assess(Snap(Idle, error: true), 20_000, false, false).ShowSpinner);
 
-        var attaching = tracker.Assess(Snap(Idle, error: true), 20_100, isPreparing: true, isClosing: false);
+        var attaching = tracker.Assess(Snap(Idle, error: true), 20_100, isPreparing: true, chromeSuppressed: false);
 
         Assert.True(attaching.ShowSpinner);
     }
@@ -310,7 +310,7 @@ public class PlaybackStatusTrackerTests
         var tracker = new PlaybackStatusTracker();
         tracker.Assess(Snap(Ready, pos: 1000), 0, false, false);
 
-        var view = tracker.Assess(Snap(Idle, pos: 1000), 100, isPreparing: false, isClosing: true);
+        var view = tracker.Assess(Snap(Idle, pos: 1000), 100, isPreparing: false, chromeSuppressed: true);
 
         Assert.Equal(PlaybackStatus.Idle, view.Status);
         Assert.False(view.ShowSpinner);
@@ -326,7 +326,7 @@ public class PlaybackStatusTrackerTests
     {
         var tracker = new PlaybackStatusTracker();
 
-        var view = tracker.Assess(Snap(state, error: error), 0, isPreparing: true, isClosing: true);
+        var view = tracker.Assess(Snap(state, error: error), 0, isPreparing: true, chromeSuppressed: true);
 
         Assert.False(view.ShowSpinner);
     }

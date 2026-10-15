@@ -241,6 +241,7 @@ namespace VardyParty.Platforms.Android
         protected override void OnResume()
         {
             base.OnResume();
+            ResumePlaybackAfterSuspend();
             HideSystemUI();
             VardyParty.AndroidScreenAwake.HoldPlayerWindow(Window);
             if (_matchEventPolicy != null) _matchEventPolicy.IsAppForegrounded = true;

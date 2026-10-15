@@ -893,6 +893,7 @@ public class StreamResolutionOrchestratorTests
     [InlineData(PlaybackCloseReasons.PlayerClosed, true)]
     [InlineData("User closed video player", true)]
     [InlineData("User closed MPV player", true)]
+    [InlineData(PlaybackCloseReasons.PlayerRecreated, false)]   // a system recreate must not end candidate testing
     [InlineData("Stream ended.", false)]
     [InlineData("Playback error", false)]
     [InlineData("", false)]

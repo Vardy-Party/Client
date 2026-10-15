@@ -107,13 +107,13 @@ public sealed class PlaybackStatusTracker
     /// <param name="snapshot">Current player reading.</param>
     /// <param name="nowMs">Monotonic clock in milliseconds (e.g. SystemClock.ElapsedRealtime).</param>
     /// <param name="isPreparing">A new source is being attached (SetMediaSource / Prepare in flight).</param>
-    /// <param name="isClosing">The player is being closed or left; no wait chrome may appear.</param>
-    public PlaybackStatusView Assess(PlayerSnapshot snapshot, long nowMs, bool isPreparing, bool isClosing)
+    /// <param name="chromeSuppressed">The player is closing or suspended; no wait chrome may appear.</param>
+    public PlaybackStatusView Assess(PlayerSnapshot snapshot, long nowMs, bool isPreparing, bool chromeSuppressed)
     {
         var previous = _status;
         var status = Evaluate(snapshot, nowMs);
         var failoverAgeMs = _failoverSinceMs is { } since ? nowMs - since : 0;
-        var show = PlaybackWaitChrome.ShouldShow(status, isPreparing, isClosing, failoverAgeMs);
+        var show = PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed, failoverAgeMs);
         return new PlaybackStatusView(status, show, SignalFor(previous, status));
     }
 

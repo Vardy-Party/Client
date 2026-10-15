@@ -284,9 +284,18 @@ namespace VardyParty.Platforms.Android
                 {
                     try
                     {
-                        if (_isClosing)
+                        if (IsLifecycleClosing)
                         {
                             _logger?.LogInformation("[NativeVideoActivity] Closing - ignoring attach");
+                            return;
+                        }
+
+                        if (_lifecycle == PlaybackLifecycle.Suspended)
+                        {
+                            // Paused on purpose: remember the stream and let resume re-attach the latest one,
+                            // instead of re-adding the listener and starting a prepare nobody is watching.
+                            _m3u8Url = m3u8Url;
+                            _logger?.LogInformation("[NativeVideoActivity] Suspended - deferring attach to resume");
                             return;
                         }
 

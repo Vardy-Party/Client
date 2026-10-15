@@ -17,6 +17,17 @@ public static class PlaybackCloseReasons
     /// (system teardown, Home, task removal, the OnBackPressed fallback).
     /// </summary>
     public const string PlayerClosed = "Video player closed";
+
+    /// <summary>
+    /// The Android player activity was destroyed by a system recreate (a configuration change such as
+    /// uiMode, locale or orientation), not because the viewer left. Deliberately does NOT match
+    /// <see cref="PlayerClosed"/> or <see cref="UserClosed"/>, so candidate testing keeps going.
+    /// </summary>
+    public const string PlayerRecreated = "Video player recreated";
+
+    /// <summary>The reason an Android player activity reports from OnDestroy.</summary>
+    /// <param name="isChangingConfigurations">Activity.IsChangingConfigurations: a recreate, not a departure.</param>
+    public static string ForDestroy(bool isChangingConfigurations) => isChangingConfigurations ? PlayerRecreated : PlayerClosed;
 }
 
 public class PlaybackResult

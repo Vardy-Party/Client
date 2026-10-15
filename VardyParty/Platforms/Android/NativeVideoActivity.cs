@@ -22,7 +22,18 @@ using System.Threading;
 
 namespace VardyParty.Platforms.Android
 {
-    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme.NoActionBar", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
+    [Activity(
+        Label = "Video Player",
+        Theme = "@style/Maui.MainTheme.NoActionBar",
+        MainLauncher = false,
+        ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape,
+        // A TV can change uiMode (night/day), locale, layout direction, font scale, density or attach a
+        // keyboard/remote while the player is up. Without these flags Android destroys and recreates the
+        // activity, and OnDestroy would report the player closed. Handle them in place instead.
+        ConfigurationChanges = global::Android.Content.PM.ConfigChanges.ScreenSize | global::Android.Content.PM.ConfigChanges.SmallestScreenSize | global::Android.Content.PM.ConfigChanges.ScreenLayout
+            | global::Android.Content.PM.ConfigChanges.Orientation | global::Android.Content.PM.ConfigChanges.Density | global::Android.Content.PM.ConfigChanges.UiMode | global::Android.Content.PM.ConfigChanges.Locale
+            | global::Android.Content.PM.ConfigChanges.LayoutDirection | global::Android.Content.PM.ConfigChanges.FontScale | global::Android.Content.PM.ConfigChanges.Keyboard
+            | global::Android.Content.PM.ConfigChanges.KeyboardHidden | global::Android.Content.PM.ConfigChanges.Navigation)]
     public partial class NativeVideoActivity : Activity
     {
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
@@ -845,9 +856,10 @@ namespace VardyParty.Platforms.Android
             {
                 if (_player == null) return;
 
-                StopStatusWatchdog();
-                // Closing or releasing: nothing may react to the IDLE that Stop() causes.
-                if (release || _isClosing) DetachPlayerListener();
+                // Closing, releasing or suspended: nothing may react to the IDLE that Stop() causes.
+                var lifecycleSuppressed = PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle);
+                if (release || lifecycleSuppressed) StopStatusWatchdog();
+                if (release || lifecycleSuppressed) DetachPlayerListener();
                 try { _player.PlayWhenReady = false; } catch { }
                 try { _player.Pause(); } catch { }
                 try { _player.Stop(); } catch { }
@@ -897,13 +909,14 @@ namespace VardyParty.Platforms.Android
 
         protected override void OnPause()
         {
-            if (IsFinishing) BeginClosing();
+            BeginSuspend();
             StopAndReleasePlayer(release: false);
             base.OnPause();
         }
 
         protected override void OnStop()
         {
+            BeginSuspend();
             StopAndReleasePlayer(release: false);
             MatchToastOnStop();
             base.OnStop();
@@ -925,7 +938,7 @@ namespace VardyParty.Platforms.Android
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
-                ReportPlaybackClosed(PlaybackCloseReasons.PlayerClosed);
+                ReportPlaybackClosed(PlaybackCloseReasons.ForDestroy(IsChangingConfigurations));
             }
             finally
             {
