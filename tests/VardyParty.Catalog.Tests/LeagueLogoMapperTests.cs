@@ -29,6 +29,26 @@ namespace VardyParty.Catalog.Tests
             Assert.True(string.IsNullOrEmpty(path));
         }
 
+        [Fact]
+        public void GetLogoForLeague_UsesTheResolvedLeague_NotTheRawBbcName()
+        {
+            // BBC calls it something unmapped; the reconciled league is a known competition.
+            var game = _fixture.Build<Game>()
+                .With(g => g.League, "Unknown League")
+                .With(g => g.BBCLeague, "Unmapped BBC Label")
+                .Create();
+            game.ResolveLeague("UEFA Champions League");
+
+            var path = LeagueLogoMapper.GetLogoForLeague(game);
+
+            var expected = _fixture.Build<Game>()
+                .With(g => g.League, "UEFA Champions League")
+                .With(g => g.BBCLeague, string.Empty)
+                .Create();
+            Assert.Equal(LeagueLogoMapper.GetLogoForLeague(expected), path);
+            Assert.False(string.IsNullOrEmpty(path));
+        }
+
         [Theory]
         [InlineData("League Alpha")]
         [InlineData("Unknown League")]

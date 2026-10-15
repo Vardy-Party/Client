@@ -326,8 +326,14 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         g.BBCHome = bbc.Home ?? string.Empty;
         g.BBCAway = bbc.Away ?? string.Empty;
 
+        // BBCLeague keeps BBC's own name. The reconciled display name (which may be the API's spelling of the
+        // same competition, so matched and unmatched games group together) is kept separately.
+        // Order matters: the home screen may read this Game on another thread, and DisplayLeague falls back to
+        // BBCLeague when ResolvedLeague is empty. Publishing ResolvedLeague first means a reader never sees BBC's
+        // raw spelling in between (which would briefly show a duplicate section).
         var resolvedLeague = ResolveDisplayLeague(g, bbc.League);
-        g.BBCLeague = resolvedLeague;
+        g.ResolveLeague(resolvedLeague);
+        g.BBCLeague = (bbc.League ?? string.Empty).Trim();
         if (!string.IsNullOrEmpty(resolvedLeague))
         {
             g.League = resolvedLeague;
@@ -339,10 +345,16 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         var apiLeague = (game.ApiLeague ?? string.Empty).Trim();
         var bbc = (bbcLeague ?? string.Empty).Trim();
 
+        // The API key is the server's canonical league name (League Aliases are
+        // applied there). BBC only supplies a competition label, so when it is the
+        // same competition spelled differently keep the API's, or the matched games
+        // split off into a second section (e.g. BBC "UEFA Conference League" vs
+        // API "UEFA Europa Conference League").
         if (!string.IsNullOrEmpty(apiLeague)
             && !string.IsNullOrEmpty(bbc)
             && !apiLeague.Equals(bbc, StringComparison.OrdinalIgnoreCase)
-            && apiLeague.Contains(bbc, StringComparison.OrdinalIgnoreCase))
+            && (apiLeague.Contains(bbc, StringComparison.OrdinalIgnoreCase)
+                || IsSameCompetitionSpelling(bbc, apiLeague)))
         {
             return apiLeague;
         }
@@ -364,6 +376,51 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         }
 
         return bbc;
+    }
+
+    /// <summary>
+    /// Words that carry no competition identity and are dropped before comparing league names.
+    /// Add a word here when a new spelling variant needs it; the matcher itself does not change.
+    /// </summary>
+    private static readonly string[] IgnoredCompetitionWords = ["uefa"];
+
+    /// <summary>
+    /// Whole-phrase respellings applied to a normalised league name (lower case, single spaces),
+    /// as (from, to). Phrases are matched on word boundaries only.
+    /// </summary>
+    private static readonly (string From, string To)[] CompetitionRespellings =
+    [
+        ("europa conference", "conference")
+    ];
+
+    private static readonly char[] CompetitionWordSeparators = [' ', '-', '.', '\'', '/', '&'];
+
+    /// <summary>
+    /// True when both names are the same competition under different spellings, e.g. BBC
+    /// "UEFA Conference League" and the API's (alias-canonical) "UEFA Europa Conference League".
+    /// Deliberately an equality test on normalised names, not a loose word-subset test:
+    /// "UEFA Europa League" is a word-subset of "UEFA Europa Conference League" but is a
+    /// different competition, and "AFC Champions League" must not match "UEFA Champions League".
+    /// </summary>
+    private static bool IsSameCompetitionSpelling(string left, string right) =>
+        string.Equals(
+            NormaliseCompetitionName(left),
+            NormaliseCompetitionName(right),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string NormaliseCompetitionName(string name)
+    {
+        var words = name.Split(CompetitionWordSeparators, StringSplitOptions.RemoveEmptyEntries);
+        var normalised = " " + string.Join(
+            ' ',
+            words.Where(w => !IgnoredCompetitionWords.Contains(w, StringComparer.OrdinalIgnoreCase))) + " ";
+
+        foreach (var (from, to) in CompetitionRespellings)
+        {
+            normalised = normalised.Replace($" {from} ", $" {to} ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return normalised.Trim();
     }
 
     private static bool IsImportantGamesInternationalFixture(Game game, string apiLeague, string bbcLeague)
