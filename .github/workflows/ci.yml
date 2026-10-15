@@ -307,7 +307,9 @@ jobs:
 
   build-ios:
     name: Build iOS
-    runs-on: macos-26
+    # .NET 11 RC2 Apple workloads require Xcode 27. macos-26 images ship
+    # Xcode 26.6. xcode-27 is arm64-only, so the simulator RID matches the host.
+    runs-on: xcode-27
     needs:
       - resolve-flags
       - test
@@ -331,7 +333,7 @@ jobs:
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-ios -r iossimulator-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-ios -r iossimulator-arm64
       # Same re-restore dance as the Android job: the head restore's global
       # TargetFramework/RID poison the assets of every project that keeps
       # TargetFramework negotiation (NETSDK1005 'no target for net11.0').
@@ -344,7 +346,7 @@ jobs:
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
           dotnet restore VardyParty.HomeUi/VardyParty.HomeUi.csproj --ignore-failed-sources
       - name: Build iOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-ios -r iossimulator-x64 --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-ios -r iossimulator-arm64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -381,7 +383,8 @@ jobs:
 
   build-macos:
     name: Build macOS
-    runs-on: macos-26
+    # Same Xcode 27 requirement as Build iOS. xcode-27 is arm64-only.
+    runs-on: xcode-27
     needs:
       - resolve-flags
       - test
@@ -405,7 +408,7 @@ jobs:
           dotnet restore ${{ env.VARDYPARTY_HOSTING_CSPROJ }} --ignore-failed-sources
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
       - name: Restore app dependencies
-        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-maccatalyst -r maccatalyst-x64
+        run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -p:TargetFramework=net11.0-maccatalyst -r maccatalyst-arm64
       # Same re-restore dance as the Android/iOS jobs (see the iOS job note):
       # projects that keep TargetFramework negotiation — HomeUi above all —
       # must be re-restored plain after the TFM/RID-pinned head restore, and
@@ -417,7 +420,7 @@ jobs:
           dotnet restore VardyParty.Presentation/VardyParty.Presentation.csproj --ignore-failed-sources
           dotnet restore VardyParty.HomeUi/VardyParty.HomeUi.csproj --ignore-failed-sources
       - name: Build macOS app
-        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-x64 --no-restore
+        run: dotnet build ${{ env.VARDYPARTY_CSPROJ }} -c Release -f net11.0-maccatalyst -r maccatalyst-arm64 --no-restore
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:

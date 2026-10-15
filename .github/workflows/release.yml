@@ -129,7 +129,7 @@ jobs:
   build-ios-release:
     name: Build & Package iOS (IPA)
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: macos-14
+    runs-on: xcode-27
     needs: create-release
     steps:
       - uses: actions/checkout@v7
@@ -168,7 +168,7 @@ jobs:
   build-macos-release:
     name: Build & Package macOS
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    runs-on: macos-14
+    runs-on: xcode-27
     needs: create-release
     steps:
       - uses: actions/checkout@v7

@@ -445,13 +445,6 @@ jobs:
           fi
           echo "OK: AllowUserSecrets not found in appsettings.json"
         shell: bash
-      - name: Install Liberation Sans for splash rasterization
-        run: |
-          # MauiSplashScreen SVG text is baked on the runner. Ubuntu has no Arial,
-          # so Skia used to pick DejaVu. Liberation Sans is Arial-metric.
-          sudo apt-get update
-          sudo apt-get install -y fonts-liberation
-          fc-cache -f
       - name: Publish Android app
         run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-android -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true -p:AndroidSigningKeyPass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" -p:AndroidSigningStorePass="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
       - name: Verify APK Signature
@@ -540,7 +533,8 @@ jobs:
 
   package-ios:
     name: Package iOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     steps:
@@ -665,7 +659,8 @@ jobs:
 
   package-macos:
     name: Package macOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7

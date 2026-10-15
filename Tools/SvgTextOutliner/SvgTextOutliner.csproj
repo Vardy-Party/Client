@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net11.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<UseMonoRuntime>false</UseMonoRuntime>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="SkiaSharp" Version="4.148.0" />
+		<!-- SkiaSharp does not pull Linux natives. Splash outlining runs on the Ubuntu agents. -->
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.148.0" />
+		<InternalsVisibleTo Include="VardyParty.SvgTextOutliner.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- SIL OFL 1.1. Reserved font name Liberation. See Fonts/LICENSE. -->
+		<None Include="Fonts\LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\LiberationSans-Bold.ttf" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\LICENSE" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Fonts\AUTHORS" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+</Project>

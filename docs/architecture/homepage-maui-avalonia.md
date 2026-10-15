@@ -557,12 +557,12 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 | Component | Version |
 |---|---|
-| .NET SDK | `11.0.100-rc.1.26425.128` (channel 11.0, quality rc.1) |
-| `Microsoft.Maui.Controls` | `11.0.0-rc.1.26451.6` (nuget.org) |
-| `Avalonia.Controls.Maui.Desktop` | `11.0.0-rc.1.26252.343` (nuget.org; Avalonia 12 preview underneath) |
+| .NET SDK | `11.0.x` in CI (latest on the channel). This table follows that channel; the RC2 package versions are in the rows below. |
+| `Microsoft.Maui.Controls` | `11.0.*-*` (nuget.org; RC2 `11.0.0-rc.2.26505.5` until `11.0.0`) |
+| `Avalonia.Controls.Maui.Desktop` | `11.0.*-*` (nuget.org; Avalonia 12 underneath) |
 | MAUI workload on Linux | `maui-tizen` (the only workload that carries the plain-TFM MAUI SDK on Linux) |
 | `Svg.Skia` | `5.2.2` |
-| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas; Avalonia RC1) |
+| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas) |
 
 ### Repo-specific gotchas (hard-won, do not rediscover)
 
@@ -580,9 +580,10 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
    set `HomeUiTargetFrameworks=net11.0` (CI job env) so they never restore
    android.
 2. **SkiaSharp native mismatch**: `Svg.Skia` pins
-   `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia MAUI RC1's managed
-   SkiaSharp needs native **4.151**. Without the explicit `4.151.0` pin you
-   get NU1605 on restore and/or a startup native `libSkiaSharp` mismatch.
+   `SkiaSharp.NativeAssets.Linux` 3.119 while the `11.0.*-*` Avalonia MAUI
+   packages' managed SkiaSharp needs native **4.151**. Without the explicit
+   `4.151.0` pin you get NU1605 on restore and/or a startup native
+   `libSkiaSharp` mismatch.
 3. **LibVLC in a MAUI-Avalonia window**: in-window playback composites
    LibVLC software frames (RV32 / `SetVideoCallbacks`) into an Avalonia
    `Image` hosted by `VideoHostView` — no `LibVLCSharp.Avalonia` VideoView
@@ -600,8 +601,8 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 The `ci.yml` pipeline is ordered so **Code Quality gates every platform
 build**:
 
-1. `test` (SDK 11 RC1, all `tests/*Tests` projects), then
-2. `code-quality` (SDK 11 RC1: analyzers with warnings-as-errors +
+1. `test` (SDK `11.0.x`, all `tests/*Tests` projects), then
+2. `code-quality` (SDK `11.0.x`: analyzers with warnings-as-errors +
    `dotnet format --verify-no-changes`), then
 3. `build-android`, `build-windows`, `build-ios`, `build-macos` and
    `build-linux` — each with `needs: code-quality`, and finally
@@ -874,7 +875,7 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
 
 | Risk | Notes |
 |---|---|
-| .NET 11 SDK channel | CI installs `11.0.x` (latest on the channel). GA is expected November 10, 2026. The Linux stack below was verified on RC1 `11.0.100-rc.1.26425.128`. |
+| .NET 11 SDK channel | CI installs `11.0.x` (latest on the channel). GA is expected November 10, 2026. The Linux stack below follows that same channel. |
 | MAUI-Avalonia is **Preview 1** | APIs and package names may change; desktop-only today, WASM promised. |
 | Avalonia 12 is itself preview | The backend rides on it; the SkiaSharp pin will need revisiting each bump. |
 | Package drift | All packages come from nuget.org today; if previews move to a nightly feed, `NuGet.config` needs the feed added. |
