@@ -78,6 +78,27 @@ public class StreamResolutionOrchestrator(
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken)
     {
+        try
+        {
+            return await ResolveAsync(game, launcher, cancellationToken);
+        }
+        finally
+        {
+            // Whatever exit fired (user closed, cancelled, failed, completed), the homepage modal is bound
+            // to IsResolving, so it must never depend on which return statement ran.
+            if (_isResolving)
+            {
+                _isResolving = false;
+                PublishProgress();
+            }
+        }
+    }
+
+    private async Task<StreamResolutionOutcome> ResolveAsync(
+        Game game,
+        IPlaybackLauncher launcher,
+        CancellationToken cancellationToken)
+    {
         Reset();
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
 
@@ -117,6 +138,11 @@ public class StreamResolutionOrchestrator(
         var heldHealthy = new SortedDictionary<int, EnrichedStream>();
         var nextExtraIndex = orderedStreams.Count;
 
+        // Candidate testing must stop the moment the user closes the player. Without this the loop below
+        // only noticed the close when the resolver next yielded a stream, so after Back the homepage kept
+        // showing the "Finding streams" modal for as long as the remaining candidates took to test.
+        using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
         void FlushReadyForPlayback()
         {
             var frontier = 0;
@@ -139,6 +165,7 @@ public class StreamResolutionOrchestrator(
                 {
                     hasPlayedFirstStream = true;
                     playbackTask = PlayStreamAsync(game, readyStream, launcher, cancellationToken);
+                    _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
                 }
             }
         }
@@ -164,12 +191,12 @@ public class StreamResolutionOrchestrator(
             await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
                                orderedStreams,
                                2,
-                               cancellationToken,
+                               enumerationCts.Token,
                                totalCount =>
                                {
                                    _totalStreams = totalCount;
                                    PublishProgress();
-                               }))
+                               }).WithCancellation(enumerationCts.Token))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -177,7 +204,7 @@ public class StreamResolutionOrchestrator(
                 if (playbackTask != null && playbackTask.IsCompleted)
                 {
                     var playbackResult = await playbackTask;
-                    if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+                    if (playbackResult?.ViewerLeft == true)
                     {
                         outcome.UserClosed = true;
                         outcome.PlaybackResult = playbackResult;
@@ -215,10 +242,10 @@ public class StreamResolutionOrchestrator(
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {
             // Close cancels the resolve CTS while PlayVideoAsync already completed
-            // with "User closed" — prefer that outcome over a bare cancel.
+            // with a viewer-left result - prefer that outcome over a bare cancel.
             var playbackResult = await playbackTask;
             outcome.PlaybackResult = playbackResult;
-            if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+            if (playbackResult?.ViewerLeft == true)
             {
                 outcome.UserClosed = true;
             }
@@ -240,7 +267,7 @@ public class StreamResolutionOrchestrator(
             var playbackResult = await playbackTask;
             outcome.PlaybackResult = playbackResult;
 
-            if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+            if (playbackResult?.ViewerLeft == true)
             {
                 outcome.UserClosed = true;
             }
@@ -293,6 +320,22 @@ public class StreamResolutionOrchestrator(
             streamCount, _streamsTested, _healthyStreamCount);
         return outcome;
     }
+
+    /// <summary>
+    /// Stops candidate testing the moment the viewer leaves the player (user close or the player window
+    /// going away). Returns the continuation so callers and tests can await it deterministically.
+    /// </summary>
+    internal static Task CancelEnumerationWhenViewerLeaves(Task<PlaybackResult?> playbackTask, CancellationTokenSource enumerationCts) =>
+        playbackTask.ContinueWith(
+            t =>
+            {
+                if (t.Status != TaskStatus.RanToCompletion || t.Result?.ViewerLeft != true) return;
+                try { enumerationCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
 
     public void Reset()
     {
@@ -431,7 +474,7 @@ public class StreamResolutionOrchestrator(
         // If we used a cached URL and it failed immediately, the token may have been
         // invalidated. Re-resolve fresh and retry this same stream once.
         if (usedCachedUrl && result != null && !result.Success &&
-            result.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) != true)
+            !result.ViewerLeft)
         {
             logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
             var freshUrl = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);

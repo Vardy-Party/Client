@@ -770,6 +770,233 @@ public class StreamResolutionOrchestratorTests
             .Create();
     }
 
+    [Fact]
+    public async Task StartAsync_UserClosesPlayerWhileCandidatesStillTesting_ReturnsPromptlyAndStopsTesting()
+    {
+        // Regression: Back from the player left the homepage "Finding streams" modal up until the resolver
+        // yielded another candidate, because the close was only noticed on the next yielded stream.
+        var (game, enriched) = BuildGameAndHealthyStream();
+        var resolverToken = default(CancellationToken);
+        var resolverBlocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangeCommon(game, enriched.Stream);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+            {
+                resolverToken = ct;
+                return YieldThenBlock(enriched, resolverBlocked, ct);
+            });
+
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var progress = new List<StreamResolutionProgress>();
+        sut.ProgressUpdated.Subscribe(new ProgressCapture(progress));
+
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        await resolverBlocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(startTask.IsCompleted); // still testing candidates while the stream plays
+
+        playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        var outcome = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(outcome.UserClosed);
+        Assert.True(resolverToken.IsCancellationRequested);
+        AssertModalDismissed(progress);
+    }
+
+    [Theory]
+    [InlineData(PlaybackCloseReasons.UserClosed)]
+    [InlineData(PlaybackCloseReasons.PlayerClosed)]
+    [InlineData("User closed video player")]
+    public async Task StartAsync_ViewerLeavesAsResolverYieldsAnotherStream_DoesNotRelaunchAndDismissesModal(string closeMessage)
+    {
+        // The race behind the stuck modal: the player closes at the same moment the resolver yields another
+        // healthy candidate. The viewer has left, so no second player may launch and IsResolving must end false.
+        var (game, enriched) = BuildGameAndHealthyStream();
+        var second = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Build<StreamModel>()
+                .With(s => s.Url, "https://streams.example.com/other.html")
+                .With(s => s.Channel, "Channel South")
+                .Create())
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, "https://streams.example.com/other.html")
+            .Create();
+        var firstYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangeCommon(game, enriched.Stream);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                YieldThenWait(enriched, second, firstYielded, releaseSecond.Task, ct));
+
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var progress = new List<StreamResolutionProgress>();
+        sut.ProgressUpdated.Subscribe(new ProgressCapture(progress));
+
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        await firstYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        playbackGate.SetResult(PlaybackResult.Completed(closeMessage));
+        releaseSecond.SetResult();
+        var outcome = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(outcome.UserClosed);
+        _fixture.GetMock<INativeVideoPlayerService>().Verify(
+            p => p.PlayVideoAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Once);
+        AssertModalDismissed(progress);
+    }
+
+    [Fact]
+    public async Task StartAsync_PlayerEndsWithoutUserClose_DoesNotCancelCandidateTesting()
+    {
+        var (game, enriched) = BuildGameAndHealthyStream();
+        var resolverToken = default(CancellationToken);
+        var firstYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseResolver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangeCommon(game, enriched.Stream);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+            {
+                resolverToken = ct;
+                return YieldThenWait(enriched, null, firstYielded, releaseResolver.Task, ct);
+            });
+
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        await firstYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        playbackGate.SetResult(PlaybackResult.Completed("Stream ended.", recoverable: false));
+        releaseResolver.SetResult();
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The player finishing is not the viewer leaving: nothing may have cancelled candidate testing.
+        Assert.False(resolverToken.IsCancellationRequested);
+    }
+
+    [Theory]
+    [InlineData(PlaybackCloseReasons.UserClosed, true)]
+    [InlineData(PlaybackCloseReasons.PlayerClosed, true)]
+    [InlineData("User closed video player", true)]
+    [InlineData("User closed MPV player", true)]
+    [InlineData(PlaybackCloseReasons.PlayerRecreated, false)]   // a system recreate must not end candidate testing
+    [InlineData("Stream ended.", false)]
+    [InlineData("Playback error", false)]
+    [InlineData("", false)]
+    public async Task CancelEnumerationWhenViewerLeaves_CancelsOnlyWhenTheViewerLeft(string message, bool cancels)
+    {
+        // Deterministic: awaits the continuation itself instead of sleeping and hoping.
+        using var cts = new CancellationTokenSource();
+        var playback = Task.FromResult<PlaybackResult?>(PlaybackResult.Completed(message));
+
+        await StreamResolutionOrchestrator.CancelEnumerationWhenViewerLeaves(playback, cts);
+
+        Assert.Equal(cancels, cts.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task CancelEnumerationWhenViewerLeaves_DoesNothingWhenPlaybackFaultsOrIsNull()
+    {
+        using var cts = new CancellationTokenSource();
+        var faulted = Task.FromException<PlaybackResult?>(new InvalidOperationException("boom"));
+        var nothing = Task.FromResult<PlaybackResult?>(null);
+
+        await StreamResolutionOrchestrator.CancelEnumerationWhenViewerLeaves(faulted, cts);
+        await StreamResolutionOrchestrator.CancelEnumerationWhenViewerLeaves(nothing, cts);
+
+        Assert.False(cts.IsCancellationRequested);
+    }
+
+    private static void AssertModalDismissed(List<StreamResolutionProgress> progress)
+    {
+        Assert.NotEmpty(progress);
+        Assert.False(progress[^1].IsResolving);
+    }
+
+
+    private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()
+    {
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+        var stream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.Channel, "Channel North")
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, stream)
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/north.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, stream.Url)
+            .Create();
+        return (game, enriched);
+    }
+
+    private void ArrangeCommon(Game game, StreamModel stream)
+    {
+        _fixture.Inject<IStreamSwitchingService>(_fixture.Create<StreamSwitchingService>());
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream).Create()
+            });
+    }
+
+    private void ArrangePlayer(Task<PlaybackResult> result)
+        => _fixture.GetMock<INativeVideoPlayerService>()
+            .Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Returns(result);
+
+    private static async IAsyncEnumerable<EnrichedStream> YieldThenBlock(
+        EnrichedStream first,
+        TaskCompletionSource blocked,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return first;
+        blocked.TrySetResult();
+        await Task.Delay(Timeout.Infinite, ct); // models candidates still being health-tested
+    }
+
+    private static async IAsyncEnumerable<EnrichedStream> YieldThenWait(
+        EnrichedStream first,
+        EnrichedStream? second,
+        TaskCompletionSource firstYielded,
+        Task release,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return first;
+        firstYielded.TrySetResult();
+        await release.WaitAsync(ct);
+        if (second is not null)
+            yield return second;
+    }
     private static async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
     {
         foreach (var stream in streams)
@@ -784,6 +1011,19 @@ public class StreamResolutionOrchestratorTests
         entered.TrySetResult();
         await Task.Delay(Timeout.Infinite, cancellationToken);
         yield break;
+    }
+
+    private sealed class ProgressCapture(List<StreamResolutionProgress> progress) : IObserver<StreamResolutionProgress>
+    {
+        public void OnCompleted()
+        {
+        }
+
+        public void OnError(Exception error)
+        {
+        }
+
+        public void OnNext(StreamResolutionProgress value) => progress.Add(value);
     }
 
     private sealed class StatusCapture(List<string> statuses) : IObserver<StreamResolutionProgress>

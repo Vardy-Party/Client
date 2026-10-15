@@ -194,44 +194,18 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private void RefreshWaitIndicator()
+        /// <summary>Applies the tracker's spinner verdict to the view. Decides nothing itself.</summary>
+        private void ApplyWaitIndicator(bool show)
         {
             try
             {
-                var state = _player?.PlaybackState ?? PlayerStateIdle;
-                var show = PlaybackWaitChrome.ShouldShowWaitIndicator(
-                    isReady: state == PlayerStateReady,
-                    isLoading: _isBuffering,
-                    isPreparing: _isPreparing,
-                    isEnded: state == PlayerStateEnded);
-                if (show)
-                    ShowBufferingIndicator();
-                else
-                    HideBufferingIndicator();
+                var indicator = _bufferingIndicator;
+                if (indicator == null) return;
+                var visibility = show ? global::Android.Views.ViewStates.Visible : global::Android.Views.ViewStates.Gone;
+                RunOnUiThread(() => indicator.Visibility = visibility);
             }
-            catch (Exception ex) { LogIgnored("RefreshWaitIndicator", ex); }
+            catch (Exception ex) { LogIgnored("ApplyWaitIndicator", ex); }
         }
-
-        private void ShowBufferingIndicator()
-        {
-            try
-            {
-                if (_bufferingIndicator == null) return;
-                RunOnUiThread(() => _bufferingIndicator.Visibility = global::Android.Views.ViewStates.Visible);
-            }
-            catch (Exception ex) { LogIgnored("ShowBufferingIndicator", ex); }
-        }
-
-        private void HideBufferingIndicator()
-        {
-            try
-            {
-                if (_bufferingIndicator == null) return;
-                RunOnUiThread(() => _bufferingIndicator.Visibility = global::Android.Views.ViewStates.Gone);
-            }
-            catch (Exception ex) { LogIgnored("HideBufferingIndicator", ex); }
-        }
-
         private void ShowOverlayAnimated()
         {
             try

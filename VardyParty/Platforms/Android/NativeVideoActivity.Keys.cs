@@ -352,6 +352,8 @@ namespace VardyParty.Platforms.Android
             if (TryConsumeBackLayer())
                 return true;
 
+            // Before anything stops the player: Stop() drops it to IDLE, and that must not re-show the spinner.
+            BeginClosing();
             try { _switching?.Cleanup(); } catch { }
             DispatchEngine(MediaEngineEvent.UserClose());
             return true;

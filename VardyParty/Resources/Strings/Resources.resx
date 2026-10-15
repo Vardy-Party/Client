@@ -129,6 +129,9 @@
   <data name="StatusEnded" xml:space="preserve">
     <value>Ended</value>
   </data>
+  <data name="StatusError" xml:space="preserve">
+    <value>Error</value>
+  </data>
   <data name="StatusLabel" xml:space="preserve">
     <value>Status</value>
   </data>

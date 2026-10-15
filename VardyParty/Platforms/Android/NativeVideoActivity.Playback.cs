@@ -122,6 +122,7 @@ namespace VardyParty.Platforms.Android
             public void CloseSession(string reason)
             {
                 activity._logger?.LogWarning("[NativeVideoActivity] Closing playback session: {Reason}", reason);
+                activity.BeginClosing();
                 activity.ReportPlaybackClosed(reason);
                 activity.Finish();
             }
@@ -199,15 +200,16 @@ namespace VardyParty.Platforms.Android
 
             try
             {
+                // The live-edge seek is a position discontinuity and a new prepare: forget position history and let
+                // the tracker derive Buffering (and the Started signal) from the player instead of latching it by hand.
                 _isPreparing = true;
-                _isBuffering = true;
-                _playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
-                RefreshWaitIndicator();
-                _engine.Raise(MediaEngineEvent.Buffering(generation, true));
+                _playerFaulted = false;
+                _statusTracker.Reset();
 
                 _player.SeekToDefaultPosition();
                 _player.Prepare();
                 _player.PlayWhenReady = true;
+                RefreshPlaybackStatus();
                 return true;
             }
             catch (Exception ex)
@@ -282,6 +284,21 @@ namespace VardyParty.Platforms.Android
                 {
                     try
                     {
+                        if (IsLifecycleClosing)
+                        {
+                            _logger?.LogInformation("[NativeVideoActivity] Closing - ignoring attach");
+                            return;
+                        }
+
+                        if (_lifecycle == PlaybackLifecycle.Suspended)
+                        {
+                            // Paused on purpose: remember the stream and let resume re-attach the latest one,
+                            // instead of re-adding the listener and starting a prepare nobody is watching.
+                            _m3u8Url = m3u8Url;
+                            _logger?.LogInformation("[NativeVideoActivity] Suspended - deferring attach to resume");
+                            return;
+                        }
+
                         if (_player == null)
                         {
                             _logger?.LogWarning("[NativeVideoActivity] Player null - cannot switch");
@@ -290,7 +307,10 @@ namespace VardyParty.Platforms.Android
 
                         _isPreparing = true;
                         _m3u8Url = m3u8Url;
-                        RefreshWaitIndicator();
+                        _playerFaulted = false;
+                        _statusTracker.Reset();
+                        StartStatusWatchdog();
+                        RefreshPlaybackStatus();
 
                         var dataSourceFactory = new AndroidX.Media3.DataSource.DefaultHttpDataSource.Factory();
                         try

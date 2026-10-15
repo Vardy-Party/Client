@@ -1,10 +1,56 @@
+using System.Text.Json.Serialization;
+
 namespace VardyParty.Kernel;
+
+/// <summary>
+/// The reasons a playback session reports when the viewer leaves the player. One place, so the
+/// producers (session controller, Android activity) and the consumers (resolution orchestrator)
+/// cannot drift apart on a magic string.
+/// </summary>
+public static class PlaybackCloseReasons
+{
+    /// <summary>The viewer pressed Back / Stop and the session controller closed the session.</summary>
+    public const string UserClosed = "User closed";
+
+    /// <summary>
+    /// The Android player activity was destroyed without going through the session controller
+    /// (system teardown, Home, task removal, the OnBackPressed fallback).
+    /// </summary>
+    public const string PlayerClosed = "Video player closed";
+
+    /// <summary>
+    /// The Android player activity was destroyed by a system recreate (a configuration change such as
+    /// uiMode, locale or orientation), not because the viewer left. Deliberately does NOT match
+    /// <see cref="PlayerClosed"/> or <see cref="UserClosed"/>, so candidate testing keeps going.
+    /// </summary>
+    public const string PlayerRecreated = "Video player recreated";
+
+    /// <summary>The reason an Android player activity reports from OnDestroy.</summary>
+    /// <param name="isChangingConfigurations">Activity.IsChangingConfigurations: a recreate, not a departure.</param>
+    public static string ForDestroy(bool isChangingConfigurations) => isChangingConfigurations ? PlayerRecreated : PlayerClosed;
+}
 
 public class PlaybackResult
 {
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
     public bool IsRecoverable { get; set; }
+
+    /// <summary>The viewer closed the player (Back / Stop). Also true for the Windows and Linux "User closed ..." messages.</summary>
+    [JsonIgnore]
+    public bool IsUserClosed => (Message ?? string.Empty).Contains(PlaybackCloseReasons.UserClosed, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The player window went away without a user close (see <see cref="PlaybackCloseReasons.PlayerClosed"/>).</summary>
+    [JsonIgnore]
+    public bool IsPlayerClosed => (Message ?? string.Empty).Contains(PlaybackCloseReasons.PlayerClosed, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Nobody is watching any more: the user closed the player, or its window was destroyed.
+    /// Candidate testing must stop, there is nothing to fail over to, and the player must not be
+    /// relaunched.
+    /// </summary>
+    [JsonIgnore]
+    public bool ViewerLeft => IsUserClosed || IsPlayerClosed;
 
     public static PlaybackResult Completed(string message, bool recoverable = false) => new()
     {

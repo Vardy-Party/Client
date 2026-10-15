@@ -22,7 +22,18 @@ using System.Threading;
 
 namespace VardyParty.Platforms.Android
 {
-    [Activity(Label = "Video Player", Theme = "@style/Maui.MainTheme.NoActionBar", MainLauncher = false, ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape)]
+    [Activity(
+        Label = "Video Player",
+        Theme = "@style/Maui.MainTheme.NoActionBar",
+        MainLauncher = false,
+        ScreenOrientation = global::Android.Content.PM.ScreenOrientation.Landscape,
+        // A TV can change uiMode (night/day), locale, layout direction, font scale, density or attach a
+        // keyboard/remote while the player is up. Without these flags Android destroys and recreates the
+        // activity, and OnDestroy would report the player closed. Handle them in place instead.
+        ConfigurationChanges = global::Android.Content.PM.ConfigChanges.ScreenSize | global::Android.Content.PM.ConfigChanges.SmallestScreenSize | global::Android.Content.PM.ConfigChanges.ScreenLayout
+            | global::Android.Content.PM.ConfigChanges.Orientation | global::Android.Content.PM.ConfigChanges.Density | global::Android.Content.PM.ConfigChanges.UiMode | global::Android.Content.PM.ConfigChanges.Locale
+            | global::Android.Content.PM.ConfigChanges.LayoutDirection | global::Android.Content.PM.ConfigChanges.FontScale | global::Android.Content.PM.ConfigChanges.Keyboard
+            | global::Android.Content.PM.ConfigChanges.KeyboardHidden | global::Android.Content.PM.ConfigChanges.Navigation)]
     public partial class NativeVideoActivity : Activity
     {
         // Constructor DI - OS will call default ctor which chains to parameterized ctor
@@ -221,6 +232,10 @@ namespace VardyParty.Platforms.Android
         private const int OverlayTimeoutMs = 3000;
         private bool _overlayLocked;
         private bool _isBuffering;
+        private readonly PlaybackStatusTracker _statusTracker = new();
+        private bool _playerFaulted;
+        private global::Android.OS.Handler? _statusHandler;
+        private Java.Lang.Runnable? _statusRunnable;
         private string? _gameTitle;
         private bool _suppressOverlayShow;
         private int? _videoWidth;
@@ -751,7 +766,7 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogInformation("[NativeVideoActivity] Starting initial playback: {Url}", _m3u8Url);
                 AttachViaSession(_m3u8Url, usedCachedUrl: true);
-                RefreshWaitIndicator();
+                RefreshPlaybackStatus();
             }
 
             HideOverlayAnimated();
@@ -841,6 +856,10 @@ namespace VardyParty.Platforms.Android
             {
                 if (_player == null) return;
 
+                // Closing, releasing or suspended: nothing may react to the IDLE that Stop() causes.
+                var lifecycleSuppressed = PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle);
+                if (release || lifecycleSuppressed) StopStatusWatchdog();
+                if (release || lifecycleSuppressed) DetachPlayerListener();
                 try { _player.PlayWhenReady = false; } catch { }
                 try { _player.Pause(); } catch { }
                 try { _player.Stop(); } catch { }
@@ -882,14 +901,22 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
         }
 
+        public override void Finish()
+        {
+            BeginClosing();
+            base.Finish();
+        }
+
         protected override void OnPause()
         {
+            BeginSuspend();
             StopAndReleasePlayer(release: false);
             base.OnPause();
         }
 
         protected override void OnStop()
         {
+            BeginSuspend();
             StopAndReleasePlayer(release: false);
             MatchToastOnStop();
             base.OnStop();
@@ -899,7 +926,9 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                BeginClosing();
                 RemoveCallback(_tickerHandler, _tickerRunnable);
+                StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
                 StopVideoInfoRefreshLoop();
                 _healthReportTimer?.Dispose();
@@ -909,7 +938,7 @@ namespace VardyParty.Platforms.Android
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
-                ReportPlaybackClosed("Video player closed");
+                ReportPlaybackClosed(PlaybackCloseReasons.ForDestroy(IsChangingConfigurations));
             }
             finally
             {
@@ -1361,27 +1390,21 @@ namespace VardyParty.Platforms.Android
 
             public void OnPlaybackStateChanged(int playbackState)
             {
-                try
-                {
-                    _activity._playbackStateText = playbackState switch
-                    {
-                        PlayerStateIdle => VardyParty.Resources.Strings.Resources.StatusIdle,
-                        PlayerStateBuffering => VardyParty.Resources.Strings.Resources.StatusBuffering,
-                        PlayerStateReady => VardyParty.Resources.Strings.Resources.StatusPlaying,
-                        PlayerStateEnded => VardyParty.Resources.Strings.Resources.StatusEnded,
-                        _ => VardyParty.Resources.Strings.Resources.StatusPlaying
-                    };
-                }
-                catch (Exception ex) { _activity.LogIgnored("OnPlaybackStateChanged", ex); }
+                // A new prepare has begun (or finished): any earlier error no longer applies.
+                if (playbackState == PlayerStateBuffering || playbackState == PlayerStateReady)
+                    _activity._playerFaulted = false;
 
-                if (playbackState == PlayerStateBuffering)
-                    _activity._isBuffering = true;
+                // READY ends the prepare: clear the flag BEFORE deriving, so the spinner verdict for this very
+                // event does not still count a finished prepare as in flight.
+                if (playbackState == PlayerStateReady)
+                    _activity._isPreparing = false;
+
+                // Status text, spinner and overlay all follow one derivation (PlaybackStatusTracker).
+                _activity.RefreshPlaybackStatus();
 
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
-                    _activity._isBuffering = false;
-                    _activity._isPreparing = false;
                     // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
                     if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
                         _activity._behindLiveWindowRecoveries = 0;
@@ -1432,8 +1455,6 @@ namespace VardyParty.Platforms.Android
 
                     _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
-
-                _activity.RefreshWaitIndicator();
             }
 
             public void OnTracksChanged(Tracks? tracks)
@@ -1450,35 +1471,9 @@ namespace VardyParty.Platforms.Android
             public void OnVideoSizeChanged(VideoSize? videoSize) { }
             public void OnIsLoadingChanged(bool isLoading)
             {
-                try
-                {
-                    if (isLoading)
-                    {
-                        _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
-                        _activity._isBuffering = true;
-                        _activity.RefreshWaitIndicator();
-                        _activity.HideOverlayAnimated();
-                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, true));
-                    }
-                    else if (_activity._player?.PlaybackState == PlayerStateReady)
-                    {
-                        _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusPlaying;
-                        _activity._isBuffering = false;
-                        _activity.RefreshWaitIndicator();
-                        _activity._engine.Raise(MediaEngineEvent.Buffering(_activity.CurrentAttachGeneration, false));
-                    }
-                    else
-                    {
-                        _activity._isBuffering = false;
-                        _activity.RefreshWaitIndicator();
-                    }
-
-                    var last = _activity._lastOverlayInfo;
-                    if (last != null)
-                    {
-                        _activity.RunOnUiThread(() => _activity.UpdateOverlayText(last));
-                    }
-                }
+                // isLoading only means "fetching more media" (true for much of a healthy HLS stream, including
+                // while READY and playing). It is NOT a buffering signal, so it only triggers a re-derivation.
+                try { _activity.RefreshPlaybackStatus(); }
                 catch (Exception ex) { _activity.LogIgnored("OnIsLoadingChanged", ex); }
             }
             public void OnAudioAttributesChanged(AndroidX.Media3.Common.AudioAttributes? attributes) { }
@@ -1487,11 +1482,11 @@ namespace VardyParty.Platforms.Android
             public void OnCues(AndroidX.Media3.Common.Text.CueGroup? cueGroup) { }
             public void OnCues(IList<AndroidX.Media3.Common.Text.Cue>? cues) { }
             public void OnDeviceInfoChanged(AndroidX.Media3.Common.DeviceInfo? deviceInfo) { }
-            public void OnIsPlayingChanged(bool isPlaying) { }
+            public void OnIsPlayingChanged(bool isPlaying) => _activity.RefreshPlaybackStatus();
             public void OnMediaItemTransition(MediaItem? mediaItem, int reason) { }
             public void OnMediaMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
             public void OnMetadata(Metadata? metadata) { }
-            public void OnPlayWhenReadyChanged(bool playWhenReady, int reason) { }
+            public void OnPlayWhenReadyChanged(bool playWhenReady, int reason) => _activity.RefreshPlaybackStatus();
             public void OnPlaybackParametersChanged(PlaybackParameters? playbackParameters) { }
             public void OnPlaybackSuppressionReasonChanged(int playbackSuppressionReason) { }
             public void OnPlayerErrorChanged(PlaybackException? error)
@@ -1505,16 +1500,21 @@ namespace VardyParty.Platforms.Android
                         return;
 
                     var message = error.Message ?? "Playback error";
-                    _activity._playbackStateText = VardyParty.Resources.Strings.Resources.StatusBuffering;
-                    _activity._isBuffering = false;
+                    _activity._playerFaulted = true;
                     _activity._isPreparing = false;
-                    _activity.RefreshWaitIndicator();
+                    _activity.RefreshPlaybackStatus();
                     _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnPlayerErrorChanged", ex); }
             }
             public void OnPlaylistMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
-            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) { }
+            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason)
+            {
+                // A seek, live-window slide or item transition moves the position by an arbitrary amount; that
+                // jump is not playback progress, so the tracker must forget its position history.
+                _activity._statusTracker.Reset();
+                _activity.RefreshPlaybackStatus();
+            }
             public void OnRenderedFirstFrame() { }
             public void OnRepeatModeChanged(int repeatMode) { }
             public void OnSeekBackIncrementChanged(long seekBackIncrementMs) { }
