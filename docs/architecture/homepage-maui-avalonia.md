@@ -1,7 +1,7 @@
 # The homepage, rewritten once: MAUI XAML drawn by Avalonia
 
 This document explains the new homepage stack introduced by the
-`VardyParty.HomeUi` + `VardyParty.Desktop` projects, and answers the
+`VardyParty.HomeUi` + `VardyParty.Linux` projects, and answers the
 architecture questions that motivated it. It supersedes the approach sketched
 in [phase-2-webview-xaml.md](phase-2-webview-xaml.md) (which assumed the
 MAUI XAML rewrite could not cover Linux).
@@ -39,7 +39,7 @@ library Chrome and Flutter use), so the same UI runs anywhere Skia runs —
 including Linux. The retired `VardyParty.Linux` app was Avalonia 11 with its
 own hand-written window; its XAML dialect was *similar* to MAUI's but not
 compatible, which is why the app previously needed two homepage
-implementations. That head is now deleted; `VardyParty.Desktop` (MAUI drawn
+implementations. That head is now deleted; `VardyParty.Linux` (MAUI drawn
 by Avalonia) is the only Linux head.
 
 ### What changed: the MAUI-Avalonia backend
@@ -59,7 +59,7 @@ platform —
 | Android TV / phone | MAUI → native Android views (fast; no WebView) |
 | Windows | MAUI → WinUI |
 | iOS / Mac Catalyst | MAUI → UIKit |
-| **Linux desktop** | MAUI → **Avalonia-drawn** (`VardyParty.Desktop`) |
+| **Linux desktop** | MAUI → **Avalonia-drawn** (`VardyParty.Linux`) |
 | WASM (future) | MAUI → Avalonia-drawn in the browser |
 
 ## What this PR ships
@@ -79,13 +79,13 @@ VardyParty/                   MAUI head (net11.0-android/-ios/-maccatalyst/-wind
   HomeHostPage.xaml           hosts HomeView + auth/resolve overlays on every platform
                               (the Blazor UI is deleted)
 
-VardyParty.Desktop/           Linux/desktop head (net11.0, UseAvaloniaApp)
+VardyParty.Linux/           Linux head (net11.0, UseAvaloniaApp)
   MauiProgram.cs              AddVardyParty + AddVardyPartyHttpClients + HomeUi DI
-  Pages/DesktopHomePage.xaml  hosts HomeView + device-code QR sign-in + playback overlays
-  Services/DesktopAuthService.cs        Auth0 PKCE loopback / device-code flow (from VardyParty.Linux)
-  Services/DesktopVideoPlayerService.cs LibVLC playback in a native video window (see below)
+  Pages/LinuxHomePage.xaml  hosts HomeView + device-code QR sign-in + playback overlays
+  Services/LinuxAuthService.cs        Auth0 PKCE loopback / device-code flow (from VardyParty.Linux)
+  Services/LinuxVideoPlayerService.cs LibVLC playback in a native video window (see below)
   Services/SoundFlowUiSoundPlayer.cs    UI sounds (miniaudio); degrades gracefully headless
-  Services/SampleGames.cs     VARDYPARTY_DESKTOP_SAMPLE_DATA=1 offline data
+  Services/SampleGames.cs     VARDYPARTY_LINUX_SAMPLE_DATA=1 offline data
 
 VardyParty.Presentation/Application/Home/
   TeamPalette.cs              curated club colours + deterministic HSL fallback
@@ -102,11 +102,11 @@ Deleted on this branch (no dormant rollback code):
   package, the Razor project SDK and every scoped-CSS/wwwroot sync step in
   the csproj and `scripts/run-windows-debug.ps1`.
 - `VardyParty.Linux/` (the Avalonia 11 head with the ListBox homepage). Its
-  two unique capabilities were ported into `VardyParty.Desktop` first: the
-  Auth0 device-code sign-in with QR (`DesktopAuthService` + QRCoder) and
-  LibVLC playback (`DesktopVideoPlayerService`). `VardyParty.slnx`, CI, CD
-  snap packaging and `scripts/launch-linux-app.cmd` now point at the
-  Desktop head.
+  two unique capabilities were ported into `VardyParty.Linux` first: the
+  Auth0 device-code sign-in with QR (`LinuxAuthService` + QRCoder) and
+  LibVLC playback (`LinuxVideoPlayerService`). `VardyParty.slnx`, CI, CD
+  snap packaging and `scripts/launch-linux-app.ps1` now point at the
+  Linux head.
 
 The pure logic lives in `VardyParty.Presentation` (net11.0, fully
 unit-tested in `tests/VardyParty.Presentation.Tests`) so the existing MAUI
@@ -117,13 +117,12 @@ app can adopt it without touching the preview stack.
 Every project in the repo — the domain libraries (Kernel, Ports, Catalog,
 Auth, Streaming, Playback, Presentation, Hosting), the test projects
 (`tests/Directory.Build.props`) and `Tools/StreamHealthCheckerTool` — targets
-net11.0, matching the MAUI/Desktop heads. The
+net11.0, matching the MAUI/Linux heads. The
 `Microsoft.Extensions.Logging.Abstractions` / `Options` /
 `Configuration.Abstractions` packages are framework-provided on .NET 11 and
 their explicit `PackageReference`s were removed (they fired NU1510; the
-packaging flows are zero-warning again). CI/CD pins a single
-`DOTNET_VERSION: "11.0.x"` with `dotnet-quality: preview` for every job —
-`DOTNET_PREVIEW_VERSION` is gone.
+packaging flows are zero-warning again). CI/CD installs the latest SDK on
+the `11.0.x` channel for every job — `DOTNET_PREVIEW_VERSION` is gone.
 
 ### The Netflix-style UI in XAML terms
 
@@ -360,6 +359,46 @@ and cards in the top row.
   first card of the first row on the empty→non-empty edge; the view consumes
   it once and calls `RequestFocus()` on the native view, so the app opens
   with a visibly focused card. Later refreshes never steal the highlight.
+  The retry is `View.Post` (`MatchCardView.RequestInitialFocusWhenReady`),
+  one attempt per traversal, not a burst of dispatcher messages.
+- Leaving a stream: `PlaybackExitFocus` picks the watched card, or the first
+  card of the first rail that still has a game. `HomeView` holds Menu out of
+  the focus order until that card takes focus. A miss posts on the card
+  itself when `TvCardFocusRegistry` still has it (Android runs that from
+  the view run queue on attach). A card that has not been created yet waits
+  for one `OnGlobalLayout` on the rows list after
+  `ScrollToPositionWithOffset`. A frame callback is armed beside that
+  listener: a hierarchy that does not lay out still consumes one attempt,
+  and either signal continues. Cancel drops both. Posting on that
+  already-attached recycler would spend the budget before the row binds.
+  When the budget is spent, an attached card is focused before Menu is put
+  back in the focus order.
+
+```mermaid
+flowchart TD
+  exit[Player closes] --> choose[PlaybackExitFocus.Choose]
+  choose --> hold[Hold Menu out of the focus order]
+  hold --> lookup{Card view in the registry?}
+  lookup -->|yes, even if detached| postCard[Post on that view]
+  lookup -->|not created yet| layout[Scroll the row, then layout or one frame]
+  postCard --> ready{Attached, shown, and laid out?}
+  layout --> ready
+  ready -->|yes| focus[RequestFocus and release Menu]
+  ready -->|no, budget left| lookup
+  ready -->|budget spent| last[RequestFocus if attached, then release Menu]
+```
+
+### Remote compute
+
+Guest resolve over the compute relay:
+
+- A clean ICE miss stays on the relay. The guest sends `signal kind=failed` and does not raise a banner.
+- A drop after transport `webrtc` and before `rpc-result` banners `This phone failed: direct connection dropped. Correlation id: {id}`.
+- CONNECT DNS is DoH-first when DoH is enabled. Carrier DNS on 4G often answers and would skip DoH.
+- Leftover MP chips after the first `/mp` keep resolving like LAN.
+- Leave always cancels headed Chrome.
+
+`RemoteComputeController` orchestrates share, redeem, and the host watches. Claim checks go through `AuthAccessTokenRoles`. CONNECT logs reason and DNS via (`dns` / `connect failed` / `port not allowed`) only — never host, port, IP, SDP, or a full ICE candidate.
 
 Key routing: `RemoteKeyHandler` (activity level) still has **no D-pad
 direction cases** — direction keys are owned by the dispatch-stage router
@@ -367,6 +406,30 @@ above; `RemoteKeyHandler` only consumes media keys, Menu, Back and
 (conditionally) Enter. `Activity.OnKeyDown` logging a `DpadUp/Down/...`
 press now means the dispatch-stage router declined it (non-TV, non-board
 focus, or the open menu panel's items own it).
+
+### Catalog session recovery
+
+A catalog HTTP 401 is not an empty night. `ApiService.GetAllGamesAsync`
+throws `ApiUnauthorizedException` and leaves the last board in place.
+`EnrichedGameService` publishes `CatalogUnauthorized` under the same lock
+as other reactive updates, and it coalesces overlapping API polls the same
+way it coalesces BBC fetches. A 403 throws `ApiForbiddenException` and is
+shown on the error banner; a 404 is still an empty board.
+
+`CatalogSessionRecovery` decides what the homepage does next. `HomeHostPage`
+and `LinuxHomePage` only paint that decision. A token check that throws is
+a dead session: it opens sign-in. It is not treated as a refresh token that
+is still present.
+
+```mermaid
+flowchart TD
+  signal[Catalog 401 or resume recheck] --> idle{Signed-in home and not already signing in?}
+  idle -->|no| stop[Do nothing]
+  idle -->|yes| probe{Token probe}
+  probe -->|still signed in, catalog 401| banner[Keep the board and show the recovery banner]
+  probe -->|still signed in, resume| stay[Stay on the board]
+  probe -->|signed out or the check threw| signin[Open sign-in]
+```
 
 ### The brand logo (3D, metallic, animated)
 
@@ -428,7 +491,7 @@ Six generated WAV cues (`VardyParty/Resources/Raw/Sounds`) played through
 moves (rate-limited), select confirmation, stream-ready, error, goal chime
 (via `MatchEventDetector`, see the match-event section below) and app-open
 sting. Platform players: `SoundPool` on Android, `MediaPlayer` on Windows,
-SoundFlow (miniaudio) on the Desktop head — which disables itself cleanly
+SoundFlow (miniaudio) on the Linux head — which disables itself cleanly
 when no audio device exists (headless CI). Sounds are suppressed while the
 native video player is visible
 (`INativeVideoPlayerService.PlaybackVisibilityChanged`) and can be turned
@@ -450,7 +513,7 @@ shared code:
 - **`MatchEventNotificationPolicy`** (unit-tested decision table): heads
   wire window lifecycle into `IsAppForegrounded` (Activated/Resumed =
   foreground, Stopped = background; Deactivated — focus lost while still
-  visible, e.g. the desktop head's native VLC window taking focus —
+  visible, e.g. the Linux head's native VLC window taking focus —
   deliberately still counts as foreground) and the existing
   playback-visibility signal into `IsPlaybackActive`.
 - **Homepage toast** (`MatchEventToastViewModel` + `MatchEventToastView`):
@@ -479,7 +542,7 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 | App state | Surface | Sting (audio) | Toast | Card flash |
 | --- | --- | --- | --- | --- |
 | Foreground | Homepage (no stream) | Yes | Yes | Yes |
-| Foreground | Stream playing | No | Yes | Yes (behind player) |
+| Foreground | Stream playing | No | Other games only (not the watched fixture) | Other games only |
 | Background / minimized | any | No | No — dropped, no catch-up on resume | No |
 
 - **"Goal notifications"** (default ON, persisted via the
@@ -494,12 +557,12 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 | Component | Version |
 |---|---|
-| .NET SDK | `11.0.100-preview.7.26381.103` (channel 11.0, quality preview) |
-| `Microsoft.Maui.Controls` | `11.0.0-preview.7.26406.9` (nuget.org) |
-| `Avalonia.Controls.Maui.Desktop` | `11.0.0-preview.7.26224.328` (nuget.org; Avalonia 12 preview underneath) |
+| .NET SDK | `11.0.x` in CI (latest on the channel). This table follows that channel; the RC2 package versions are in the rows below. |
+| `Microsoft.Maui.Controls` | `11.0.*-*` (nuget.org; RC2 `11.0.0-rc.2.26505.5` until `11.0.0`) |
+| `Avalonia.Controls.Maui.Desktop` | `11.0.*-*` (nuget.org; Avalonia 12 underneath) |
 | MAUI workload on Linux | `maui-tizen` (the only workload that carries the plain-TFM MAUI SDK on Linux) |
 | `Svg.Skia` | `5.2.2` |
-| `SkiaSharp.NativeAssets.Linux` | `4.148.0` (explicit pin, see gotchas) |
+| `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas) |
 
 ### Repo-specific gotchas (hard-won, do not rediscover)
 
@@ -511,23 +574,23 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
    output** to its referencing project (CS0234/CS0246 despite a successful
    reference build). Heads referencing `VardyParty.HomeUi` therefore override
    `GlobalPropertiesToRemove` so the head TFM flows in (windows/android).
-   `VardyParty.Desktop` (and HomeUi.Tests) also set `AdditionalProperties`
+   `VardyParty.Linux` (and HomeUi.Tests) also set `AdditionalProperties`
    `TargetFrameworks=net11.0`. Linux HomeUi lists `net11.0;net11.0-android`
    so the MAUI `--no-restore` Android job has that TFM in assets. Unit tests
    set `HomeUiTargetFrameworks=net11.0` (CI job env) so they never restore
    android.
 2. **SkiaSharp native mismatch**: `Svg.Skia` pins
-   `SkiaSharp.NativeAssets.Linux` 3.119 while Avalonia 12 preview's managed
-   SkiaSharp is 4.148. Without the explicit 4.148 pin the app aborts at
-   startup with "native libSkiaSharp (119.0) incompatible".
-3. **LibVLC in a MAUI-Avalonia window**: `LibVLCSharp.Avalonia`'s
-   `VideoView` is an Avalonia control with no MAUI handler, so it cannot be
-   hosted inside the Desktop head's MAUI XAML tree (and the Avalonia-12
-   preview backend exposes no supported native-surface embedding hook).
-   `DesktopVideoPlayerService` therefore uses plain `LibVLCSharp` and lets
-   libvlc open its own native video window; the in-app "Now Playing"
-   overlay owns the Close control. libvlc is initialised lazily on first
-   play so machines without VLC still run the homepage.
+   `SkiaSharp.NativeAssets.Linux` 3.119 while the `11.0.*-*` Avalonia MAUI
+   packages' managed SkiaSharp needs native **4.151**. Without the explicit
+   `4.151.0` pin you get NU1605 on restore and/or a startup native
+   `libSkiaSharp` mismatch.
+3. **LibVLC in a MAUI-Avalonia window**: in-window playback composites
+   LibVLC software frames (RV32 / `SetVideoCallbacks`) into an Avalonia
+   `Image` hosted by `VideoHostView` — no `LibVLCSharp.Avalonia` VideoView
+   / native child, so MAUI chrome can overlay the picture. If the presenter
+   cannot attach, `LinuxVideoPlayerService` falls back to libvlc's own
+   native window; libvlc is initialised lazily on first play so machines
+   without VLC still run the homepage.
 4. **Catalog apply must not `Dispatcher.Dispatch` from Rx into WinUI**:
    queue on `HomeViewModel`, drain on the UI thread. Windows: idle
    `IDispatcherTimer`. Android/Desktop: `MainThread` (TV Choreographer
@@ -538,20 +601,20 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 The `ci.yml` pipeline is ordered so **Code Quality gates every platform
 build**:
 
-1. `test` (SDK 11 preview, all `tests/*Tests` projects), then
-2. `code-quality` (SDK 11 preview: analyzers with warnings-as-errors +
+1. `test` (SDK `11.0.x`, all `tests/*Tests` projects), then
+2. `code-quality` (SDK `11.0.x`: analyzers with warnings-as-errors +
    `dotnet format --verify-no-changes`), then
 3. `build-android`, `build-windows`, `build-ios`, `build-macos` and
-   `build-desktop` — each with `needs: code-quality`, and finally
-4. `desktop-runtime-smoke` (needs `build-desktop`): rebuilds the Desktop
+   `build-linux` — each with `needs: code-quality`, and finally
+4. `linux-runtime-smoke` (needs `build-linux`): rebuilds the Linux
    head and runs it for 20 s under `xvfb-run` with
-   `VARDYPARTY_DESKTOP_SAMPLE_DATA=1` — the startup smoke test that used to
+   `VARDYPARTY_LINUX_SAMPLE_DATA=1` — the startup smoke test that used to
    guard `VardyParty.Linux`.
 
 `ci-complete` fails on any failure of test/code-quality/android/windows/
 desktop-build/desktop-smoke (iOS/macOS remain informational, as before).
 The old `build-linux` and `linux-runtime-smoke` jobs are gone with the
-project; CD's Linux snap jobs package `VardyParty.Desktop` instead.
+project; CD's Linux snap jobs package `VardyParty.Linux` instead.
 
 ## Local packaging (PowerShell)
 
@@ -812,7 +875,7 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
 
 | Risk | Notes |
 |---|---|
-| .NET 11 **preview** SDK | GA expected November 2026; preview 7 used here. |
+| .NET 11 SDK channel | CI installs `11.0.x` (latest on the channel). GA is expected November 10, 2026. The Linux stack below follows that same channel. |
 | MAUI-Avalonia is **Preview 1** | APIs and package names may change; desktop-only today, WASM promised. |
 | Avalonia 12 is itself preview | The backend rides on it; the SkiaSharp pin will need revisiting each bump. |
 | Package drift | All packages come from nuget.org today; if previews move to a nightly feed, `NuGet.config` needs the feed added. |
@@ -821,12 +884,12 @@ every ~60s poll Clear+rebuilt all rows and cards. The fixes, in order:
 ## Migration roadmap (all steps landed on this branch)
 
 1. ~~Shared homepage~~ — `VardyParty.HomeUi`, Linux head
-   (`VardyParty.Desktop`), tested logic in `VardyParty.Presentation`.
+   (`VardyParty.Linux`), tested logic in `VardyParty.Presentation`.
 2. ~~Android/Windows head adoption~~ — `VardyParty/` retargeted to net11,
    `HomeHostPage` hosts the shared homepage natively.
 3. ~~Delete the WebView~~ — `BlazorWebView`, `wwwroot/`,
    `Components/*.razor` and all Blazor plumbing removed; iOS/Mac Catalyst
    boot the XAML homepage too.
 4. ~~Retire `VardyParty.Linux`~~ — playback + Auth0 device flow moved into
-   `VardyParty.Desktop`; the Avalonia-11 app and its duplicate homepage are
+   `VardyParty.Linux`; the Avalonia-11 app and its duplicate homepage are
    deleted.

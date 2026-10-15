@@ -114,8 +114,7 @@ public sealed class Auth0OAuthClient(
                 ["audience"] = settings.Audience
             }!), cancellationToken);
 
-        var payload = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken);
-        return ToTokenResult(response.IsSuccessStatusCode, payload);
+        return await ReadTokenResponseAsync(response, cancellationToken);
     }
 
     public async Task<Auth0TokenHttpResult> ExchangeAuthorizationCodeAsync(
@@ -137,8 +136,7 @@ public sealed class Auth0OAuthClient(
             ["audience"] = settings.Audience
         }!), cancellationToken);
 
-        var payload = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken);
-        return ToTokenResult(response.IsSuccessStatusCode, payload);
+        return await ReadTokenResponseAsync(response, cancellationToken);
     }
 
     public async Task<Auth0TokenHttpResult> RefreshAsync(
@@ -159,18 +157,56 @@ public sealed class Auth0OAuthClient(
             ["audience"] = settings.Audience
         }!), cts.Token);
 
-        var payload = await response.Content.ReadFromJsonAsync<TokenResponse>(cts.Token);
-        return ToTokenResult(response.IsSuccessStatusCode, payload);
+        return await ReadTokenResponseAsync(response, cts.Token);
     }
 
-    private static Auth0TokenHttpResult ToTokenResult(bool success, TokenResponse? payload)
-        => new(
-            success && payload != null && !string.IsNullOrWhiteSpace(payload.AccessToken),
+    private async Task<Auth0TokenHttpResult> ReadTokenResponseAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var body = response.Content != null
+            ? await response.Content.ReadAsStringAsync(cancellationToken)
+            : string.Empty;
+
+        TokenResponse? payload = null;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try
+            {
+                payload = System.Text.Json.JsonSerializer.Deserialize<TokenResponse>(body);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                logger.LogWarning(ex, "[Auth0] Failed to deserialize token response body: {Body}", body);
+            }
+        }
+
+        var isSuccess = response.IsSuccessStatusCode
+            && payload != null
+            && !string.IsNullOrWhiteSpace(payload.AccessToken);
+
+        var error = payload?.Error;
+        var errorDescription = payload?.ErrorDescription;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            error ??= $"HTTP_{(int)response.StatusCode}";
+            errorDescription ??= !string.IsNullOrWhiteSpace(body) ? body : response.ReasonPhrase;
+            logger.LogWarning(
+                "[Auth0] Token request failed with status {StatusCode}: {Error} {Description}",
+                (int)response.StatusCode,
+                error,
+                errorDescription);
+        }
+
+        return new Auth0TokenHttpResult(
+            isSuccess,
             payload?.AccessToken,
             payload?.ExpiresIn ?? 0,
             payload?.RefreshToken,
-            payload?.Error,
-            payload?.ErrorDescription);
+            error,
+            errorDescription);
+    }
 
     private static OAuthErrorResponse? TryReadOAuthError(string body)
     {

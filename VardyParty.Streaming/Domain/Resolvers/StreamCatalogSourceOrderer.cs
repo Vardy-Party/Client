@@ -3,11 +3,11 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Orders catalog streams so FB (English footybitex) candidates are tried before MP (v2) alternates.
+/// Orders catalog streams so MP (v2) candidates are tried before FB (footybites) alternates.
 /// </summary>
 public static class StreamCatalogSourceOrderer
 {
-    public static List<StreamModel> OrderFbBeforeMp(IEnumerable<StreamModel> streams)
+    public static List<StreamModel> OrderMpBeforeFb(IEnumerable<StreamModel> streams)
     {
         return streams
             .Select((stream, index) => (stream, index))
@@ -17,23 +17,23 @@ public static class StreamCatalogSourceOrderer
             .ToList();
     }
 
-    public static List<int> OrderIndexesFbBeforeMp(
+    public static List<int> OrderIndexesMpBeforeFb(
         IReadOnlyList<int> indexes,
         Func<int, StreamModel> getStream)
     {
+        var mp = new List<int>();
         var fb = new List<int>();
         var other = new List<int>();
-        var mp = new List<int>();
 
         foreach (var index in indexes)
         {
             switch (getStream(index).ResolveCatalogSource())
             {
-                case "fb":
-                    fb.Add(index);
-                    break;
                 case "mp":
                     mp.Add(index);
+                    break;
+                case "fb":
+                    fb.Add(index);
                     break;
                 default:
                     other.Add(index);
@@ -42,17 +42,17 @@ public static class StreamCatalogSourceOrderer
         }
 
         var ordered = new List<int>(indexes.Count);
+        ordered.AddRange(mp);
         ordered.AddRange(fb);
         ordered.AddRange(other);
-        ordered.AddRange(mp);
         return ordered;
     }
 
     internal static int GetCatalogSourcePriority(StreamModel stream) =>
         stream.ResolveCatalogSource() switch
         {
-            "fb" => 0,
-            "mp" => 1,
+            "mp" => 0,
+            "fb" => 1,
             _ => 2
         };
 }

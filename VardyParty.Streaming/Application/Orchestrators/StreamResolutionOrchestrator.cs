@@ -15,7 +15,9 @@ public class StreamResolutionOrchestrator(
     ISessionIdProvider sessionIdProvider,
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
-    ILogger<StreamResolutionOrchestrator> logger) : IStreamResolutionOrchestrator
+    ILogger<StreamResolutionOrchestrator> logger,
+    ILocalLanPlayService? localLanPlayService = null,
+    IRemoteComputeKeepAlive? keepAlive = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -26,6 +28,14 @@ public class StreamResolutionOrchestrator(
     /// never a silent empty outcome.
     /// </summary>
     private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Shown for the whole paired search. A mobile link can sit on the second
+    /// page for minutes before chips appear, and the title "Finding streams"
+    /// alone looked like a stall.
+    /// </summary>
+    public const string PairedFindingStatus =
+        "Using the paired computer. A slow link can take several minutes.";
 
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
@@ -72,7 +82,9 @@ public class StreamResolutionOrchestrator(
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
 
         _isResolving = true;
-        _status = "Searching for streams...";
+        _status = localLanPlayService?.UsesRemoteCompute == true
+            ? PairedFindingStatus
+            : "Searching for streams...";
         PublishProgress();
 
         var outcome = new StreamResolutionOutcome();
@@ -80,9 +92,63 @@ public class StreamResolutionOrchestrator(
         var streamCount = 0;
         Task<PlaybackResult?>? playbackTask = null;
 
+        if (localLanPlayService != null
+            && !localLanPlayService.UsesRemoteCompute
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+        {
+            logger.LogWarning("[StreamResolution] Local LAN service is unavailable — aborting stream resolution");
+            _status = "Local service unavailable";
+            outcome.LocalServiceUnavailable = true;
+            _isResolving = false;
+            PublishProgress();
+            return outcome;
+        }
+
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
         var orderedStreams = orderedCandidates.Select(c => c.Stream).ToList();
+        // First play follows catalog order. FillWindow may finish a later FB
+        // while an earlier /mp is still in flight; hold that FB until every
+        // lower index has yielded so playback still starts on the earlier row.
+        var catalogIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < orderedStreams.Count; i++)
+            catalogIndex[orderedStreams[i]] = i;
+        var resolvedCatalog = new HashSet<int>();
+        var heldHealthy = new SortedDictionary<int, EnrichedStream>();
+        var nextExtraIndex = orderedStreams.Count;
+
+        // Candidate testing must stop the moment the user closes the player. Without this the loop below
+        // only noticed the close when the resolver next yielded a stream, so after Back the homepage kept
+        // showing the "Finding streams" modal for as long as the remaining candidates took to test.
+        using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        void FlushReadyForPlayback()
+        {
+            var frontier = 0;
+            while (frontier < orderedStreams.Count && resolvedCatalog.Contains(frontier))
+                frontier++;
+
+            var ready = heldHealthy
+                .Where(pair => pair.Key < frontier || frontier >= orderedStreams.Count)
+                .Select(pair => pair.Key)
+                .ToList();
+            foreach (var index in ready)
+            {
+                var readyStream = heldHealthy[index];
+                heldHealthy.Remove(index);
+                streamSwitchingService.AddHealthyStream(readyStream);
+                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                PublishProgress();
+
+                if (!hasPlayedFirstStream)
+                {
+                    hasPlayedFirstStream = true;
+                    playbackTask = PlayStreamAsync(game, readyStream, launcher, cancellationToken);
+                    CancelEnumerationWhenUserCloses(playbackTask, enumerationCts);
+                }
+            }
+        }
+
         if (orderedStreams.Count == 0)
         {
             _status = "No streams found";
@@ -92,10 +158,12 @@ public class StreamResolutionOrchestrator(
             return outcome;
         }
 
-        // Candidate testing must stop the moment the user closes the player. Without this the loop below
-        // only noticed the close when the resolver next yielded a stream, so after Back the homepage kept
-        // showing the "Finding streams" modal for as long as the remaining candidates took to test.
-        using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // LAN discovery stays the fast path. The foreground service is only
+        // held while this session is actually resolving through the paired host,
+        // and it stays up across every candidate in the loop below.
+        var relayed = localLanPlayService?.UsesRemoteCompute == true
+            && !await localLanPlayService.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        using var relayKeepAlive = RelayKeepAliveHold.Start(keepAlive, relayed);
 
         try
         {
@@ -127,6 +195,11 @@ public class StreamResolutionOrchestrator(
                 _streamsTested++;
                 PublishProgress();
 
+                var index = catalogIndex.TryGetValue(enrichedStream.Stream, out var known)
+                    ? known
+                    : nextExtraIndex++;
+                resolvedCatalog.Add(index);
+
                 if (enrichedStream.Status == StreamResolutionStatus.Failed)
                 {
                     _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
@@ -136,30 +209,35 @@ public class StreamResolutionOrchestrator(
                 {
                     _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
                         cancellationToken);
+                    heldHealthy[index] = enrichedStream;
                 }
 
-                if (enrichedStream.Status != StreamResolutionStatus.Healthy)
-                {
-                    continue;
-                }
-
-                streamSwitchingService.AddHealthyStream(enrichedStream);
-                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-                PublishProgress();
-
-                if (!hasPlayedFirstStream)
-                {
-                    hasPlayedFirstStream = true;
-                    // Start playback without awaiting so stream testing can continue
-                    playbackTask = PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
-                    CancelEnumerationWhenUserCloses(playbackTask, enumerationCts);
-                }
+                // Start playback without awaiting so stream testing can continue.
+                FlushReadyForPlayback();
             }
-            }
-        catch (OperationCanceledException) when (enumerationCts.IsCancellationRequested
-                                                 && !cancellationToken.IsCancellationRequested)
+
+            FlushReadyForPlayback();
+        }
+        catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {
-            // Stopped because the player was closed by the user; the playback result is handled below.
+            // Close cancels the resolve CTS while PlayVideoAsync already completed
+            // with "User closed" — prefer that outcome over a bare cancel.
+            var playbackResult = await playbackTask;
+            outcome.PlaybackResult = playbackResult;
+            if (playbackResult?.Message?.Contains("User closed", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                outcome.UserClosed = true;
+            }
+
+            _isResolving = false;
+            PublishProgress();
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            _isResolving = false;
+            PublishProgress();
+            throw;
         }
 
         // Wait for playback to complete if it was started
@@ -191,8 +269,27 @@ public class StreamResolutionOrchestrator(
 
         if (_healthyStreamCount == 0)
         {
-            _status = "No working streams found";
-            outcome.NoWorkingStreams = true;
+            var remoteError = localLanPlayService?.LastRemoteComputeError;
+            if (!string.IsNullOrWhiteSpace(remoteError))
+            {
+                _status = remoteError;
+                outcome.RemoteComputeError = remoteError;
+            }
+            else if (localLanPlayService?.UsesRemoteCompute == true)
+            {
+                _status = "No working streams found";
+                outcome.NoWorkingStreams = true;
+            }
+            else if (localLanPlayService != null && !await localLanPlayService.IsAvailableAsync(cancellationToken))
+            {
+                _status = "Local service unavailable";
+                outcome.LocalServiceUnavailable = true;
+            }
+            else
+            {
+                _status = "No working streams found";
+                outcome.NoWorkingStreams = true;
+            }
             PublishProgress();
         }
 
@@ -322,7 +419,7 @@ public class StreamResolutionOrchestrator(
         };
         launcher.BufferingStateChanged += bufferingHandler;
 
-        var reportingTask = StartPlaybackHealthReportingAsync(enrichedStream.Stream, launcher, playbackCts.Token);
+        var reportingTask = StartPlaybackHealthReportingAsync(game, enrichedStream.Stream, launcher, playbackCts.Token);
         PlaybackResult? result;
         try
         {
@@ -372,14 +469,15 @@ public class StreamResolutionOrchestrator(
     }
 
     private async Task StartPlaybackHealthReportingAsync(
+        Game game,
         StreamModel stream,
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken)
     {
         try
         {
-            var hasReportedMetadata = false;
             var streamName = StreamHealthIdentity.GetStreamName(stream);
+            var softRefreshTicks = 0;
 
             // Wait for player to initialize and extract metadata
             // Windows MediaPlayer fires NaturalVideoSizeChanged after video decodes (~1-2s)
@@ -389,7 +487,6 @@ public class StreamResolutionOrchestrator(
             var initialMetrics = launcher.GetCurrentMetrics();
             _ = streamHealthReporter.ReportPlaybackStartedAsync(stream.Url, null, streamName, initialMetrics,
                 cancellationToken);
-            hasReportedMetadata = initialMetrics?.Resolution.HasValue == true;
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -405,6 +502,13 @@ public class StreamResolutionOrchestrator(
                 // Report periodic metrics without duplicating metadata
                 _ = streamHealthReporter.ReportPlaybackMetricsAsync(stream.Url, null, streamName, metrics,
                     cancellationToken);
+
+                // Soft-refresh recommendations about every 60s (every other 30s tick).
+                softRefreshTicks++;
+                if (softRefreshTicks % 2 == 0)
+                {
+                    _ = EnsureFreshRecommendationsAsync(game, force: false, cancellationToken);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -414,6 +518,42 @@ public class StreamResolutionOrchestrator(
 
     private async Task HandleNextStreamRequestedAsync(Game game, CancellationToken cancellationToken)
     {
+        var wouldWrap = streamSwitchingService.WouldWrapOnNext();
+        var recommendations = await EnsureFreshRecommendationsAsync(
+            game,
+            force: wouldWrap,
+            cancellationToken);
+
+        if (wouldWrap && recommendations != null)
+        {
+            ApplyWraparoundReorder(recommendations);
+        }
+
+        var current = streamSwitchingService.GetCurrentStream();
+        var healthy = streamSwitchingService.GetHealthyStreams();
+
+        // Only on wraparound: jump to a high-confidence recommended peer.
+        // Mid-cycle Next must walk every healthy stream (UI total), otherwise
+        // users bounce between the 2–3 recommended chips forever.
+        if (StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrap)
+            && recommendations != null)
+        {
+            var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
+            if (preferred != null
+                && streamSwitchingService.SwitchToMatchingStream(
+                    preferred.Stream.Url,
+                    StreamHealthIdentity.GetStreamName(preferred.Stream)))
+            {
+                logger.LogInformation(
+                    "[StreamResolution] Wraparound switched to preferred recommended stream {Channel}",
+                    preferred.Stream.Channel);
+                _status = "Switched to recommended stream";
+                PublishProgress();
+                PrefetchUpcomingStreamUrl(game, cancellationToken);
+                return;
+            }
+        }
+
         var nextStream = streamSwitchingService.GetNextHealthyStream();
         if (nextStream == null)
         {
@@ -460,6 +600,76 @@ public class StreamResolutionOrchestrator(
             _status = "Switched to next stream";
             PublishProgress();
             PrefetchUpcomingStreamUrl(game, cancellationToken);
+        }
+    }
+
+    private async Task<RecommendationResponse?> EnsureFreshRecommendationsAsync(
+        Game game,
+        bool force,
+        CancellationToken cancellationToken)
+    {
+        var cached = selectionCoordinator.LatestRecommendations;
+        if (!force
+            && !StreamRecommendationPolicy.IsStale(
+                cached,
+                DateTimeOffset.UtcNow,
+                StreamRecommendationPolicy.HardRefreshMaxAge))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var fresh = await streamHealthService.GetRecommendationsAsync(
+                game.ApiLeague,
+                game.Home,
+                game.Away,
+                cancellationToken);
+            if (fresh != null)
+            {
+                selectionCoordinator.RememberRecommendations(fresh);
+                logger.LogInformation(
+                    "[StreamResolution] Refreshed recommendations (force={Force}, count={Count}, generatedAt={GeneratedAt})",
+                    force,
+                    fresh.Recommended?.Count ?? 0,
+                    fresh.GeneratedAt);
+            }
+
+            return fresh ?? cached;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamResolution] Recommendation refresh failed");
+            return cached;
+        }
+    }
+
+    private void ApplyWraparoundReorder(RecommendationResponse recommendations)
+    {
+        var healthy = streamSwitchingService.GetHealthyStreams();
+        if (healthy.Count <= 1 || recommendations.Recommended is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var preferred = new List<EnrichedStream>();
+        foreach (var item in recommendations.Recommended
+                     .OrderByDescending(r => StreamTestOrderPolicy.RankConfidence(r.Confidence)))
+        {
+            var match = healthy.FirstOrDefault(candidate =>
+                StreamHealthIdentity.MatchesRecommendation(candidate.Stream, item.Url, item.StreamName));
+            if (match != null && !preferred.Contains(match))
+            {
+                preferred.Add(match);
+            }
+        }
+
+        if (preferred.Count > 0)
+        {
+            streamSwitchingService.ReorderHealthyStreams(preferred);
+            logger.LogInformation(
+                "[StreamResolution] Wraparound reordered healthy pool by recommendations ({Count} preferred)",
+                preferred.Count);
         }
     }
 
@@ -563,5 +773,29 @@ public class StreamResolutionOrchestrator(
             StreamsTested = _streamsTested,
             HealthyStreams = _healthyStreamCount
         });
+    }
+
+    /// <summary>
+    /// Starts <see cref="IRemoteComputeKeepAlive"/> for one relayed resolve
+    /// session and stops it when <see cref="StartCoreAsync"/> returns.
+    /// </summary>
+    private sealed class RelayKeepAliveHold : IDisposable
+    {
+        private readonly IRemoteComputeKeepAlive? _keepAlive;
+
+        private RelayKeepAliveHold(IRemoteComputeKeepAlive? keepAlive) => _keepAlive = keepAlive;
+
+        public static RelayKeepAliveHold Start(IRemoteComputeKeepAlive? keepAlive, bool hold)
+        {
+            if (!hold)
+            {
+                return new RelayKeepAliveHold(null);
+            }
+
+            keepAlive?.Start();
+            return new RelayKeepAliveHold(keepAlive);
+        }
+
+        public void Dispose() => _keepAlive?.Stop();
     }
 }

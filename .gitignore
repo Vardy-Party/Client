@@ -9,6 +9,8 @@
 *.user
 *.userosscache
 *.sln.docstates
+.cookie
+*.cookie
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -351,6 +353,10 @@ ASALocalRun/
 # Local History for Visual Studio
 .localhistory/
 
+# Local secrets — never commit (sync to GitHub with scripts/sync-github-secrets-from-env.ps1)
+.env
+.env.local
+
 # BeatPulse healthcheck temp database
 healthchecksdb
 
@@ -371,3 +377,7 @@ FodyWeavers.xsd
 
 # Build-generated (GenerateBuildInfo now writes to obj/, but older branches still write here)
 VardyParty/Resources/Raw/buildinfo.txt
+
+# Local Auth0/API merge for -p:PatchAppSettings=true (never commit)
+VardyParty/appsettings.local.json
+VardyParty.Desktop/appsettings.local.json

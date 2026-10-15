@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using VardyParty.Auth;
 using VardyParty.Catalog;
 using VardyParty.Playback;
+using VardyParty.Ports;
 using VardyParty.Streaming;
 
 namespace VardyParty.Hosting;
@@ -19,25 +21,46 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<Auth0ApiTokenHandler>();
         services.AddTransient<M3U8HttpHandler>();
 
+        services.TryAddSingleton<LocalServiceConnection>();
+        services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
+        services.TryAddSingleton<IRemoteComputePreferences, InMemoryRemoteComputePreferences>();
+        services.TryAddSingleton<IRemoteComputeKeepAlive, NoopRemoteComputeKeepAlive>();
+        services.AddSingleton<IRemoteComputePlay, RemoteComputePlayClient>();
+        services.AddHttpClient<IRemoteComputeController, RemoteComputeController>()
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>();
+        services.TryAddSingleton<IDnsOverHttpsEndpoint, CloudflareDnsOverHttpsEndpoint>();
+        services.AddSingleton<CloudflareDnsOverHttpsClient>();
+        services.AddSingleton<IDnsOverHttpsClient>(sp => sp.GetRequiredService<CloudflareDnsOverHttpsClient>());
+        services.AddSingleton<IHostNameResolver, SystemThenDohHostNameResolver>();
+
+        SocketsHttpHandler CreateHandler(IServiceProvider sp, bool ignoreSsl = false, bool useCookies = true) =>
+            DualStackSocketsHttpHandler.Create(
+                ignoreSslCertificateErrors: ignoreSsl,
+                useCookies: useCookies,
+                hostNameResolver: sp.GetRequiredService<IHostNameResolver>());
+
         services.AddHttpClient(Auth0HttpClients.Name)
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
 
         services.AddHttpClient(PlaybackHttpClients.Probe)
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create())
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
             .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
 
-        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>();
+        services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>(LocalLanPlayHttpClient.Name)
+            .AddHttpMessageHandler<Auth0ApiTokenHandler>()
+            .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(3));
+        services.AddSingleton<ILocalLanDnsNotifier, LocalLanDnsNotifier>();
 
         services.AddHttpClient<IBbcFixturesService, BbcFixturesService>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
 
         services.AddHttpClient<IStreamHealthService, StreamHealthService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create(ignoreSslCertificateErrors));
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp, ignoreSslCertificateErrors));
 
         services.AddHttpClient<ApiService>()
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create(ignoreSslCertificateErrors))
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp, ignoreSslCertificateErrors))
             .ConfigureHttpClient(client =>
             {
                 client.DefaultRequestHeaders.TryAddWithoutValidation(
@@ -51,11 +74,34 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
+
+        // Named client for Android ExoPlayer / managed media fetches (DoH-aware).
+        // Timeout is infinite so Media3 Open/Close own stall detection.
+        services.AddHttpClient(PlaybackHttpClients.Media)
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
+            .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.MediaTimeout);
 
         services.AddHttpClient("StreamApi")
             .AddHttpMessageHandler<M3U8HttpHandler>()
-            .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create(useCookies: true));
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp, useCookies: true));
+
+        services.AddHttpClient(GitHubDesktopUpdateService.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri("https://api.github.com/");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "VardyParty-Client");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/vnd.github+json");
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
+
+        services.AddHttpClient(GitHubDesktopUpdateService.AssetHttpClientName, client =>
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "VardyParty-Client");
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/octet-stream");
+                client.Timeout = TimeSpan.FromMinutes(15);
+            })
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
 
         return services;
     }

@@ -8,7 +8,7 @@ name: CD - Package & Release
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
-  # Everything targets net11.0(-*): one preview SDK pin for every job.
+  # Everything targets net11.0(-*). 11.0.x is the latest SDK on the 11.0 channel.
   DOTNET_VERSION: "11.0.x"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
@@ -44,7 +44,7 @@ jobs:
     runs-on: windows-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -58,17 +58,16 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui --skip-manifest-update
       - name: Download Windows build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-windows
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -189,7 +188,9 @@ jobs:
       - name: Publish Windows app
         env:
           MSIX_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
+        # WindowsAppSDKSelfContained stays in VardyParty.csproj. A -p: flag is global
+        # and the Windows App SDK then requires a Windows architecture on HomeUi.
+        run: dotnet publish ${{ env.VARDYPARTY_CSPROJ }} -f net11.0-windows10.0.19041.0 -c Release -p:SelfContained=true -p:RunGenerateBuildInfo=true -p:RunGenerateSplash=true
       - name: Extract MSIX package
         run: |
           $searchRoots = @(
@@ -303,11 +304,11 @@ jobs:
           Write-Host "Installation script copied"
         shell: powershell
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./windows-artifacts
-          retention-days: 30
+          retention-days: 5
       - name: Publish Windows package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -317,10 +318,11 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls ./windows-artifacts/VardyParty-windows-v*-b*.msix | head -1)
+          CER_FILE=./windows-artifacts/vardyparty.cer
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$CER_FILE" --clobber
           fi
         shell: bash
 
@@ -329,7 +331,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -343,17 +345,16 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: dotnet workload install maui-android --ignore-failed-sources
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: "17"
           distribution: temurin
@@ -362,7 +363,7 @@ jobs:
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Download Android build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-android
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -509,11 +510,11 @@ jobs:
           ls -lh "$ARTIFACTS_DIR"
         shell: bash
       - name: Upload Android package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./android-package-artifacts
-          retention-days: 30
+          retention-days: 5
       - name: Publish Android package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -532,11 +533,12 @@ jobs:
 
   package-ios:
     name: Package iOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -550,10 +552,9 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -562,7 +563,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install ios --ignore-failed-sources
       - name: Download iOS build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-ios
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -635,11 +636,11 @@ jobs:
       - name: Create iOS package
         run: tar -czf VardyParty-ios-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-ios/ios-arm64 .
       - name: Upload iOS package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-ios-v*-b*.tar.gz
-          retention-days: 30
+          retention-days: 5
       - name: Publish iOS package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -658,10 +659,11 @@ jobs:
 
   package-macos:
     name: Package macOS
-    runs-on: macos-26
+    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -675,10 +677,9 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
@@ -687,7 +688,7 @@ jobs:
           dotnet workload install maui --ignore-failed-sources
           dotnet workload install maccatalyst --ignore-failed-sources
       - name: Download macOS build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-macos
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -760,11 +761,11 @@ jobs:
       - name: Create macOS package
         run: tar -czf VardyParty-macos-v${APP_DISPLAY_VERSION}-b${APP_BUILD_VERSION}.tar.gz -C VardyParty/bin/Release/net11.0-maccatalyst/maccatalyst-arm64 .
       - name: Upload macOS package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-package-v${{ steps.app_version.outputs.display }}-b${{ steps.app_version.outputs.build }}
           path: ./VardyParty-macos-v*-b*.tar.gz
-          retention-days: 30
+          retention-days: 5
       - name: Publish macOS package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -783,12 +784,14 @@ jobs:
 
   package-linux-x64:
     name: Package Linux x64 Snap
-    runs-on: ubuntu-latest
+    # core24 snap. Build on 24.04 so the self-contained binary's glibc
+    # matches the snap base and Ubuntu 24 hosts.
+    runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       HomeUiTargetFrameworks: net11.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -802,17 +805,16 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
         run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
         env:
           AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
@@ -828,18 +830,18 @@ jobs:
           API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
           chmod +x scripts/merge-appsettings-secrets.sh
-          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
-          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
+          scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Linux/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
           echo "OK: Linux appsettings enriched from Actions secrets"
         shell: bash
       - name: Publish Linux x64 application
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net11.0 -r linux-x64 -c Release --self-contained true -p:PublishSingleFile=false
       - name: Verify Linux icon exists
         run: |
-          ICON_PATH="VardyParty.Desktop/Assets/vardyparty.svg"
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
           if [ ! -f "$ICON_PATH" ]; then
             echo "ERROR: Linux icon not found at $ICON_PATH"
             exit 1
@@ -873,7 +875,7 @@ jobs:
           base: core24
           version: '__SNAP_VERSION__'
           summary: Vardy Party Linux client
-          description: Vardy Party desktop client packaged as a Snap.
+          description: Vardy Party Linux client packaged as a Snap.
           grade: devel
           confinement: classic
           platforms:
@@ -882,7 +884,7 @@ jobs:
           parts:
             app:
               plugin: dump
-              source: VardyParty.Desktop/bin/Release/net11.0/linux-x64/publish
+              source: VardyParty.Linux/bin/Release/net11.0/linux-x64/publish
               override-build: |
                 craftctl default
                 mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
@@ -896,13 +898,13 @@ jobs:
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
-                cp "$CRAFT_PROJECT_DIR/VardyParty.Desktop/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
                 export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/x86_64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
                 export VLC_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/vlc/plugins"
-                exec $SNAP/VardyPartyDesktop "$@"
+                exec $SNAP/VardyPartyLinux "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:
@@ -985,12 +987,28 @@ jobs:
             exit 1
           fi
           echo "OK: Linux x64 snap found at $OUTPUT_PATH"
+      - name: Sign Linux x64 snap
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "ERROR: MINISIGN_SECRET_KEY is required to sign Linux snaps"
+            exit 1
+          fi
+          SNAP=$(ls "$GITHUB_WORKSPACE"/VardyParty-linux-x64-v*+*.snap | head -1)
+          dotnet run --project Tools/VardyParty.Minisign/VardyParty.Minisign.csproj -c Release -- sign "$SNAP"
+          test -f "${SNAP}.minisig"
       - name: Upload Linux x64 package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x64-package-v${{ steps.snap_version.outputs.full }}
-          path: ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
-          retention-days: 30
+          path: |
+            ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap
+            ${{ github.workspace }}/VardyParty-linux-x64-v*+*.snap.minisig
+            ${{ github.workspace }}/packaging/minisign.pub
+          retention-days: 5
       - name: Publish Linux x64 package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -1000,21 +1018,24 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-x64-v*+*.snap | head -1)
+          SIG_FILE="${PACKAGE_FILE}.minisig"
+          PUB_FILE="$GITHUB_WORKSPACE/packaging/minisign.pub"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           fi
         shell: bash
 
   package-linux-arm64:
     name: Package Linux ARM64 Snap
+    # core24 snap, same glibc constraint as the x64 package job.
     runs-on: ubuntu-24.04-arm
     if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       HomeUiTargetFrameworks: net11.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion
@@ -1028,17 +1049,16 @@ jobs:
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
       - name: Setup .NET 11 preview
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          dotnet-quality: preview
           source-url: https://nuget.pkg.github.com/Vardy-Party/index.json
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
         run: dotnet workload install maui-tizen --ignore-failed-sources
       - name: Restore dependencies
-        run: dotnet restore VardyParty.Desktop/VardyParty.Desktop.csproj --ignore-failed-sources
+        run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
         env:
           AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
@@ -1054,18 +1074,18 @@ jobs:
           API_HEADLESSBASEURL: ${{ secrets.API_HEADLESSBASEURL }}
         run: |
           chmod +x scripts/merge-appsettings-secrets.sh
-          scripts/merge-appsettings-secrets.sh VardyParty.Desktop/appsettings.json
-          if grep -q "AllowUserSecrets" VardyParty.Desktop/appsettings.json; then
+          scripts/merge-appsettings-secrets.sh VardyParty.Linux/appsettings.json
+          if grep -q "AllowUserSecrets" VardyParty.Linux/appsettings.json; then
             echo "ERROR: AllowUserSecrets found in Linux appsettings.json"
             exit 1
           fi
           echo "OK: Linux appsettings enriched from Actions secrets"
         shell: bash
       - name: Publish Linux ARM64 application
-        run: dotnet publish VardyParty.Desktop/VardyParty.Desktop.csproj -f net11.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
+        run: dotnet publish VardyParty.Linux/VardyParty.Linux.csproj -f net11.0 -r linux-arm64 -c Release --self-contained true -p:PublishSingleFile=false
       - name: Verify Linux icon exists
         run: |
-          ICON_PATH="VardyParty.Desktop/Assets/vardyparty.svg"
+          ICON_PATH="VardyParty.Linux/Assets/vardyparty.svg"
           if [ ! -f "$ICON_PATH" ]; then
             echo "ERROR: Linux icon not found at $ICON_PATH"
             exit 1
@@ -1099,7 +1119,7 @@ jobs:
           base: core24
           version: '__SNAP_VERSION__'
           summary: Vardy Party Linux client
-          description: Vardy Party desktop client packaged as a Snap.
+          description: Vardy Party Linux client packaged as a Snap.
           grade: devel
           confinement: classic
           platforms:
@@ -1108,7 +1128,7 @@ jobs:
           parts:
             app:
               plugin: dump
-              source: VardyParty.Desktop/bin/Release/net11.0/linux-arm64/publish
+              source: VardyParty.Linux/bin/Release/net11.0/linux-arm64/publish
               override-build: |
                 craftctl default
                 mkdir -p "$CRAFT_PART_INSTALL/meta/gui"
@@ -1122,13 +1142,13 @@ jobs:
                 Type=Application
                 Categories=AudioVideo;Video;
                 DESKTOP
-                cp "$CRAFT_PROJECT_DIR/VardyParty.Desktop/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
+                cp "$CRAFT_PROJECT_DIR/VardyParty.Linux/Assets/vardyparty.svg" "$CRAFT_PART_INSTALL/meta/gui/vardyparty.svg"
                 mkdir -p "$CRAFT_PART_INSTALL/bin"
                 cat > "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper" << 'WRAPPER'
                 #!/bin/bash
                 export LD_LIBRARY_PATH="$SNAP/usr/lib:$SNAP/usr/lib/aarch64-linux-gnu:$SNAP/lib:$SNAP/lib/aarch64-linux-gnu:$SNAP/usr/lib/aarch64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
                 export VLC_PLUGIN_PATH="$SNAP/usr/lib/aarch64-linux-gnu/vlc/plugins"
-                exec $SNAP/VardyPartyDesktop "$@"
+                exec $SNAP/VardyPartyLinux "$@"
                 WRAPPER
                 chmod +x "$CRAFT_PART_INSTALL/bin/vardyparty-wrapper"
               stage-packages:
@@ -1211,12 +1231,28 @@ jobs:
             exit 1
           fi
           echo "OK: Linux ARM64 snap found at $OUTPUT_PATH"
+      - name: Sign Linux ARM64 snap
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "ERROR: MINISIGN_SECRET_KEY is required to sign Linux snaps"
+            exit 1
+          fi
+          SNAP=$(ls "$GITHUB_WORKSPACE"/VardyParty-linux-arm64-v*+*.snap | head -1)
+          dotnet run --project Tools/VardyParty.Minisign/VardyParty.Minisign.csproj -c Release -- sign "$SNAP"
+          test -f "${SNAP}.minisig"
       - name: Upload Linux ARM64 package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-arm64-package-v${{ steps.snap_version.outputs.full }}
-          path: ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
-          retention-days: 30
+          path: |
+            ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap
+            ${{ github.workspace }}/VardyParty-linux-arm64-v*+*.snap.minisig
+            ${{ github.workspace }}/packaging/minisign.pub
+          retention-days: 5
       - name: Publish Linux ARM64 package as Release asset
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
         env:
@@ -1226,10 +1262,12 @@ jobs:
         run: |
           set -e
           PACKAGE_FILE=$(ls $GITHUB_WORKSPACE/VardyParty-linux-arm64-v*+*.snap | head -1)
+          SIG_FILE="${PACKAGE_FILE}.minisig"
+          PUB_FILE="$GITHUB_WORKSPACE/packaging/minisign.pub"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           else
-            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" --clobber
+            gh release create "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --title "$RELEASE_NAME" --notes "Automated package release for $RELEASE_NAME" || gh release upload "$RELEASE_TAG" "$PACKAGE_FILE" "$SIG_FILE" "$PUB_FILE" --clobber
           fi
         shell: bash
 
@@ -1245,7 +1283,7 @@ jobs:
       - package-linux-arm64
     if: ${{ always() && github.ref == 'refs/heads/main' && github.event.inputs.produce_release_assets == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
       - name: Apply packaged ApplicationVersion

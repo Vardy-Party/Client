@@ -53,16 +53,11 @@ namespace VardyParty.Platforms.Android
             _playbackStateText = text;
             _isBuffering = buffering;
 
-            if (buffering)
-            {
-                ShowBufferingIndicator();
-                if (bufferingChanged) HideOverlayAnimated();
-            }
-            else
-            {
-                // Always hide (not only on a transition): cheap, and guarantees a stray visible spinner is cleared.
-                HideBufferingIndicator();
-            }
+            // The spinner follows PlaybackWaitChrome: while READY it shows only for a real stall (`_isBuffering` is
+            // the tracker's verdict, never raw isLoading) or an attach in flight; while idle/errored it stays up
+            // for failover. It is re-applied on every derivation so a stray visible spinner is always cleared.
+            RefreshWaitIndicator();
+            if (buffering && bufferingChanged) HideOverlayAnimated();
 
             if (bufferingChanged)
                 _engine.Raise(MediaEngineEvent.Buffering(CurrentAttachGeneration, buffering));

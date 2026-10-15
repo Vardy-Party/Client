@@ -16,8 +16,8 @@ namespace VardyParty.Presentation;
 public sealed record StreamResolutionOutcomePlan(bool ClearSelection, string? ErrorMessage);
 
 /// <summary>
-/// Shared outcome handling for the stream-resolution host pages (Desktop's
-/// DesktopHomePage and the MAUI head's HomeHostPage). Field failure this
+/// Shared outcome handling for the stream-resolution host pages
+/// (LinuxHomePage and the MAUI head's HomeHostPage). Field failure this
 /// codifies: the no-working-streams outcome left the picked game latched as
 /// the shell selection and surfaced nothing, so the card looked dead — the
 /// same-game guard ate every re-click until an app restart. EVERY terminal
@@ -37,7 +37,11 @@ public static class StreamResolutionOutcomeUx
     /// was a complete no-op — no overlay, no banner, nothing.
     /// </summary>
     public const string ResolverBusyMessage =
-        "Still finishing the previous stream — try again in a moment";
+        "Still finishing the previous stream search — try again in a moment";
+
+    /// <summary>Banner when LocalService is not running or unreachable on the LAN.</summary>
+    public const string LocalServiceUnavailableMessage =
+        "Local service unavailable. Ensure VardyParty Local Service is running on your LAN.";
 
     /// <summary>Fallback when playback failed without its own message.</summary>
     public const string StreamUnavailableMessage = "Stream unavailable";
@@ -50,6 +54,16 @@ public static class StreamResolutionOutcomeUx
         if (outcome.UserClosed)
         {
             return new StreamResolutionOutcomePlan(ClearSelection: true, ErrorMessage: null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(outcome.RemoteComputeError))
+        {
+            return new StreamResolutionOutcomePlan(ClearSelection: true, outcome.RemoteComputeError);
+        }
+
+        if (outcome.LocalServiceUnavailable)
+        {
+            return new StreamResolutionOutcomePlan(ClearSelection: true, LocalServiceUnavailableMessage);
         }
 
         if (outcome.NoWorkingStreams)

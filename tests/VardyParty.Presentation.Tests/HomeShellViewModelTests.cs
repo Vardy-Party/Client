@@ -54,9 +54,9 @@ public class HomeShellViewModelTests
     }
 
     [Fact]
-    public void DecideResumeAfterPlayer_AfterPick_ResumesWhenCurrentIsSameInstance()
+    public void DecideResumeAfterPlayer_AfterPick_ClearsWhenCurrentIsSameInstance()
     {
-        // Arrange
+        // Arrange — leaving the player must not restart finding-streams.
         var sut = new HomeShellViewModel();
         var game = _fixture.Build<Game>()
             .With(g => g.Home, "Home United")
@@ -72,7 +72,30 @@ public class HomeShellViewModelTests
             resolutionExhausted: false);
 
         // Assert
-        Assert.Equal(ResumeAfterPlayerAction.Resume, action);
+        Assert.Equal(ResumeAfterPlayerAction.Clear, action);
+    }
+
+    [Fact]
+    public void DecideResumeAfterPlayer_WhenUnauthenticated_ReturnsClear()
+    {
+        // Arrange
+        var sut = new HomeShellViewModel();
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .Create();
+        sut.OnUserPicked(game);
+        sut.MarkPlayerSessionStarted();
+
+        // Act
+        var action = sut.DecideResumeAfterPlayer(
+            isResolvingStreams: false,
+            currentGame: game,
+            resolutionExhausted: false,
+            isAuthenticated: false);
+
+        // Assert
+        Assert.Equal(ResumeAfterPlayerAction.Clear, action);
     }
 
     [Fact]

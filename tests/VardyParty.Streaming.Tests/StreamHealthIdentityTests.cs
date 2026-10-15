@@ -32,7 +32,6 @@ public class StreamHealthIdentityTests
     [Fact]
     public void GetStreamName_V2Stream_ReturnsPlayerStreamLabel()
     {
-        // Arrange
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match.html")
             .With(s => s.ResolutionStrategy, "v2")
@@ -40,11 +39,52 @@ public class StreamHealthIdentityTests
             .With(s => s.StreamStatus, "ready")
             .Create();
 
-        // Act
-        var name = StreamHealthIdentity.GetStreamName(stream);
+        Assert.Equal("Channel East", StreamHealthIdentity.GetStreamName(stream));
+    }
 
-        // Assert
-        Assert.Equal("Channel East", name);
+    [Fact]
+    public void GetStreamName_MpSourceWithoutV2Strategy_ReturnsPlayerStreamLabel()
+    {
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, string.Empty)
+            .With(s => s.PlayerStream, "SKA")
+            .With(s => s.Channel, "V2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+
+        Assert.Equal("SKA", StreamHealthIdentity.GetStreamName(stream));
+    }
+
+    [Fact]
+    public void GetStreamName_MpSource_ChannelChipAfterAutoselect_ReturnsChannel()
+    {
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.Channel, "Fubo US")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+
+        Assert.Equal("Fubo US", StreamHealthIdentity.GetStreamName(stream));
+    }
+
+    [Fact]
+    public void GetStreamName_MpSource_BadgeOnlyChannel_ReturnsNull()
+    {
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.com/match.html")
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.Channel, "V2")
+            .With(s => s.StreamStatus, "ready")
+            .Create();
+
+        Assert.Null(StreamHealthIdentity.GetStreamName(stream));
     }
 
     [Fact]

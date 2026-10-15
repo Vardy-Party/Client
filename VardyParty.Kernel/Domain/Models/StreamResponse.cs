@@ -85,8 +85,8 @@ public class Stream
 
 
     public bool RequiresV2StreamSelection =>
-
-        string.Equals(ResolutionStrategy, "v2", StringComparison.OrdinalIgnoreCase);
+        string.Equals(ResolutionStrategy, "v2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Source, "mp", StringComparison.OrdinalIgnoreCase);
 
 
 
@@ -101,29 +101,24 @@ public class Stream
         !IsCountdown && !string.IsNullOrWhiteSpace(Url);
 
     /// <summary>
-    /// Per-stream catalog badge from URL/strategy evidence, not game-level sources.
+    /// Per-stream catalog badge from <see cref="ResolutionStrategy"/> / <see cref="Source"/> —
+    /// not URL host sniffing.
     /// </summary>
     public string ResolveCatalogSource()
     {
-        // URL host is authoritative — never trust sticky Source/strategy on FB URLs.
-        if (IsMpStreamUrl(Url))
+        if (RequiresV2StreamSelection
+            || string.Equals(Source, "mp", StringComparison.OrdinalIgnoreCase))
         {
             return "mp";
         }
 
-        if (!string.IsNullOrWhiteSpace(Url))
+        if (string.Equals(ResolutionStrategy, "v1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Source, "fb", StringComparison.OrdinalIgnoreCase))
         {
             return "fb";
         }
 
-        if (RequiresV2StreamSelection)
-        {
-            return "mp";
-        }
-
-        return string.Equals(Source, "mp", StringComparison.OrdinalIgnoreCase) ? "mp"
-            : string.Equals(Source, "fb", StringComparison.OrdinalIgnoreCase) ? "fb"
-            : string.Empty;
+        return string.IsNullOrWhiteSpace(Source) ? string.Empty : Source.Trim().ToLowerInvariant();
     }
 
     public string CatalogSourceBadgeLabel =>
@@ -133,16 +128,6 @@ public class Stream
             "fb" => "FB",
             _ => string.Empty
         };
-
-    private static bool IsMpStreamUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return false;
-        }
-
-        return url.Contains("mpoutqn", StringComparison.OrdinalIgnoreCase);
-    }
 
 }
 

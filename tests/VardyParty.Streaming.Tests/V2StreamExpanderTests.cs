@@ -17,7 +17,7 @@ public class V2StreamExpanderTests
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/page")
+            .With(s => s.Url, "https://streams.example.test/page")
             .With(s => s.Channel, "Channel North")
             .With(s => s.ResolutionStrategy, string.Empty)
             .Create();
@@ -35,7 +35,7 @@ public class V2StreamExpanderTests
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Url, "https://streams.example.test/match")
             .With(s => s.ResolutionStrategy, "v2")
             .With(s => s.StreamStatus, "ready")
             .With(s => s.PlayerStreams, new List<string> { "Channel East", "Channel North", "Channel West" })
@@ -57,13 +57,14 @@ public class V2StreamExpanderTests
     }
 
     [Fact]
-    public void Expand_V2WithEmptyPlayerStreams_DropsEntry()
+    public void Expand_V2WithEmptyPlayerStreams_KeepsPageUrl()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Url, "https://streams.example.test/match")
             .With(s => s.Channel, "Channel South")
             .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
             .With(s => s.PlayerStreams, new List<string>())
             .Create();
 
@@ -71,21 +72,23 @@ public class V2StreamExpanderTests
         var result = V2StreamExpander.Expand([stream]);
 
         // Assert
-        Assert.Empty(result);
+        Assert.Single(result);
+        Assert.Same(stream, result[0]);
     }
 
     [Fact]
-    public void Expand_MixedFbAndEmptyMp_OnlyKeepsFb()
+    public void Expand_MixedFbAndEmptyMp_KeepsBoth()
     {
         // Arrange
         var fb = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/a")
+            .With(s => s.Url, "https://streams.example.test/a")
             .With(s => s.Channel, "Channel North")
             .With(s => s.ResolutionStrategy, "direct")
             .Create();
         var mp = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Url, "https://streams.example.test/match")
             .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, "ready")
             .With(s => s.PlayerStreams, new List<string>())
             .Create();
 
@@ -93,8 +96,9 @@ public class V2StreamExpanderTests
         var result = V2StreamExpander.Expand([fb, mp]);
 
         // Assert
-        Assert.Single(result);
+        Assert.Equal(2, result.Count);
         Assert.Same(fb, result[0]);
+        Assert.Same(mp, result[1]);
     }
 
     [Fact]
@@ -102,7 +106,7 @@ public class V2StreamExpanderTests
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://streams.example.com/match")
+            .With(s => s.Url, "https://streams.example.test/match")
             .With(s => s.ResolutionStrategy, "v2")
             .With(s => s.PlayerStreams, new List<string> { "Channel North", "channel north", "Channel West" })
             .Create();
@@ -112,5 +116,42 @@ public class V2StreamExpanderTests
 
         // Assert
         Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void RemainingFromLocalService_SkipsSelectedAndToolbarBlob()
+    {
+        // Arrange
+        var source = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://www.example-mp.test/football/match.html")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.PlayerStreams, new List<string>())
+            .Create();
+
+        // Act
+        var remaining = V2StreamExpander.RemainingFromLocalService(
+            source,
+            ["APK TV TG Chip A Chip B", "Chip A Chip B", "Chip A", "Chip B", "APK"],
+            "Chip A",
+            new VardyParty.LocalService.V2.V2PlaybackTransportPlugin());
+
+        // Assert
+        Assert.Equal(["Chip B"], remaining.Select(s => s.PlayerStream).ToList());
+        Assert.All(remaining, s => Assert.Equal(source.Url, s.Url));
+    }
+
+    [Fact]
+    public void ApplySelectedChip_FillsUnlabeledRow()
+    {
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.Channel, string.Empty)
+            .Create();
+
+        V2StreamExpander.ApplySelectedChip(stream, "Chip A");
+
+        Assert.Equal("Chip A", stream.PlayerStream);
+        Assert.Equal("Chip A", stream.Channel);
     }
 }

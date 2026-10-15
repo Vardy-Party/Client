@@ -1,3 +1,4 @@
+using VardyParty.Kernel;
 using VardyParty.Presentation;
 
 namespace VardyParty.HomeUi.Views;
@@ -47,6 +48,16 @@ public partial class HomeView : ContentView
     /// card that opened it (not the Menu button).
     /// </summary>
     public void RestoreFocusAfterOverlay() => RestoreTvCardFocus();
+
+    /// <summary>
+    /// Android TV only: after the native player closes, focus the watched
+    /// game if it is still on the board, otherwise the first card of the
+    /// first rail. Never the header Menu.
+    /// </summary>
+    public void RestoreFocusAfterStreamExit(Game? watched) =>
+        RestoreTvFocusAfterStreamExit(watched);
+
+    partial void RestoreTvFocusAfterStreamExit(Game? watched);
 
     /// <summary>
     /// Android TV only (HomeView.Tv.cs): (re)subscribes the menu focus trap
@@ -354,6 +365,10 @@ public partial class HomeView : ContentView
     private void OnShowAllClicked(object? sender, EventArgs e) => ViewModel?.ShowAllLeagues();
 
     private void OnResetClicked(object? sender, EventArgs e) => ViewModel?.ResetLeaguesToDefaults();
+
+    private void OnUpdateClicked(object? sender, EventArgs e) => ViewModel?.RequestUpdate();
+
+    private void OnRedeemRemoteComputeClicked(object? sender, EventArgs e) => ViewModel?.RedeemRemoteCompute();
 
     private void OnSignOutClicked(object? sender, EventArgs e) => ViewModel?.RequestSignOut();
 

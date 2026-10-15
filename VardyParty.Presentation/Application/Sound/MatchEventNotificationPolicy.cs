@@ -1,3 +1,4 @@
+using VardyParty.Kernel;
 using VardyParty.Ports;
 
 namespace VardyParty.Presentation;
@@ -9,7 +10,8 @@ namespace VardyParty.Presentation;
 ///
 /// - App foregrounded AND homepage is the active surface (no stream playing):
 ///   sting + toast + card flash.
-/// - Stream playing (native player open): toast only, NO audio.
+/// - Stream playing (native player open): toast + flash for OTHER games,
+///   never for the fixture whose stream is on screen; NO audio.
 /// - App minimized/background: nothing at all — events are dropped, never
 ///   queued for a catch-up on resume.
 /// - The "Goal notifications" toggle (default ON, persisted like the UI
@@ -23,7 +25,8 @@ namespace VardyParty.Presentation;
 /// the desktop head's native VLC window taking focus — deliberately does NOT
 /// count as background, or the "playing → toast only" row could never
 /// deliver on desktop), and the existing playback-visibility wiring sets
-/// <see cref="IsPlaybackActive"/>.
+/// <see cref="IsPlaybackActive"/>. <c>SelectionState.CurrentGame</c> is the
+/// watched fixture while a stream is up.
 /// </summary>
 public sealed class MatchEventNotificationPolicy
 {
@@ -74,4 +77,20 @@ public sealed class MatchEventNotificationPolicy
     /// "UI sounds" toggle and playback suppression on top).
     /// </summary>
     public bool ShouldPlayAudio => ShouldPresent && !IsPlaybackActive;
+
+    /// <summary>
+    /// Per-event gate on top of <see cref="ShouldPresent"/>: while a stream
+    /// is playing, the watched fixture is silent (the viewer can see the
+    /// goal). Other live games still toast.
+    /// </summary>
+    public bool ShouldPresentEvent(MatchEvent matchEvent, Game? watchingGame)
+    {
+        ArgumentNullException.ThrowIfNull(matchEvent);
+
+        if (!ShouldPresent)
+            return false;
+
+        return !(IsPlaybackActive && HomePlaybackIntent.SameGame(watchingGame, matchEvent.Game));
+    }
 }
+

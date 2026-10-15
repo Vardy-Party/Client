@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <Import Project="..\Version.props" />
 
@@ -124,17 +124,25 @@
       <Message Importance="high" Text="GenerateBuildInfo: $(BuildTimestamp) commit=$(GitHash)" />
     </Target>
 
-    <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true -->
+    <!-- GenerateSplashWithBuildInfo disabled by default; enable by setting RunGenerateSplash=true.
+         SvgTextOutliner then replaces <text> with outlines of the bundled
+         Liberation Sans (SIL OFL). Runners do not need Arial or fonts-liberation. -->
     <Target Name="GenerateSplashWithBuildInfo" BeforeTargets="ProcessMauiAssets" DependsOnTargets="GenerateBuildInfo" Condition="'$(RunGenerateSplash)' == 'true'">
       <PropertyGroup>
-        <SplashFile>$(MSBuildProjectDirectory)\Resources\Splash\vardyparty_splash_generated.svg</SplashFile>
+        <!-- Combine, not a backslash literal. Exec does not normalize separators,
+             and Linux treats '\' as a filename character. -->
+        <SplashDirectory>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), 'Resources', 'Splash'))</SplashDirectory>
+        <SplashFile>$([System.IO.Path]::Combine($(SplashDirectory), 'vardyparty_splash_generated.svg'))</SplashFile>
+        <SvgTextOutlinerProject>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(MSBuildThisFileDirectory), '..', 'Tools', 'SvgTextOutliner', 'SvgTextOutliner.csproj'))))</SvgTextOutlinerProject>
         <BuildTimestamp Condition="'$(BuildTimestamp)' == ''">$([System.DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) UTC</BuildTimestamp>
         <GitHash Condition="'$(GitHash)' == ''">unknown</GitHash>
       </PropertyGroup>
-      <MakeDir Directories="$(MSBuildProjectDirectory)\Resources\Splash" />
+      <MakeDir Directories="$(SplashDirectory)" />
       <ItemGroup>
         <_SplashLines Include="&lt;svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'&gt;" />
-        <_SplashLines Include="&lt;rect width='512' height='512' fill='#003090'/&gt;" />
+        <!-- No full-bleed rect: MauiSplashScreen Color paints the screen. A
+             matching rect made Android 12+ phones a solid blue circle (the
+             system splash masks the image). Logo + build lines stay in the SVG. -->
 
 		<!-- Soccer Ball Logo (centered at 256, 160) -->
 		<_SplashLines Include="&lt;g transform='translate(256, 160)'&gt;" />
@@ -146,13 +154,28 @@
 		<_SplashLines Include="&lt;path d='M 0,-8 L 35,18 L -35,18 Z' fill='#D5D5D5'/&gt;" />
 		<_SplashLines Include="&lt;/g&gt;" />
 
-		<_SplashLines Include="&lt;text x='256' y='330' font-size='44' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='700' text-anchor='middle'&gt;VardyParty&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='380' font-size='24' fill='#ffffff' font-family='Arial, Helvetica, sans-serif' font-weight='600' text-anchor='middle'&gt;Version $(ApplicationDisplayVersion)&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'&gt;Commit: $(GitHash)&lt;/text&gt;" />
-		<_SplashLines Include="&lt;text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Arial, Helvetica, sans-serif' text-anchor='middle'&gt;Built: $(BuildTimestamp)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='330' font-size='44' fill='#ffffff' font-family='Liberation Sans' font-weight='700' text-anchor='middle'&gt;VardyParty&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='380' font-size='24' fill='#ffffff' font-family='Liberation Sans' font-weight='600' text-anchor='middle'&gt;Version $(ApplicationDisplayVersion)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='415' font-size='20' fill='#e0e0e0' font-family='Liberation Sans' text-anchor='middle'&gt;Commit: $(GitHash)&lt;/text&gt;" />
+		<_SplashLines Include="&lt;text x='256' y='445' font-size='18' fill='#f0f0f0' font-family='Liberation Sans' text-anchor='middle'&gt;Built: $(BuildTimestamp)&lt;/text&gt;" />
 		<_SplashLines Include="&lt;/svg&gt;" />
 	  </ItemGroup>
       <WriteLinesToFile File="$(SplashFile)" Lines="@(_SplashLines)" Overwrite="true" />
+      <!-- Resizetizer 11 RC2 crashes on SVG <text> (dotnet/maui#38507) on
+           Windows, iOS, and Mac Catalyst. Outline the labels before assets run.
+           Publish does not restore this tool (it is not a ProjectReference).
+           Restore in its own process so project.assets.json exists, then build
+           in-process. Drop the app SelfContained flag and RID so the tool stays
+           a net11.0 exe when the publish is Windows or Android. -->
+      <Exec Command="dotnet restore &quot;$(SvgTextOutlinerProject)&quot;" />
+      <MSBuild Projects="$(SvgTextOutlinerProject)"
+               Targets="Build"
+               Properties="Configuration=Release;TargetFramework=net11.0"
+               RemoveProperties="SelfContained;RuntimeIdentifier;RuntimeIdentifiers">
+        <Output TaskParameter="TargetOutputs" ItemName="_SvgTextOutlinerAssembly" />
+      </MSBuild>
+      <Exec Command="dotnet exec &quot;%(_SvgTextOutlinerAssembly.Identity)&quot; &quot;$(SplashFile)&quot;"
+            WorkingDirectory="$(MSBuildThisFileDirectory).." />
     </Target>
 
     <!-- Auto-sync Package.appxmanifest version from .csproj properties for Windows builds -->
@@ -168,9 +191,13 @@
     </Target>
 
 
-    <!-- Splash uses generated SVG with build info -->
+    <!-- Splash uses generated SVG with build info (TV full window + phone overlay). -->
     <ItemGroup>
       <MauiSplashScreen Include="Resources\Splash\vardyparty_splash_generated.svg" Color="#003090" BaseSize="456,456" />
+      <!-- Ball-only, for Android 12+ 108dp circular system splash. -->
+      <MauiImage Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'"
+                 Include="Resources\Splash\vardyparty_splash.svg"
+                 BaseSize="288,288" />
     </ItemGroup>
 
     <ItemGroup>
@@ -181,7 +208,8 @@
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
         
-        <!-- Android TV Banner (wide asset — not the phone launcher icon) -->
+        <!-- Android TV Banner (wide asset — not the phone launcher icon).
+             The title is a Liberation Sans path, not <text>: Resizetizer crashes on SVG text. -->
         <MauiImage Include="Resources\AppIcon\banner.svg" BaseSize="320,180" />
 
 
@@ -214,12 +242,13 @@
     <!-- Retain default MAUI AppCompat layout -->
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0-preview.7.26381.103" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="11.0.0-preview.7.26381.103" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0-preview.7.26381.103" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.7.26406.9" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0-preview.7.26381.103" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.0-preview.7.26381.103" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.*-*" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="11.0.*-*" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.*-*" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.*-*" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.*-*" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="11.0.*-*" />
+        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.*-*" Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'" />
         <PackageReference Include="Auth0.OidcClient.MAUI" Version="1.4.0" />
         <PackageReference Include="QRCoder" Version="1.7.0" />
     </ItemGroup>
@@ -305,26 +334,26 @@
 
   <ItemGroup>
     <!--
-        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Desktop,
+        HomeUi cross-targets (net11.0 drawn by Avalonia in VardyParty.Linux,
         net11.0-android/-windows compiled natively into this head).
         Directory.Build.targets strips TargetFramework off every
         ProjectReference, which breaks the cross-targeting reference protocol
         (no compiled output comes back) - so this one reference keeps
-        TargetFramework negotiation and only strips the RID/SelfContained
+        TargetFramework negotiation and only strips the RID/SelfContained/WindowsAppSDKSelfContained
         globals.
     -->
     <ProjectReference Include="..\VardyParty.HomeUi\VardyParty.HomeUi.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;WindowsAppSDKSelfContained</GlobalPropertiesToRemove>
     </ProjectReference>
     <!-- Strip MAUI TargetFrameworks/RID so net11.0 domain libraries restore as net11.0, not NETSDK1005. -->
     <ProjectReference Include="..\VardyParty.Hosting\VardyParty.Hosting.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;WindowsAppSDKSelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
     <ProjectReference Include="..\VardyParty.Playback\VardyParty.Playback.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;WindowsAppSDKSelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
     <ProjectReference Include="..\VardyParty.Presentation\VardyParty.Presentation.csproj">
-      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
+      <GlobalPropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;SelfContained;WindowsAppSDKSelfContained;TargetFramework;TargetFrameworks</GlobalPropertiesToRemove>
     </ProjectReference>
   </ItemGroup>
 
@@ -350,6 +379,11 @@
     <!-- CI: signing disabled (no cert). CD: PFX decoded from secrets. Local: thumbprint from cert store (above). -->
     <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
       <WindowsPackageType>MSIX</WindowsPackageType>
+      <!-- Release MSIX includes .NET 11 and the Windows App SDK. A normal PC
+           does not have the .NET 11 preview, so a framework-dependent package
+           cannot start. Debug builds stay framework-dependent. -->
+      <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
+      <WindowsAppSDKSelfContained Condition="'$(Configuration)' == 'Release'">true</WindowsAppSDKSelfContained>
       <CertificateFilePath>$(MSBuildProjectDirectory)\certs\vardyparty.pfx</CertificateFilePath>
       <!-- PFX exists (CD): override to sign with PFX file -->
       <AppxPackageSigningEnabled Condition="Exists('$(CertificateFilePath)')">true</AppxPackageSigningEnabled>
@@ -456,17 +490,47 @@
         <Exec Command="powershell -NoProfile -Command &quot;(Get-Content '$(ManifestPath)') -replace 'Version=&quot;[\d.]+&quot;', 'Version=&quot;$(WindowsVersion)&quot;' | Set-Content '$(ManifestPath)'&quot;" />
     </Target>
 
-    <!-- Local Development: Patch appsettings.json with user secrets for Android builds -->
-    <!-- Usage: dotnet build -f net11.0-android -p:PatchAppSettings=true -->
-    <!-- This patches the SOURCE appsettings.json BEFORE build so it gets embedded into APK -->
-    <!-- WARNING: This modifies the source file. Revert with: git restore VardyParty\appsettings.json -->
-    <Target Name="PatchAppSettingsForLocalAndroid" BeforeTargets="BeforeBuild" Condition="'$(TargetFramework)' == 'net11.0-android' AND '$(PatchAppSettings)' == 'true'">
+    <!-- .NET Android preview can run CoreCompile with an empty
+         _CoreCompileResourceInputs list (Non-Resx EmbeddedResources never reach
+         csc). Force appsettings.json onto the Csc Resources list so MauiProgram's
+         GetManifestResourceStream("VardyParty.appsettings.json") works. -->
+    <Target Name="EnsureAppSettingsEmbeddedResource"
+            BeforeTargets="CoreCompile"
+            Condition="'$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0'">
+        <!-- Preview SDKs sometimes omit Non-Resx EmbeddedResources from csc; force one entry.
+             Remove any existing appsettings.json compile input first (CS1508 if duplicated). -->
+        <ItemGroup>
+            <_AppSettingsCompileResource Include="@(_CoreCompileResourceInputs)"
+                                         Condition="'%(Filename)%(Extension)' == 'appsettings.json'" />
+            <_CoreCompileResourceInputs Remove="@(_AppSettingsCompileResource)" />
+            <_CoreCompileResourceInputs Include="@(EmbeddedResource)"
+                                        Condition="'%(Filename)%(Extension)' == 'appsettings.json'">
+                <LogicalName>VardyParty.appsettings.json</LogicalName>
+                <Type>Non-Resx</Type>
+                <WithCulture>false</WithCulture>
+            </_CoreCompileResourceInputs>
+        </ItemGroup>
+        <Message Text="[BUILD] Ensuring EmbeddedResource appsettings.json is passed to CoreCompile" Importance="high" />
+    </Target>
+
+    <!-- Local Development: patch SOURCE appsettings.json from user-secrets so
+         MauiAsset + EmbeddedResource embed real Auth0/API values.
+         Usage: -p:PatchAppSettings=true
+         WARNING: modifies the source file. Restore: git restore VardyParty\appsettings.json
+         Runs immediately before CoreCompile/MauiAssets (and before
+         EnsureAppSettingsEmbeddedResource via target order below). -->
+    <Target Name="PatchAppSettingsForLocalAndroid"
+            BeforeTargets="EnsureAppSettingsEmbeddedResource;ProcessMauiAssets"
+            Condition="'$(PatchAppSettings)' == 'true' AND ('$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0')">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
-            <UserSecretsId>$(UserSecretsId)</UserSecretsId>
+            <ApiTargetArg Condition="'$(ApiTarget)' != ''">-ApiTarget &quot;$(ApiTarget)&quot;</ApiTargetArg>
         </PropertyGroup>
-        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE build (for embedding into APK)" Importance="high" />
-        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings-android.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot;" />
+        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE CoreCompile/MauiAssets" Importance="high" />
+        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot; $(ApiTargetArg)" />
+        <ItemGroup>
+            <CustomAdditionalCompileInputs Include="$(SourceAppSettingsPath)" />
+        </ItemGroup>
     </Target>
 
 </Project>

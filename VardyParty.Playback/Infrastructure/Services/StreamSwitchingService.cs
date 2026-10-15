@@ -68,21 +68,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
 
             // Always update overlay info so UI sees new totals and current stream metadata
-            var current = GetCurrentStream();
-            var overlay = current == null ? null : new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
         }
     }
 
@@ -122,20 +111,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _currentStreamSubject.OnNext(current);
 
             // Publish overlay info for UI/platform consumers
-            var overlay = new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                current,
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
 
             // No platform-specific actions here - consumers can subscribe to CurrentStreamIndexChanged
             // and HealthyStreamsUpdated to update UI or platform overlays as needed.
@@ -165,6 +144,100 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return nextIndex < _healthyStreams.Count ? _healthyStreams[nextIndex] : null;
         }
+    }
+
+    public bool WouldWrapOnNext()
+    {
+        lock (_healthyStreams)
+        {
+            if (_healthyStreams.Count == 0 || _currentStreamIndex < 0)
+            {
+                return false;
+            }
+
+            return ((_currentStreamIndex + 1) % _healthyStreams.Count) == 0;
+        }
+    }
+
+    public void ReorderHealthyStreams(IReadOnlyList<EnrichedStream> preferredFirst)
+    {
+        lock (_healthyStreams)
+        {
+            if (_healthyStreams.Count <= 1 || preferredFirst.Count == 0)
+            {
+                return;
+            }
+
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+
+            var seen = new HashSet<EnrichedStream>();
+            var reordered = new List<EnrichedStream>(_healthyStreams.Count);
+            foreach (var preferred in preferredFirst)
+            {
+                if (_healthyStreams.Contains(preferred) && seen.Add(preferred))
+                {
+                    reordered.Add(preferred);
+                }
+            }
+
+            foreach (var existing in _healthyStreams)
+            {
+                if (seen.Add(existing))
+                {
+                    reordered.Add(existing);
+                }
+            }
+
+            _healthyStreams.Clear();
+            _healthyStreams.AddRange(reordered);
+            if (current != null)
+            {
+                _currentStreamIndex = _healthyStreams.IndexOf(current);
+            }
+
+            _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
+        }
+    }
+
+    public bool SwitchToMatchingStream(string streamUrl, string? streamName)
+    {
+        lock (_healthyStreams)
+        {
+            for (var i = 0; i < _healthyStreams.Count; i++)
+            {
+                if (MatchesCatalogIdentity(_healthyStreams[i].Stream, streamUrl, streamName))
+                {
+                    return SwitchToStream(i);
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool MatchesCatalogIdentity(Kernel.Stream stream, string streamUrl, string? streamName)
+    {
+        if (!string.Equals(stream.Url, streamUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(streamName))
+        {
+            return true;
+        }
+
+        var label = !string.IsNullOrWhiteSpace(stream.PlayerStream)
+            ? stream.PlayerStream.Trim()
+            : stream.Channel?.Trim();
+        return !string.IsNullOrWhiteSpace(label)
+               && string.Equals(label, streamName.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<EnrichedStream> GetHealthyStreams()
@@ -224,21 +297,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
 
             // Publish updated overlay info
-            var current = GetCurrentStream();
-            var overlay = current == null ? null : new PlayerOverlayInfo
-            {
-                Index = GetCurrentStreamIndex(),
-                Total = _healthyStreams.Count,
-                Channel = current.Stream?.Channel,
-                BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
-                FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
-                VideoCodec = null,
-                AudioCodec = null,
-                AspectRatio = BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
-                Title = current.Stream?.Channel
-            };
-            _overlayInfoSubject.OnNext(overlay);
+            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                GetCurrentStream(),
+                GetCurrentStreamIndex(),
+                _healthyStreams.Count));
 
             return true;
         }
@@ -249,17 +311,5 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         _healthyStreamsSubject?.Dispose();
         _currentIndexSubject?.Dispose();
         _currentStreamSubject?.Dispose();
-    }
-
-    private static string? BuildAspect(string? resolution)
-    {
-        if (string.IsNullOrEmpty(resolution)) return null;
-        var parts = resolution.Split('x');
-        if (parts.Length != 2) return null;
-        if (!int.TryParse(parts[0], out var w)) return null;
-        if (!int.TryParse(parts[1], out var h)) return null;
-        int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
-        var g = gcd(w, h);
-        return $"{w / g}:{h / g}";
     }
 }

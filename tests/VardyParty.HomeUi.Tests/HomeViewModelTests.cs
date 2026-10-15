@@ -25,6 +25,7 @@ public sealed class HomeViewModelTests : IDisposable
     private readonly Mock<IHomeAssetLocator> _assets;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly MatchEventBus _bus = new();
+    private readonly SelectionState _selection = new();
     private readonly HomeViewModel _sut;
 
     public HomeViewModelTests()
@@ -50,7 +51,8 @@ public sealed class HomeViewModelTests : IDisposable
         var preferences = new InMemorySoundPreferencesStore();
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         _notifications = new MatchEventNotificationPolicy(preferences);
-        var menu = new MenuViewModel(_filter.Object, sounds, _notifications);
+        var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
@@ -59,7 +61,9 @@ public sealed class HomeViewModelTests : IDisposable
             sounds,
             _notifications,
             _bus,
-            NullLogger<HomeViewModel>.Instance);
+            _selection,
+            NullLogger<HomeViewModel>.Instance,
+            new NullDesktopUpdateService());
     }
 
     public void Dispose() => _sut.Dispose();
@@ -310,6 +314,22 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.True(_sut.HasError);
         Assert.Equal("catalog down", _sut.ErrorMessage);
         Assert.False(_sut.HasPendingWork);
+    }
+
+    [Fact]
+    public void FlushPendingApply_CatalogBoard_DoesNotBlankExistingBanner()
+    {
+        _sut.SetLanWarning("Local service unavailable. Ensure VardyParty Local Service is running on your LAN.");
+        _sut.FlushPendingApply();
+        Assert.True(_sut.HasError);
+
+        _sut.UpdateGames(CatalogWithOneGame());
+        _sut.SetServiceError(null);
+        _sut.FlushPendingApply();
+
+        Assert.True(_sut.HasError);
+        Assert.Contains("Local service unavailable", _sut.ErrorMessage, StringComparison.Ordinal);
+        Assert.True(_sut.HasGames);
     }
 
     [Fact]
@@ -638,6 +658,207 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Null(_sut.Toast.Current);
     }
 
+    [Fact]
+    public void FlushPendingApply_GoalOnWatchedGame_WhilePlaying_DeliversNothing()
+    {
+        var delivered = 0;
+        _bus.Published += _ => delivered++;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 0, awayScore: 0, minute: 10));
+        _sut.FlushPendingApply();
+        _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
+        _notifications.IsPlaybackActive = true;
+
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 23));
+        _sut.FlushPendingApply();
+
+        Assert.Equal(0, delivered);
+        Assert.Null(_sut.Toast.Current);
+    }
+
+    [Fact]
+    public void FlushPendingApply_GoalOnOtherGame_WhilePlaying_StillToasts()
+    {
+        var delivered = new List<MatchEvent>();
+        _bus.Published += delivered.Add;
+        _sut.UpdateGames(TwoLiveCatalog(homeA: 0, homeB: 0));
+        _sut.FlushPendingApply();
+        _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
+        _notifications.IsPlaybackActive = true;
+
+        _sut.UpdateGames(TwoLiveCatalog(homeA: 0, homeB: 1));
+        _sut.FlushPendingApply();
+
+        var matchEvent = Assert.Single(delivered);
+        Assert.Equal("River Town", matchEvent.Game.Home);
+        Assert.NotNull(_sut.Toast.Current);
+        Assert.Contains("River Town", _sut.Toast.Current!.Headline, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RemoteSettings_WhileCheckingAnInvite_ChangesTheButtonAndThenSaysPaired()
+    {
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+        sut.UseOtherLocalService = true;
+
+        Assert.Equal("Use their local-service", sut.RedeemButtonText);
+        Assert.True(sut.CanRedeem);
+        Assert.True(sut.ShowGuestEntry);
+
+        remote.RedeemBusy = true;
+        remote.Status = "Checking that invite code...";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.Equal("Checking…", sut.RedeemButtonText);
+        Assert.False(sut.CanRedeem);
+
+        remote.RedeemBusy = false;
+        remote.IsGuestPaired = true;
+        remote.Status = "Paired. This device uses that computer to find streams.";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.True(sut.CanRedeem);
+        Assert.True(sut.RemoteStatusIsPaired);
+        Assert.False(sut.RemoteStatusIsFault);
+        Assert.False(sut.ShowGuestEntry);
+        Assert.True(sut.UseOtherLocalService);
+        Assert.False(sut.ShowHostCompute);
+    }
+
+    [Fact]
+    public void RemoteSettings_WhenTheRelayFails_MarksTheStatusAsAFault()
+    {
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+        remote.Status = "Relay failed: Invite code is invalid or expired. Correlation id: abc";
+        remote.Notify();
+        sut.FlushPendingApply();
+
+        Assert.True(sut.RemoteStatusIsFault);
+        Assert.False(sut.RemoteStatusIsPaired);
+    }
+
+    [Fact]
+    public void RemoteSettings_ShareStaysOffUntilALocalServiceIsFound()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true };
+        using var sut = NewShell(remote);
+
+        // Act
+        sut.ShareComputeEnabled = true;
+        var beforeFound = remote.ShareSetCount;
+        sut.SetLocalServiceFound(true);
+        sut.FlushPendingApply();
+        sut.ShareComputeEnabled = true;
+
+        // Assert
+        Assert.Equal(0, beforeFound);
+        Assert.True(sut.CanShareLocalService);
+        Assert.False(sut.ShowShareNeedLocalService);
+        Assert.Equal(1, remote.ShareSetCount);
+        Assert.True(remote.ShareEnabled);
+    }
+
+    [Fact]
+    public void RemoteSettings_ShareSwitchStaysUsableWhileAlreadySharing()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true, ShareEnabled = true };
+
+        // Act
+        using var sut = NewShell(remote);
+
+        // Assert
+        Assert.True(sut.CanShareLocalService);
+        Assert.False(sut.ShowShareNeedLocalService);
+    }
+
+    [Fact]
+    public void RemoteSettings_GuestUsingOtherLocalService_CannotShare()
+    {
+        // Arrange
+        var remote = new SettingsRemote { HasRelayUser = true, IsGuestPaired = true };
+        using var sut = NewShell(remote);
+
+        // Act
+        sut.SetLocalServiceFound(true);
+        sut.FlushPendingApply();
+        sut.ShareComputeEnabled = true;
+
+        // Assert
+        Assert.True(sut.UseOtherLocalService);
+        Assert.False(sut.ShowHostCompute);
+        Assert.False(sut.CanShareLocalService);
+        Assert.Equal(0, remote.ShareSetCount);
+        Assert.False(remote.ShareEnabled);
+    }
+
+    private HomeViewModel NewShell(SettingsRemote remote)
+    {
+        var preferences = new InMemorySoundPreferencesStore();
+        var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
+        var notifications = new MatchEventNotificationPolicy(preferences);
+        var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns);
+        return new HomeViewModel(
+            _filter.Object,
+            menu,
+            _images.Object,
+            _assets.Object,
+            sounds,
+            notifications,
+            _bus,
+            _selection,
+            NullLogger<HomeViewModel>.Instance,
+            new NullDesktopUpdateService(),
+            remote);
+    }
+
+    private sealed class SettingsRemote : IRemoteComputeController
+    {
+        public bool ShareEnabled { get; set; }
+
+        public bool IsGuestPaired { get; set; }
+
+        public bool OffersRemoteCompute { get; set; } = true;
+
+        public bool HasRelayUser { get; set; }
+
+        public string InviteCode { get; set; } = "";
+
+        public string Status { get; set; } = "";
+
+        public bool RedeemBusy { get; set; }
+
+        public int ShareSetCount { get; private set; }
+
+        public event Action? Changed;
+
+        public void Notify() => Changed?.Invoke();
+
+        public Task SetShareEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+        {
+            ShareSetCount++;
+            ShareEnabled = enabled;
+            return Task.CompletedTask;
+        }
+
+        public Task RedeemAsync(string code, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task StopUsingRemoteAsync(CancellationToken cancellationToken = default)
+        {
+            IsGuestPaired = false;
+            return Task.CompletedTask;
+        }
+
+        public Task RefreshAccessAsync(CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
     private Dictionary<string, List<Game>> CatalogWithScoredGame(int homeScore, int awayScore, int minute)
     {
         var game = _fixture.Build<Game>()
@@ -664,6 +885,34 @@ public sealed class HomeViewModelTests : IDisposable
         return new Dictionary<string, List<Game>>
         {
             ["League Alpha"] = [game],
+        };
+    }
+
+    private Dictionary<string, List<Game>> TwoLiveCatalog(int homeA, int homeB)
+    {
+        var kickoff = DateTime.UtcNow.Date.AddHours(-1);
+        Game Live(string home, string away, int homeScore) => _fixture.Build<Game>()
+            .With(g => g.Home, home)
+            .With(g => g.Away, away)
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)20)
+            .With(g => g.HomeScore, (int?)homeScore)
+            .With(g => g.AwayScore, (int?)0)
+            .With(g => g.Start, kickoff)
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = [Live("Home United", "Away City", homeA), Live("River Town", "Lake Borough", homeB)],
         };
     }
 

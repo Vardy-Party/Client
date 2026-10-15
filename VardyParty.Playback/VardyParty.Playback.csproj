@@ -19,6 +19,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="VardyParty.Playback.Tests" />
+		<InternalsVisibleTo Include="VardyParty" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
 		<ProjectReference Include="..\VardyParty.Ports\VardyParty.Ports.csproj" />
 	</ItemGroup>

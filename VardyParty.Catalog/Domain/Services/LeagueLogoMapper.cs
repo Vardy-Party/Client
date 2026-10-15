@@ -58,6 +58,8 @@ public static class LeagueLogoMapper
             _ when Is("UEFA Champions League") || Is("Champions League") => "images/leagues/uefa-champions-league-logo-brandlogos.net_iyyz8y0dw.svg",
             _ when Is("UEFA Europa League") || Is("Europa League") => "images/leagues/uefa-europa-league-2024-logo-brandlogos.net_j9ualbg4k.svg",
             _ when Is("UEFA Conference League") || Is("Conference League") || Is("Europa Conference League") => "images/leagues/uefa-europa-conference-league-logo-75E25sU4_brandlogos.net.svg",
+            _ when Is("UEFA Nations League") => "images/leagues/uefa-nations-league.png",
+            _ when Is("Concacaf Nations League") => "images/leagues/concacaf-nations-league-2026.svg",
             _ when Is("GFF League") => "images/leagues/gambia_gambia-national-team.football-logos.cc.svg",
             _ when Is("Northern Super League") => "images/leagues/Northern_Super_League.svg",
             _ => string.Empty

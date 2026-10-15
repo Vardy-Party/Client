@@ -84,6 +84,23 @@ public class Auth0PkceTests
             Assert.Equal(candidate, uri.OriginalString);
     }
 
+    [Theory]
+    [InlineData("vardyparty://callback", null, Auth0Pkce.DefaultLinuxLoopbackRedirectUri)]
+    [InlineData("http://127.0.0.1:9999/cb", null, "http://127.0.0.1:9999/cb")]
+    [InlineData("vardyparty://callback", "http://127.0.0.1:5555/auth", "http://127.0.0.1:5555/auth")]
+    [InlineData("http://127.0.0.1:9999/cb", "http://127.0.0.1:5555/auth", "http://127.0.0.1:5555/auth")]
+    public void ResolveLinuxBrowserRedirectUri_PrefersOverrideThenLoopbackThenDefault(
+        string redirectUri,
+        string? loopbackOverride,
+        string expected)
+    {
+        // Act
+        var resolved = Auth0Pkce.ResolveLinuxBrowserRedirectUri(redirectUri, loopbackOverride);
+
+        // Assert
+        Assert.Equal(expected, resolved.OriginalString);
+    }
+
     [Fact]
     public void BuildListenerPrefix_UsesEffectivePortAndTrailingSlash()
     {

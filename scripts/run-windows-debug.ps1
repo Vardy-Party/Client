@@ -7,6 +7,12 @@
 #   pwsh ./scripts/run-windows-debug.ps1
 #   pwsh ./scripts/run-windows-debug.ps1 -Rebuild
 #   pwsh ./scripts/run-windows-debug.ps1 -NoLaunch
+#   pwsh ./scripts/run-windows-debug.ps1 -KeepPatchedAppSettings
+#
+# Secrets: committed VardyParty/appsettings.json is a template. This script
+# passes -p:PatchAppSettings=true so Auth0/API values from user-secrets are
+# embedded before the Windows layout is registered, then git-restores the
+# template (same contract as package-android.ps1).
 #
 # CS2012 / DLL locked (VBCSCompiler, Xaml.Markup.Compiler, stale VardyParty.exe):
 #   Get-Process VardyParty,VBCSCompiler -EA SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -Filter "Name LIKE '%Markup.Compiler%'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
@@ -16,7 +22,8 @@ param(
     [string]$Configuration = 'Debug',
 
     [switch]$Rebuild,
-    [switch]$NoLaunch
+    [switch]$NoLaunch,
+    [switch]$KeepPatchedAppSettings
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,7 +35,7 @@ $winOut = Join-Path $repoRoot "VardyParty\bin\$Configuration\net11.0-windows10.0
 # The MAUI head targets net11.0-*: fail fast when dotnet resolves to an older SDK.
 $sdkVersion = (& dotnet --version)
 if (-not $sdkVersion.StartsWith('11.')) {
-    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 preview SDK (11.0.100-preview.7 or later)."
+    throw "dotnet resolves to SDK $sdkVersion but the MAUI head needs the .NET 11 RC1 SDK (11.0.100-rc.1 or later)."
 }
 
 if (-not (Test-Path $project)) {
@@ -42,16 +49,44 @@ Write-Host "[$buildTarget] $project (Visual Studio-style Windows deploy)..."
 & dotnet restore (Join-Path $repoRoot 'VardyParty.Hosting\VardyParty.Hosting.csproj')
 
 # CI=true => Windows-only target graph (same effective output as VS Debug).
-& dotnet msbuild $project `
-    -t:$buildTarget `
-    -p:Configuration=$Configuration `
-    -p:TargetFramework=net11.0-windows10.0.19041.0 `
-    -p:CI=true `
-    -p:GenerateTestArtifacts=true `
-    -p:RunGenerateBuildInfo=true
+# PatchAppSettings embeds user-secrets into MauiAsset/EmbeddedResource;
+# empty Auth0:Domain becomes https:///authorize ("Malformed URL" on Sign in).
+$buildFailed = $false
+try {
+    & dotnet msbuild $project `
+        -t:$buildTarget `
+        -p:Configuration=$Configuration `
+        -p:TargetFramework=net11.0-windows10.0.19041.0 `
+        -p:CI=true `
+        -p:GenerateTestArtifacts=true `
+        -p:RunGenerateBuildInfo=true `
+        -p:PatchAppSettings=true
 
-if ($LASTEXITCODE -ne 0) {
-    throw "MSBuild $buildTarget failed with exit code $LASTEXITCODE"
+    if ($LASTEXITCODE -ne 0) {
+        $buildFailed = $true
+    }
+}
+finally {
+    if ($KeepPatchedAppSettings) {
+        Write-Host '-KeepPatchedAppSettings: leaving the patched VardyParty/appsettings.json in the working tree.'
+        Write-Host 'Revert it later with: git restore VardyParty/appsettings.json'
+    }
+    else {
+        Push-Location $repoRoot
+        try {
+            & git restore -- 'VardyParty/appsettings.json'
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning 'git restore VardyParty/appsettings.json failed — revert it manually before committing.'
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
+
+if ($buildFailed) {
+    throw "MSBuild $buildTarget failed"
 }
 
 $recipePath = Join-Path $winOut 'AppX\vs.appxrecipe'

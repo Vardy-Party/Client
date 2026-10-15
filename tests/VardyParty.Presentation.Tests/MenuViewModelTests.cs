@@ -95,8 +95,11 @@ public class MenuViewModelTests
     {
         var player = _fixture.GetMock<VardyParty.Ports.IUiSoundPlayer>();
         var prefs = _fixture.GetMock<VardyParty.Ports.ISoundPreferencesStore>();
+        var dnsPrefs = _fixture.GetMock<VardyParty.Ports.IDnsPreferencesStore>();
+        dnsPrefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
         _fixture.Inject(new UiSoundService(player.Object, prefs.Object));
         _fixture.Inject(new MatchEventNotificationPolicy(prefs.Object));
+        _fixture.Inject(new DnsOverHttpsPreference(dnsPrefs.Object));
         return (player, prefs);
     }
 
@@ -187,5 +190,34 @@ public class MenuViewModelTests
         // Assert
         prefs.Verify(p => p.SaveGoalNotificationsEnabled(true), Times.Once);
         Assert.True(sut.GoalNotificationsEnabled);
+    }
+
+    [Fact]
+    public void DnsOverHttpsFallbackEnabled_DefaultsOn_WhenNothingSaved()
+    {
+        // Arrange
+        InjectUiSounds();
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act & Assert
+        Assert.True(sut.DnsOverHttpsFallbackEnabled);
+    }
+
+    [Fact]
+    public void ToggleDnsOverHttpsFallback_TurnsOff_AndPersists()
+    {
+        // Arrange
+        InjectUiSounds();
+        var dnsPrefs = _fixture.GetMock<VardyParty.Ports.IDnsPreferencesStore>();
+        dnsPrefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
+        _fixture.Inject(new DnsOverHttpsPreference(dnsPrefs.Object));
+        var sut = _fixture.Create<MenuViewModel>();
+
+        // Act
+        sut.ToggleDnsOverHttpsFallback();
+
+        // Assert
+        dnsPrefs.Verify(p => p.SaveDnsOverHttpsFallbackEnabled(false), Times.Once);
+        Assert.False(sut.DnsOverHttpsFallbackEnabled);
     }
 }

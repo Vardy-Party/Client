@@ -9,6 +9,7 @@ using VardyParty.HomeUi;
 using VardyParty.Kernel;
 using VardyParty.Hosting;
 using VardyParty.Playback;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 #if ANDROID
 using VardyParty.Platforms.Android;
@@ -242,6 +243,11 @@ public static class MauiProgram
         // packaged MSIX launches) swaps in the null player for crash bisecting.
 #if ANDROID || WINDOWS
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore, MauiDnsPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputePreferences, MauiRemoteComputePreferences>();
+#if ANDROID
+        builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputeKeepAlive, VardyParty.Platforms.Android.AndroidRemoteComputeKeepAlive>();
+#endif
         if (VardyParty.Ports.UiSoundKillSwitch.IsDisabled)
         {
             Console.WriteLine($"[MauiProgram] UI sounds disabled via {VardyParty.Ports.UiSoundKillSwitch.Trigger} (NullUiSoundPlayer)");
@@ -264,6 +270,16 @@ public static class MauiProgram
         // platform boots HomeHostPage).
         builder.Services.AddSingleton<VardyParty.HomeUi.IHomeAssetLocator, MauiHomeAssetLocator>();
         builder.Services.AddVardyPartyHomeUi();
+#if WINDOWS
+        if (IsWindowsPackaged)
+        {
+            builder.Services.AddSingleton<IRunningAppVersion>(_ =>
+                new AssemblyRunningAppVersion(typeof(MauiProgram).Assembly));
+            builder.Services.AddSingleton<IDesktopPendingUpdateStore, FileDesktopPendingUpdateStore>();
+            builder.Services.AddSingleton<IDesktopPackageApplier, MsixPackageManagerApplier>();
+            builder.Services.AddSingleton<IDesktopUpdateService, GitHubDesktopUpdateService>();
+        }
+#endif
         builder.Services.AddSingleton<HomeHostPage>();
         builder.Services.AddSingleton(DeviceInfo.Current);
 

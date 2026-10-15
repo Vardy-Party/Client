@@ -15,6 +15,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
 		<ProjectReference Include="..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
 		<ProjectReference Include="..\VardyParty.Ports\VardyParty.Ports.csproj" />

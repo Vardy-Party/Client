@@ -113,7 +113,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_NoRecommendations_KeepsFbBeforeMpCatalogOrder()
+    public void Build_NoRecommendations_KeepsMpBeforeFbCatalogOrder()
     {
         // Arrange
         var streams = new[]
@@ -131,7 +131,7 @@ public class StreamTestOrderPolicyTests
             index => streams[index]);
 
         // Assert
-        Assert.Equal([1, 2, 0], order);
+        Assert.Equal([0, 1, 2], order);
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public class StreamTestOrderPolicyTests
             index => streams[index]);
 
         // Assert
-        Assert.Equal([0, 1], order);
+        Assert.Equal([1, 0], order);
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_MediumSitsBetweenHighAndLow_ThenFbRemainderBeforeMp()
+    public void Build_MediumSitsBetweenHighAndLow_ThenMpRemainderBeforeFb()
     {
         // Arrange
         var streams = new[]
@@ -237,7 +237,7 @@ public class StreamTestOrderPolicyTests
             index => streams[index]);
 
         // Assert
-        Assert.Equal([3, 4, 1, 2, 0], order);
+        Assert.Equal([3, 4, 1, 0, 2], order);
     }
 
     [Fact]

@@ -2,7 +2,7 @@
 
 This guide explains how to build the Android app locally with proper configuration secrets, matching the CI/CD pipeline behavior.
 
-**Committed `VardyParty/appsettings.json` and `VardyParty.Desktop/appsettings.json` are
+**Committed `VardyParty/appsettings.json` and `VardyParty.Linux/appsettings.json` are
 templates only** (empty Auth0 / API values). Never commit real secrets into those files.
 CI/CD (`.github/workflows/cd.yml`) and local packaging (`package-android.ps1` /
 `-p:PatchAppSettings=true`) inject secrets at build time from GitHub Actions secrets or
@@ -12,11 +12,33 @@ CI/CD (`.github/workflows/cd.yml`) and local packaging (`package-android.ps1` /
 
 ```powershell
 pwsh ./package-android.ps1
+pwsh ./package-android.ps1 -Api preview
 ```
 
-That script restores, patches secrets into `appsettings.json` for the build, and
-produces `armeabi-v7a` (TV) + `arm64-v8a` (phones) outputs. See script help for
-`-Mode`. The rest of this doc is the manual user-secrets / MSBuild path.
+That script patches secrets into `appsettings.json` for the build and produces
+`armeabi-v7a` (TV) + `arm64-v8a` (phones). See script help for `-Mode`. The rest
+of this doc is the manual user-secrets / MSBuild path.
+
+## Which API this APK calls
+
+Release Android ignores `VARDYPARTY_DEBUG_API`. The address baked into the APK
+is `Api:HeadlessBaseUrl` from user-secrets, unless `-Api` overrides it for
+that package only. The stored secret is not changed.
+
+| Flag | Baked `Api:HeadlessBaseUrl` |
+|------|-----------------------------|
+| (omit) or `-Api production` | `Api:HeadlessBaseUrl` |
+| `-Api preview` | `Api:HeadlessBaseUrl-Preview` |
+| `-Api local` | `Api:HeadlessBaseUrl-Local` |
+
+The build log prints the baked address, for example `API target preview: Api:HeadlessBaseUrl = https://headless-m3u8-preview.example.test/`. The preview or local key must already be in user-secrets or the package fails.
+
+Other heads, same user-secrets keys:
+
+- Debug Windows: user env `VARDYPARTY_DEBUG_API=local|preview|production`, then relaunch. Unset means production. Release Windows ignores it.
+- Linux: `VARDYPARTY_LINUX_API=local|preview|production` at process start. See [LINUX_SUPPORT.md](LINUX_SUPPORT.md).
+
+Phone-over-USB against preview, Wi-Fi off: [REMOTE_COMPUTE_PREVIEW_USB.md](REMOTE_COMPUTE_PREVIEW_USB.md).
 
 ## Problem
 
@@ -55,13 +77,13 @@ dotnet user-secrets set "Api:HeadlessBaseUrl" "https://api.vardyparty.com" --pro
 Once secrets are configured, build Android with the `PatchAppSettings=true` parameter:
 
 ```bash
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net11.0-android -p:PatchAppSettings=true
 ```
 
 Or for Release builds:
 
 ```bash
-dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release -p:PatchAppSettings=true
+dotnet build .\VardyParty\VardyParty.csproj -f net11.0-android -c Release -p:PatchAppSettings=true
 ```
 
 ## How It Works
@@ -77,7 +99,7 @@ dotnet build .\VardyParty\VardyParty.csproj -f net10.0-android -c Release -p:Pat
    - Merges secrets into the source file
    - Removes `AllowUserSecrets` flag (like CI/CD does)
    - The build then embeds the patched file into the APK
-   - Only affects Android builds (`net10.0-android`)
+   - Only affects Android builds (`net11.0-android`)
    - **⚠️ WARNING: This temporarily modifies your source file!**
 
 3. **After Building**: 
