@@ -373,32 +373,49 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
     }
 
     /// <summary>
-    /// True when both names are the same UEFA competition under different
-    /// spellings: BBC says "UEFA Conference League", the API (alias-canonical)
-    /// says "UEFA Europa Conference League". Deliberately not a loose word-subset
-    /// test: "UEFA Europa League" is a subset of "UEFA Europa Conference League"
-    /// but is a different competition.
+    /// Words that carry no competition identity and are dropped before comparing league names.
+    /// Add a word here when a new spelling variant needs it; the matcher itself does not change.
+    /// </summary>
+    private static readonly string[] IgnoredCompetitionWords = ["uefa"];
+
+    /// <summary>
+    /// Whole-phrase respellings applied to a normalised league name (lower case, single spaces),
+    /// as (from, to). Phrases are matched on word boundaries only.
+    /// </summary>
+    private static readonly (string From, string To)[] CompetitionRespellings =
+    [
+        ("europa conference", "conference")
+    ];
+
+    private static readonly char[] CompetitionWordSeparators = [' ', '-', '.', '\'', '/', '&'];
+
+    /// <summary>
+    /// True when both names are the same competition under different spellings, e.g. BBC
+    /// "UEFA Conference League" and the API's (alias-canonical) "UEFA Europa Conference League".
+    /// Deliberately an equality test on normalised names, not a loose word-subset test:
+    /// "UEFA Europa League" is a word-subset of "UEFA Europa Conference League" but is a
+    /// different competition, and "AFC Champions League" must not match "UEFA Champions League".
     /// </summary>
     private static bool IsSameCompetitionSpelling(string left, string right) =>
-        CompetitionWords(left).SequenceEqual(CompetitionWords(right), StringComparer.OrdinalIgnoreCase);
+        string.Equals(
+            NormaliseCompetitionName(left),
+            NormaliseCompetitionName(right),
+            StringComparison.OrdinalIgnoreCase);
 
-    private static List<string> CompetitionWords(string name)
+    private static string NormaliseCompetitionName(string name)
     {
-        var words = name.Split([' ', '-', '.', '\'', '/', '&'], StringSplitOptions.RemoveEmptyEntries).ToList();
-        words.RemoveAll(w => w.Equals("uefa", StringComparison.OrdinalIgnoreCase));
-        for (var i = 0; i < words.Count - 1; i++)
+        var words = name.Split(CompetitionWordSeparators, StringSplitOptions.RemoveEmptyEntries);
+        var normalised = " " + string.Join(
+            ' ',
+            words.Where(w => !IgnoredCompetitionWords.Contains(w, StringComparer.OrdinalIgnoreCase))) + " ";
+
+        foreach (var (from, to) in CompetitionRespellings)
         {
-            if (words[i].Equals("europa", StringComparison.OrdinalIgnoreCase)
-                && words[i + 1].Equals("conference", StringComparison.OrdinalIgnoreCase))
-            {
-                words.RemoveAt(i);
-                break;
-            }
+            normalised = normalised.Replace($" {from} ", $" {to} ", StringComparison.OrdinalIgnoreCase);
         }
 
-        return words;
+        return normalised.Trim();
     }
-
     private static bool IsImportantGamesInternationalFixture(Game game, string apiLeague, string bbcLeague)
     {
         if (!apiLeague.Equals("Important Games", StringComparison.OrdinalIgnoreCase))
