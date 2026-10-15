@@ -328,10 +328,16 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         var apiLeague = (game.ApiLeague ?? string.Empty).Trim();
         var bbc = (bbcLeague ?? string.Empty).Trim();
 
+        // The API key is the server's canonical league name (League Aliases are
+        // applied there). BBC only supplies a competition label, so when it is the
+        // same competition spelled differently keep the API's, or the matched games
+        // split off into a second section (e.g. BBC "UEFA Conference League" vs
+        // API "UEFA Europa Conference League").
         if (!string.IsNullOrEmpty(apiLeague)
             && !string.IsNullOrEmpty(bbc)
             && !apiLeague.Equals(bbc, StringComparison.OrdinalIgnoreCase)
-            && apiLeague.Contains(bbc, StringComparison.OrdinalIgnoreCase))
+            && (apiLeague.Contains(bbc, StringComparison.OrdinalIgnoreCase)
+                || IsSameCompetitionSpelling(bbc, apiLeague)))
         {
             return apiLeague;
         }
@@ -353,6 +359,33 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         }
 
         return bbc;
+    }
+
+    /// <summary>
+    /// True when both names are the same UEFA competition under different
+    /// spellings: BBC says "UEFA Conference League", the API (alias-canonical)
+    /// says "UEFA Europa Conference League". Deliberately not a loose word-subset
+    /// test: "UEFA Europa League" is a subset of "UEFA Europa Conference League"
+    /// but is a different competition.
+    /// </summary>
+    private static bool IsSameCompetitionSpelling(string left, string right) =>
+        CompetitionWords(left).SequenceEqual(CompetitionWords(right), StringComparer.OrdinalIgnoreCase);
+
+    private static List<string> CompetitionWords(string name)
+    {
+        var words = name.Split([' ', '-', '.', '\'', '/', '&'], StringSplitOptions.RemoveEmptyEntries).ToList();
+        words.RemoveAll(w => w.Equals("uefa", StringComparison.OrdinalIgnoreCase));
+        for (var i = 0; i < words.Count - 1; i++)
+        {
+            if (words[i].Equals("europa", StringComparison.OrdinalIgnoreCase)
+                && words[i + 1].Equals("conference", StringComparison.OrdinalIgnoreCase))
+            {
+                words.RemoveAt(i);
+                break;
+            }
+        }
+
+        return words;
     }
 
     private static bool IsImportantGamesInternationalFixture(Game game, string apiLeague, string bbcLeague)

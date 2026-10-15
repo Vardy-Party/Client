@@ -725,6 +725,77 @@ namespace VardyParty.Catalog.Tests
             Assert.Equal(bbcKickoff, g.Start);
         }
 
+        [Theory]
+        [InlineData("UEFA Europa Conference League", "UEFA Conference League")]
+        [InlineData("UEFA Europa Conference League", "Conference League")]
+        [InlineData("UEFA Champions League", "Champions League")]
+        public void BbcLeagueThatIsAnotherSpellingOfApiLeague_KeepsApiLeagueName(string apiLeague, string bbcLeague)
+        {
+            // Arrange: the API key is already alias-canonical; BBC must not rename the row.
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.ApiLeague, apiLeague)
+                    .With(g => g.League, apiLeague)
+                    .With(g => g.BBCLeague, string.Empty)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = kickoff,
+                    League = bbcLeague,
+                    HasProgress = false
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames(games, bbc, "x");
+
+            // Assert
+            Assert.Equal(apiLeague, games[0].DisplayLeague);
+        }
+
+        [Fact]
+        public void BbcLeagueUnrelatedToApiLeague_StillUsesBbcName()
+        {
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.Start, kickoff)
+                    .With(g => g.ApiLeague, "UEFA Europa Conference League")
+                    .With(g => g.League, "UEFA Europa Conference League")
+                    .With(g => g.BBCLeague, string.Empty)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = kickoff,
+                    League = "UEFA Europa League",
+                    HasProgress = false
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            matcher.EnrichGames(games, bbc, "x");
+
+            Assert.Equal("UEFA Europa League", games[0].DisplayLeague);
+        }
         [Fact]
         public void FutureKickoff_WithStaleMinuteZero_IsScheduledUpcoming()
         {
