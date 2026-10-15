@@ -805,6 +805,71 @@ namespace VardyParty.Catalog.Tests
             Assert.Equal(apiLeague, matched.ApiLeague);
         }
 
+        [Fact]
+        public void EnrichGames_TrimsBbcLeague_AndResolvesFromTheTrimmedName()
+        {
+            // Arrange
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var game = BuildLeagueGame("Home United", "Away City", kickoff, "UEFA Europa Conference League");
+            var fixture = BuildBbcFixture("Home United", "Away City", kickoff, "  UEFA Conference League  ");
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames([game], [fixture], "x");
+
+            // Assert
+            Assert.Equal("UEFA Conference League", game.BBCLeague);
+            Assert.Equal("UEFA Europa Conference League", game.ResolvedLeague);
+        }
+
+        [Fact]
+        public void UnmatchedGame_KeepsAnEmptyResolvedLeague_AndAnEmptyBbcLeague()
+        {
+            // Arrange
+            const string apiLeague = "UEFA Europa Conference League";
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var matched = BuildLeagueGame("Home United", "Away City", kickoff, apiLeague);
+            var unmatched = BuildLeagueGame("North Rovers", "South Athletic", kickoff, apiLeague);
+            var fixture = BuildBbcFixture("Home United", "Away City", kickoff, "UEFA Conference League");
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames([matched, unmatched], [fixture], "x");
+
+            // Assert: nothing is written to an unmatched game; it groups by its own API league.
+            Assert.Equal(string.Empty, unmatched.ResolvedLeague);
+            Assert.Equal(string.Empty, unmatched.BBCLeague);
+            Assert.Equal(apiLeague, unmatched.DisplayLeague);
+        }
+
+        [Fact]
+        public void EnrichingTheSameGamesTwice_GivesTheSameLeagues()
+        {
+            // Arrange
+            const string apiLeague = "UEFA Europa Conference League";
+            var kickoff = new DateTime(2026, 10, 15, 16, 45, 0, DateTimeKind.Utc);
+            var matched = BuildLeagueGame("Home United", "Away City", kickoff, apiLeague);
+            var unmatched = BuildLeagueGame("North Rovers", "South Athletic", kickoff, apiLeague);
+            var fixture = BuildBbcFixture("Home United", "Away City", kickoff, "UEFA Conference League");
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames([matched, unmatched], [fixture], "x");
+            var first = new[] { matched, unmatched }
+                .Select(g => (g.BBCLeague, g.ResolvedLeague, g.DisplayLeague, g.League, g.ApiLeague))
+                .ToArray();
+            matcher.EnrichGames([matched, unmatched], [fixture], "x");
+            var second = new[] { matched, unmatched }
+                .Select(g => (g.BBCLeague, g.ResolvedLeague, g.DisplayLeague, g.League, g.ApiLeague))
+                .ToArray();
+
+            // Assert
+            Assert.Equal(first, second);
+            Assert.Equal("UEFA Conference League", matched.BBCLeague);
+            Assert.Equal(apiLeague, matched.DisplayLeague);
+            Assert.Equal(apiLeague, unmatched.DisplayLeague);
+        }
+
         [Theory]
         [InlineData("Important Games")]
         [InlineData("")]
