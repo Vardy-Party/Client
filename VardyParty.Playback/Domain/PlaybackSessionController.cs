@@ -1,3 +1,5 @@
+using VardyParty.Kernel;
+
 namespace VardyParty.Playback;
 
 /// <summary>
@@ -282,7 +284,7 @@ public sealed class PlaybackSessionController
         return
         [
             new PlaybackEffect(PlaybackEffectKind.Stop),
-            new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: "User closed")
+            new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: PlaybackCloseReasons.UserClosed)
         ];
     }
 

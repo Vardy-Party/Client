@@ -1,29 +1,38 @@
 namespace VardyParty.Playback;
 
 /// <summary>
-/// When the native player must show a wait spinner. Android TV ExoPlayer
-/// often stays in BUFFERING without <c>OnIsLoadingChanged(true)</c>, so a
-/// spinner tied only to isLoading never appears. Keep it up on idle/error
-/// too — failover attaches the next URL a beat later.
+/// When the native player shows its indeterminate wait spinner. One pure decision made from the same
+/// <see cref="PlaybackStatus"/> verdict that drives the status text, so the spinner and the text can
+/// never disagree (a stale BUFFERING state that is really playing says "Playing" and shows no spinner).
 /// </summary>
 public static class PlaybackWaitChrome
 {
-    /// <param name="isReady">ExoPlayer STATE_READY.</param>
-    /// <param name="isLoading">ExoPlayer <c>OnIsLoadingChanged</c>.</param>
-    /// <param name="isPreparing">Attach in flight (<c>SetMediaSource</c>/<c>Prepare</c>).</param>
-    /// <param name="isEnded">ExoPlayer STATE_ENDED — not a wait, hide the spinner.</param>
-    public static bool ShouldShowWaitIndicator(
-        bool isReady,
-        bool isLoading,
+    /// <summary>
+    /// How long Idle/Error keep the spinner up on their own, waiting for failover to attach the next
+    /// URL. After this the spinner goes away and the Idle/Error text stays, so the two cannot
+    /// contradict each other forever when failover never attaches.
+    /// </summary>
+    public const long FailoverGraceMs = 5000;
+
+    /// <param name="status">The tracker's verdict.</param>
+    /// <param name="isPreparing">A new source is being attached (SetMediaSource / Prepare in flight).</param>
+    /// <param name="isClosing">The player is being closed or left (Back, Stop, pause, destroy). Never show.</param>
+    /// <param name="failoverAgeMs">How long the player has been Idle/Error (0 when it is not).</param>
+    public static bool ShouldShow(
+        PlaybackStatus status,
         bool isPreparing,
-        bool isEnded = false)
+        bool isClosing,
+        long failoverAgeMs = 0)
     {
-        if (isEnded)
+        if (isClosing)
             return false;
 
-        if (isReady)
-            return isLoading || isPreparing;
-
-        return true;
+        return status switch
+        {
+            PlaybackStatus.Buffering => true,
+            PlaybackStatus.Playing => isPreparing,
+            PlaybackStatus.Idle or PlaybackStatus.Error => isPreparing || failoverAgeMs < FailoverGraceMs,
+            _ => false // Ended
+        };
     }
 }

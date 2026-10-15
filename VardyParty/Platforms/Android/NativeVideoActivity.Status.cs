@@ -1,4 +1,4 @@
-﻿#if ANDROID
+#if ANDROID
 using System;
 using VardyParty.Playback;
 
@@ -6,38 +6,80 @@ namespace VardyParty.Platforms.Android
 {
     /// <summary>
     /// Single source of truth for the status text ("Playing"/"Buffering"/...), the buffering spinner and
-    /// the overlay visibility. All three are derived from the live player state by
-    /// <see cref="PlaybackStatusTracker"/> on every player event and on a periodic watchdog tick, so a
-    /// missed or reordered event can no longer leave "Buffering" latched while the stream plays.
+    /// the overlay visibility. All of it comes from one <see cref="PlaybackStatusTracker.Assess"/> call on
+    /// every player event and on a periodic watchdog tick, so a missed or reordered event can no longer
+    /// leave "Buffering" latched while the stream plays, and the spinner is never derived a second time.
+    /// This file only reads the player and applies the verdict; every decision lives in VardyParty.Playback
+    /// and is unit-tested there.
     /// </summary>
     public partial class NativeVideoActivity
     {
         private const int StatusWatchdogIntervalMs = 500;
 
-        /// <summary>Re-derives the status from the player and applies it. Must run on the main thread.</summary>
+        /// <summary>
+        /// Set as soon as the viewer leaves (Back, Finish, destroy). From then on no wait chrome may appear
+        /// and no player callback may touch the UI: Stop() drops the player to IDLE, which would otherwise
+        /// re-show the spinner over a closing activity.
+        /// </summary>
+        private bool _isClosing;
+
+        /// <summary>
+        /// Marks the activity as closing and silences everything that reacts to the player: watchdog off,
+        /// listener detached, spinner hidden. Idempotent, and must run before the player is stopped.
+        /// </summary>
+        private void BeginClosing()
+        {
+            if (_isClosing) return;
+            _isClosing = true;
+            StopStatusWatchdog();
+            DetachPlayerListener();
+            ApplyWaitIndicator(false);
+        }
+
+        private void DetachPlayerListener()
+        {
+            try
+            {
+                var listener = _playerListener;
+                if (listener != null) _player?.RemoveListener(listener);
+            }
+            catch (Exception ex) { LogIgnored("DetachPlayerListener", ex); }
+        }
+
+        /// <summary>Re-derives the status from the player and applies it. Marshals to the main thread when needed.</summary>
         private void RefreshPlaybackStatus()
         {
             try
             {
+                // Media3 players may only be read on their application thread (the main looper here).
+                if (global::Android.OS.Looper.MyLooper() != global::Android.OS.Looper.MainLooper)
+                {
+                    RunOnUiThread(RefreshPlaybackStatus);
+                    return;
+                }
+
                 var player = _player;
                 var snapshot = player == null
-                    ? new PlayerSnapshot(PlaybackStatusTracker.StateIdle, false, 0, 0, _playerFaulted)
+                    ? new PlayerSnapshot(PlaybackStatusTracker.StateIdle, 0, 0, _playerFaulted)
                     : new PlayerSnapshot(
                         player.PlaybackState,
-                        player.IsPlaying,
                         player.BufferedPercentage,
                         player.CurrentPosition,
                         _playerFaulted);
 
-                var status = _statusTracker.Evaluate(snapshot, global::Android.OS.SystemClock.ElapsedRealtime());
-                ApplyPlaybackStatus(status);
+                var view = _statusTracker.Assess(
+                    snapshot,
+                    global::Android.OS.SystemClock.ElapsedRealtime(),
+                    _isPreparing,
+                    _isClosing);
+                ApplyPlaybackStatus(view);
             }
             catch (Exception ex) { LogIgnored("RefreshPlaybackStatus", ex); }
         }
 
-        private void ApplyPlaybackStatus(PlaybackStatus status)
+        private void ApplyPlaybackStatus(PlaybackStatusView view)
         {
-            var text = status switch
+            var text = view.Status switch
             {
                 PlaybackStatus.Idle => VardyParty.Resources.Strings.Resources.StatusIdle,
                 PlaybackStatus.Buffering => VardyParty.Resources.Strings.Resources.StatusBuffering,
@@ -46,21 +88,31 @@ namespace VardyParty.Platforms.Android
                 _ => VardyParty.Resources.Strings.Resources.StatusPlaying
             };
 
-            var buffering = status == PlaybackStatus.Buffering;
+            var buffering = view.Status == PlaybackStatus.Buffering;
             var bufferingChanged = buffering != _isBuffering;
             var textChanged = !string.Equals(text, _playbackStateText, StringComparison.Ordinal);
 
             _playbackStateText = text;
             _isBuffering = buffering;
 
-            // The spinner follows PlaybackWaitChrome: while READY it shows only for a real stall (`_isBuffering` is
-            // the tracker's verdict, never raw isLoading) or an attach in flight; while idle/errored it stays up
-            // for failover. It is re-applied on every derivation so a stray visible spinner is always cleared.
-            RefreshWaitIndicator();
+            // The tracker's verdict is applied as-is. It is re-applied on every derivation so a stray
+            // visible spinner is always cleared, and a closing activity never shows one.
+            ApplyWaitIndicator(view.ShowSpinner);
             if (buffering && bufferingChanged) HideOverlayAnimated();
 
-            if (bufferingChanged)
-                _engine.Raise(MediaEngineEvent.Buffering(CurrentAttachGeneration, buffering));
+            // Only genuine stall start / recovery reach the engine (see PlaybackStatusTracker.SignalFor).
+            if (!_isClosing)
+            {
+                switch (view.Signal)
+                {
+                    case BufferingSignal.Started:
+                        _engine.Raise(MediaEngineEvent.Buffering(CurrentAttachGeneration, true));
+                        break;
+                    case BufferingSignal.Recovered:
+                        _engine.Raise(MediaEngineEvent.Buffering(CurrentAttachGeneration, false));
+                        break;
+                }
+            }
 
             if (textChanged || bufferingChanged)
             {
@@ -71,27 +123,48 @@ namespace VardyParty.Platforms.Android
 
         private void StartStatusWatchdog()
         {
-            if (_statusHandler != null) return;
-            _statusHandler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
-            _statusRunnable = new Java.Lang.Runnable(() =>
+            if (_statusHandler != null || _isClosing) return;
+
+            // Locals, not fields: Stop can null the fields between a tick being queued and it running.
+            var handler = new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+            Java.Lang.Runnable? runnable = null;
+            runnable = new Java.Lang.Runnable(() =>
             {
-                if (_statusHandler == null || _statusRunnable == null) return;
-                RefreshPlaybackStatus();
-                _statusHandler?.PostDelayed(_statusRunnable, StatusWatchdogIntervalMs);
+                var live = ReferenceEquals(_statusHandler, handler);
+                try
+                {
+                    if (!live || _isClosing || IsFinishing || IsDestroyed) return;
+                    RefreshPlaybackStatus();
+                }
+                catch (Exception ex) { LogIgnored("StatusWatchdogTick", ex); }
+                finally
+                {
+                    // Keep ticking through a failed tick, but only while this watchdog is still the live one.
+                    if (live && ReferenceEquals(_statusHandler, handler) && !_isClosing && !IsFinishing && !IsDestroyed)
+                    {
+                        try { handler.PostDelayed(runnable!, StatusWatchdogIntervalMs); }
+                        catch (Exception ex) { LogIgnored("StatusWatchdogReschedule", ex); }
+                    }
+                }
             });
-            _statusHandler.PostDelayed(_statusRunnable, StatusWatchdogIntervalMs);
+
+            _statusHandler = handler;
+            _statusRunnable = runnable;
+            handler.PostDelayed(runnable, StatusWatchdogIntervalMs);
         }
 
         private void StopStatusWatchdog()
         {
-            try
-            {
-                if (_statusHandler != null && _statusRunnable != null)
-                    _statusHandler.RemoveCallbacks(_statusRunnable);
-            }
-            catch (Exception ex) { LogIgnored("StopStatusWatchdog", ex); }
+            var handler = _statusHandler;
+            var runnable = _statusRunnable;
             _statusHandler = null;
             _statusRunnable = null;
+            try
+            {
+                if (handler != null && runnable != null)
+                    handler.RemoveCallbacks(runnable);
+            }
+            catch (Exception ex) { LogIgnored("StopStatusWatchdog", ex); }
         }
     }
 }

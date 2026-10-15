@@ -755,7 +755,7 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogInformation("[NativeVideoActivity] Starting initial playback: {Url}", _m3u8Url);
                 AttachViaSession(_m3u8Url, usedCachedUrl: true);
-                RefreshWaitIndicator();
+                RefreshPlaybackStatus();
             }
 
             HideOverlayAnimated();
@@ -846,6 +846,8 @@ namespace VardyParty.Platforms.Android
                 if (_player == null) return;
 
                 StopStatusWatchdog();
+                // Closing or releasing: nothing may react to the IDLE that Stop() causes.
+                if (release || _isClosing) DetachPlayerListener();
                 try { _player.PlayWhenReady = false; } catch { }
                 try { _player.Pause(); } catch { }
                 try { _player.Stop(); } catch { }
@@ -887,8 +889,15 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex) { LogIgnored("ReportPlaybackResult", ex); }
         }
 
+        public override void Finish()
+        {
+            BeginClosing();
+            base.Finish();
+        }
+
         protected override void OnPause()
         {
+            if (IsFinishing) BeginClosing();
             StopAndReleasePlayer(release: false);
             base.OnPause();
         }
@@ -904,6 +913,7 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                BeginClosing();
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
@@ -915,7 +925,7 @@ namespace VardyParty.Platforms.Android
                 DisposeSubscriptions();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
-                ReportPlaybackClosed("Video player closed");
+                ReportPlaybackClosed(PlaybackCloseReasons.PlayerClosed);
             }
             finally
             {
@@ -1371,13 +1381,17 @@ namespace VardyParty.Platforms.Android
                 if (playbackState == PlayerStateBuffering || playbackState == PlayerStateReady)
                     _activity._playerFaulted = false;
 
+                // READY ends the prepare: clear the flag BEFORE deriving, so the spinner verdict for this very
+                // event does not still count a finished prepare as in flight.
+                if (playbackState == PlayerStateReady)
+                    _activity._isPreparing = false;
+
                 // Status text, spinner and overlay all follow one derivation (PlaybackStatusTracker).
                 _activity.RefreshPlaybackStatus();
 
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
-                    _activity._isPreparing = false;
                     // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
                     if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
                         _activity._behindLiveWindowRecoveries = 0;
@@ -1428,8 +1442,6 @@ namespace VardyParty.Platforms.Android
 
                     _activity._engine.Raise(MediaEngineEvent.Ended(_activity.CurrentAttachGeneration));
                 }
-
-                _activity.RefreshWaitIndicator();
             }
 
             public void OnTracksChanged(Tracks? tracks)
@@ -1483,7 +1495,13 @@ namespace VardyParty.Platforms.Android
                 catch (Exception ex) { _activity.LogIgnored("OnPlayerErrorChanged", ex); }
             }
             public void OnPlaylistMetadataChanged(AndroidX.Media3.Common.MediaMetadata? mediaMetadata) { }
-            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason) => _activity.RefreshPlaybackStatus();
+            public void OnPositionDiscontinuity(AndroidX.Media3.Common.PlayerPositionInfo? oldPosition, AndroidX.Media3.Common.PlayerPositionInfo? newPosition, int reason)
+            {
+                // A seek, live-window slide or item transition moves the position by an arbitrary amount; that
+                // jump is not playback progress, so the tracker must forget its position history.
+                _activity._statusTracker.Reset();
+                _activity.RefreshPlaybackStatus();
+            }
             public void OnRenderedFirstFrame() { }
             public void OnRepeatModeChanged(int repeatMode) { }
             public void OnSeekBackIncrementChanged(long seekBackIncrementMs) { }
