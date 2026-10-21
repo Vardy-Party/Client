@@ -179,6 +179,8 @@ public sealed class MatchEventToastViewModelTests
         var item = Item("Jablonec", "Rangers", homeScore: 2, awayScore: 1);
 
         Assert.Equal("GOAL — Jablonec 2–1 Rangers", item.Headline);
+        Assert.Equal("GOAL", item.KindLabel);
+        Assert.Equal("Jablonec 2–1 Rangers", item.Fixture);
         Assert.Equal("Cup Alpha", item.LeagueName);
         Assert.Equal("J", item.HomeInitial);
         Assert.Equal("R", item.AwayInitial);

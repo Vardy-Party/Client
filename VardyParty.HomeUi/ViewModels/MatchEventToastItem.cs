@@ -19,6 +19,8 @@ public sealed class MatchEventToastItem
     {
         Event = matchEvent;
         Headline = MatchEventPresenter.Headline(matchEvent);
+        KindLabel = MatchEventPresenter.Kind(matchEvent);
+        Fixture = MatchEventPresenter.Fixture(matchEvent);
         LeagueName = MatchEventPresenter.LeagueName(matchEvent);
         GameKey = HomeBoardDiffer.GameKey(matchEvent.Game);
         LeagueIcon = leagueIcon;
@@ -46,6 +48,12 @@ public sealed class MatchEventToastItem
 
     public MatchEvent Event { get; }
     public string Headline { get; }
+
+    /// <summary>"GOAL" etc. - shown on the attribution line, not before the home badge.</summary>
+    public string KindLabel { get; }
+
+    /// <summary>"Home 2–1 Away" - sits between the home and away badges.</summary>
+    public string Fixture { get; }
     public string LeagueName { get; }
 
     /// <summary>Card identity (<see cref="HomeBoardDiffer.GameKey"/>) for the synchronized flash.</summary>

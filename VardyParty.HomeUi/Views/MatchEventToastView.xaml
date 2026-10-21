@@ -33,23 +33,42 @@
                   RowSpacing="6"
                   Padding="14,10,14,12"
                   InputTransparent="True">
-                <!-- League attribution -->
-                <HorizontalStackLayout Spacing="8" InputTransparent="True">
-                    <Image Source="{Binding Current.LeagueIcon}"
+                <!-- Event kind + league attribution. The kind ("GOAL") lives
+                     here, NOT in the badge row: anything before the home team
+                     name would push the home badge away from its team. -->
+                <!-- Kind and logo always show; the league name is what truncates. -->
+                <!-- Gaps are margins, not ColumnSpacing: a hidden league
+                     logo then costs nothing (no double gap). -->
+                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="0" InputTransparent="True">
+                    <Label Text="{Binding Current.KindLabel}"
+                           FontSize="{Binding Layout.AggregateFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           VerticalOptions="Center" />
+                    <Image Grid.Column="1"
+                           Margin="8,0,0,0"
+                           Source="{Binding Current.LeagueIcon}"
                            WidthRequest="18"
                            HeightRequest="18"
                            Aspect="AspectFit"
                            VerticalOptions="Center"
                            IsVisible="{Binding Current.HasLeagueIcon}" />
-                    <Label Text="{Binding Current.LeagueName}"
+                    <Label Grid.Column="2"
+                           Margin="8,0,0,0"
+                           Text="{Binding Current.LeagueName}"
                            FontSize="{Binding Layout.AggregateFontSize}"
                            FontAttributes="Bold"
                            TextColor="#AEB6C6"
+                           MaxLines="1"
+                           LineBreakMode="TailTruncation"
                            VerticalOptions="Center" />
-                </HorizontalStackLayout>
+                </Grid>
 
-                <!-- Badges + headline -->
+                <!-- [home badge] Home 2–1 Away [away badge]. Pinned LTR: an RTL
+                     flow would mirror the columns while Latin team names still
+                     read LTR, putting the home badge next to the away team. -->
                 <Grid Grid.Row="1"
+                      FlowDirection="LeftToRight"
                       ColumnDefinitions="Auto,*,Auto"
                       ColumnSpacing="10"
                       InputTransparent="True">
@@ -77,7 +96,7 @@
                     </Grid>
 
                     <Label Grid.Column="1"
-                           Text="{Binding Current.Headline}"
+                           Text="{Binding Current.Fixture}"
                            FontSize="{Binding Layout.TeamFontSize}"
                            FontAttributes="Bold"
                            TextColor="White"

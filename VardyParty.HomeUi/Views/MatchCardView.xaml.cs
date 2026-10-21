@@ -621,6 +621,19 @@ public partial class MatchCardView : ContentView
 
     private void ScrollStripToFocusedCard(ScrollView strip, int attemptsLeft)
     {
+#if ANDROID
+        // Native first: the card's own HorizontalScrollView, measured in px
+        // from the laid-out native tree. Does not depend on MAUI ContentSize,
+        // ScrollX or MapRequestScrollTo's IsLayoutRequested deferral. The MAUI
+        // path below stays as the fallback when the card is not laid out yet.
+        if (_wiredNative is { } focusedNative
+            && TvDpadFocusRouter.TryRevealInStrip(
+                focusedNative, ViewModel?.Layout.FocusRingThickness ?? 3))
+        {
+            return;
+        }
+#endif
+
         // Card left edge in strip-content coordinates: sum frame offsets from
         // the focusable chrome up to (excluding) the strip's content element.
         double cardLeft = 0;
@@ -791,12 +804,32 @@ public partial class MatchCardView : ContentView
             return false;
         }
 
-        for (var walk = platform; walk != null; walk = walk.Parent as global::Android.Views.View)
+        // MAUI's horizontal ScrollView is a MauiScrollView (NestedScrollView)
+        // that HOSTS a MauiHorizontalScrollView child. Walking UP from the
+        // platform view never finds it, so search DOWN: the view itself, the
+        // tagged MAUI child, then direct children.
+        if (platform is global::Android.Widget.HorizontalScrollView self)
         {
-            if (walk is global::Android.Widget.HorizontalScrollView found)
+            hsv = self;
+            return true;
+        }
+
+        if (platform.FindViewWithTag("Microsoft.Maui.Android.HorizontalScrollView")
+                is global::Android.Widget.HorizontalScrollView tagged)
+        {
+            hsv = tagged;
+            return true;
+        }
+
+        if (platform is global::Android.Views.ViewGroup group)
+        {
+            for (var i = 0; i < group.ChildCount; i++)
             {
-                hsv = found;
-                return true;
+                if (group.GetChildAt(i) is global::Android.Widget.HorizontalScrollView child)
+                {
+                    hsv = child;
+                    return true;
+                }
             }
         }
 

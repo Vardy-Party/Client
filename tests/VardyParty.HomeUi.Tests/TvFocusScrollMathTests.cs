@@ -310,6 +310,103 @@ public class TvFocusScrollMathTests
         Assert.Equal(0, TvFocusScrollMath.SumHorizontalChildExtent(0, 7));
     }
 
+    [Fact]
+    public void ComputeStripTarget_CardPastRightEdgeInPx_ScrollsItIn()
+    {
+        // Arrange: 1920px viewport, 6 cards of 525px + 24px gap, content 3270px,
+        // strip at rest; 4th card (left 1647) overhangs the right edge.
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 1647, cardWidth: 525, overhead: 12,
+            viewportWidth: 1920, contentWidth: 3270, currentScrollX: 0);
+
+        // Assert: right edge + overhead lands on the viewport edge.
+        Assert.Equal(1647 + 525 + 12 - 1920, target);
+    }
+
+    [Fact]
+    public void ComputeStripTarget_ReportedContentEqualsViewport_IsTheOffScreenBug()
+    {
+        // The MAUI-measured path: ContentSize reported == viewport clamps to 0,
+        // so focus walks off-screen. The native path passes the HSV child width.
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 1647, cardWidth: 525, overhead: 12,
+            viewportWidth: 1920, contentWidth: 1920, currentScrollX: 0);
+
+        Assert.Equal(0, target);
+    }
+
+    [Fact]
+    public void ComputeStripTarget_DefaultSnap_IsComfortPadInDip()
+    {
+        // Target 2 (<= 4dp default snap) snaps to 0 on the MAUI path.
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 10, cardWidth: 100, overhead: 8,
+            viewportWidth: 120, contentWidth: 1000, currentScrollX: 10);
+
+        Assert.Equal(0, target);
+    }
+
+    [Fact]
+    public void ComputeStripTarget_PxSnap_ScalesWithDensity()
+    {
+        // Native px path at density 2: snap window is 8px, so a 6px target
+        // snaps to 0 (it would NOT with the 4-unit default).
+        var withPxSnap = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 22, cardWidth: 200, overhead: 16,
+            viewportWidth: 240, contentWidth: 2000, currentScrollX: 20,
+            snap: TvFocusScrollMath.ChromeComfortPad * 2);
+        var withDefault = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 22, cardWidth: 200, overhead: 16,
+            viewportWidth: 240, contentWidth: 2000, currentScrollX: 20);
+
+        Assert.Equal(0, withPxSnap);
+        Assert.Equal(6, withDefault);
+    }
+
+    [Fact]
+    public void ComputeStripTarget_PxSnap_SnapsToMaxScroll()
+    {
+        // maxScroll 760; wanted 754 is within the 8px window -> 760.
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 900, cardWidth: 90, overhead: 4,
+            viewportWidth: 240, contentWidth: 1000, currentScrollX: 0,
+            snap: 8);
+
+        Assert.Equal(760, target);
+    }
+
+    [Theory]
+    [InlineData(120, null, 120)]
+    [InlineData(120, 120.0, 120)]
+    [InlineData(120, 120.4, 120)]
+    [InlineData(120, 600.0, 600)]
+    [InlineData(450, 0.0, 0)]
+    public void ResolveRevealScrollX_UsesInFlightTargetUntilReached(
+        double actual, double? inFlight, double expected)
+    {
+        Assert.Equal(expected, TvFocusScrollMath.ResolveRevealScrollX(actual, inFlight));
+    }
+
+    [Fact]
+    public void ReversedPressMidAnimation_StillScrollsBack()
+    {
+        // Right-press animated from 0 towards 600; at mid-animation ScrollX
+        // 300 the user presses left onto a card at 310..510 (viewport 400).
+        // From the actual 300 the card looks visible (no scroll); from the
+        // 600 the strip is heading to, it would end clipped -> scroll back.
+        var current = TvFocusScrollMath.ResolveRevealScrollX(300, 600);
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 310, cardWidth: 200, overhead: 8,
+            viewportWidth: 400, contentWidth: 2000, currentScrollX: current);
+        var naive = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 310, cardWidth: 200, overhead: 8,
+            viewportWidth: 400, contentWidth: 2000, currentScrollX: 300);
+
+        Assert.Null(naive);
+        Assert.Equal(302, target);
+    }
+
     [Theory]
     [InlineData(100, 2.75, 275)]
     [InlineData(100.4, 2, 201)]
