@@ -32,6 +32,7 @@ namespace VardyParty.Platforms.Windows
             private MatchEventBus? matchEventBus;
             private Action<MatchEvent>? matchEventHandler;
             private Microsoft.UI.Xaml.Controls.Border? matchToastBorder;
+            private Microsoft.UI.Xaml.Controls.TextBlock? matchToastPrefix;
             private Microsoft.UI.Xaml.Controls.TextBlock? matchToastText;
             private Microsoft.UI.Xaml.Controls.Image? matchToastLeague;
             private Microsoft.UI.Xaml.Controls.Image? matchToastHome;
@@ -58,20 +59,26 @@ namespace VardyParty.Platforms.Windows
                         IsHitTestVisible = false,
                     };
 
-                    matchToastLeague = MakeIcon(22, 8);
-                    matchToastHome = MakeIcon(26, 8);
-                    matchToastAway = MakeIcon(26, 0);
-                    matchToastAway.Margin = new Microsoft.UI.Xaml.Thickness(8, 0, 0, 0);
-
-                    matchToastText = new Microsoft.UI.Xaml.Controls.TextBlock
+                    Microsoft.UI.Xaml.Controls.TextBlock MakeText(byte r, byte g, byte b) => new()
                     {
                         Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                            global::Windows.UI.Color.FromArgb(0xFF, 0xF3, 0xF4, 0xF6)),
+                            global::Windows.UI.Color.FromArgb(0xFF, r, g, b)),
                         FontSize = 15,
                         FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                         VerticalAlignment = WinVerticalAlignment.Center,
                         IsHitTestVisible = false,
                     };
+
+                    // [league logo] GOAL · League  [home badge] Home 2–1 Away [away badge]
+                    // Each badge sits directly against its own team's name: the
+                    // kind/league prefix is a separate text BEFORE the home badge.
+                    matchToastLeague = MakeIcon(22, 8);
+                    matchToastPrefix = MakeText(0xAE, 0xB6, 0xC6);
+                    matchToastHome = MakeIcon(26, 8);
+                    matchToastHome.Margin = new Microsoft.UI.Xaml.Thickness(12, 0, 8, 0);
+                    matchToastText = MakeText(0xF3, 0xF4, 0xF6);
+                    matchToastAway = MakeIcon(26, 0);
+                    matchToastAway.Margin = new Microsoft.UI.Xaml.Thickness(8, 0, 0, 0);
 
                     var row = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
@@ -80,6 +87,7 @@ namespace VardyParty.Platforms.Windows
                         IsHitTestVisible = false,
                     };
                     row.Children.Add(matchToastLeague);
+                    row.Children.Add(matchToastPrefix);
                     row.Children.Add(matchToastHome);
                     row.Children.Add(matchToastText);
                     row.Children.Add(matchToastAway);
@@ -155,7 +163,7 @@ namespace VardyParty.Platforms.Windows
 
             private void ShowNextMatchToast()
             {
-                if (matchToastBorder == null || matchToastText == null || matchToastQueue.Count == 0)
+                if (matchToastBorder == null || matchToastText == null || matchToastPrefix == null || matchToastQueue.Count == 0)
                 {
                     matchToastShowing = false;
                     return;
@@ -166,15 +174,8 @@ namespace VardyParty.Platforms.Windows
                 var epoch = ++matchToastEpoch;
                 var game = matchEvent.Game;
 
-                var headline = matchEvent.Kind switch
-                {
-                    MatchEventKind.Goal => "GOAL",
-                    MatchEventKind.ExtraTime => "EXTRA TIME",
-                    MatchEventKind.Penalties => "PENALTIES",
-                    _ => "MATCH",
-                };
-                matchToastText.Text =
-                    $"{headline} · {game.DisplayLeague}  —  {game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
+                matchToastPrefix.Text = $"{MatchEventPresenter.Kind(matchEvent)} · {game.DisplayLeague}";
+                matchToastText.Text = MatchEventPresenter.Fixture(matchEvent);
 
                 var loader = VardyParty.AppServiceProvider.ServiceProvider?
                     .GetService(typeof(IBadgeImageLoader)) as IBadgeImageLoader;
