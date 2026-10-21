@@ -36,27 +36,35 @@
                 <!-- Event kind + league attribution. The kind ("GOAL") lives
                      here, NOT in the badge row: anything before the home team
                      name would push the home badge away from its team. -->
-                <HorizontalStackLayout Spacing="8" InputTransparent="True">
+                <!-- Kind and logo always show; the league name is what truncates. -->
+                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8" InputTransparent="True">
                     <Label Text="{Binding Current.KindLabel}"
                            FontSize="{Binding Layout.AggregateFontSize}"
                            FontAttributes="Bold"
                            TextColor="White"
                            VerticalOptions="Center" />
-                    <Image Source="{Binding Current.LeagueIcon}"
+                    <Image Grid.Column="1"
+                           Source="{Binding Current.LeagueIcon}"
                            WidthRequest="18"
                            HeightRequest="18"
                            Aspect="AspectFit"
                            VerticalOptions="Center"
                            IsVisible="{Binding Current.HasLeagueIcon}" />
-                    <Label Text="{Binding Current.LeagueName}"
+                    <Label Grid.Column="2"
+                           Text="{Binding Current.LeagueName}"
                            FontSize="{Binding Layout.AggregateFontSize}"
                            FontAttributes="Bold"
                            TextColor="#AEB6C6"
+                           MaxLines="1"
+                           LineBreakMode="TailTruncation"
                            VerticalOptions="Center" />
-                </HorizontalStackLayout>
+                </Grid>
 
-                <!-- [home badge] Home 2–1 Away [away badge] -->
+                <!-- [home badge] Home 2–1 Away [away badge]. Pinned LTR: an RTL
+                     flow would mirror the columns while Latin team names still
+                     read LTR, putting the home badge next to the away team. -->
                 <Grid Grid.Row="1"
+                      FlowDirection="LeftToRight"
                       ColumnDefinitions="Auto,*,Auto"
                       ColumnSpacing="10"
                       InputTransparent="True">

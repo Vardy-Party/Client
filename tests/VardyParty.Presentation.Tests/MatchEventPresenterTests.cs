@@ -59,6 +59,37 @@ public sealed class MatchEventPresenterTests
     }
 
     [Fact]
+    public void Kind_UnknownKind_IsNeutral_NotPenalties()
+    {
+        Assert.Equal("MATCH", MatchEventPresenter.Kind(Event((MatchEventKind)99)));
+    }
+
+    [Fact]
+    public void Fixture_UnknownKind_NamesTheTeamsOnly()
+    {
+        Assert.Equal("Jablonec v Rangers", MatchEventPresenter.Fixture(Event((MatchEventKind)99)));
+    }
+
+    [Theory]
+    [InlineData(MatchEventKind.Goal)]
+    [InlineData(MatchEventKind.ExtraTime)]
+    [InlineData(MatchEventKind.Penalties)]
+    [InlineData((MatchEventKind)99)]
+    public void Scoreline_ShowsScoreForEveryKind_HomeFirstAwayLast(MatchEventKind kind)
+    {
+        // In-player banners have always shown the score for ET / penalties.
+        var line = MatchEventPresenter.Scoreline(Event(kind, homeScore: 1, awayScore: 1));
+
+        Assert.Equal("Jablonec 1–1 Rangers", line);
+    }
+
+    [Fact]
+    public void Headline_UnknownKind_UsesNeutralKind()
+    {
+        Assert.Equal("MATCH — Jablonec v Rangers", MatchEventPresenter.Headline(Event((MatchEventKind)99)));
+    }
+
+    [Fact]
     public void LeagueName_UsesDisplayLeague()
     {
         Assert.Equal("Cup Alpha", MatchEventPresenter.LeagueName(Event(MatchEventKind.Goal)));

@@ -66,6 +66,9 @@ namespace VardyParty.Platforms.Android
                     Visibility = global::Android.Views.ViewStates.Gone,
                 };
                 _matchToastView.SetGravity(global::Android.Views.GravityFlags.CenterVertical);
+                // Pin LTR: under an RTL locale the row would mirror while Latin
+                // team names still read LTR, putting the home badge by the away team.
+                _matchToastView.LayoutDirection = global::Android.Views.LayoutDirection.Ltr;
                 _matchToastView.SetPadding(Dp(14), Dp(10), Dp(14), Dp(10));
 
                 var background = new global::Android.Graphics.Drawables.GradientDrawable();
@@ -95,13 +98,24 @@ namespace VardyParty.Platforms.Android
                 // [league logo] GOAL · League  [home badge] Home 2–1 Away [away badge]
                 // Each badge sits directly against its own team's name: the
                 // kind/league prefix is a separate view BEFORE the home badge.
+                // The prefix owns the gap (not the badge), so the separation
+                // holds while a badge is loading or missing.
                 _matchToastLeagueLogo = MakeIcon(22);
                 _matchToastPrefix = MakeText("#AEB6C6");
+                _matchToastPrefix.LayoutParameters = new LinearLayout.LayoutParams(
+                    global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                    global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+                {
+                    RightMargin = Dp(12),
+                };
+                _matchToastPrefix.SetSingleLine(true);
+                _matchToastPrefix.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
 
                 _matchToastHomeBadge = MakeIcon(26);
-                ((LinearLayout.LayoutParams)_matchToastHomeBadge.LayoutParameters!).LeftMargin = Dp(12);
 
                 _matchToastText = MakeText("#F3F4F6");
+                _matchToastText.SetMaxLines(2);
+                _matchToastText.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
 
                 _matchToastAwayBadge = MakeIcon(26);
                 ((LinearLayout.LayoutParams)_matchToastAwayBadge.LayoutParameters!).LeftMargin = Dp(8);
@@ -165,13 +179,16 @@ namespace VardyParty.Platforms.Android
 
             var game = matchEvent.Game;
             _matchToastPrefix.Text = $"{MatchEventPresenter.Kind(matchEvent)} · {game.DisplayLeague}";
-            _matchToastText.Text = MatchEventPresenter.Fixture(matchEvent);
+            _matchToastText.Text = MatchEventPresenter.Scoreline(matchEvent);
+            ApplyMatchToastTextWidths();
 
             // Artwork async from the shared byte cache; epoch-guarded so a
-            // superseded banner never receives a late image.
-            SetBadgeAsync(_matchToastLeagueLogo, ResolveLeagueLogoBytesAsync(game), epoch);
-            SetBadgeAsync(_matchToastHomeBadge, _badgeLoader?.LoadRemoteBytesAsync(game.HomeBadgeUrl), epoch);
-            SetBadgeAsync(_matchToastAwayBadge, _badgeLoader?.LoadRemoteBytesAsync(game.AwayBadgeUrl), epoch);
+            // superseded banner never receives a late image. Team badges keep
+            // their slot (Invisible) while loading or when missing, so the
+            // fixture never jumps and the row stays symmetric.
+            SetBadgeAsync(_matchToastLeagueLogo, ResolveLeagueLogoBytesAsync(game), epoch, keepSlot: false);
+            SetBadgeAsync(_matchToastHomeBadge, _badgeLoader?.LoadRemoteBytesAsync(game.HomeBadgeUrl), epoch, keepSlot: true);
+            SetBadgeAsync(_matchToastAwayBadge, _badgeLoader?.LoadRemoteBytesAsync(game.AwayBadgeUrl), epoch, keepSlot: true);
 
             _matchToastView.Alpha = 0f;
             _matchToastView.Visibility = global::Android.Views.ViewStates.Visible;
@@ -182,6 +199,27 @@ namespace VardyParty.Platforms.Android
                 _matchToastHandler.RemoveCallbacks(_matchToastHideRunnable);
                 _matchToastHandler.PostDelayed(_matchToastHideRunnable, MatchToastDurationMs);
             }
+        }
+
+        /// <summary>
+        /// Cap both texts against the CURRENT display width so the fixed-size
+        /// badges are always measured: the prefix ellipsizes first, the
+        /// fixture wraps to 2 lines then ellipsizes, and the away badge can
+        /// never be squeezed to zero width on a portrait phone.
+        /// </summary>
+        private void ApplyMatchToastTextWidths()
+        {
+            if (_matchToastPrefix == null || _matchToastText == null) return;
+            var metrics = Resources?.DisplayMetrics;
+            if (metrics == null) return;
+            float density = metrics.Density;
+            int Dp(float dp) => (int)(dp * density);
+
+            // Screen minus toast margins, padding, three icons and their gaps.
+            int chrome = Dp(_isTvDevice ? 48 + 48 : 16 + 16) + Dp(14 + 14) + Dp(22 + 26 + 26) + Dp(8 + 12 + 8 + 8);
+            int budget = Math.Max(Dp(160), metrics.WidthPixels - chrome);
+            _matchToastPrefix.SetMaxWidth((int)(budget * 0.4f));
+            _matchToastText.SetMaxWidth((int)(budget * 0.6f));
         }
 
         private async Task<byte[]?> ResolveLeagueLogoBytesAsync(global::VardyParty.Kernel.Game game)
@@ -201,10 +239,12 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private void SetBadgeAsync(ImageView? target, Task<byte[]?>? bytesTask, int epoch)
+        private void SetBadgeAsync(ImageView? target, Task<byte[]?>? bytesTask, int epoch, bool keepSlot)
         {
             if (target == null) return;
-            target.Visibility = global::Android.Views.ViewStates.Gone;
+            target.Visibility = keepSlot
+                ? global::Android.Views.ViewStates.Invisible
+                : global::Android.Views.ViewStates.Gone;
             if (bytesTask == null) return;
 
             _ = Task.Run(async () =>

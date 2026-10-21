@@ -14,12 +14,16 @@ public static class MatchEventPresenter
     public static string Headline(MatchEvent matchEvent) =>
         $"{Kind(matchEvent)} — {Fixture(matchEvent)}";
 
-    /// <summary>"GOAL" / "EXTRA TIME" / "PENALTIES".</summary>
+    /// <summary>
+    /// "GOAL" / "EXTRA TIME" / "PENALTIES"; a neutral "MATCH" for any kind
+    /// added later, so a new event can never masquerade as an existing one.
+    /// </summary>
     public static string Kind(MatchEvent matchEvent) => matchEvent.Kind switch
     {
         MatchEventKind.Goal => "GOAL",
         MatchEventKind.ExtraTime => "EXTRA TIME",
-        _ => "PENALTIES",
+        MatchEventKind.Penalties => "PENALTIES",
+        _ => "MATCH",
     };
 
     /// <summary>
@@ -28,13 +32,30 @@ public static class MatchEventPresenter
     /// immediately before this text and the away badge immediately after it,
     /// so each badge is next to its own team (the kind label goes elsewhere).
     /// </summary>
-    public static string Fixture(MatchEvent matchEvent)
+    /// <remarks>
+    /// Homepage-toast wording: the score for a goal, "v" otherwise (unchanged
+    /// from the original headline). In-player banners use <see cref="Scoreline"/>.
+    /// </remarks>
+    public static string Fixture(MatchEvent matchEvent) => matchEvent.Kind switch
+    {
+        MatchEventKind.Goal => Scoreline(matchEvent),
+        MatchEventKind.ExtraTime or MatchEventKind.Penalties => Versus(matchEvent),
+        _ => Versus(matchEvent),
+    };
+
+    /// <summary>
+    /// "Home United 1–1 Away City" for EVERY kind - the in-player banners
+    /// (Android, Windows) have always shown the score for extra time and
+    /// penalties too. Home team first, away team last.
+    /// </summary>
+    public static string Scoreline(MatchEvent matchEvent)
     {
         var game = matchEvent.Game;
-        return matchEvent.Kind == MatchEventKind.Goal
-            ? $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}"
-            : $"{game.DisplayHome} v {game.DisplayAway}";
+        return $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
     }
+
+    private static string Versus(MatchEvent matchEvent) =>
+        $"{matchEvent.Game.DisplayHome} v {matchEvent.Game.DisplayAway}";
 
     /// <summary>League name for the toast's attribution line.</summary>
     public static string LeagueName(MatchEvent matchEvent) =>

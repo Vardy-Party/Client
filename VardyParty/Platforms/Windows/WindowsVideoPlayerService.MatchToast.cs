@@ -66,17 +66,23 @@ namespace VardyParty.Platforms.Windows
                         FontSize = 15,
                         FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                         VerticalAlignment = WinVerticalAlignment.Center,
+                        TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis,
                         IsHitTestVisible = false,
                     };
 
                     // [league logo] GOAL · League  [home badge] Home 2–1 Away [away badge]
                     // Each badge sits directly against its own team's name: the
                     // kind/league prefix is a separate text BEFORE the home badge.
+                    // The prefix owns the gap (not the badge), so the separation
+                    // holds while a badge is loading or missing.
                     matchToastLeague = MakeIcon(22, 8);
                     matchToastPrefix = MakeText(0xAE, 0xB6, 0xC6);
+                    matchToastPrefix.Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 12, 0);
+                    matchToastPrefix.TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap;
                     matchToastHome = MakeIcon(26, 8);
-                    matchToastHome.Margin = new Microsoft.UI.Xaml.Thickness(12, 0, 8, 0);
                     matchToastText = MakeText(0xF3, 0xF4, 0xF6);
+                    matchToastText.TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap;
+                    matchToastText.MaxLines = 2;
                     matchToastAway = MakeIcon(26, 0);
                     matchToastAway.Margin = new Microsoft.UI.Xaml.Thickness(8, 0, 0, 0);
 
@@ -84,6 +90,9 @@ namespace VardyParty.Platforms.Windows
                     {
                         Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
                         VerticalAlignment = WinVerticalAlignment.Center,
+                        // Pin LTR: an RTL flow would mirror the row while Latin
+                        // team names still read LTR, swapping the badges' teams.
+                        FlowDirection = Microsoft.UI.Xaml.FlowDirection.LeftToRight,
                         IsHitTestVisible = false,
                     };
                     row.Children.Add(matchToastLeague);
@@ -175,15 +184,18 @@ namespace VardyParty.Platforms.Windows
                 var game = matchEvent.Game;
 
                 matchToastPrefix.Text = $"{MatchEventPresenter.Kind(matchEvent)} · {game.DisplayLeague}";
-                matchToastText.Text = MatchEventPresenter.Fixture(matchEvent);
+                matchToastText.Text = MatchEventPresenter.Scoreline(matchEvent);
+                ApplyMatchToastTextWidths();
 
                 var loader = VardyParty.AppServiceProvider.ServiceProvider?
                     .GetService(typeof(IBadgeImageLoader)) as IBadgeImageLoader;
                 var locator = VardyParty.AppServiceProvider.ServiceProvider?
                     .GetService(typeof(IHomeAssetLocator)) as IHomeAssetLocator;
-                SetToastImageAsync(matchToastLeague, ResolveLeagueBytesAsync(loader, locator, game), epoch);
-                SetToastImageAsync(matchToastHome, loader?.LoadRemoteBytesAsync(game.HomeBadgeUrl), epoch);
-                SetToastImageAsync(matchToastAway, loader?.LoadRemoteBytesAsync(game.AwayBadgeUrl), epoch);
+                // Team badges keep their slot while loading or missing, so the
+                // fixture never jumps and the row stays symmetric.
+                SetToastImageAsync(matchToastLeague, ResolveLeagueBytesAsync(loader, locator, game), epoch, keepSlot: false);
+                SetToastImageAsync(matchToastHome, loader?.LoadRemoteBytesAsync(game.HomeBadgeUrl), epoch, keepSlot: true);
+                SetToastImageAsync(matchToastAway, loader?.LoadRemoteBytesAsync(game.AwayBadgeUrl), epoch, keepSlot: true);
 
                 matchToastBorder.Opacity = 0;
                 matchToastBorder.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
@@ -193,6 +205,25 @@ namespace VardyParty.Platforms.Windows
                 matchToastHideTimer.Stop();
                 matchToastHideTimer.Interval = TimeSpan.FromMilliseconds(MatchToastDurationMs);
                 matchToastHideTimer.Start();
+            }
+
+            /// <summary>
+            /// Cap both texts against the player's current width so the
+            /// fixed-size badges are always laid out: the prefix ellipsizes,
+            /// the fixture wraps to 2 lines then ellipsizes, and the away badge
+            /// is never pushed out of a narrow window.
+            /// </summary>
+            private void ApplyMatchToastTextWidths()
+            {
+                if (matchToastPrefix == null || matchToastText == null) return;
+                var width = playerGrid?.ActualWidth ?? 0;
+                if (width <= 0) width = 1280;
+
+                // Width minus toast margin, padding, three icons and their gaps.
+                const double chrome = 32 + 28 + (22 + 26 + 26) + (8 + 12 + 8 + 8);
+                var budget = Math.Min(Math.Max(160, width - chrome), 720);
+                matchToastPrefix.MaxWidth = budget * 0.4;
+                matchToastText.MaxWidth = budget * 0.6;
             }
 
             private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateMatchToastTimer()
@@ -253,10 +284,21 @@ namespace VardyParty.Platforms.Windows
             }
 
             private void SetToastImageAsync(
-                Microsoft.UI.Xaml.Controls.Image? target, Task<byte[]?>? bytesTask, int epoch)
+                Microsoft.UI.Xaml.Controls.Image? target, Task<byte[]?>? bytesTask, int epoch, bool keepSlot)
             {
                 if (target == null) return;
-                target.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                if (keepSlot)
+                {
+                    // Reserve the slot (transparent) instead of collapsing it.
+                    target.Source = null;
+                    target.Opacity = 0;
+                    target.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                }
+                else
+                {
+                    target.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                }
+
                 if (bytesTask == null) return;
 
                 _ = Task.Run(async () =>
@@ -275,6 +317,7 @@ namespace VardyParty.Platforms.Windows
                                 using var stream = new InMemoryRandomAccessStreamOverBytes(bytes);
                                 await image.SetSourceAsync(stream.Stream);
                                 target.Source = image;
+                                target.Opacity = 1;
                                 target.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                             }
                             catch (Exception ex) { _host.LogIgnored("SetToastImage", ex); }
