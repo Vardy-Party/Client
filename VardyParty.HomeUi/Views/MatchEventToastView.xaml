@@ -33,8 +33,15 @@
                   RowSpacing="6"
                   Padding="14,10,14,12"
                   InputTransparent="True">
-                <!-- League attribution -->
+                <!-- Event kind + league attribution. The kind ("GOAL") lives
+                     here, NOT in the badge row: anything before the home team
+                     name would push the home badge away from its team. -->
                 <HorizontalStackLayout Spacing="8" InputTransparent="True">
+                    <Label Text="{Binding Current.KindLabel}"
+                           FontSize="{Binding Layout.AggregateFontSize}"
+                           FontAttributes="Bold"
+                           TextColor="White"
+                           VerticalOptions="Center" />
                     <Image Source="{Binding Current.LeagueIcon}"
                            WidthRequest="18"
                            HeightRequest="18"
@@ -48,7 +55,7 @@
                            VerticalOptions="Center" />
                 </HorizontalStackLayout>
 
-                <!-- Badges + headline -->
+                <!-- [home badge] Home 2–1 Away [away badge] -->
                 <Grid Grid.Row="1"
                       ColumnDefinitions="Auto,*,Auto"
                       ColumnSpacing="10"
@@ -77,7 +84,7 @@
                     </Grid>
 
                     <Label Grid.Column="1"
-                           Text="{Binding Current.Headline}"
+                           Text="{Binding Current.Fixture}"
                            FontSize="{Binding Layout.TeamFontSize}"
                            FontAttributes="Bold"
                            TextColor="White"

@@ -40,6 +40,7 @@ namespace VardyParty.Platforms.Android
         private ImageView? _matchToastLeagueLogo;
         private ImageView? _matchToastHomeBadge;
         private ImageView? _matchToastAwayBadge;
+        private TextView? _matchToastPrefix;
         private TextView? _matchToastText;
         private global::Android.OS.Handler? _matchToastHandler;
         private Java.Lang.Runnable? _matchToastHideRunnable;
@@ -82,19 +83,32 @@ namespace VardyParty.Platforms.Android
                     return view;
                 }
 
-                _matchToastLeagueLogo = MakeIcon(22);
-                _matchToastHomeBadge = MakeIcon(26);
+                TextView MakeText(string color)
+                {
+                    var view = new TextView(this);
+                    view.SetTextColor(global::Android.Graphics.Color.ParseColor(color));
+                    view.SetTextSize(global::Android.Util.ComplexUnitType.Dip, _isTvDevice ? 18 : 14);
+                    view.SetTypeface(view.Typeface, global::Android.Graphics.TypefaceStyle.Bold);
+                    return view;
+                }
 
-                _matchToastText = new TextView(this);
-                _matchToastText.SetTextColor(global::Android.Graphics.Color.ParseColor("#F3F4F6"));
-                _matchToastText.SetTextSize(global::Android.Util.ComplexUnitType.Dip, _isTvDevice ? 18 : 14);
-                _matchToastText.SetTypeface(_matchToastText.Typeface, global::Android.Graphics.TypefaceStyle.Bold);
+                // [league logo] GOAL · League  [home badge] Home 2–1 Away [away badge]
+                // Each badge sits directly against its own team's name: the
+                // kind/league prefix is a separate view BEFORE the home badge.
+                _matchToastLeagueLogo = MakeIcon(22);
+                _matchToastPrefix = MakeText("#AEB6C6");
+
+                _matchToastHomeBadge = MakeIcon(26);
+                ((LinearLayout.LayoutParams)_matchToastHomeBadge.LayoutParameters!).LeftMargin = Dp(12);
+
+                _matchToastText = MakeText("#F3F4F6");
 
                 _matchToastAwayBadge = MakeIcon(26);
                 ((LinearLayout.LayoutParams)_matchToastAwayBadge.LayoutParameters!).LeftMargin = Dp(8);
                 ((LinearLayout.LayoutParams)_matchToastAwayBadge.LayoutParameters!).RightMargin = 0;
 
                 _matchToastView.AddView(_matchToastLeagueLogo);
+                _matchToastView.AddView(_matchToastPrefix);
                 _matchToastView.AddView(_matchToastHomeBadge);
                 _matchToastView.AddView(_matchToastText);
                 _matchToastView.AddView(_matchToastAwayBadge);
@@ -139,7 +153,7 @@ namespace VardyParty.Platforms.Android
 
         private void ShowNextMatchToast()
         {
-            if (_matchToastView == null || _matchToastText == null || _matchToastQueue.Count == 0)
+            if (_matchToastView == null || _matchToastText == null || _matchToastPrefix == null || _matchToastQueue.Count == 0)
             {
                 _matchToastShowing = false;
                 return;
@@ -150,15 +164,8 @@ namespace VardyParty.Platforms.Android
             var epoch = ++_matchToastEpoch;
 
             var game = matchEvent.Game;
-            var headline = matchEvent.Kind switch
-            {
-                MatchEventKind.Goal => "GOAL",
-                MatchEventKind.ExtraTime => "EXTRA TIME",
-                MatchEventKind.Penalties => "PENALTIES",
-                _ => "MATCH",
-            };
-            _matchToastText.Text =
-                $"{headline} · {game.DisplayLeague}  —  {game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
+            _matchToastPrefix.Text = $"{MatchEventPresenter.Kind(matchEvent)} · {game.DisplayLeague}";
+            _matchToastText.Text = MatchEventPresenter.Fixture(matchEvent);
 
             // Artwork async from the shared byte cache; epoch-guarded so a
             // superseded banner never receives a late image.
