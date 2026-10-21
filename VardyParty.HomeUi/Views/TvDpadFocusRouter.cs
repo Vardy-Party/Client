@@ -581,8 +581,9 @@ public static class TvDpadFocusRouter
 
     private sealed class StripScrollRequest
     {
-        public int TargetPx;
-        public long RequestedAtMs;
+        public int TargetPx { get; set; }
+
+        public long RequestedAtMs { get; set; }
     }
 
     /// <summary>
@@ -594,10 +595,11 @@ public static class TvDpadFocusRouter
     /// Returns false when the card is not in a laid-out strip, so callers can
     /// fall back to the MAUI path.
     /// </summary>
-    internal static bool TryRevealInStrip(AView card, double ringThicknessDip) =>
-        TryRevealInStrip(card, ringThicknessDip, allowLayoutRetry: true);
-
-    private static bool TryRevealInStrip(AView card, double ringThicknessDip, bool allowLayoutRetry)
+    /// <param name="allowLayoutRetry">
+    /// Internal: true for the first attempt; the single post-layout retry
+    /// passes false so it can never loop.
+    /// </param>
+    internal static bool TryRevealInStrip(AView card, double ringThicknessDip, bool allowLayoutRetry = true)
     {
         // Detached (RecyclerView recycle): no trustworthy geometry; let the
         // caller's MAUI retry loop handle it.
