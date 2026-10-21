@@ -42,6 +42,18 @@ public static class TvFocusScrollMath
     /// disabled on Android for safety, but the selection ring no longer
     /// depends on drawing outside the card.
     /// </summary>
+    /// <summary>
+    /// Where the strip WILL be, for reveal math: the last requested target
+    /// while a smooth scroll is still animating towards it, otherwise the
+    /// actual scroll position. Computing from the mid-animation position
+    /// lets a reversed D-pad press see the new card as "visible", skip the
+    /// scroll, and get clipped when the old animation finishes.
+    /// </summary>
+    public static double ResolveRevealScrollX(double actualScrollX, double? inFlightTarget) =>
+        inFlightTarget is { } target && Math.Abs(target - actualScrollX) >= 1
+            ? target
+            : actualScrollX;
+
     public static double FocusChromePadding(double cardDimension, double ringThickness) =>
         Math.Ceiling(FocusChromeOverhead(cardDimension, ringThickness));
 
@@ -51,13 +63,19 @@ public static class TvFocusScrollMath
     /// needed. Clamped to the scrollable range [0, extent]. A target within
     /// <see cref="ChromeComfortPad"/> of an edge snaps TO that edge.
     /// </summary>
+    /// <param name="snap">
+    /// Edge-snap window in the SAME units as the other arguments. Defaults
+    /// to <see cref="ChromeComfortPad"/> (dip, the MAUI path); the native px
+    /// path passes <c>ChromeComfortPad * density</c>.
+    /// </param>
     public static double? ComputeStripTarget(
         double cardLeft,
         double cardWidth,
         double overhead,
         double viewportWidth,
         double contentWidth,
-        double currentScrollX)
+        double currentScrollX,
+        double snap = ChromeComfortPad)
     {
         if (cardWidth <= 0 || viewportWidth <= 0)
         {
@@ -84,12 +102,12 @@ public static class TvFocusScrollMath
 
         target = Math.Clamp(target, 0, maxScroll);
 
-        if (target <= ChromeComfortPad)
+        if (target <= snap)
         {
             return 0;
         }
 
-        if (maxScroll - target <= ChromeComfortPad)
+        if (maxScroll - target <= snap)
         {
             return maxScroll;
         }

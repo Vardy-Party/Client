@@ -37,13 +37,16 @@
                      here, NOT in the badge row: anything before the home team
                      name would push the home badge away from its team. -->
                 <!-- Kind and logo always show; the league name is what truncates. -->
-                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8" InputTransparent="True">
+                <!-- Gaps are margins, not ColumnSpacing: a hidden league
+                     logo then costs nothing (no double gap). -->
+                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="0" InputTransparent="True">
                     <Label Text="{Binding Current.KindLabel}"
                            FontSize="{Binding Layout.AggregateFontSize}"
                            FontAttributes="Bold"
                            TextColor="White"
                            VerticalOptions="Center" />
                     <Image Grid.Column="1"
+                           Margin="8,0,0,0"
                            Source="{Binding Current.LeagueIcon}"
                            WidthRequest="18"
                            HeightRequest="18"
@@ -51,6 +54,7 @@
                            VerticalOptions="Center"
                            IsVisible="{Binding Current.HasLeagueIcon}" />
                     <Label Grid.Column="2"
+                           Margin="8,0,0,0"
                            Text="{Binding Current.LeagueName}"
                            FontSize="{Binding Layout.AggregateFontSize}"
                            FontAttributes="Bold"

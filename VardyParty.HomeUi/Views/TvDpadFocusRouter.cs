@@ -565,6 +565,27 @@ public static class TvDpadFocusRouter
     private static readonly global::Android.Graphics.Rect RevealRect = new();
 
     /// <summary>
+    /// UI-thread only: the last SmoothScrollTo target per strip, so a reveal
+    /// issued mid-animation computes from where the strip is GOING
+    /// (<see cref="TvFocusScrollMath.ResolveRevealScrollX"/>).
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<HorizontalScrollView, StripScrollRequest>
+        StripScrollTargets = new();
+
+    /// <summary>
+    /// A request older than this is not "in flight" any more (Android's smooth
+    /// scroll runs ~250ms), so a scroll from another path can never leave a
+    /// stale target in charge.
+    /// </summary>
+    private const long StripScrollInFlightMs = 500;
+
+    private sealed class StripScrollRequest
+    {
+        public int TargetPx;
+        public long RequestedAtMs;
+    }
+
+    /// <summary>
     /// Keep a card (plus focus-chrome overhead) inside its strip viewport,
     /// computed in native px from the laid-out HorizontalScrollView: card
     /// rect via OffsetDescendantRectToMyCoords, extent from the HSV child,
@@ -573,8 +594,18 @@ public static class TvDpadFocusRouter
     /// Returns false when the card is not in a laid-out strip, so callers can
     /// fall back to the MAUI path.
     /// </summary>
-    internal static bool TryRevealInStrip(AView card, double ringThicknessDip)
+    internal static bool TryRevealInStrip(AView card, double ringThicknessDip) =>
+        TryRevealInStrip(card, ringThicknessDip, allowLayoutRetry: true);
+
+    private static bool TryRevealInStrip(AView card, double ringThicknessDip, bool allowLayoutRetry)
     {
+        // Detached (RecyclerView recycle): no trustworthy geometry; let the
+        // caller's MAUI retry loop handle it.
+        if (!card.IsAttachedToWindow)
+        {
+            return false;
+        }
+
         HorizontalScrollView? hsv = null;
         for (var p = card.Parent; p != null; p = p.Parent)
         {
@@ -596,6 +627,23 @@ public static class TvDpadFocusRouter
             return false;
         }
 
+        // Pending layout (e.g. a staged chunk append grew the content but has
+        // not been re-laid out): measuring now would use stale bounds / the
+        // old maxScroll. Retry ONCE after the layout pass, still native.
+        if (allowLayoutRetry && (hsv.IsLayoutRequested || content.IsLayoutRequested))
+        {
+            var strip = hsv;
+            strip.Post(() =>
+            {
+                // Focus moved on meanwhile: never scroll back to a stale card.
+                if (card.HasFocus)
+                {
+                    TryRevealInStrip(card, ringThicknessDip, allowLayoutRetry: false);
+                }
+            });
+            return true;
+        }
+
         RevealRect.Set(0, 0, card.Width, card.Height);
         hsv.OffsetDescendantRectToMyCoords(card, RevealRect);
 
@@ -603,15 +651,32 @@ public static class TvDpadFocusRouter
         // the same convention HorizontalScrollView.scrollToChild uses.
         var cardLeftPx = RevealRect.Left;
 
+        // Real density (sub-1 included); only a missing/invalid value falls back.
         var density = hsv.Resources?.DisplayMetrics?.Density ?? 1f;
-        var overheadPx = TvFocusScrollMath.FocusChromeOverhead(card.Width, ringThicknessDip)
-            * Math.Max(density, 1f);
+        if (density <= 0)
+        {
+            density = 1f;
+        }
+
+        var overheadPx = TvFocusScrollMath.FocusChromeOverhead(card.Width, ringThicknessDip) * density;
+        var snapPx = TvFocusScrollMath.ChromeComfortPad * density;
+
+        var request = StripScrollTargets.GetOrCreateValue(hsv);
+        var nowMs = global::Android.OS.SystemClock.UptimeMillis();
+        double? inFlight = request.RequestedAtMs > 0 && nowMs - request.RequestedAtMs <= StripScrollInFlightMs
+            ? request.TargetPx
+            : null;
+        var currentPx = TvFocusScrollMath.ResolveRevealScrollX(hsv.ScrollX, inFlight);
 
         var target = TvFocusScrollMath.ComputeStripTarget(
-            cardLeftPx, card.Width, overheadPx, hsv.Width, content.Width, hsv.ScrollX);
+            cardLeftPx, card.Width, overheadPx, hsv.Width, content.Width, currentPx, snapPx);
         if (target is { } x)
         {
-            hsv.SmoothScrollTo((int)Math.Round(x), 0);
+            // Replaces any in-flight smooth scroll: the latest focus wins.
+            var xPx = (int)Math.Round(x);
+            request.TargetPx = xPx;
+            request.RequestedAtMs = nowMs;
+            hsv.SmoothScrollTo(xPx, 0);
         }
 
         return true;
