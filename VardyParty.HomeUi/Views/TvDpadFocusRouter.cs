@@ -561,6 +561,62 @@ public static class TvDpadFocusRouter
         && header is { IsAttachedToWindow: true, IsShown: true, Focusable: true }
         && header.RequestFocus();
 
+    /// <summary>UI-thread only: scratch rect for <see cref="TryRevealInStrip"/>.</summary>
+    private static readonly global::Android.Graphics.Rect RevealRect = new();
+
+    /// <summary>
+    /// Keep a card (plus focus-chrome overhead) inside its strip viewport,
+    /// computed in native px from the laid-out HorizontalScrollView: card
+    /// rect via OffsetDescendantRectToMyCoords, extent from the HSV child,
+    /// position from hsv.ScrollX. RevealOnFocusHint=false switched off
+    /// Android's own reveal, so this is the only thing that scrolls the row.
+    /// Returns false when the card is not in a laid-out strip, so callers can
+    /// fall back to the MAUI path.
+    /// </summary>
+    internal static bool TryRevealInStrip(AView card, double ringThicknessDip)
+    {
+        HorizontalScrollView? hsv = null;
+        for (var p = card.Parent; p != null; p = p.Parent)
+        {
+            if (p is HorizontalScrollView found)
+            {
+                hsv = found;
+                break;
+            }
+
+            if (p is RecyclerView)
+            {
+                break;
+            }
+        }
+
+        if (hsv is null || hsv.Width <= 0 || card.Width <= 0 || hsv.ChildCount == 0
+            || hsv.GetChildAt(0) is not { Width: > 0 } content)
+        {
+            return false;
+        }
+
+        RevealRect.Set(0, 0, card.Width, card.Height);
+        hsv.OffsetDescendantRectToMyCoords(card, RevealRect);
+
+        // Content coordinates of the HSV (its own ScrollX is not applied),
+        // the same convention HorizontalScrollView.scrollToChild uses.
+        var cardLeftPx = RevealRect.Left;
+
+        var density = hsv.Resources?.DisplayMetrics?.Density ?? 1f;
+        var overheadPx = TvFocusScrollMath.FocusChromeOverhead(card.Width, ringThicknessDip)
+            * Math.Max(density, 1f);
+
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeftPx, card.Width, overheadPx, hsv.Width, content.Width, hsv.ScrollX);
+        if (target is { } x)
+        {
+            hsv.SmoothScrollTo((int)Math.Round(x), 0);
+        }
+
+        return true;
+    }
+
     private static RecyclerView? FindParentRecycler(AView view)
     {
         for (var parent = view.Parent; parent != null; parent = parent.Parent)

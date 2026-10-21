@@ -310,6 +310,32 @@ public class TvFocusScrollMathTests
         Assert.Equal(0, TvFocusScrollMath.SumHorizontalChildExtent(0, 7));
     }
 
+    [Fact]
+    public void ComputeStripTarget_CardPastRightEdgeInPx_ScrollsItIn()
+    {
+        // Arrange: 1920px viewport, 6 cards of 525px + 24px gap, content 3270px,
+        // strip at rest; 4th card (left 1647) overhangs the right edge.
+        // Act
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 1647, cardWidth: 525, overhead: 12,
+            viewportWidth: 1920, contentWidth: 3270, currentScrollX: 0);
+
+        // Assert: right edge + overhead lands on the viewport edge.
+        Assert.Equal(1647 + 525 + 12 - 1920, target);
+    }
+
+    [Fact]
+    public void ComputeStripTarget_ReportedContentEqualsViewport_IsTheOffScreenBug()
+    {
+        // The MAUI-measured path: ContentSize reported == viewport clamps to 0,
+        // so focus walks off-screen. The native path passes the HSV child width.
+        var target = TvFocusScrollMath.ComputeStripTarget(
+            cardLeft: 1647, cardWidth: 525, overhead: 12,
+            viewportWidth: 1920, contentWidth: 1920, currentScrollX: 0);
+
+        Assert.Equal(0, target);
+    }
+
     [Theory]
     [InlineData(100, 2.75, 275)]
     [InlineData(100.4, 2, 201)]
