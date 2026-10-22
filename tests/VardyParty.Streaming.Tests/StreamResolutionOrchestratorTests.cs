@@ -382,6 +382,71 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
+    public async Task StartAsync_CancelledPredecessorStillUnwinding_WaitsInsteadOfStartRefused()
+    {
+        // The previous session's token is cancelled, but it keeps the gate while
+        // the abort unwinds (longer than the 2s overlap refusal). The replacement
+        // start must wait on its own token and run, not return StartRefused.
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unwindStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(async (Game _, CancellationToken ct) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return;
+
+                entered.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    unwindStarted.TrySetResult();
+                    await Task.Delay(TimeSpan.FromSeconds(3));
+                    throw;
+                }
+            });
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>());
+
+        using var cts = new CancellationTokenSource();
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        var first = sut.StartAsync(game, player.Object, cts.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        await unwindStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var second = sut.StartAsync(game, player.Object);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        var secondOutcome = await second.WaitAsync(TimeSpan.FromSeconds(8));
+
+        Assert.False(secondOutcome.StartRefused);
+        Assert.True(secondOutcome.NoWorkingStreams);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Verify(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
     public async Task StartAsync_FirstHealthyInvokesPlayer_LaterHealthyJoinPoolOnly()
     {
         // Arrange

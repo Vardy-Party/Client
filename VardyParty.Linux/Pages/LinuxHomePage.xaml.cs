@@ -78,6 +78,8 @@ public partial class LinuxHomePage : ContentPage
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
     private int _resolutionGeneration;
+    private int _resolutionClaimGeneration;
+    private readonly object _resolutionOwnership = new();
     private CancellationTokenSource? _resolutionCts;
     private Task? _resolutionTask;
 
@@ -1062,15 +1064,20 @@ public partial class LinuxHomePage : ContentPage
             _resolutionCts?.Cancel();
         }
 
-        var generation = Interlocked.Increment(ref _resolutionGeneration);
-        _resolutionStartClaimed = true;
+        int generation;
+        lock (_resolutionOwnership)
+        {
+            generation = Interlocked.Increment(ref _resolutionGeneration);
+            _resolutionClaimGeneration = generation;
+            _resolutionStartClaimed = true;
+            _isResolvingStreams = true;
+            _resolveOverlayOpen = true;
+            _resolutionExhausted = false;
+        }
 
         _homeShell.OnUserPicked(game);
         _selection.CurrentGame = game;
-        _isResolvingStreams = true;
-        _resolveOverlayOpen = true;
-        _resolutionExhausted = false;
-        ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
+        ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}", generation);
 
         _progressSubscription ??= _orchestrator.ProgressUpdated.Subscribe(progress =>
         {
@@ -1085,7 +1092,7 @@ public partial class LinuxHomePage : ContentPage
             UpdateResolveOverlay(progress);
         });
 
-        if (generation != Volatile.Read(ref _resolutionGeneration))
+        if (ReleaseSupersededResolutionStart(generation))
         {
             return;
         }
@@ -1139,14 +1146,31 @@ public partial class LinuxHomePage : ContentPage
             }
             finally
             {
-                if (generation == Volatile.Read(ref _resolutionGeneration))
+                var clearOwnedSession = false;
+                lock (_resolutionOwnership)
                 {
-                    _resolutionStartClaimed = false;
-                    _isResolvingStreams = false;
-                    _resolveOverlayOpen = false;
+                    if (generation == _resolutionGeneration)
+                    {
+                        _resolutionStartClaimed = false;
+                        _isResolvingStreams = false;
+                        _resolveOverlayOpen = false;
+                        if (_resolutionClaimGeneration == generation)
+                            _resolutionClaimGeneration = 0;
+                        clearOwnedSession = true;
+                    }
+                }
+
+                if (clearOwnedSession)
+                {
                     _viewModel.OnStreamResolutionEnded();
                     Dispatcher.Dispatch(() =>
                     {
+                        if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                                generation, Volatile.Read(ref _resolutionGeneration)))
+                        {
+                            return;
+                        }
+
                         ResolveOverlay.IsVisible = false;
                         TryResumeAfterPlayer();
                     });
@@ -1179,11 +1203,16 @@ public partial class LinuxHomePage : ContentPage
 
         _progressSubscription?.Dispose();
         _progressSubscription = null;
-        Interlocked.Increment(ref _resolutionGeneration);
-        _resolutionStartClaimed = false;
-        _resolutionExhausted = true;
-        _isResolvingStreams = false;
-        _resolveOverlayOpen = false;
+        lock (_resolutionOwnership)
+        {
+            Interlocked.Increment(ref _resolutionGeneration);
+            _resolutionClaimGeneration = 0;
+            _resolutionStartClaimed = false;
+            _resolutionExhausted = true;
+            _isResolvingStreams = false;
+            _resolveOverlayOpen = false;
+        }
+
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
@@ -1274,6 +1303,10 @@ public partial class LinuxHomePage : ContentPage
             _logger.LogWarning(ex, "[LinuxHome] Failed to close playback");
         }
 
+        // User Close stamps a viewer-left result. A source-error result must not
+        // cancel the orchestrator's fresh-playlist retry.
+        if (HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(_videoPlayer.LastPlaybackResult))
+        {
         var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
             _resolveOverlayOpen,
             _isResolvingStreams,
@@ -1294,6 +1327,7 @@ public partial class LinuxHomePage : ContentPage
             {
                 _logger.LogDebug(ex, "[LinuxHome] Cancel of resolution CTS after close failed");
             }
+        }
         }
 
         Dispatcher.Dispatch(() =>
@@ -1728,8 +1762,57 @@ public partial class LinuxHomePage : ContentPage
         }
     }
 
-    private void ShowResolveOverlay(string subtitle) => Dispatcher.Dispatch(() =>
+    /// <summary>
+    /// Drops a start that lost the generation race before its search task was
+    /// queued. Returns true when this attempt must not continue.
+    /// </summary>
+    private bool ReleaseSupersededResolutionStart(int generation)
     {
+        lock (_resolutionOwnership)
+        {
+            if (!HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
+                    generation,
+                    _resolutionGeneration,
+                    _resolutionClaimGeneration))
+            {
+                return false;
+            }
+
+            _resolutionClaimGeneration = 0;
+            _resolutionStartClaimed = false;
+            _isResolvingStreams = false;
+            _resolveOverlayOpen = false;
+            _selection.CurrentGame = null;
+        }
+
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxHome] ClearSelection on superseded start failed");
+        }
+
+        Dispatcher.Dispatch(() =>
+        {
+            if (Volatile.Read(ref _resolutionClaimGeneration) != 0)
+                return;
+
+            ResolveOverlay.IsVisible = false;
+        });
+        _logger.LogInformation("[LinuxHome] Stream resolution start superseded before search began");
+        return true;
+    }
+
+    private void ShowResolveOverlay(string subtitle, int generation) => Dispatcher.Dispatch(() =>
+    {
+        if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                generation, Volatile.Read(ref _resolutionGeneration)))
+        {
+            return;
+        }
+
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;

@@ -1,3 +1,4 @@
+using VardyParty.Kernel;
 using VardyParty.Presentation;
 using Xunit;
 
@@ -16,6 +17,18 @@ public class HomeFindingStreamsPolicyTests
     [InlineData(false)]
     public void PlaybackLeaveShouldStopFinding_Always_EvenWhenOverlayAlreadyDismissed(bool findingActive) =>
         Assert.True(HomeFindingStreamsPolicy.PlaybackLeaveShouldStopFinding(findingActive));
+
+    [Fact]
+    public void PlaybackHideShouldCancelResolution_OnlyWhenViewerLeft()
+    {
+        Assert.True(HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(null));
+        Assert.True(HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(
+            PlaybackResult.Completed(PlaybackCloseReasons.UserClosed)));
+        Assert.True(HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(
+            PlaybackResult.Completed(PlaybackCloseReasons.PlayerClosed)));
+        Assert.False(HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(
+            PlaybackResult.Completed("Source error")));
+    }
 
     [Fact]
     public void IsFindingActive_WhenAnyOwnershipFlagSet()
@@ -45,5 +58,29 @@ public class HomeFindingStreamsPolicyTests
             isResolvingStreams: false,
             resolutionStartClaimed: false,
             resolutionTaskInFlight: false));
+    }
+
+    [Fact]
+    public void ShouldReleaseSupersededResolutionStart_OnlyWhenThisAttemptStillOwnsTheClaim()
+    {
+        Assert.True(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
+            attemptGeneration: 4,
+            currentGeneration: 5,
+            publishedClaimGeneration: 4));
+        Assert.False(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
+            attemptGeneration: 4,
+            currentGeneration: 5,
+            publishedClaimGeneration: 5));
+        Assert.False(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
+            attemptGeneration: 4,
+            currentGeneration: 4,
+            publishedClaimGeneration: 4));
+    }
+
+    [Fact]
+    public void ShouldPaintFindingOverlay_OnlyForTheCurrentGeneration()
+    {
+        Assert.True(HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(3, 3));
+        Assert.False(HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(3, 4));
     }
 }

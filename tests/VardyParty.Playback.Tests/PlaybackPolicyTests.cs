@@ -323,6 +323,7 @@ public class PlaybackPolicyTests
     [InlineData(null, "source error", "androidx.media3.exoplayer.source.BehindLiveWindowException", true)]
     [InlineData(2001, "Decoder init failed", null, false)]
     [InlineData(null, "network timeout", null, false)]
+    [InlineData(null, "Source error", "androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker$PlaylistStuckException", false)]
     public void IsBehindLiveWindowFailure_MatchesExoPlayerSignals(
         int? errorCode,
         string? message,
@@ -337,6 +338,39 @@ public class PlaybackPolicyTests
         // Assert
         Assert.Equal(expected, isBehind);
         Assert.Equal(1002, PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow);
+    }
+
+    [Theory]
+    [InlineData(null, "androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker$PlaylistStuckException", true)]
+    [InlineData("PlaylistStuckException", null, true)]
+    [InlineData("Source error", "Caused by: PlaylistStuckException", true)]
+    [InlineData("Source error", "BehindLiveWindowException", false)]
+    [InlineData("Decoder init failed", null, false)]
+    [InlineData(null, null, false)]
+    public void IsStuckLivePlaylistFailure_MatchesPlaylistStuckCause(
+        string? message,
+        string? causeSummary,
+        bool expected)
+    {
+        var stuck = PlaybackPolicy.IsStuckLivePlaylistFailure(message, causeSummary);
+        Assert.Equal(expected, stuck);
+    }
+
+    [Theory]
+    [InlineData(1002, "Source error", null, true)]
+    [InlineData(null, "Source error", "HlsPlaylistTracker$PlaylistStuckException", true)]
+    [InlineData(2001, "Decoder init failed", null, false)]
+    public void IsRecoverableExoLiveHlsStall_CoversBehindLiveWindowAndPlaylistStuck(
+        int? errorCode,
+        string? message,
+        string? causeSummary,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            PlaybackPolicy.IsRecoverableExoLiveHlsStall(errorCode, message, causeSummary));
+        Assert.True(PlaybackPolicy.ShouldAttemptLiveHlsRecovery(0, "https://cdn.example/live.m3u8"));
+        Assert.False(PlaybackPolicy.ShouldAttemptLiveHlsRecovery(PlaybackPolicy.MaxLiveHlsRecoveries, "https://cdn.example/live.m3u8"));
     }
 
     [Theory]

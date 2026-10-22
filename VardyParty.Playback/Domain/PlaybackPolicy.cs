@@ -91,8 +91,9 @@ public static class PlaybackPolicy
         => consecutiveFailures >= MaxConsecutiveDownloadFailures;
 
     /// <summary>
-    /// Soft live-HLS recoveries (Android BehindLiveWindow seek, Windows AdaptiveMediaSource reattach)
-    /// before escalating to <see cref="MediaEngineEventKind.Error"/> / pool remove.
+    /// Soft live-HLS recoveries (Android BehindLiveWindow or PlaylistStuck seek,
+    /// Windows AdaptiveMediaSource reattach) before escalating to
+    /// <see cref="MediaEngineEventKind.Error"/> / pool remove.
     /// Linux LibVLC uses --http-reconnect instead of this budget.
     /// </summary>
     public const int MaxLiveHlsRecoveries = 5;
@@ -146,6 +147,23 @@ public static class PlaybackPolicy
     }
 
     /// <summary>
+    /// Android ExoPlayer <c>HlsPlaylistTracker.PlaylistStuckException</c>: the live
+    /// media playlist stopped advancing. Same seek-to-live-edge recovery as
+    /// <see cref="IsBehindLiveWindowFailure"/>, sharing <see cref="MaxLiveHlsRecoveries"/>.
+    /// Matched from the exception message or cause summary so hosts stay OS-free.
+    /// </summary>
+    public static bool IsStuckLivePlaylistFailure(string? message, string? causeSummary = null)
+        => ContainsStuckPlaylistMarker(message) || ContainsStuckPlaylistMarker(causeSummary);
+
+    /// <summary>
+    /// Either live-HLS stall ExoPlayer reports as a source error that a seek to the
+    /// live edge can clear. Other source errors still escalate.
+    /// </summary>
+    public static bool IsRecoverableExoLiveHlsStall(int? errorCode, string? message, string? causeSummary = null)
+        => IsBehindLiveWindowFailure(errorCode, message, causeSummary)
+           || IsStuckLivePlaylistFailure(message, causeSummary);
+
+    /// <summary>
     /// Windows MediaPlayer failure classification for live HLS soft-recover.
     /// Network-class only — mirrors Android’s BehindLiveWindow-only gate.
     /// Decoding / Unknown / unsupported / aborted / auth must escalate to Error
@@ -193,6 +211,10 @@ public static class PlaybackPolicy
     private static bool ContainsLiveWindowMarker(string? text)
         => !string.IsNullOrEmpty(text)
            && text.Contains("BehindLiveWindow", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ContainsStuckPlaylistMarker(string? text)
+        => !string.IsNullOrEmpty(text)
+           && text.Contains("PlaylistStuck", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// ExoPlayer raises OnPlayerErrorChanged(null) to clear a previous error. Hosts must not
