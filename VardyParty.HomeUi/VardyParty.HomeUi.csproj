@@ -48,10 +48,13 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- Metallic brand crest: PNG for reliable first paint; SVG kept as
-		     source + Svg.Skia fallback if the PNG embed is missing. -->
-		<EmbeddedResource Include="Resources\brand_crest.png" />
-		<EmbeddedResource Include="Resources\brand_crest.svg" />
+		<!-- Crest layers: PNG for reliable first paint; SVG is the source and
+		     the Svg.Skia fallback if a PNG embed is missing. The disc (highlight
+		     and rim) stays fixed; only the mark is rotated. -->
+		<EmbeddedResource Include="Resources\brand_crest_disc.png" />
+		<EmbeddedResource Include="Resources\brand_crest_disc.svg" />
+		<EmbeddedResource Include="Resources\brand_crest_mark.png" />
+		<EmbeddedResource Include="Resources\brand_crest_mark.svg" />
 	</ItemGroup>
 
 	<ItemGroup>

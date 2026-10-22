@@ -132,7 +132,7 @@ public sealed class BrandCrestSpinMachine
         {
             // Layout killed the turn (the paint that delivered this apply is
             // exactly the abort trigger) — re-drive the deferred restart so
-            // the crest never sits edge-on while loading continues.
+            // the crest never sits mid-turn while loading continues.
             Spinning = false;
             RestartPending = true;
             return Step.Defer;

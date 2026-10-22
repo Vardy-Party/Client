@@ -68,12 +68,12 @@ platform —
 VardyParty.HomeUi/            shared MAUI XAML homepage (net11.0 + net11.0-android/-windows)
   Views/HomeView.xaml         Netflix-style rows + brand header + league/settings menu
   Views/MatchCardView.xaml    rich match card (badges, score, status, effects)
-  Views/BrandLogoView.xaml    3D metallic animated Vardy Party crest (see below)
+  Views/BrandLogoView.xaml    metallic animated Vardy Party crest (see below)
   ViewModels/                 HomeViewModel, LeagueRowViewModel, MatchCardViewModel,
                               LeagueToggleViewModel, HomeLayoutState
   Services/                   IBadgeImageLoader (+ Svg.Skia rasterizer), IHomeAssetLocator,
                               BrandCrestImageLoader
-  Resources/brand_crest.svg   metallic crest, embedded + rasterised at runtime
+  Resources/brand_crest_*.svg disc (fixed highlight + rim) and mark (spinning pattern)
 
 VardyParty/                   MAUI head (net11.0-android/-ios/-maccatalyst/-windows)
   HomeHostPage.xaml           hosts HomeView + auth/resolve overlays on every platform
@@ -431,25 +431,30 @@ flowchart TD
   probe -->|signed out or the check threw| signin[Open sign-in]
 ```
 
-### The brand logo (3D, metallic, animated)
+### The brand logo (metallic, animated)
 
 The header is a brand row: the Vardy Party crest left of the wordmark with
 the subtitle beneath, on every adaptive layout
 (`HomeLayoutMetrics.BrandLogoSize`: TV 68 / desktop 58 / phone 46–40 dip).
 
-- **Asset**: `VardyParty.HomeUi/Resources/brand_crest.svg` re-authors the
-  app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`) with
-  chrome/navy metallic gradients, and is rasterised once per process through
-  the same Svg.Skia path the badges use (`BrandCrestImageLoader`).
-- **3D treatment** (`BrandLogoView`): the badges' brushed-metal gradient
+- **Asset**: the app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`)
+  with chrome/navy metallic gradients, split so the light does not spin.
+  `brand_crest_disc.svg` is the sphere fill and rim (highlight stays upper-left).
+  `brand_crest_mark.svg` is the transparent diamond, panels, and seams.
+  `BrandCrestImageLoader` rasterises each layer once per process (embedded PNG
+  first, Svg.Skia fallback). `brand_crest.svg` is the composed reference; the
+  view does not rotate it.
+- **Treatment** (`BrandLogoView`): the badges' brushed-metal gradient
   ring, a dark inner plate, a glass gloss over the upper hemisphere, and a
-  drop shadow.
-- **Animation**: while `HomeViewModel.IsContentLoading` the crest spins on a
-  3D `RotationY` turntable (coin-edge rim + angle-driven glint). When the
-  first catalog lands, the spinner **finishes the turn it is on** and eases
-  to face-on rest with a sheen — catalog paint must not `AbortAnimation`
-  mid-rotation (that froze the crest edge-on). If layout kills the spinner,
-  `HomeView` tells the logo after apply and it settles from the last angle.
+  drop shadow. Those overlays sit above the mark and do not rotate.
+- **Animation**: while `HomeViewModel.IsContentLoading`, `BrandCrestSpin.Pose`
+  turns only the mark in the plane of the screen (`Image.Rotation` about the
+  disc center). Bezel `RotationY` stays 0, face `ScaleX` stays 1, and the
+  spin frame does not drive the sheen. When the first catalog lands, the
+  mark **finishes the turn it is on** and eases to upright rest (0°/360°)
+  with a sheen — catalog paint must not `AbortAnimation` mid-rotation (that
+  froze the crest mid-turn). If layout kills the spinner, `HomeView` tells
+  the logo after apply and it settles from the last angle.
   After rest, a slow ambient shimmer loop (a low-opacity sheen crosses the
   crest for a quarter of a 6 s loop) — **suspended entirely on the TV class**
   (`HomeIdleAnimationPolicy.AllowAmbientCrestShimmer`; the idle TV homepage
@@ -480,9 +485,9 @@ the subtitle beneath, on every adaptive layout
     `SettleOverdueMs` (turn + ease + slack) **snaps** to face-on with
     direct property writes layout cannot abort. Invariant: once content
     is ready the crest always reaches face-on rest, on every platform.
-  - **The settle never reverses through the coin-edge**: angles at or past
-    180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — the
-    edge-on freeze case — rests at 360, not 0.
+  - **The settle never reverses the in-plane turn**: angles at or past
+    180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — upside-down —
+    rests at 360, not 0.
 
 ### UI sound design
 

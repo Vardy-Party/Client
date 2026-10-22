@@ -57,7 +57,9 @@ if command -v gh >/dev/null 2>&1; then
       [[ -z "${branch}" ]] && continue
       [[ "${branch}" == "${current_branch}" ]] && continue
       [[ "${branch}" == "${GITHUB_HEAD_REF:-}" ]] && continue
-      body=$(gh api "repos/${GITHUB_REPOSITORY}/contents/Version.props" -f ref="${branch}" --jq '.content' 2>/dev/null || true)
+      # gh api switches to POST when -f is set, and the contents endpoint 404s.
+      # -X GET keeps ref on the query string so other open PRs count.
+      body=$(gh api -X GET "repos/${GITHUB_REPOSITORY}/contents/Version.props" -f ref="${branch}" --jq '.content' 2>/dev/null || true)
       [[ -z "${body}" ]] && continue
       ver=$(printf '%s' "${body}" | tr -d '\n' | base64 -d 2>/dev/null \
         | sed -n 's/.*<ApplicationVersion>\([0-9][0-9]*\)<\/ApplicationVersion>.*/\1/p' | head -n 1 || true)

@@ -31,12 +31,13 @@
 
     </ContentView.Resources>
 
-    <!-- The bezel stays put. Only CrestImage rotates in the plane of the
-         screen (Rotation, not RotationY). A Y-axis coin flip is a silhouette:
-         squashing through the edge looks the same either way, so the turn
-         reads as an optical illusion. An in-plane turn moves the diamond and
-         panels around the disc, so the direction is unambiguous. The gloss
-         stays fixed — a light on the disc, not paint that flips with it. -->
+    <!-- The bezel, sphere highlight, rim, gloss, and sheen stay put. Only
+         CrestMark rotates in the plane of the screen (Rotation, not RotationY),
+         around the center of the disc. A Y-axis coin flip is a silhouette:
+         squashing through the edge looks the same either way. Turning the
+         diamond and panels in the plane makes the direction unambiguous.
+         CrestDisc holds the baked highlight and rim so that light does not
+         orbit with the pattern. -->
     <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
           HeightRequest="{Binding Layout.BrandLogoSize}">
 
@@ -63,14 +64,23 @@
             <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" />
         </Border>
 
-        <!-- Crest face: image rotation is the spin; gloss and sheen stay put -->
+        <!-- Disc stays fixed. Only the mark's Rotation is the spin. -->
         <Grid x:Name="CrestFace"
               Margin="5"
               InputTransparent="True">
-            <Image x:Name="CrestImage"
+            <Image x:Name="CrestDisc"
                    Aspect="AspectFit"
                    HorizontalOptions="Fill"
-                   VerticalOptions="Fill" />
+                   VerticalOptions="Fill"
+                   InputTransparent="True" />
+            <Image x:Name="CrestMark"
+                   Aspect="AspectFit"
+                   HorizontalOptions="Fill"
+                   VerticalOptions="Fill"
+                   AnchorX="0.5"
+                   AnchorY="0.5"
+                   Rotation="0"
+                   InputTransparent="True" />
 
             <!-- Gloss highlight -->
             <Border StrokeShape="Ellipse" StrokeThickness="0"
