@@ -7,7 +7,7 @@ namespace VardyParty.HomeUi;
 /// Loads the metallic brand crest for <c>BrandLogoView</c>. Prefers the
 /// pre-rasterised PNG embedded beside the SVG so first paint never depends
 /// on Svg.Skia natives (field: empty spinning ring on WinUI/Android when
-/// StreamImageSource + nested RotationY failed to show the crest). SVG
+/// StreamImageSource nested under a yawing plate failed to show the crest). SVG
 /// remains as a fallback for builds that omit the PNG.
 /// </summary>
 public static class BrandCrestImageLoader

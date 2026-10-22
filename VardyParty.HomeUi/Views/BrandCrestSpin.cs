@@ -27,11 +27,11 @@ public static class BrandCrestSpin
     }
 
     /// <summary>
-    /// Nearest face-on rest. Turning the short way never crosses a full extra
+    /// Nearest upright rest. Turning the short way never crosses a full extra
     /// revolution; angles at or past 180 ease forward to 360 so the settle
-    /// never reverses through the coin-edge. Exactly 180 — the edge-on freeze
-    /// case — must also rest forward at 360: easing it back to 0 would swing
-    /// the crest backward through the edge it froze on.
+    /// never reverses the spin. Exactly 180 — the old mid-turn freeze —
+    /// must also rest forward at 360: easing it back to 0 would spin the
+    /// disc backward.
     /// </summary>
     public static double RestTargetDegrees(double current)
     {

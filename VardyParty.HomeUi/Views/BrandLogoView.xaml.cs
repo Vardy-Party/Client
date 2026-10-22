@@ -7,7 +7,7 @@ namespace VardyParty.HomeUi.Views;
 /// it is never focusable (D-pad/tab traversal skips it; the menu button
 /// beside it stays focusable).
 /// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/>)
-/// the crest spins on a 3D RotationY turntable; when rows render it finishes
+/// the crest spins in the plane of the disc; when rows render it finishes
 /// the turn it is on and eases to rest with a sheen sweep. Catalog paint must
 /// not abort the spinner — that froze the crest mid-turn.
 /// </summary>
@@ -19,9 +19,6 @@ public partial class BrandLogoView : ContentView
     private const string SettleAnimation = "BrandSpinSettle";
     private const uint FocusScaleMs = 130;
     private const double AmbientOpacity = 0.35;
-    private const double RimMinScaleX = 0.06;
-    private const double RimMaxScaleX = 0.34;
-    private const double RimDriftPx = 7.0;
 
     // Lifecycle decisions (spin/abort/restart/settle/snap) live in the pure,
     // clock-injectable BrandCrestSpinMachine; this view only executes Steps
@@ -407,7 +404,7 @@ public partial class BrandLogoView : ContentView
         LogoOuter.RotationY = 0;
         CrestFace.ScaleX = 1;
         CrestFace.Opacity = 1;
-        EdgeRim.Opacity = 0;
+        CrestImage.Rotation = 0;
         LogoSheen.Opacity = 0;
         LogoSheen.TranslationX = -26;
     }
@@ -415,26 +412,16 @@ public partial class BrandLogoView : ContentView
     private void ApplySpinFrame(double angleDegrees)
     {
         _angle = angleDegrees;
-        var radians = angleDegrees * Math.PI / 180.0;
-        var sin = Math.Sin(radians);
-        var cos = Math.Cos(radians);
-        var absSin = Math.Abs(sin);
-        var faceVisibility = Math.Abs(cos);
 
-        // Ring chrome still uses RotationY (works on every head). The crest
-        // face is a sibling driven by ScaleX so WinUI/Android actually paint
-        // the raster — nested Image under RotationY was the empty circle.
-        LogoOuter.RotationY = angleDegrees;
-        CrestFace.ScaleX = cos;
-        CrestFace.Opacity = Math.Clamp(faceVisibility, 0.08, 1.0);
-
-        EdgeRim.ScaleX = RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * absSin;
-        EdgeRim.TranslationX = sin * RimDriftPx;
-        EdgeRim.Opacity = 0.9 * absSin;
-
-        var glint = Math.Abs(Math.Sin(2 * radians));
-        LogoSheen.Opacity = faceVisibility * (0.12 + 0.68 * glint * glint * glint);
-        LogoSheen.TranslationX = -26 + (SheenTravel + 26) * (angleDegrees % 180.0) / 180.0;
+        // In-plane turn. ScaleX = cos(angle) was a coin flip: the face
+        // collapsed to a line and the brain could read the turn either way.
+        // The bezel, gloss and sheen stay fixed so the light does not spin
+        // with the pattern.
+        LogoOuter.RotationY = 0;
+        CrestFace.ScaleX = 1;
+        CrestFace.Opacity = 1;
+        CrestImage.Rotation = angleDegrees;
+        LogoSheen.Opacity = 0;
     }
 
     private double SheenTravel => Math.Max(Width, 40) + 26;
