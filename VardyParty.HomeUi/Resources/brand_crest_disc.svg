@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Static disc of the Vardy Party crest: sphere fill and chrome rim only.
+  The off-center highlight and the rim gradient are baked here so they stay
+  lit from the upper left while the mark spins. Same 360 viewBox as
+  brand_crest_mark.svg. Do not change one without the other.
+  brand_crest.svg is the composed reference; BrandLogoView does not rotate it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <defs>
+    <!-- Sphere base: chrome lit from the upper left -->
+    <radialGradient id="sphere" cx="0.35" cy="0.28" r="0.95">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#DDE3EA"/>
+      <stop offset="0.75" stop-color="#AAB3C0"/>
+      <stop offset="1" stop-color="#6E7887"/>
+    </radialGradient>
+    <!-- Polished rim -->
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FDFDFD"/>
+      <stop offset="0.30" stop-color="#C2C8D0"/>
+      <stop offset="0.50" stop-color="#848B96"/>
+      <stop offset="0.72" stop-color="#D9DDE2"/>
+      <stop offset="1" stop-color="#F4F6F8"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(180, 180)">
+    <circle cx="0" cy="0" r="168" fill="url(#sphere)" stroke="url(#rim)" stroke-width="10"/>
+  </g>
+</svg>
