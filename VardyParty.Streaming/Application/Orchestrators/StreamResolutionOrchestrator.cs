@@ -22,12 +22,16 @@ public class StreamResolutionOrchestrator(
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// How long a new StartAsync will wait for the previous resolution session
-    /// to release the gate (hosts cancel the old session just before calling).
-    /// When this runs out the outcome is StartRefused — surfaced to the user —
-    /// never a silent empty outcome.
+    /// How long a new StartAsync waits for a previous session that is still
+    /// running and was not cancelled. When this runs out the outcome is
+    /// StartRefused — surfaced to the user — never a silent empty outcome.
+    /// A predecessor whose token is already cancelled is unwinding. Wait up to
+    /// <see cref="CancelledUnwindWait"/> for that gate, then refuse. The cap
+    /// covers a few seconds of /play unwind and does not hang the next pick.
     /// </summary>
     private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan CancelledUnwindWait = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Shown for the whole paired search. A mobile link can sit on the second
@@ -40,6 +44,7 @@ public class StreamResolutionOrchestrator(
     private readonly BehaviorSubject<StreamResolutionProgress> _progressSubject =
         new(new StreamResolutionProgress());
     private readonly SemaphoreSlim _startGate = new(1, 1);
+    private ActiveSession? _activeSession;
 
     private bool _hasBufferingOccurred;
     private int _healthyStreamCount;
@@ -56,20 +61,45 @@ public class StreamResolutionOrchestrator(
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken = default)
     {
-        if (!await _startGate.WaitAsync(StartGateWait, cancellationToken))
+        var acquired = await _startGate.WaitAsync(StartGateWait, cancellationToken).ConfigureAwait(false);
+        if (!acquired)
+        {
+            // Hosts cancel the previous session before calling again. That
+            // session can still hold the gate while /play unwinds. Refusing
+            // after 2s latches the homepage on "still finishing". Wait it out
+            // on the caller token. A session that was NOT cancelled is still
+            // active — refuse, so two resolves never run together.
+            var active = Volatile.Read(ref _activeSession);
+            if (active?.Token.IsCancellationRequested == true)
+            {
+                acquired = await _startGate.WaitAsync(CancelledUnwindWait, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                acquired = await _startGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (!acquired)
         {
             logger.LogWarning("[StreamResolution] Refusing StartAsync for {Home} vs {Away} - previous session still active",
                 game.DisplayHome, game.DisplayAway);
             return new StreamResolutionOutcome { StartRefused = true };
         }
 
+        var session = new ActiveSession(cancellationToken);
+        Volatile.Write(ref _activeSession, session);
         try
         {
-            return await StartCoreAsync(game, launcher, cancellationToken);
+            return await StartCoreAsync(game, launcher, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
+            // Release first so a waiter whose 2s timeout lands in this gap
+            // still observes the cancelled token and takes the unwind wait,
+            // instead of a null session and an immediate StartRefused.
             _startGate.Release();
+            Interlocked.CompareExchange(ref _activeSession, null, session);
         }
     }
 
@@ -795,6 +825,15 @@ public class StreamResolutionOrchestrator(
             StreamsTested = _streamsTested,
             HealthyStreams = _healthyStreamCount
         });
+    }
+
+    /// <summary>
+    /// Token of the session currently inside the start gate. A replacement
+    /// start reads it to tell a cancelled unwind from a live overlap.
+    /// </summary>
+    private sealed class ActiveSession(CancellationToken token)
+    {
+        public CancellationToken Token { get; } = token;
     }
 
     /// <summary>

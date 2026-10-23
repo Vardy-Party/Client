@@ -90,6 +90,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
 
+    public PlaybackResult? LastPlaybackResult { get; private set; }
+
     /// <summary>
     /// One LibVLC+MediaPlayer generation. Ops serialize on <see cref="OpGate"/>;
     /// a timed-out op flips <see cref="Abandoned"/> and the pair is never
@@ -392,12 +394,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
         StopMetricsLoop();
-        PlaybackVisibilityChanged?.Invoke(this, false);
-        _playbackTcs?.TrySetResult(new PlaybackResult
+        var closed = new PlaybackResult
         {
             Success = true,
             Message = "User closed playback"
-        });
+        };
+        LastPlaybackResult = closed;
+        PlaybackVisibilityChanged?.Invoke(this, false);
+        _playbackTcs?.TrySetResult(closed);
 
         var vlc = _current;
         if (vlc == null)
@@ -783,12 +787,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "[LinuxVideoPlayerService] Error during playback");
-            PlaybackVisibilityChanged?.Invoke(this, false);
-            return new PlaybackResult
+            var failed = new PlaybackResult
             {
                 Success = false,
                 Message = $"Playback error: {ex.Message}"
             };
+            LastPlaybackResult = failed;
+            PlaybackVisibilityChanged?.Invoke(this, false);
+            return failed;
         }
     }
 
@@ -907,8 +913,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         public void CloseSession(string reason)
         {
+            var result = PlaybackResult.Completed(reason, true);
+            player.LastPlaybackResult = result;
             player.PlaybackVisibilityChanged?.Invoke(player, false);
-            player._playbackTcs?.TrySetResult(PlaybackResult.Completed(reason, true));
+            player._playbackTcs?.TrySetResult(result);
         }
 
         public void SwitchPoolToNext()

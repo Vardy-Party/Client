@@ -166,12 +166,14 @@ namespace VardyParty.Platforms.Android
 
         /// <summary>
         /// Media3 reports <c>ERROR_CODE_BEHIND_LIVE_WINDOW</c> when live HLS falls behind the
-        /// sliding window (buffering / TS glitches). Linux LibVLC reconnects; ExoPlayer needs an
-        /// explicit seek-to-live-edge + prepare. Returns true when recovery was attempted.
+        /// sliding window, and <c>PlaylistStuckException</c> when the live media playlist stops
+        /// advancing. Linux LibVLC reconnects; ExoPlayer needs an explicit seek-to-live-edge +
+        /// prepare. Both share <see cref="PlaybackPolicy.MaxLiveHlsRecoveries"/>. Returns true
+        /// when recovery was attempted.
         /// </summary>
         private bool TryRecoverBehindLiveWindow(AndroidX.Media3.Common.PlaybackException error)
         {
-            if (!IsBehindLiveWindowError(error))
+            if (!IsRecoverableLiveHlsStall(error))
                 return false;
 
             var generation = CurrentAttachGeneration;
@@ -194,7 +196,7 @@ namespace VardyParty.Platforms.Android
 
             _behindLiveWindowRecoveries++;
             _logger?.LogWarning(
-                "[NativeVideoActivity] Behind live window — seeking to live edge (attempt {Attempt}/{Max})",
+                "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
                 _behindLiveWindowRecoveries,
                 PlaybackPolicy.MaxLiveHlsRecoveries);
 
@@ -219,7 +221,7 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private static bool IsBehindLiveWindowError(AndroidX.Media3.Common.PlaybackException error)
+        private static bool IsRecoverableLiveHlsStall(AndroidX.Media3.Common.PlaybackException error)
         {
             string? causeSummary = null;
             try
@@ -242,7 +244,7 @@ namespace VardyParty.Platforms.Android
                 // Ignore cause walk failures — ErrorCode / message checks remain.
             }
 
-            return PlaybackPolicy.IsBehindLiveWindowFailure(error.ErrorCode, error.Message, causeSummary);
+            return PlaybackPolicy.IsRecoverableExoLiveHlsStall(error.ErrorCode, error.Message, causeSummary);
         }
 
         /// <summary>

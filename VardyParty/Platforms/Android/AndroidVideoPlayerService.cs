@@ -13,6 +13,8 @@ namespace VardyParty.Platforms.Android
 
         public event EventHandler<bool>? PlaybackVisibilityChanged;
 
+        public PlaybackResult? LastPlaybackResult { get; private set; }
+
         private static AndroidVideoPlayerService? _instance;
         private static TaskCompletionSource<PlaybackResult>? _playbackTcs;
         private static Func<Task>? _onNextStreamRequested;
@@ -39,6 +41,7 @@ namespace VardyParty.Platforms.Android
                 var context = global::Android.App.Application.Context;
                 if (context == null) return Task.FromResult(PlaybackResult.Completed("No context", true));
 
+                LastPlaybackResult = null;
                 _playbackTcs = new TaskCompletionSource<PlaybackResult>();
                 _onNextStreamRequested = onNextStreamRequested;
                 _requestHeaders = requestHeaders;
@@ -99,6 +102,8 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                if (_instance is { } instance)
+                    instance.LastPlaybackResult = result;
                 _playbackTcs?.TrySetResult(result);
             }
             catch { }

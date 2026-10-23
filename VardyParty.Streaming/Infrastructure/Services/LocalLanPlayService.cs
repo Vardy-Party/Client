@@ -52,10 +52,14 @@ public class LocalLanPlayService(
     private readonly TimeSpan _m3u8CallTimeout =
         TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);
 
-    private string? _cachedBaseUrl;
-    private DateTimeOffset _cachedBaseUrlAt = DateTimeOffset.MinValue;
-    private DateTimeOffset _lastDiscoveryAttemptAt = DateTimeOffset.MinValue;
-    private bool _lastDiscoveryFailed;
+    private readonly LocalServiceEndpointCache _endpoints = new(DiscoveryCacheTtl, DiscoveryFailureCacheTtl);
+
+    internal LocalServiceEndpointCache EndpointsForTests => _endpoints;
+
+    /// <summary>
+    /// Test seam so a failed /play can invalidate discovery without a real UDP probe.
+    /// </summary>
+    internal Func<CancellationToken, Task<string?>>? DiscoverOverrideForTests { get; set; }
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
@@ -153,6 +157,7 @@ public class LocalLanPlayService(
 
         // If the service responded with an authentication or authorization failure (401/403),
         // it is running and reachable on this port. Retrying UDP discovery across the LAN is futile.
+        cancellationToken.ThrowIfCancellationRequested();
         if (LastHealthStatus is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             return false;
 
@@ -217,6 +222,8 @@ public class LocalLanPlayService(
         if (resolved != null)
             return resolved;
 
+        // A cancelled /play or /mp must not look like the service died.
+        cancellationToken.ThrowIfCancellationRequested();
         InvalidateDiscoveryCache();
         baseUrl = await ResolveServiceBaseUrlAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -329,6 +336,10 @@ public class LocalLanPlayService(
             ApplyHealthPayload(doc.RootElement);
             return _cachedCapabilities;
         }
+        catch (Exception ex) when (IsCallerCancellation(ex, cancellationToken))
+        {
+            throw ToCallerCancellation(ex, cancellationToken);
+        }
         catch (Exception ex)
         {
             logger.LogDebug(ex, "[LocalLanPlay] Failed to read capabilities from {Url}", healthUrl);
@@ -429,6 +440,10 @@ public class LocalLanPlayService(
             }
 
             return isOk;
+        }
+        catch (Exception ex) when (IsCallerCancellation(ex, cancellationToken))
+        {
+            throw ToCallerCancellation(ex, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -578,9 +593,13 @@ public class LocalLanPlayService(
                 streamUrl,
                 harvest.Streams.Count == 0 ? "(none)" : string.Join(", ", harvest.Streams));
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (IsCallerCancellation(ex, cancellationToken))
         {
-            harvest.Complete(failed: true);
+            // Android aborts a cancelled socket as SocketException 125 wrapped
+            // in HttpRequestException, not OperationCanceledException. Completing
+            // the harvest as a failure makes the caller invalidate discovery.
+            logger.LogDebug(ex, "[LocalLanPlay] POST /mp cancelled for {StreamUrl}", streamUrl);
+            harvest.Cancel();
         }
         catch (Exception ex)
         {
@@ -662,9 +681,13 @@ public class LocalLanPlayService(
             logger.LogInformation("[LocalLanPlay] Resolved m3u8 via local service for {StreamUrl}", streamUrl);
             return result;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (IsCallerCancellation(ex, cancellationToken))
         {
-            throw;
+            // A caller-cancelled /play is not a dead local service. Android
+            // surfaces that abort as SocketException 125 / HttpRequestException
+            // / TaskCanceledException, which must not fall through to "return
+            // null" and invalidate discovery.
+            throw ToCallerCancellation(ex, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -673,6 +696,38 @@ public class LocalLanPlayService(
                 baseUrl);
             return null;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="cancellationToken"/> is cancelled, including
+    /// when the HTTP stack reported that abort as a socket error or a
+    /// cancelled task instead of <see cref="OperationCanceledException"/>.
+    /// A linked-CTS timeout leaves the caller token alone and stays a failure.
+    /// </summary>
+    private static bool IsCallerCancellation(Exception exception, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return true;
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException canceled
+                && canceled.CancellationToken.CanBeCanceled
+                && canceled.CancellationToken == cancellationToken)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static OperationCanceledException ToCallerCancellation(Exception exception, CancellationToken cancellationToken)
+    {
+        if (exception is OperationCanceledException canceled && canceled.CancellationToken == cancellationToken)
+            throw canceled;
+
+        return new OperationCanceledException("Local service call was cancelled.", exception, cancellationToken);
     }
 
     public Task<string?> GetServiceBaseUrlAsync(CancellationToken cancellationToken = default) =>
@@ -698,38 +753,32 @@ public class LocalLanPlayService(
 
     private async Task<string?> ResolveServiceBaseUrlAsync(CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(_cachedBaseUrl) && DateTimeOffset.UtcNow - _cachedBaseUrlAt < DiscoveryCacheTtl)
+        var now = DateTimeOffset.UtcNow;
+        var lookup = _endpoints.LookupOrJoin(now, cancellationToken, ct =>
+            DiscoverOverrideForTests is { } discover
+                ? discover(ct)
+                : DiscoverViaUdpAsync(ct));
+        switch (lookup.Kind)
         {
-            logger.LogDebug("[LocalLanPlay] Using cached service endpoint: {Endpoint} (expires in {TTL}s)",
-                _cachedBaseUrl, (DiscoveryCacheTtl - (DateTimeOffset.UtcNow - _cachedBaseUrlAt)).TotalSeconds);
-            return _cachedBaseUrl;
-        }
+            case EndpointLookupKind.Cached:
+                logger.LogDebug("[LocalLanPlay] Using cached service endpoint: {Endpoint} (expires in {TTL}s)",
+                    lookup.Url, lookup.Remaining.TotalSeconds);
+                return lookup.Url;
+            case EndpointLookupKind.Backoff:
+                logger.LogDebug("[LocalLanPlay] Skipping UDP discovery: previous attempt failed recently (backoff {Remaining:F1}s)",
+                    lookup.Remaining.TotalSeconds);
+                return null;
+            default:
+                logger.LogDebug("[LocalLanPlay] Cache miss or expired, performing fresh discovery...");
+                var discovered = await lookup.Flight!.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(discovered))
+                {
+                    logger.LogInformation("[LocalLanPlay] Cached discovered service endpoint: {Endpoint} (TTL: {TTL}s)",
+                        discovered, DiscoveryCacheTtl.TotalSeconds);
+                }
 
-        if (_lastDiscoveryFailed && DateTimeOffset.UtcNow - _lastDiscoveryAttemptAt < DiscoveryFailureCacheTtl)
-        {
-            logger.LogDebug("[LocalLanPlay] Skipping UDP discovery: previous attempt failed recently (backoff {Remaining:F1}s)",
-                (DiscoveryFailureCacheTtl - (DateTimeOffset.UtcNow - _lastDiscoveryAttemptAt)).TotalSeconds);
-            return null;
+                return discovered;
         }
-
-        logger.LogDebug("[LocalLanPlay] Cache miss or expired, performing fresh discovery...");
-        _lastDiscoveryAttemptAt = DateTimeOffset.UtcNow;
-        var discovered = await DiscoverViaUdpAsync(cancellationToken);
-        if (!string.IsNullOrWhiteSpace(discovered))
-        {
-            _cachedBaseUrl = discovered.TrimEnd('/');
-            _cachedBaseUrlAt = DateTimeOffset.UtcNow;
-            _lastDiscoveryFailed = false;
-            logger.LogInformation("[LocalLanPlay] Cached discovered service endpoint: {Endpoint} (TTL: {TTL}s)",
-                _cachedBaseUrl, DiscoveryCacheTtl.TotalSeconds);
-        }
-        else
-        {
-            _lastDiscoveryFailed = true;
-            _cachedBaseUrl = null;
-        }
-
-        return _cachedBaseUrl;
     }
 
     private async Task<string?> DiscoverViaUdpAsync(CancellationToken cancellationToken)
@@ -777,6 +826,10 @@ public class LocalLanPlayService(
                     var receiveTask = udp.ReceiveAsync(timeoutCts.Token).AsTask();
                     received = await receiveTask;
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (OperationCanceledException)
                 {
                     break;
@@ -815,6 +868,14 @@ public class LocalLanPlayService(
                 DiscoveryTimeout.TotalMilliseconds, string.Join(",", probePorts));
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw ToCallerCancellation(ex, cancellationToken);
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[LocalLanPlay] UDP discovery failed with exception. Verify VardyParty.LocalService is installed and running on your network.");
@@ -824,10 +885,7 @@ public class LocalLanPlayService(
 
     private void InvalidateDiscoveryCache()
     {
-        _cachedBaseUrl = null;
-        _cachedBaseUrlAt = DateTimeOffset.MinValue;
-        _lastDiscoveryAttemptAt = DateTimeOffset.MinValue;
-        _lastDiscoveryFailed = false;
+        _endpoints.Invalidate();
         _cachedCapabilities = [];
         _cachedServiceVersion = null;
         _capabilitiesCachedAt = DateTimeOffset.MinValue;

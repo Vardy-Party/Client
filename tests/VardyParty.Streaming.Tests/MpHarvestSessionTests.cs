@@ -184,4 +184,31 @@ public sealed class MpHarvestSessionTests
         // Assert
         Assert.True(harvest.HasPlaylist);
     }
+
+    [Fact]
+    public async Task Cancel_WaitersThrow_InsteadOfAFailedPlaylist()
+    {
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync("Chip A", CancellationToken.None);
+
+        harvest.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        Assert.False(harvest.CanReuseFor("https://page.example.test/match", "https://page.example.test/match"));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            harvest.WaitForAsync(null, CancellationToken.None));
+
+        var withChip = new MpHarvestSession();
+        withChip.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8"
+        });
+        Assert.True(withChip.HasPlaylist);
+        withChip.Cancel();
+        Assert.False(withChip.CanReuseFor(
+            "https://page.example.test/match",
+            "https://page.example.test/match"));
+    }
 }

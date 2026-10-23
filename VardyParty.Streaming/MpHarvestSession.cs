@@ -17,6 +17,7 @@ public sealed class MpHarvestSession
     private List<string> _streams = [];
     private string? _error;
     private bool _done;
+    private bool _cancelled;
 
     public IReadOnlyList<string> Streams
     {
@@ -40,7 +41,8 @@ public sealed class MpHarvestSession
     /// already has a playlist. A completed miss must not block the next tap.
     /// </summary>
     public bool CanReuseFor(string? page, string streamUrl) =>
-        string.Equals(page, streamUrl, StringComparison.OrdinalIgnoreCase)
+        !_cancelled
+        && string.Equals(page, streamUrl, StringComparison.OrdinalIgnoreCase)
         && (!IsCompleted || HasPlaylist);
 
     public Task WhenCompleted => _completed.Task;
@@ -120,6 +122,8 @@ public sealed class MpHarvestSession
 
     public async Task<M3U8Response?> WaitForAsync(string? label, CancellationToken cancellationToken)
     {
+        ThrowIfCancelled(cancellationToken);
+
         if (!string.IsNullOrWhiteSpace(label)
             && _byLabel.TryGetValue(label.Trim(), out var cached))
         {
@@ -134,6 +138,7 @@ public sealed class MpHarvestSession
         var key = label.Trim();
         if (_done)
         {
+            ThrowIfCancelled(cancellationToken);
             return _byLabel.TryGetValue(key, out var late) ? late : null;
         }
 
@@ -144,12 +149,40 @@ public sealed class MpHarvestSession
         {
             waiter.TrySetResult(cached);
         }
+        else if (_cancelled)
+        {
+            waiter.TrySetCanceled(cancellationToken);
+        }
         else if (_done)
         {
             waiter.TrySetResult(_byLabel.TryGetValue(key, out var afterClear) ? afterClear : null);
         }
 
         return await waiter.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Caller cancelled the harvest. Waiters throw instead of observing a
+    /// failed playlist, so the caller does not invalidate discovery.
+    /// </summary>
+    public void Cancel()
+    {
+        _cancelled = true;
+        _done = true;
+        _firstChip.TrySetCanceled();
+        foreach (var waiter in _waiters.Values)
+        {
+            waiter.TrySetCanceled();
+        }
+
+        _waiters.Clear();
+        _completed.TrySetResult();
+    }
+
+    private void ThrowIfCancelled(CancellationToken cancellationToken)
+    {
+        if (_cancelled)
+            throw new OperationCanceledException(cancellationToken);
     }
 
     public void Complete(bool failed, string? error = null)

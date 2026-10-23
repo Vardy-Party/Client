@@ -64,6 +64,8 @@ namespace VardyParty.Platforms.Windows
 
         public event EventHandler<bool>? PlaybackVisibilityChanged;
 
+        public PlaybackResult? LastPlaybackResult { get; private set; }
+
         private PlaybackMetrics? _currentMetrics;
         private MediaPlaybackItem? _currentPlaybackItem;
 
@@ -104,6 +106,7 @@ namespace VardyParty.Platforms.Windows
             var tcs = new TaskCompletionSource<PlaybackResult>();
 
             _logger.LogInformation($"PlayVideoAsync starting: {title}");
+            LastPlaybackResult = null;
 
             // Player surface takes over: suppress UI sounds until this session ends.
             try
@@ -116,10 +119,12 @@ namespace VardyParty.Platforms.Windows
             }
 
             _ = tcs.Task.ContinueWith(
-                _ =>
+                completed =>
                 {
                     try
                     {
+                        if (completed.Status == TaskStatus.RanToCompletion)
+                            LastPlaybackResult = completed.Result;
                         PlaybackVisibilityChanged?.Invoke(this, false);
                     }
                     catch (Exception ex)

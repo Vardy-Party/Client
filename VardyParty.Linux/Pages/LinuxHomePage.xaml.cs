@@ -78,6 +78,8 @@ public partial class LinuxHomePage : ContentPage
     private bool _resolutionStartClaimed;
     private bool _resolutionExhausted;
     private int _resolutionGeneration;
+    private int _resolutionClaimGeneration;
+    private readonly object _resolutionOwnership = new();
     private CancellationTokenSource? _resolutionCts;
     private Task? _resolutionTask;
 
@@ -1062,15 +1064,20 @@ public partial class LinuxHomePage : ContentPage
             _resolutionCts?.Cancel();
         }
 
-        var generation = Interlocked.Increment(ref _resolutionGeneration);
-        _resolutionStartClaimed = true;
+        int generation;
+        lock (_resolutionOwnership)
+        {
+            generation = Interlocked.Increment(ref _resolutionGeneration);
+            _resolutionClaimGeneration = generation;
+            _resolutionStartClaimed = true;
+            _isResolvingStreams = true;
+            _resolveOverlayOpen = true;
+            _resolutionExhausted = false;
+        }
 
         _homeShell.OnUserPicked(game);
         _selection.CurrentGame = game;
-        _isResolvingStreams = true;
-        _resolveOverlayOpen = true;
-        _resolutionExhausted = false;
-        ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}");
+        ShowResolveOverlay($"{game.DisplayHome} v {game.DisplayAway}", generation);
 
         _progressSubscription ??= _orchestrator.ProgressUpdated.Subscribe(progress =>
         {
@@ -1079,24 +1086,34 @@ public partial class LinuxHomePage : ContentPage
                 _homeShell.MarkPlayerSessionStarted();
             }
 
-            // Drive chrome/title from progress, but never clear
-            // _resolveOverlayOpen here — see field comment.
-            _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
-            UpdateResolveOverlay(progress);
+            // A posted progress callback can outlive Back. Re-read under the
+            // same lock Cancel uses, and do not put the resolving flag back.
+            var progressGeneration = Volatile.Read(ref _resolutionGeneration);
+            lock (_resolutionOwnership)
+            {
+                if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                        progressGeneration, _resolutionGeneration))
+                {
+                    return;
+                }
+
+                if (!_resolveOverlayOpen && !_resolutionStartClaimed)
+                    return;
+
+                _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
+            }
+
+            UpdateResolveOverlay(progress, progressGeneration);
         });
 
-        if (generation != Volatile.Read(ref _resolutionGeneration))
-        {
+        if (!TryContinueResolutionStart(generation, out var searchToken))
             return;
-        }
 
-        _resolutionCts?.Cancel();
-        _resolutionCts = new CancellationTokenSource();
         _resolutionTask = Task.Run(async () =>
         {
             try
             {
-                var outcome = await _orchestrator.StartAsync(game, _videoPlayer, _resolutionCts.Token);
+                var outcome = await _orchestrator.StartAsync(game, _videoPlayer, searchToken);
                 if (generation != Volatile.Read(ref _resolutionGeneration))
                 {
                     return;
@@ -1139,14 +1156,31 @@ public partial class LinuxHomePage : ContentPage
             }
             finally
             {
-                if (generation == Volatile.Read(ref _resolutionGeneration))
+                var clearOwnedSession = false;
+                lock (_resolutionOwnership)
                 {
-                    _resolutionStartClaimed = false;
-                    _isResolvingStreams = false;
-                    _resolveOverlayOpen = false;
+                    if (generation == _resolutionGeneration)
+                    {
+                        _resolutionStartClaimed = false;
+                        _isResolvingStreams = false;
+                        _resolveOverlayOpen = false;
+                        if (_resolutionClaimGeneration == generation)
+                            _resolutionClaimGeneration = 0;
+                        clearOwnedSession = true;
+                    }
+                }
+
+                if (clearOwnedSession)
+                {
                     _viewModel.OnStreamResolutionEnded();
                     Dispatcher.Dispatch(() =>
                     {
+                        if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                                generation, Volatile.Read(ref _resolutionGeneration)))
+                        {
+                            return;
+                        }
+
                         ResolveOverlay.IsVisible = false;
                         TryResumeAfterPlayer();
                     });
@@ -1179,11 +1213,16 @@ public partial class LinuxHomePage : ContentPage
 
         _progressSubscription?.Dispose();
         _progressSubscription = null;
-        Interlocked.Increment(ref _resolutionGeneration);
-        _resolutionStartClaimed = false;
-        _resolutionExhausted = true;
-        _isResolvingStreams = false;
-        _resolveOverlayOpen = false;
+        lock (_resolutionOwnership)
+        {
+            Interlocked.Increment(ref _resolutionGeneration);
+            _resolutionClaimGeneration = 0;
+            _resolutionStartClaimed = false;
+            _resolutionExhausted = true;
+            _isResolvingStreams = false;
+            _resolveOverlayOpen = false;
+        }
+
         _selection.CurrentGame = null;
         _homeShell.ClearSelection();
         _viewModel.OnStreamResolutionEnded();
@@ -1274,6 +1313,10 @@ public partial class LinuxHomePage : ContentPage
             _logger.LogWarning(ex, "[LinuxHome] Failed to close playback");
         }
 
+        // User Close stamps a viewer-left result. A source-error result must not
+        // cancel the orchestrator's fresh-playlist retry.
+        if (HomeFindingStreamsPolicy.PlaybackHideShouldCancelResolution(_videoPlayer.LastPlaybackResult))
+        {
         var findingActive = HomeFindingStreamsPolicy.IsFindingActive(
             _resolveOverlayOpen,
             _isResolvingStreams,
@@ -1294,6 +1337,7 @@ public partial class LinuxHomePage : ContentPage
             {
                 _logger.LogDebug(ex, "[LinuxHome] Cancel of resolution CTS after close failed");
             }
+        }
         }
 
         Dispatcher.Dispatch(() =>
@@ -1728,8 +1772,80 @@ public partial class LinuxHomePage : ContentPage
         }
     }
 
-    private void ShowResolveOverlay(string subtitle) => Dispatcher.Dispatch(() =>
+    /// <summary>
+    /// Queues this attempt only when it is still the current generation.
+    /// The CTS swap happens in that same decision. A lost start either clears
+    /// flags it still owns, or leaves a cancel / newer claim untouched and
+    /// does not start a search.
+    /// </summary>
+    private bool TryContinueResolutionStart(int generation, out CancellationToken searchToken)
     {
+        searchToken = default;
+        CancellationTokenSource? abandoned = null;
+        var abortAndClear = false;
+        lock (_resolutionOwnership)
+        {
+            switch (HomeFindingStreamsPolicy.DecideResolutionStart(
+                        generation,
+                        _resolutionGeneration,
+                        _resolutionClaimGeneration))
+            {
+                case HomeResolutionStartDisposition.Continue:
+                    abandoned = _resolutionCts;
+                    var next = new CancellationTokenSource();
+                    _resolutionCts = next;
+                    searchToken = next.Token;
+                    break;
+                case HomeResolutionStartDisposition.AbortAndClear:
+                    _resolutionClaimGeneration = 0;
+                    _resolutionStartClaimed = false;
+                    _isResolvingStreams = false;
+                    _resolveOverlayOpen = false;
+                    _selection.CurrentGame = null;
+                    abortAndClear = true;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        abandoned?.Cancel();
+        if (!abortAndClear)
+            return true;
+
+        try
+        {
+            _homeShell.ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxHome] ClearSelection on superseded start failed");
+        }
+
+        Dispatcher.Dispatch(() =>
+        {
+            if (Volatile.Read(ref _resolutionClaimGeneration) != 0)
+                return;
+
+            ResolveOverlay.IsVisible = false;
+        });
+        _logger.LogInformation("[LinuxHome] Stream resolution start superseded before search began");
+        return false;
+    }
+
+    private void ShowResolveOverlay(string subtitle, int generation) => Dispatcher.Dispatch(() =>
+    {
+        lock (_resolutionOwnership)
+        {
+            if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                    generation, _resolutionGeneration))
+            {
+                return;
+            }
+
+            _resolveOverlayOpen = true;
+        }
+
         ResolveTitleLabel.Text = "Finding streams...";
         ResolveStatusLabel.Text = subtitle;
         ResolveStatusLabel.IsVisible = true;
@@ -1739,12 +1855,23 @@ public partial class LinuxHomePage : ContentPage
         ResolveCountLabel.Text = count;
         ResolveCountLabel.IsVisible = count.Length > 0;
         ResolveOverlay.IsVisible = true;
-        _resolveOverlayOpen = true;
         ResolveCancelButton.Focus();
     });
 
-    private void UpdateResolveOverlay(StreamResolutionProgress progress) => Dispatcher.Dispatch(() =>
+    private void UpdateResolveOverlay(StreamResolutionProgress progress, int generation) => Dispatcher.Dispatch(() =>
     {
+        bool showOverlay;
+        lock (_resolutionOwnership)
+        {
+            if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                    generation, _resolutionGeneration))
+            {
+                return;
+            }
+
+            showOverlay = _resolveOverlayOpen;
+        }
+
         var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
         var indeterminate = StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
 
@@ -1771,7 +1898,8 @@ public partial class LinuxHomePage : ContentPage
         ResolveCountLabel.IsVisible = count.Length > 0;
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false on first subscribe while we still owe the overlay.
-        ResolveOverlay.IsVisible = _resolveOverlayOpen;
+        // showOverlay was read under the ownership lock with the generation.
+        ResolveOverlay.IsVisible = showOverlay;
     });
 
     private void ApplyResolveWaitVisual(bool indeterminate, double fraction)

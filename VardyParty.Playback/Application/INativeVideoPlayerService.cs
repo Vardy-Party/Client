@@ -1,3 +1,4 @@
+using VardyParty.Kernel;
 using VardyParty.Ports;
 
 namespace VardyParty.Playback;
@@ -10,4 +11,11 @@ public interface INativeVideoPlayerService : IPlaybackLauncher
     /// blips never play over commentary.
     /// </summary>
     event EventHandler<bool>? PlaybackVisibilityChanged;
+
+    /// <summary>
+    /// Result of the session that just hid. Set before
+    /// <see cref="PlaybackVisibilityChanged"/> is raised with false, so the
+    /// host can tell a source error from the viewer leaving.
+    /// </summary>
+    PlaybackResult? LastPlaybackResult { get; }
 }

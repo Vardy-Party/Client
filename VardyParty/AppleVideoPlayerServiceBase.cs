@@ -44,6 +44,8 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
 
     public event EventHandler<bool>? PlaybackVisibilityChanged;
 
+    public PlaybackResult? LastPlaybackResult { get; private set; }
+
     protected AppleVideoPlayerServiceBase(
         ILogger logger,
         IStreamSwitchingService switching,
@@ -88,6 +90,7 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         IReadOnlyDictionary<string, string>? requestHeaders = null)
     {
         _logger.LogInformation("[AppleVideoPlayer] Playing video: {Title}", title);
+        LastPlaybackResult = null;
         _onNextStreamRequested = onNextStreamRequested;
         _playbackTcs = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _refererUrl = refererUrl;
@@ -95,28 +98,30 @@ public abstract class AppleVideoPlayerServiceBase : INativeVideoPlayerService
         _title = title;
         _closing = false;
 
+        PlaybackResult result;
         try
         {
             PlaybackVisibilityChanged?.Invoke(this, true);
             _session.Reset();
             AttachViaSession(m3u8Url);
-            return await _playbackTcs.Task;
+            result = await _playbackTcs.Task;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[AppleVideoPlayer] Error during playback");
-            return PlaybackResult.Completed($"Playback error: {ex.Message}", true);
+            result = PlaybackResult.Completed($"Playback error: {ex.Message}", true);
         }
-        finally
+
+        LastPlaybackResult = result;
+        try
         {
-            try
-            {
-                PlaybackVisibilityChanged?.Invoke(this, false);
-            }
-            catch
-            {
-            }
+            PlaybackVisibilityChanged?.Invoke(this, false);
         }
+        catch
+        {
+        }
+
+        return result;
     }
 
     protected abstract AVUrlAsset CreateAsset(
