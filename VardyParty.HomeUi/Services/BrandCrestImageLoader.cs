@@ -4,149 +4,198 @@ using Svg.Skia;
 namespace VardyParty.HomeUi;
 
 /// <summary>
-/// Loads the metallic brand crest for <c>BrandLogoView</c>. Prefers the
-/// pre-rasterised PNG embedded beside the SVG so first paint never depends
+/// Loads the metallic brand crest for <c>BrandLogoView</c> as two layers.
+/// The disc (sphere highlight and rim) stays fixed. The mark (diamond,
+/// panels, seams) is the only layer the view rotates. Prefers the
+/// pre-rasterised PNGs embedded beside the SVGs so first paint never depends
 /// on Svg.Skia natives (field: empty spinning ring on WinUI/Android when
-/// StreamImageSource + nested RotationY failed to show the crest). SVG
-/// remains as a fallback for builds that omit the PNG.
+/// StreamImageSource nested under a yawing plate failed to show the crest).
+/// SVG remains the fallback when a PNG embed is missing.
 /// </summary>
 public static class BrandCrestImageLoader
 {
     /// <summary>Raster size used when falling back to SVG → PNG.</summary>
     private const int RasterPixels = 256;
 
-    private const string CacheFileName = "vardy_brand_crest_v1.png";
+    private static readonly CrestLayer Disc = new(
+        "brand_crest_disc.png",
+        "brand_crest_disc.svg",
+        "vardy_brand_crest_disc_v1.png");
 
-    private static readonly Lazy<byte[]?> CrestPng = new(LoadPngBytes, LazyThreadSafetyMode.ExecutionAndPublication);
-    private static readonly object FileGate = new();
-    private static string? _cachedFilePath;
+    private static readonly CrestLayer Mark = new(
+        "brand_crest_mark.png",
+        "brand_crest_mark.svg",
+        "vardy_brand_crest_mark_v1.png");
 
-    public static ImageSource? GetCrest()
+    /// <summary>Static sphere fill and rim. Do not rotate this source.</summary>
+    public static ImageSource? GetDisc() => Disc.GetImage();
+
+    /// <summary>Transparent diamond, panels, and seams. This is the spinning layer.</summary>
+    public static ImageSource? GetMark() => Mark.GetImage();
+
+    /// <summary>Same as <see cref="GetDisc"/> but never blocks the caller on I/O.</summary>
+    public static Task<ImageSource?> GetDiscAsync(CancellationToken cancellationToken = default) =>
+        Disc.GetImageAsync(cancellationToken);
+
+    /// <summary>Same as <see cref="GetMark"/> but never blocks the caller on I/O.</summary>
+    public static Task<ImageSource?> GetMarkAsync(CancellationToken cancellationToken = default) =>
+        Mark.GetImageAsync(cancellationToken);
+
+    private sealed class CrestLayer
     {
-        var png = CrestPng.Value;
-        if (png == null)
+        private readonly string _pngSuffix;
+        private readonly string _svgSuffix;
+        private readonly string _cacheFileName;
+        private readonly Lazy<byte[]?> _png;
+        private readonly object _fileGate = new();
+        private string? _cachedFilePath;
+
+        public CrestLayer(string pngSuffix, string svgSuffix, string cacheFileName)
         {
-            return null;
+            _pngSuffix = pngSuffix;
+            _svgSuffix = svgSuffix;
+            _cacheFileName = cacheFileName;
+            _png = new Lazy<byte[]?>(LoadPngBytes, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
-        // Prefer a file path: WinUI and Android MAUI Image handlers have been
-        // flaky with StreamImageSource for this crest. Avalonia accepted
-        // FromStream; FromFile works on every head we ship.
-        var path = EnsureCacheFile(png);
-        if (path != null)
+        public ImageSource? GetImage()
         {
-            return ImageSource.FromFile(path);
-        }
-
-        return ImageSource.FromStream(() => new MemoryStream(png));
-    }
-
-    /// <summary>Same as <see cref="GetCrest"/> but never blocks the caller on I/O.</summary>
-    public static Task<ImageSource?> GetCrestAsync(CancellationToken cancellationToken = default) =>
-        Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return GetCrest();
-        }, cancellationToken);
-
-    private static string? EnsureCacheFile(byte[] png)
-    {
-        lock (FileGate)
-        {
-            if (_cachedFilePath != null && File.Exists(_cachedFilePath))
+            var png = _png.Value;
+            if (png == null)
             {
-                return _cachedFilePath;
+                return null;
             }
 
-            try
+            // Prefer a file path: WinUI and Android MAUI Image handlers have been
+            // flaky with StreamImageSource for this crest. Avalonia accepted
+            // FromStream; FromFile works on every head we ship.
+            var path = EnsureCacheFile(png);
+            if (path != null)
             {
-                var dir = Path.Combine(Path.GetTempPath(), "VardyParty");
-                Directory.CreateDirectory(dir);
-                var path = Path.Combine(dir, CacheFileName);
-                if (!File.Exists(path) || new FileInfo(path).Length != png.Length)
+                return ImageSource.FromFile(path);
+            }
+
+            return ImageSource.FromStream(() => new MemoryStream(png));
+        }
+
+        public Task<ImageSource?> GetImageAsync(CancellationToken cancellationToken) =>
+            Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return GetImage();
+            }, cancellationToken);
+
+        private string? EnsureCacheFile(byte[] png)
+        {
+            lock (_fileGate)
+            {
+                if (_cachedFilePath != null && File.Exists(_cachedFilePath))
                 {
-                    File.WriteAllBytes(path, png);
+                    return _cachedFilePath;
                 }
 
-                _cachedFilePath = path;
-                return path;
+                try
+                {
+                    var dir = Path.Combine(Path.GetTempPath(), "VardyParty");
+                    Directory.CreateDirectory(dir);
+                    var path = Path.Combine(dir, _cacheFileName);
+                    if (!File.Exists(path) || new FileInfo(path).Length != png.Length)
+                    {
+                        File.WriteAllBytes(path, png);
+                    }
+
+                    _cachedFilePath = path;
+                    return path;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        private byte[]? LoadPngBytes()
+        {
+            try
+            {
+                var png = ReadEmbedded(_pngSuffix);
+                if (png is { Length: > 0 })
+                {
+                    return png;
+                }
+
+                return RenderSvgFallback();
             }
             catch
             {
                 return null;
             }
         }
-    }
 
-    private static byte[]? LoadPngBytes()
-    {
-        try
+        private byte[]? RenderSvgFallback()
         {
-            var assembly = typeof(BrandCrestImageLoader).Assembly;
-            var pngName = Array.Find(assembly.GetManifestResourceNames(),
-                n => n.EndsWith("brand_crest.png", StringComparison.OrdinalIgnoreCase));
-            if (pngName != null)
+            try
             {
-                using var stream = assembly.GetManifestResourceStream(pngName);
-                if (stream != null)
+                var svgBytes = ReadEmbedded(_svgSuffix);
+                if (svgBytes == null)
                 {
-                    using var ms = new MemoryStream();
-                    stream.CopyTo(ms);
-                    if (ms.Length > 0)
-                    {
-                        return ms.ToArray();
-                    }
+                    return null;
                 }
+
+                using var stream = new MemoryStream(svgBytes);
+                using var svg = new SKSvg();
+                var picture = svg.Load(stream);
+                if (picture == null || picture.CullRect.Width <= 0 || picture.CullRect.Height <= 0)
+                {
+                    return null;
+                }
+
+                var bounds = picture.CullRect;
+                var scale = RasterPixels / Math.Max(bounds.Width, bounds.Height);
+                var info = new SKImageInfo(
+                    Math.Max(1, (int)Math.Ceiling(bounds.Width * scale)),
+                    Math.Max(1, (int)Math.Ceiling(bounds.Height * scale)),
+                    SKColorType.Rgba8888,
+                    SKAlphaType.Premul);
+
+                using var surface = SKSurface.Create(info);
+                var canvas = surface.Canvas;
+                canvas.Clear(SKColors.Transparent);
+                canvas.Scale(scale);
+                canvas.Translate(-bounds.Left, -bounds.Top);
+                canvas.DrawPicture(picture);
+                canvas.Flush();
+
+                using var image = surface.Snapshot();
+                using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                return data?.ToArray();
             }
-
-            return RenderSvgFallback();
+            catch
+            {
+                return null;
+            }
         }
-        catch
-        {
-            return null;
-        }
-    }
 
-    private static byte[]? RenderSvgFallback()
-    {
-        try
+        private static byte[]? ReadEmbedded(string suffix)
         {
             var assembly = typeof(BrandCrestImageLoader).Assembly;
-            var name = Array.Find(assembly.GetManifestResourceNames(),
-                n => n.EndsWith("brand_crest.svg", StringComparison.OrdinalIgnoreCase));
-            if (name == null) return null;
-
-            using var stream = assembly.GetManifestResourceStream(name);
-            if (stream == null) return null;
-
-            using var svg = new SKSvg();
-            var picture = svg.Load(stream);
-            if (picture == null || picture.CullRect.Width <= 0 || picture.CullRect.Height <= 0)
+            var name = Array.Find(
+                assembly.GetManifestResourceNames(),
+                n => n.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+            if (name == null)
             {
                 return null;
             }
 
-            var bounds = picture.CullRect;
-            var scale = RasterPixels / Math.Max(bounds.Width, bounds.Height);
-            var info = new SKImageInfo(
-                Math.Max(1, (int)Math.Ceiling(bounds.Width * scale)),
-                Math.Max(1, (int)Math.Ceiling(bounds.Height * scale)));
+            using var stream = assembly.GetManifestResourceStream(name);
+            if (stream == null)
+            {
+                return null;
+            }
 
-            using var surface = SKSurface.Create(info);
-            var canvas = surface.Canvas;
-            canvas.Clear(SKColors.Transparent);
-            canvas.Scale(scale);
-            canvas.Translate(-bounds.Left, -bounds.Top);
-            canvas.DrawPicture(picture);
-            canvas.Flush();
-
-            using var image = surface.Snapshot();
-            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-            return data.ToArray();
-        }
-        catch
-        {
-            return null;
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return ms.Length == 0 ? null : ms.ToArray();
         }
     }
 }

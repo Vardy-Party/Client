@@ -162,7 +162,7 @@ public class BrandCrestSpinMachineTests
     public void RequestSettle_SpinnerKilledByLayout_SettlesImmediately()
     {
         // Arrange — the catalog apply killed the spin animation; the crest
-        // must not sit edge-on.
+        // must not stay mid-turn.
         var machine = new BrandCrestSpinMachine();
         machine.BeginLoading();
         machine.SpinCycleFinished(cancelled: true, shouldSpin: true);
@@ -204,7 +204,7 @@ public class BrandCrestSpinMachineTests
     public void CatalogApplied_ContentNotReady_SpinKilledByLayout_DefersRestart()
     {
         // Arrange — the paint that delivered the (still not ready) apply
-        // aborted the turn; the crest must self-heal, not settle edge-on.
+        // aborted the turn; the crest must self-heal, not stay mid-turn.
         var machine = new BrandCrestSpinMachine();
         machine.BeginLoading();
 
@@ -443,11 +443,11 @@ public class BrandCrestSpinMachineTests
     }
 
     [Fact]
-    public void SettleFromExactlyEdgeOn_UsesForwardRestTarget()
+    public void SettleFromExactlyUpsideDown_EasesForwardNeverReversesTurn()
     {
         // Arrange — the machine's SettleAnimated step eases toward
-        // RestTargetDegrees: from the edge-on freeze angle that must be 360
-        // (forward), never 0 (backward through the coin-edge).
+        // RestTargetDegrees: from upside-down (180°) the target is 360
+        // (forward). Easing back to 0 would reverse the in-plane turn.
         var machine = new BrandCrestSpinMachine();
         machine.BeginLoading();
 

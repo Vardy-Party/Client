@@ -533,7 +533,8 @@ jobs:
 
   package-ios:
     name: Package iOS
-    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    # .NET 11 RC2 requires Xcode 27.0 exactly. The xcode-27 image default is
+    # now 27.1; Xcode 27.0 remains at /Applications/Xcode_27.0.app.
     runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
@@ -551,6 +552,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v6
         with:
@@ -659,7 +665,7 @@ jobs:
 
   package-macos:
     name: Package macOS
-    # .NET 11 RC2 requires Xcode 27, which is the xcode-27 image (arm64).
+    # Same Xcode 27.0 pin as Package iOS.
     runs-on: xcode-27
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
@@ -676,6 +682,11 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v6
         with:

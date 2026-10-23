@@ -27,10 +27,10 @@ public class BrandCrestSpinTests
     }
 
     [Fact]
-    public void RestTargetDegrees_ExactlyEdgeOn_EasesForwardNeverBackThroughEdge()
+    public void RestTargetDegrees_ExactlyUpsideDown_EasesForwardNeverReversesTurn()
     {
-        // Arrange — 180° is the edge-on freeze case (the worst case): the
-        // settle must ease forward to 360, never backward through the edge.
+        // Arrange — 180° is upside-down (the old mid-turn freeze): the
+        // settle must ease forward to 360 and must not reverse the in-plane turn.
         const double current = 180;
 
         // Act
@@ -43,7 +43,7 @@ public class BrandCrestSpinTests
     [Fact]
     public void RestTargetDegrees_540_NormalizesThenRestsForwardAt360()
     {
-        // Arrange — 540° normalizes to edge-on 180°, which rests forward.
+        // Arrange — 540° normalizes to 180° (upside-down), which rests forward.
         const double current = 540;
 
         // Act
@@ -62,7 +62,7 @@ public class BrandCrestSpinTests
     [InlineData(180, false)]
     [InlineData(359, true)]
     [InlineData(360, true)]
-    public void IsFaceOnRest_DetectsCoinFace(double angle, bool expected)
+    public void IsFaceOnRest_DetectsUprightRest(double angle, bool expected)
     {
         // Arrange
         // Act
@@ -98,5 +98,26 @@ public class BrandCrestSpinTests
 
         // Assert
         Assert.True(repeat);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    [InlineData(359.5)]
+    public void Pose_InPlaneTurn_RotatesMarkAndLeavesBezelScaleAndSheen(double angle)
+    {
+        // Arrange — 90° is the mid-turn case the view must lock.
+        // Act
+        var pose = BrandCrestSpin.Pose(angle);
+
+        // Assert — the mark carries the angle. Bezel yaw stays 0, the face
+        // is not squashed, and this frame does not drive the sheen.
+        Assert.Equal(angle, pose.MarkRotationDegrees);
+        Assert.Equal(0, pose.BezelRotationY);
+        Assert.Equal(1, pose.FaceScaleX);
+        Assert.Equal(0, pose.SheenOpacity);
+        Assert.False(pose.DrivesSheen);
     }
 }

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Vardy Party brand crest: the app-icon soccer ball (appiconfg.svg geometry)
-  upgraded with metallic chrome/navy gradients. Rasterised at runtime through
-  Svg.Skia (BrandCrestImageLoader) and layered with a metallic ring, gloss and
-  animated sheen in BrandLogoView.
+  Composed reference for the Vardy Party crest (appiconfg.svg geometry with
+  metallic chrome/navy gradients). BrandLogoView does not rotate this file.
+  The spinner uses brand_crest_disc.svg (sphere highlight and rim, fixed) and
+  brand_crest_mark.svg (diamond, panels, seams, in-plane rotation).
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
   <defs>
