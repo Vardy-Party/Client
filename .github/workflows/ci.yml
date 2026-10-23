@@ -307,8 +307,10 @@ jobs:
 
   build-ios:
     name: Build iOS
-    # .NET 11 RC2 Apple workloads require Xcode 27. macos-26 images ship
-    # Xcode 26.6. xcode-27 is arm64-only, so the simulator RID matches the host.
+    # .NET 11 RC2 Apple workloads (27.0.12212-net11-rc.2) require Xcode 27.0
+    # exactly. The xcode-27 image still has that app, but its default is now
+    # 27.1, which the workload rejects. macos-26 only has Xcode 26.6.
+    # xcode-27 is arm64-only, so the simulator RID matches the host.
     runs-on: xcode-27
     needs:
       - resolve-flags
@@ -317,6 +319,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v7
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v6
         with:
@@ -383,7 +390,7 @@ jobs:
 
   build-macos:
     name: Build macOS
-    # Same Xcode 27 requirement as Build iOS. xcode-27 is arm64-only.
+    # Same Xcode 27.0 pin as Build iOS. xcode-27 is arm64-only.
     runs-on: xcode-27
     needs:
       - resolve-flags
@@ -392,6 +399,11 @@ jobs:
     if: ${{ always() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && needs.resolve-flags.outputs.skip_unittests == 'true')) && (needs.code-quality.result == 'success' || (needs.code-quality.result == 'skipped' && needs.resolve-flags.outputs.skip_codequality == 'true')) }}
     steps:
       - uses: actions/checkout@v7
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v6
         with:
@@ -575,6 +587,10 @@ jobs:
                 "${{ needs.code-quality.result }}" == "failure" || \
                 "${{ needs.build-windows.result }}" == "failure" || \
                 "${{ needs.build-android.result }}" == "failure" || \
+                "${{ needs.build-ios.result }}" == "failure" || \
+                "${{ needs.build-ios.result }}" == "skipped" || \
+                "${{ needs.build-macos.result }}" == "failure" || \
+                "${{ needs.build-macos.result }}" == "skipped" || \
                 "${{ needs.build-linux.result }}" == "failure" || \
                 "${{ needs.build-linux.result }}" == "skipped" || \
                 "${{ needs.linux-runtime-smoke.result }}" == "failure" || \

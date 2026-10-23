@@ -129,6 +129,7 @@ jobs:
   build-ios-release:
     name: Build & Package iOS (IPA)
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
+    # .NET 11 RC2 requires Xcode 27.0 exactly. The xcode-27 image default is 27.1.
     runs-on: xcode-27
     needs: create-release
     steps:
@@ -136,6 +137,12 @@ jobs:
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
@@ -168,6 +175,7 @@ jobs:
   build-macos-release:
     name: Build & Package macOS
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
+    # Same Xcode 27.0 pin as the iOS release job.
     runs-on: xcode-27
     needs: create-release
     steps:
@@ -175,6 +183,12 @@ jobs:
       - name: Artifact tag
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
+      - name: Select Xcode 27.0
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcodebuild -version | grep -q '^Xcode 27.0'
       
       - name: Setup .NET 11 RC1
         uses: actions/setup-dotnet@v6
