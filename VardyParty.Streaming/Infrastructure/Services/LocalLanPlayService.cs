@@ -754,10 +754,10 @@ public class LocalLanPlayService(
     private async Task<string?> ResolveServiceBaseUrlAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var lookup = _endpoints.LookupOrJoin(now, () =>
+        var lookup = _endpoints.LookupOrJoin(now, cancellationToken, ct =>
             DiscoverOverrideForTests is { } discover
-                ? discover(CancellationToken.None)
-                : DiscoverViaUdpAsync(CancellationToken.None));
+                ? discover(ct)
+                : DiscoverViaUdpAsync(ct));
         switch (lookup.Kind)
         {
             case EndpointLookupKind.Cached:

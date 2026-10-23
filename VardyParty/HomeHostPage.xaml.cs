@@ -717,24 +717,34 @@ public partial class HomeHostPage : ContentPage
                 _homeShell.MarkPlayerSessionStarted();
             }
 
-            // Drive chrome/title from progress, but never clear
-            // _resolveOverlayOpen here — see field comment.
-            _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
-            UpdateResolveOverlay(progress);
+            // A posted progress callback can outlive Back. Re-read under the
+            // same lock Cancel uses, and do not put the resolving flag back.
+            var progressGeneration = Volatile.Read(ref _resolutionGeneration);
+            lock (_resolutionOwnership)
+            {
+                if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                        progressGeneration, _resolutionGeneration))
+                {
+                    return;
+                }
+
+                if (!_resolveOverlayOpen && !_resolutionStartClaimed)
+                    return;
+
+                _isResolvingStreams = progress.IsResolving || _resolveOverlayOpen;
+            }
+
+            UpdateResolveOverlay(progress, progressGeneration);
         });
 
-        if (ReleaseSupersededResolutionStart(generation))
-        {
+        if (!TryContinueResolutionStart(generation, out var searchToken))
             return;
-        }
 
-        _resolutionCts?.Cancel();
-        _resolutionCts = new CancellationTokenSource();
         _resolutionTask = Task.Run(async () =>
         {
             try
             {
-                var outcome = await _orchestrator.StartAsync(game, _videoPlayer, _resolutionCts.Token);
+                var outcome = await _orchestrator.StartAsync(game, _videoPlayer, searchToken);
                 if (generation != Volatile.Read(ref _resolutionGeneration))
                 {
                     return;
@@ -983,32 +993,45 @@ public partial class HomeHostPage : ContentPage
     }
 
     /// <summary>
-    /// Drops a start that lost the generation race before its search task was
-    /// queued. Returns true when this attempt must not continue.
+    /// Queues this attempt only when it is still the current generation.
+    /// The CTS swap happens in that same decision. A lost start either clears
+    /// flags it still owns, or leaves a cancel / newer claim untouched and
+    /// does not start a search.
     /// </summary>
-    private bool ReleaseSupersededResolutionStart(int generation)
+    private bool TryContinueResolutionStart(int generation, out CancellationToken searchToken)
     {
-        var release = false;
+        searchToken = default;
+        CancellationTokenSource? abandoned = null;
+        var abortAndClear = false;
         lock (_resolutionOwnership)
         {
-            if (!HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
-                    generation,
-                    _resolutionGeneration,
-                    _resolutionClaimGeneration))
+            switch (HomeFindingStreamsPolicy.DecideResolutionStart(
+                        generation,
+                        _resolutionGeneration,
+                        _resolutionClaimGeneration))
             {
-                return false;
+                case HomeResolutionStartDisposition.Continue:
+                    abandoned = _resolutionCts;
+                    var next = new CancellationTokenSource();
+                    _resolutionCts = next;
+                    searchToken = next.Token;
+                    break;
+                case HomeResolutionStartDisposition.AbortAndClear:
+                    _resolutionClaimGeneration = 0;
+                    _resolutionStartClaimed = false;
+                    _isResolvingStreams = false;
+                    _resolveOverlayOpen = false;
+                    _selection.CurrentGame = null;
+                    abortAndClear = true;
+                    break;
+                default:
+                    return false;
             }
-
-            _resolutionClaimGeneration = 0;
-            _resolutionStartClaimed = false;
-            _isResolvingStreams = false;
-            _resolveOverlayOpen = false;
-            _selection.CurrentGame = null;
-            release = true;
         }
 
-        if (!release)
-            return false;
+        abandoned?.Cancel();
+        if (!abortAndClear)
+            return true;
 
         try
         {
@@ -1028,15 +1051,20 @@ public partial class HomeHostPage : ContentPage
             UpdateBackSuppression();
         });
         _logger.LogInformation("[HomeHost] Stream resolution start superseded before search began");
-        return true;
+        return false;
     }
 
     private void ShowResolveOverlay(string subtitle, int generation) => PostUi(() =>
     {
-        if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
-                generation, Volatile.Read(ref _resolutionGeneration)))
+        lock (_resolutionOwnership)
         {
-            return;
+            if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                    generation, _resolutionGeneration))
+            {
+                return;
+            }
+
+            _resolveOverlayOpen = true;
         }
 
         ResolveTitleLabel.Text = "Finding streams...";
@@ -1051,14 +1079,26 @@ public partial class HomeHostPage : ContentPage
         HoldScreen(ScreenAwakePolicy.Hold(findingStreams: true, playing: _playbackVisible));
         // Re-assert suppression on the UI thread with the overlay actually
         // visible — covers any race where a prior session's finally cleared
-        // flags before this paint.
-        _resolveOverlayOpen = true;
+        // flags before this paint. The open flag itself was published under
+        // the ownership lock, with the generation check.
         UpdateBackSuppression();
         ResolveCancelButton.Focus();
     });
 
-    private void UpdateResolveOverlay(StreamResolutionProgress progress) => PostUi(() =>
+    private void UpdateResolveOverlay(StreamResolutionProgress progress, int generation) => PostUi(() =>
     {
+        bool showOverlay;
+        lock (_resolutionOwnership)
+        {
+            if (!HomeFindingStreamsPolicy.ShouldPaintFindingOverlay(
+                    generation, _resolutionGeneration))
+            {
+                return;
+            }
+
+            showOverlay = _resolveOverlayOpen;
+        }
+
         var isNoHealthy = StreamResolveOverlayProgress.IsExhaustedStatus(progress.Status);
         var indeterminate = StreamResolveOverlayProgress.IsIndeterminate(progress.TotalStreams, isNoHealthy);
 
@@ -1085,7 +1125,8 @@ public partial class HomeHostPage : ContentPage
         ResolveCountLabel.IsVisible = count.Length > 0;
         // Keep the modal up for the whole owned session — progress.IsResolving
         // alone can go false while we still owe the user a cancelable overlay.
-        ResolveOverlay.IsVisible = _resolveOverlayOpen;
+        // showOverlay was read under the ownership lock with the generation.
+        ResolveOverlay.IsVisible = showOverlay;
         UpdateBackSuppression();
     });
 

@@ -41,7 +41,8 @@ public sealed class MpHarvestSession
     /// already has a playlist. A completed miss must not block the next tap.
     /// </summary>
     public bool CanReuseFor(string? page, string streamUrl) =>
-        string.Equals(page, streamUrl, StringComparison.OrdinalIgnoreCase)
+        !_cancelled
+        && string.Equals(page, streamUrl, StringComparison.OrdinalIgnoreCase)
         && (!IsCompleted || HasPlaylist);
 
     public Task WhenCompleted => _completed.Task;

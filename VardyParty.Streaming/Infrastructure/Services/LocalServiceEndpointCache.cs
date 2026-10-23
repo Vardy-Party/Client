@@ -15,6 +15,8 @@ internal sealed class LocalServiceEndpointCache
     private DateTimeOffset _failedAt = DateTimeOffset.MinValue;
     private bool _failed;
     private Task<string?>? _inFlight;
+    private CancellationTokenSource? _probeCts;
+    private int _waiters;
 
     public LocalServiceEndpointCache(TimeSpan successTtl, TimeSpan failureBackoff)
     {
@@ -53,9 +55,17 @@ internal sealed class LocalServiceEndpointCache
         }
     }
 
-    public EndpointLookup LookupOrJoin(DateTimeOffset now, Func<Task<string?>> startDiscovery)
+    public EndpointLookup LookupOrJoin(DateTimeOffset now, Func<Task<string?>> startDiscovery) =>
+        LookupOrJoin(now, CancellationToken.None, _ => startDiscovery());
+
+    public EndpointLookup LookupOrJoin(
+        DateTimeOffset now,
+        CancellationToken callerToken,
+        Func<CancellationToken, Task<string?>> startDiscovery)
     {
         ArgumentNullException.ThrowIfNull(startDiscovery);
+        CancellationTokenSource? joinedProbe = null;
+        EndpointLookup result;
         lock (_gate)
         {
             if (IsFresh(now))
@@ -64,34 +74,79 @@ internal sealed class LocalServiceEndpointCache
             if (_failed && now - _failedAt < _failureBackoff)
                 return EndpointLookup.Backoff(_failureBackoff - (now - _failedAt));
 
-            if (_inFlight is not null)
-                return EndpointLookup.InFlight(_inFlight);
-
-            // The slot is published before the probe runs. A probe that is
-            // already complete would otherwise finish inside this lock and
-            // clear _inFlight before the assignment, leaving the completed
-            // task stuck as the next caller's "in flight" result.
-            var slot = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _inFlight = slot.Task;
-            Task<string?> discovery;
-            try
+            // Keep the slot task in a local. A probe that is already complete
+            // finishes inside this lock and clears _inFlight before we return,
+            // which would hand the caller a null flight.
+            Task<string?> flight;
+            if (_inFlight is null)
             {
-                discovery = startDiscovery();
+                _waiters = 0;
+                _probeCts = new CancellationTokenSource();
+                var slot = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                flight = slot.Task;
+                _inFlight = flight;
+                var probeToken = _probeCts.Token;
+                Task<string?> discovery;
+                try
+                {
+                    discovery = startDiscovery(probeToken);
+                }
+                catch (Exception ex)
+                {
+                    discovery = Task.FromException<string?>(ex);
+                }
+
+                _ = PublishAsync(slot, discovery, probeToken);
             }
-            catch (Exception ex)
+            else
             {
-                discovery = Task.FromException<string?>(ex);
+                flight = _inFlight;
             }
 
-            _ = PublishAsync(slot, discovery);
-            return EndpointLookup.InFlight(slot.Task);
+            if (callerToken.CanBeCanceled && _probeCts is not null)
+            {
+                if (callerToken.IsCancellationRequested)
+                {
+                    if (_waiters == 0)
+                        _probeCts.Cancel();
+                }
+                else
+                {
+                    _waiters++;
+                    joinedProbe = _probeCts;
+                }
+            }
+
+            result = EndpointLookup.InFlight(flight);
         }
+
+        if (joinedProbe is not null)
+        {
+            callerToken.Register(() =>
+            {
+                lock (_gate)
+                {
+                    if (!ReferenceEquals(_probeCts, joinedProbe))
+                        return;
+
+                    if (_waiters > 0)
+                        _waiters--;
+                    if (_waiters == 0)
+                        joinedProbe.Cancel();
+                }
+            });
+        }
+
+        return result;
     }
 
     private bool IsFresh(DateTimeOffset now) =>
         !string.IsNullOrWhiteSpace(_url) && now - _cachedAt < _successTtl;
 
-    private async Task PublishAsync(TaskCompletionSource<string?> slot, Task<string?> discovery)
+    private async Task PublishAsync(
+        TaskCompletionSource<string?> slot,
+        Task<string?> discovery,
+        CancellationToken probeToken)
     {
         string? discovered = null;
         var cancelled = false;
@@ -108,6 +163,9 @@ internal sealed class LocalServiceEndpointCache
         {
             discovered = null;
         }
+
+        if (probeToken.IsCancellationRequested)
+            cancelled = true;
 
         string? published = null;
         lock (_gate)

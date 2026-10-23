@@ -61,20 +61,32 @@ public class HomeFindingStreamsPolicyTests
     }
 
     [Fact]
-    public void ShouldReleaseSupersededResolutionStart_OnlyWhenThisAttemptStillOwnsTheClaim()
+    public void DecideResolutionStart_ContinuesOnlyWhenGenerationsMatch_OtherwiseAborts()
     {
-        Assert.True(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
-            attemptGeneration: 4,
-            currentGeneration: 5,
-            publishedClaimGeneration: 4));
-        Assert.False(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
-            attemptGeneration: 4,
-            currentGeneration: 5,
-            publishedClaimGeneration: 5));
-        Assert.False(HomeFindingStreamsPolicy.ShouldReleaseSupersededResolutionStart(
-            attemptGeneration: 4,
-            currentGeneration: 4,
-            publishedClaimGeneration: 4));
+        Assert.Equal(
+            HomeResolutionStartDisposition.Continue,
+            HomeFindingStreamsPolicy.DecideResolutionStart(
+                attemptGeneration: 4,
+                currentGeneration: 4,
+                publishedClaimGeneration: 4));
+        Assert.Equal(
+            HomeResolutionStartDisposition.AbortAndClear,
+            HomeFindingStreamsPolicy.DecideResolutionStart(
+                attemptGeneration: 4,
+                currentGeneration: 5,
+                publishedClaimGeneration: 4));
+        Assert.Equal(
+            HomeResolutionStartDisposition.AbortAndKeep,
+            HomeFindingStreamsPolicy.DecideResolutionStart(
+                attemptGeneration: 4,
+                currentGeneration: 5,
+                publishedClaimGeneration: 0));
+        Assert.Equal(
+            HomeResolutionStartDisposition.AbortAndKeep,
+            HomeFindingStreamsPolicy.DecideResolutionStart(
+                attemptGeneration: 4,
+                currentGeneration: 5,
+                publishedClaimGeneration: 5));
     }
 
     [Fact]

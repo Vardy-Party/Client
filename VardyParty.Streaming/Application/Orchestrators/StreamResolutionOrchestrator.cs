@@ -25,10 +25,13 @@ public class StreamResolutionOrchestrator(
     /// How long a new StartAsync waits for a previous session that is still
     /// running and was not cancelled. When this runs out the outcome is
     /// StartRefused — surfaced to the user — never a silent empty outcome.
-    /// A predecessor whose token is already cancelled is unwinding; that wait
-    /// continues on the caller token instead of refusing.
+    /// A predecessor whose token is already cancelled is unwinding. Wait up to
+    /// <see cref="CancelledUnwindWait"/> for that gate, then refuse. The cap
+    /// covers a few seconds of /play unwind and does not hang the next pick.
     /// </summary>
     private static readonly TimeSpan StartGateWait = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan CancelledUnwindWait = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Shown for the whole paired search. A mobile link can sit on the second
@@ -69,8 +72,7 @@ public class StreamResolutionOrchestrator(
             var active = Volatile.Read(ref _activeSession);
             if (active?.Token.IsCancellationRequested == true)
             {
-                await _startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                acquired = true;
+                acquired = await _startGate.WaitAsync(CancelledUnwindWait, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -93,8 +95,11 @@ public class StreamResolutionOrchestrator(
         }
         finally
         {
-            Interlocked.CompareExchange(ref _activeSession, null, session);
+            // Release first so a waiter whose 2s timeout lands in this gap
+            // still observes the cancelled token and takes the unwind wait,
+            // instead of a null session and an immediate StartRefused.
             _startGate.Release();
+            Interlocked.CompareExchange(ref _activeSession, null, session);
         }
     }
 

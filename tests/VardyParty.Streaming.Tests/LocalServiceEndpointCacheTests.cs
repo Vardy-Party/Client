@@ -107,6 +107,53 @@ public class LocalServiceEndpointCacheTests
     }
 
     [Fact]
+    public async Task LastWaiterCancel_ProbeCompletesNull_NextLookupIsInFlightNotBackoff()
+    {
+        var cache = new LocalServiceEndpointCache(SuccessTtl, FailureBackoff);
+        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var firstCts = new CancellationTokenSource();
+        using var joinerCts = new CancellationTokenSource();
+
+        var first = cache.LookupOrJoin(DateTimeOffset.UtcNow, firstCts.Token, token =>
+        {
+            probeStarted.TrySetResult();
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return (string?)null;
+                }
+
+                return (string?)null;
+            });
+        });
+        var joined = cache.LookupOrJoin(
+            DateTimeOffset.UtcNow,
+            joinerCts.Token,
+            _ => throw new InvalidOperationException("joiner must not start another probe"));
+
+        await probeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Same(first.Flight, joined.Flight);
+
+        firstCts.Cancel();
+        await Task.Delay(50);
+        Assert.False(first.Flight!.IsCompleted);
+
+        joinerCts.Cancel();
+        Assert.Null(await first.Flight.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        var next = cache.LookupOrJoin(
+            DateTimeOffset.UtcNow,
+            () => Task.FromResult<string?>("http://10.0.0.4:1"));
+        Assert.Equal(EndpointLookupKind.InFlight, next.Kind);
+        Assert.Equal("http://10.0.0.4:1", await next.Flight!);
+    }
+
+    [Fact]
     public void SuccessTtl_ExpiresAt120Seconds()
     {
         var cache = new LocalServiceEndpointCache(SuccessTtl, FailureBackoff);
