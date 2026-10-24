@@ -73,12 +73,19 @@ public sealed class MpHarvestSession
                 if (!string.IsNullOrWhiteSpace(label))
                 {
                     _byLabel[label] = response;
-                    if (_waiters.TryRemove(label, out var waiter))
+                    // Named sibling waits need rewritten segment samples for MP
+                    // health. ReleaseChipThenSoak emits playlist-first then an
+                    // enriched line — do not complete labeled waiters on the
+                    // early line or siblings fail health and never reach the UI.
+                    if (IsReadyForNamedWaiter(response)
+                        && _waiters.TryRemove(label, out var waiter))
                     {
                         waiter.TrySetResult(response);
                     }
                 }
 
+                // First (unlabeled) wait still returns as soon as any playlist
+                // URL exists so playback can start during soak.
                 if (!string.IsNullOrWhiteSpace(response.Url))
                 {
                     _firstChip.TrySetResult(response);
@@ -124,18 +131,17 @@ public sealed class MpHarvestSession
     {
         ThrowIfCancelled(cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(label)
-            && _byLabel.TryGetValue(label.Trim(), out var cached))
-        {
-            return cached;
-        }
-
         if (string.IsNullOrWhiteSpace(label))
         {
             return await _firstChip.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var key = label.Trim();
+        if (_byLabel.TryGetValue(key, out var cached) && IsReadyForNamedWaiter(cached))
+        {
+            return cached;
+        }
+
         if (_done)
         {
             ThrowIfCancelled(cancellationToken);
@@ -145,7 +151,7 @@ public sealed class MpHarvestSession
         var waiter = _waiters.GetOrAdd(
             key,
             _ => new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (_byLabel.TryGetValue(key, out cached))
+        if (_byLabel.TryGetValue(key, out cached) && IsReadyForNamedWaiter(cached))
         {
             waiter.TrySetResult(cached);
         }
@@ -198,12 +204,22 @@ public sealed class MpHarvestSession
             _firstChip.TrySetResult(null);
         }
 
-        foreach (var waiter in _waiters.Values)
+        foreach (var pair in _waiters)
         {
-            waiter.TrySetResult(null);
+            // Prefer any playlist-only cache over null when soak never enriched.
+            pair.Value.TrySetResult(
+                _byLabel.TryGetValue(pair.Key, out var cached) ? cached : null);
         }
 
         _waiters.Clear();
         _completed.TrySetResult();
     }
+
+    /// <summary>
+    /// Named chip waiters accept a definitive miss (no URL) or a playlist that
+    /// already carries rewritten segment samples for the MP health probe.
+    /// </summary>
+    private static bool IsReadyForNamedWaiter(M3U8Response response) =>
+        string.IsNullOrWhiteSpace(response.Url)
+        || response.RewrittenSegments is { Count: > 0 };
 }
