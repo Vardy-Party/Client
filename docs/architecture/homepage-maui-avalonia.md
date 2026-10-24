@@ -448,13 +448,15 @@ the subtitle beneath, on every adaptive layout
   ring, a dark inner plate, a glass gloss over the upper hemisphere, and a
   drop shadow. Those overlays sit above the mark and do not rotate.
 - **Animation**: while `HomeViewModel.IsContentLoading`, `BrandCrestSpin.Pose`
-  turns only the mark in the plane of the screen (`Image.Rotation` about the
-  disc center). Bezel `RotationY` stays 0, face `ScaleX` stays 1, and the
-  spin frame does not drive the sheen. When the first catalog lands, the
-  mark **finishes the turn it is on** and eases to upright rest (0°/360°)
-  with a sheen — catalog paint must not `AbortAnimation` mid-rotation (that
-  froze the crest mid-turn). If layout kills the spinner, `HomeView` tells
-  the logo after apply and it settles from the last angle.
+  turns a thick disc: bezel `RotationY` for true 3D chrome, crest face
+  `ScaleX = cos` (logo is the disc surface — nested `Image` under yaw paints
+  blank on WinUI/Android), edge rim for disc thickness; sheen glints with
+  the flip so direction stays readable.
+  When the first catalog lands, the mark **finishes the turn it is on** and
+  eases to face-on rest (0°/360°) with a sheen — catalog paint must not
+  `AbortAnimation` mid-rotation (that froze the crest mid-turn). If layout
+  kills the spinner, `HomeView` tells the logo after apply and it settles
+  from the last angle.
   After rest, a slow ambient shimmer loop (a low-opacity sheen crosses the
   crest for a quarter of a 6 s loop) — **suspended entirely on the TV class**
   (`HomeIdleAnimationPolicy.AllowAmbientCrestShimmer`; the idle TV homepage

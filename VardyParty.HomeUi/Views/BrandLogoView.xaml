@@ -6,70 +6,85 @@
              x:DataType="hu:HomeViewModel">
 
     <ContentView.Resources>
-        <!-- Same brushed-metal ring the match badges wear -->
+        <!-- Gold bezel — disc rim chrome (faces stay brand blue #0E1526) -->
         <LinearGradientBrush x:Key="LogoRingBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#FDFDFD" Offset="0" />
-            <GradientStop Color="#C2C8D0" Offset="0.30" />
-            <GradientStop Color="#848B96" Offset="0.50" />
-            <GradientStop Color="#D9DDE2" Offset="0.72" />
-            <GradientStop Color="#F4F6F8" Offset="1" />
+            <GradientStop Color="#FFF1C2" Offset="0" />
+            <GradientStop Color="#E8C56A" Offset="0.28" />
+            <GradientStop Color="#B8860B" Offset="0.50" />
+            <GradientStop Color="#F0D78C" Offset="0.74" />
+            <GradientStop Color="#FFF6D6" Offset="1" />
         </LinearGradientBrush>
 
-        <!-- Glass highlight over the upper hemisphere -->
+        <!-- Cool gloss over the blue face — reads reflective, not silver metal -->
         <LinearGradientBrush x:Key="LogoGlossBrush" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#66FFFFFF" Offset="0" />
-            <GradientStop Color="#17FFFFFF" Offset="0.42" />
+            <GradientStop Color="#5599BBFF" Offset="0" />
+            <GradientStop Color="#2299BBFF" Offset="0.38" />
             <GradientStop Color="#00FFFFFF" Offset="0.58" />
         </LinearGradientBrush>
 
         <!-- Light band swept across the crest (intro + ambient shimmer) -->
         <LinearGradientBrush x:Key="LogoSheenBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#00FFFFFF" Offset="0" />
-            <GradientStop Color="#59FFFFFF" Offset="0.5" />
+            <GradientStop Color="#66AACCFF" Offset="0.5" />
             <GradientStop Color="#00FFFFFF" Offset="1" />
         </LinearGradientBrush>
 
+        <!-- Gold coin-edge thickness; ScaleX/TranslationX/Opacity from spin pose -->
+        <LinearGradientBrush x:Key="LogoEdgeBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#F5E0A0" Offset="0" />
+            <GradientStop Color="#C9A227" Offset="0.45" />
+            <GradientStop Color="#6B4E12" Offset="1" />
+        </LinearGradientBrush>
     </ContentView.Resources>
 
-    <!-- The bezel, sphere highlight, rim, gloss, and sheen stay put. Only
-         CrestMark rotates in the plane of the screen (Rotation, not RotationY),
-         around the center of the disc. A Y-axis coin flip is a silhouette:
-         squashing through the edge looks the same either way. Turning the
-         diamond and panels in the plane makes the direction unambiguous.
-         CrestDisc holds the baked highlight and rim so that light does not
-         orbit with the pattern. -->
+    <!-- Gold-rim disc: LogoOuter yaws on RotationY. CrestFace / CrestFaceBack
+         are the two blue logo surfaces (ScaleX = |cos|; opacity picks the
+         camera-facing side). EdgeRim is gold thickness. Gloss/sheen stay
+         camera-facing on the reflective #0E1526 face. -->
     <Grid WidthRequest="{Binding Layout.BrandLogoSize}"
           HeightRequest="{Binding Layout.BrandLogoSize}">
 
         <!-- Focus glow: scaled slightly past the ring, faded in from code-behind -->
         <Border x:Name="GlowRing"
                 StrokeShape="Ellipse"
-                Stroke="#B39CC3FF"
+                Stroke="#B3E8C56A"
                 StrokeThickness="3"
                 BackgroundColor="Transparent"
                 Opacity="0"
                 Scale="1.12"
                 InputTransparent="True" />
 
-        <!-- Metallic bezel: fixed. The face spins inside it. -->
+        <!-- Gold coin-edge rim: sits behind the face; width + shading from yaw -->
+        <Border x:Name="EdgeRim"
+                StrokeShape="Ellipse"
+                StrokeThickness="0"
+                Background="{StaticResource LogoEdgeBrush}"
+                Opacity="0"
+                ScaleX="0.12"
+                InputTransparent="True" />
+
+        <!-- Gold bezel + reflective brand-blue face plate -->
         <Border x:Name="LogoOuter"
                 StrokeShape="Ellipse"
                 StrokeThickness="0"
                 Background="{StaticResource LogoRingBrush}"
-                Padding="3">
+                Padding="5">
             <Border.Shadow>
                 <Shadow Brush="Black" Opacity="0.5" Radius="12" Offset="0,4" />
             </Border.Shadow>
-            <!-- Dark inner plate only — crest is the sibling CrestFace below -->
+            <!-- Brand disc blue — crest mark paints on top; no silver disc wash -->
             <Border StrokeShape="Ellipse" StrokeThickness="0" BackgroundColor="#0E1526" />
         </Border>
 
-        <!-- Disc stays fixed. Only the mark's Rotation is the spin. -->
+        <!-- Front logo surface of the disc (mark only — face color is the plate) -->
         <Grid x:Name="CrestFace"
-              Margin="5"
+              Margin="7"
               InputTransparent="True">
+            <!-- Kept for loader API compatibility; opacity 0 — silver disc would wash the blue face -->
             <Image x:Name="CrestDisc"
                    Aspect="AspectFit"
+                   Opacity="0"
+                   IsVisible="False"
                    HorizontalOptions="Fill"
                    VerticalOptions="Fill"
                    InputTransparent="True" />
@@ -81,13 +96,35 @@
                    AnchorY="0.5"
                    Rotation="0"
                    InputTransparent="True" />
+        </Grid>
 
-            <!-- Gloss highlight -->
+        <!-- Back logo surface of the disc (same artwork, other side) -->
+        <Grid x:Name="CrestFaceBack"
+              Margin="7"
+              Opacity="0"
+              InputTransparent="True">
+            <Image x:Name="CrestDiscBack"
+                   Aspect="AspectFit"
+                   Opacity="0"
+                   IsVisible="False"
+                   HorizontalOptions="Fill"
+                   VerticalOptions="Fill"
+                   InputTransparent="True" />
+            <Image x:Name="CrestMarkBack"
+                   Aspect="AspectFit"
+                   HorizontalOptions="Fill"
+                   VerticalOptions="Fill"
+                   AnchorX="0.5"
+                   AnchorY="0.5"
+                   Rotation="0"
+                   InputTransparent="True" />
+        </Grid>
+
+        <!-- Gloss + sheen: reflective wash on the blue face -->
+        <Grid Margin="7" InputTransparent="True">
             <Border StrokeShape="Ellipse" StrokeThickness="0"
                     Background="{StaticResource LogoGlossBrush}"
                     InputTransparent="True" />
-
-            <!-- Sheen band -->
             <Border StrokeShape="Ellipse" StrokeThickness="0"
                     BackgroundColor="Transparent"
                     InputTransparent="True">
