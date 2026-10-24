@@ -77,16 +77,17 @@ public sealed class MpHarvestSession
                     // health. ReleaseChipThenSoak emits playlist-first then an
                     // enriched line — do not complete labeled waiters on the
                     // early line or siblings fail health and never reach the UI.
-                    if (IsReadyForNamedWaiter(response)
+                    if (IsReadyForWaiter(response)
                         && _waiters.TryRemove(label, out var waiter))
                     {
                         waiter.TrySetResult(response);
                     }
                 }
 
-                // First (unlabeled) wait still returns as soon as any playlist
-                // URL exists so playback can start during soak.
-                if (!string.IsNullOrWhiteSpace(response.Url))
+                // Seed (unlabeled) wait uses the same readiness: catalog fan-out
+                // runs the MP health probe on this response, so playlist-only
+                // must not complete under ReleaseChipThenSoak.
+                if (IsReadyForWaiter(response))
                 {
                     _firstChip.TrySetResult(response);
                 }
@@ -137,7 +138,7 @@ public sealed class MpHarvestSession
         }
 
         var key = label.Trim();
-        if (_byLabel.TryGetValue(key, out var cached) && IsReadyForNamedWaiter(cached))
+        if (_byLabel.TryGetValue(key, out var cached) && IsReadyForWaiter(cached))
         {
             return cached;
         }
@@ -151,7 +152,7 @@ public sealed class MpHarvestSession
         var waiter = _waiters.GetOrAdd(
             key,
             _ => new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (_byLabel.TryGetValue(key, out cached) && IsReadyForNamedWaiter(cached))
+        if (_byLabel.TryGetValue(key, out cached) && IsReadyForWaiter(cached))
         {
             waiter.TrySetResult(cached);
         }
@@ -216,10 +217,10 @@ public sealed class MpHarvestSession
     }
 
     /// <summary>
-    /// Named chip waiters accept a definitive miss (no URL) or a playlist that
-    /// already carries rewritten segment samples for the MP health probe.
+    /// Seed and named waiters accept a definitive miss (no URL) or a playlist
+    /// that already carries probe-shaped rewritten segment samples.
     /// </summary>
-    private static bool IsReadyForNamedWaiter(M3U8Response response) =>
+    private static bool IsReadyForWaiter(M3U8Response response) =>
         string.IsNullOrWhiteSpace(response.Url)
-        || response.RewrittenSegments is { Count: > 0 };
+        || MpRewrittenSegment.HasProbeReady(response.RewrittenSegments);
 }

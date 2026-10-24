@@ -18,7 +18,8 @@ public sealed class MpHarvestSessionTests
         {
             Type = "chip",
             Label = "Chip A",
-            Url = "https://stream.example.test/a.m3u8"
+            Url = "https://stream.example.test/a.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
         });
 
         // Act
@@ -29,6 +30,89 @@ public sealed class MpHarvestSessionTests
         Assert.Equal("Chip A", first?.SelectedStream);
         Assert.Equal(["Chip A", "Chip B"], first?.Streams);
         Assert.False(harvest.IsCompleted);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_FirstChip_WaitsForRewrittenAfterPlaylistOnlyRelease()
+    {
+        // Arrange — seed WaitForAsync(null) must not complete on playlist-only.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync(null, CancellationToken.None);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8"
+        });
+        Assert.False(waiting.IsCompleted);
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
+        });
+        var first = await waiting;
+
+        // Assert
+        Assert.Equal("https://stream.example.test/a.m3u8", first?.Url);
+        Assert.Equal(["https://cdn.example.test/a.exe?_s2=1"], first?.RewrittenSegments);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_NamedChip_MissCompletesWithoutSoak()
+    {
+        // Arrange — definitive miss must complete named wait without soak/Complete.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip B",
+            Url = ""
+        });
+        var miss = await waiting;
+
+        // Assert
+        Assert.True(string.IsNullOrWhiteSpace(miss?.Url));
+        Assert.Equal("Chip B", miss?.SelectedStream);
+        Assert.True(miss?.RewrittenSegments is null or { Count: 0 });
+        Assert.False(harvest.IsCompleted);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_NamedChip_NonProbeRewritten_StillWaitsForSoak()
+    {
+        // Arrange — Count > 0 is not enough; URLs must look probe-shaped.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip B",
+            Url = "https://stream.example.test/b.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/plain.ts"]
+        });
+        Assert.False(waiting.IsCompleted);
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip B",
+            Url = "https://stream.example.test/b.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/b.exe?_s2=1"]
+        });
+        var second = await waiting;
+
+        // Assert
+        Assert.Equal(["https://cdn.example.test/b.exe?_s2=1"], second?.RewrittenSegments);
     }
 
     [Fact]
