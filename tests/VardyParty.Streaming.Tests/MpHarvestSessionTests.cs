@@ -63,6 +63,44 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public async Task WaitForAsync_FirstChip_OtherLabelMiss_DoesNotFinishSeed()
+    {
+        // Arrange — Chip A playlist-only, then Chip B miss must not complete seed.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync(null, CancellationToken.None);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8"
+        });
+        Assert.False(waiting.IsCompleted);
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip B",
+            Url = ""
+        });
+
+        // Assert
+        Assert.False(waiting.IsCompleted);
+
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
+        });
+        var first = await waiting;
+        Assert.Equal("https://stream.example.test/a.m3u8", first?.Url);
+        Assert.Equal("Chip A", first?.SelectedStream);
+    }
+
+    [Fact]
     public async Task WaitForAsync_NamedChip_MissCompletesWithoutSoak()
     {
         // Arrange — definitive miss must complete named wait without soak/Complete.

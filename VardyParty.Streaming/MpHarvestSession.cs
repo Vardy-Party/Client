@@ -84,10 +84,10 @@ public sealed class MpHarvestSession
                     }
                 }
 
-                // Seed (unlabeled) wait uses the same readiness: catalog fan-out
-                // runs the MP health probe on this response, so playlist-only
-                // must not complete under ReleaseChipThenSoak.
-                if (IsReadyForWaiter(response))
+                // Seed wait needs probe-ready rewritten segments only — an
+                // empty-URL miss must not finish catalog fan-out while another
+                // chip may still be soaking. Complete() unblocks with null.
+                if (MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
                 {
                     _firstChip.TrySetResult(response);
                 }
@@ -217,8 +217,9 @@ public sealed class MpHarvestSession
     }
 
     /// <summary>
-    /// Seed and named waiters accept a definitive miss (no URL) or a playlist
-    /// that already carries probe-shaped rewritten segment samples.
+    /// Named waiters accept a definitive miss (no URL) or a playlist that
+    /// already carries probe-shaped rewritten segment samples. Seed
+    /// (<c>_firstChip</c>) uses <see cref="MpRewrittenSegment.HasProbeReady"/> only.
     /// </summary>
     private static bool IsReadyForWaiter(M3U8Response response) =>
         string.IsNullOrWhiteSpace(response.Url)
