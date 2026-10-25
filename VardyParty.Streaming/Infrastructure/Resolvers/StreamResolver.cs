@@ -287,7 +287,7 @@ public class StreamResolver(
     private static StreamHealthProbe? TryMpHealthProbe(M3U8Response? response)
     {
         var rewritten = response?.RewrittenSegments?
-            .Where(url => !string.IsNullOrWhiteSpace(url) && LooksLikeRewrittenSegment(url))
+            .Where(MpRewrittenSegment.LooksLike)
             .ToList();
         if (rewritten is not { Count: > 0 })
         {
@@ -300,12 +300,6 @@ public class StreamResolver(
             RequestHeaders = response!.RequestHeaders
         };
     }
-
-    private static bool LooksLikeRewrittenSegment(string url) =>
-        url.Contains("_s2=", StringComparison.OrdinalIgnoreCase)
-        || url.Contains("kdns.fr", StringComparison.OrdinalIgnoreCase)
-        || url.Contains("fhlsport", StringComparison.OrdinalIgnoreCase)
-        || url.Contains("isyjvux", StringComparison.OrdinalIgnoreCase);
 
     private static bool HasUnknownMpChipFanOut(Stream stream) =>
         MpPageUrl.IsV2Stream(stream)
