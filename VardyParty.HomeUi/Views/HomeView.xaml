@@ -267,7 +267,7 @@
                                 VerticalOptions="Center" />
                     </Grid>
                     <Grid ColumnDefinitions="*,Auto">
-                        <Label Text="DNS over HTTPS fallback"
+                        <Label Text="DNS over HTTPS (prefer Cloudflare)"
                                TextColor="#E5E7EB"
                                FontSize="15"
                                VerticalOptions="Center" />
