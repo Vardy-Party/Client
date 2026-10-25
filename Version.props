@@ -14,7 +14,7 @@
     <ApplicationVersion>207</ApplicationVersion>
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->
-    <ApplicationDisplayVersion>3.3.4</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>3.3.8</ApplicationDisplayVersion>
     
     <!-- Product name for versioning -->
     <Product>VardyParty</Product>
