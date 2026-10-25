@@ -12,9 +12,9 @@
   <PropertyGroup>
     <!-- Internal build counter — bumped on the PR branch before merge to main -->
 <<<<<<< HEAD
-    <ApplicationVersion>206</ApplicationVersion>
+    <ApplicationVersion>208</ApplicationVersion>
 =======
-    <ApplicationVersion>207</ApplicationVersion>
+    <ApplicationVersion>208</ApplicationVersion>
 >>>>>>> origin/main
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->
