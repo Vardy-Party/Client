@@ -122,13 +122,8 @@ public class StreamResolver(
             var outcome = await entry.Task.ConfigureAwait(false);
             seen.Add(CandidateKey(outcome.Enriched.Stream));
 
-            foreach (var sibling in outcome.Siblings)
-            {
-                if (!seen.Add(CandidateKey(sibling)))
-                    continue;
-
-                pending.Add(sibling);
-            }
+            if (outcome.Siblings.Count > 0)
+                EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings);
 
             // Publish total once MP chip inventory is known (siblings and/or sole chip).
             if (entry.IsMp || outcome.Siblings.Count > 0)
@@ -247,10 +242,34 @@ public class StreamResolver(
             logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
                 stream.Channel);
             logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-            var probe = TryMpHealthProbe(m3u8Response);
+            // V1/FB needs Cookie (+ Referer/Origin) from LocalService; V2/MP needs
+            // rewritten segment samples. Always forward LS soak data into health —
+            // do not probe the CDN as a bare UA/Referer client.
+            var probe = TryLocalServiceHealthProbe(m3u8Response);
             var health = probe is null
                 ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
                 : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
+
+            if (health.Status != StreamHealthStatus.Healthy
+                && LocalServiceSoakTrust.ShouldTrust(m3u8Response, health.Status))
+            {
+                logger.LogInformation(
+                    "[StreamResolver] Trusting LocalService soak for {Channel} after Client CDN probe {Status}",
+                    stream.Channel, health.Status);
+                health = new StreamHealth
+                {
+                    Url = m3u8Url,
+                    Status = StreamHealthStatus.Healthy,
+                    ErrorMessage = $"Trusted LocalService soak (Client probe was {health.Status})",
+                    CheckDurationMs = health.CheckDurationMs,
+                    Resolution = health.Resolution,
+                    FrameRate = health.FrameRate,
+                    Bitrate = health.Bitrate,
+                    VideoCodec = health.VideoCodec,
+                    AudioCodec = health.AudioCodec
+                };
+            }
+
             enriched.Health = health;
             if (health.Status == StreamHealthStatus.Healthy)
             {
@@ -261,7 +280,7 @@ public class StreamResolver(
             else
             {
                 // ManifestUnreachable / SegmentUnreachable both mean the CDN refused the probe connection —
-                // the same URL will fail in ExoPlayer. Do not trust it for playback.
+                // and LocalService did not leave soak evidence (cookies / rewritten segments).
                 enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = $"Health check failed: {health.Status}";
                 logger.LogWarning("[StreamResolver] Stream {Channel} failed health check: {Status}",
@@ -284,21 +303,99 @@ public class StreamResolver(
         }
     }
 
-    private static StreamHealthProbe? TryMpHealthProbe(M3U8Response? response)
+    private static readonly HashSet<string> LocalServicePlaybackHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        var rewritten = response?.RewrittenSegments?
+        "user-agent",
+        "referer",
+        "origin",
+        "cookie",
+        "authorization"
+    };
+
+    /// <summary>
+    /// Build a health probe from LocalService soak data: rewritten MP segments
+    /// and/or captured request headers (Cookie) from V1/FB <c>/play</c>.
+    /// </summary>
+    private static StreamHealthProbe? TryLocalServiceHealthProbe(M3U8Response? response)
+    {
+        if (response is null)
+            return null;
+
+        var rewritten = response.RewrittenSegments?
             .Where(MpRewrittenSegment.LooksLike)
             .ToList();
-        if (rewritten is not { Count: > 0 })
-        {
+        var headers = FilterPlaybackHeaders(response.RequestHeaders);
+        var hasRewritten = rewritten is { Count: > 0 };
+        var hasHeaders = headers is { Count: > 0 };
+        if (!hasRewritten && !hasHeaders)
             return null;
-        }
 
         return new StreamHealthProbe
         {
-            RewrittenSegmentUrls = rewritten,
-            RequestHeaders = response!.RequestHeaders
+            RewrittenSegmentUrls = hasRewritten ? rewritten : null,
+            RequestHeaders = hasHeaders ? headers : null
         };
+    }
+
+    private static Dictionary<string, string>? FilterPlaybackHeaders(
+        IReadOnlyDictionary<string, string>? headers)
+    {
+        if (headers is null || headers.Count == 0)
+            return null;
+
+        Dictionary<string, string>? filtered = null;
+        foreach (var pair in headers)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value)
+                || !LocalServicePlaybackHeaderNames.Contains(pair.Key))
+            {
+                continue;
+            }
+
+            filtered ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            filtered[pair.Key] = pair.Value;
+        }
+
+        return filtered;
+    }
+
+    /// <summary>
+    /// Insert newly discovered MP chip siblings ahead of remaining catalog work
+    /// so harvested labels resolve before later FB rows.
+    /// </summary>
+    private static void EnqueueMpSiblingsNext(
+        List<Stream> pending,
+        HashSet<int> started,
+        ref int nextIndex,
+        HashSet<string> seen,
+        IReadOnlyList<Stream> siblings)
+    {
+        var insertAt = 0;
+        while (insertAt < pending.Count && started.Contains(insertAt))
+            insertAt++;
+
+        var firstInserted = -1;
+        foreach (var sibling in siblings)
+        {
+            if (!seen.Add(CandidateKey(sibling)))
+                continue;
+
+            pending.Insert(insertAt, sibling);
+            if (firstInserted < 0)
+                firstInserted = insertAt;
+
+            var shifted = new HashSet<int>();
+            foreach (var index in started)
+                shifted.Add(index >= insertAt ? index + 1 : index);
+            started.Clear();
+            foreach (var index in shifted)
+                started.Add(index);
+
+            insertAt++;
+        }
+
+        if (firstInserted >= 0)
+            nextIndex = firstInserted;
     }
 
     private static bool HasUnknownMpChipFanOut(Stream stream) =>

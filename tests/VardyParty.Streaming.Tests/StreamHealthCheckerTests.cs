@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -418,9 +420,55 @@ public class StreamHealthCheckerTests
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
     }
 
+    [Fact]
+    public async Task CheckStreamHealth_ForwardsLocalServiceCookieHeader()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var client = new HttpClient(handler);
+        var settingsProvider = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(client, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(settingsProvider));
+
+        var manifestUrl = "http://streams.example.com/playlist.m3u8";
+        var segmentUrl = "http://streams.example.com/segment.ts";
+        handler.AddResponse(manifestUrl, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("#EXTM3U\n#EXTINF:10,\n" + segmentUrl)
+        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([0x47, 0x40])
+            {
+                Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("video/mp2t") }
+            }
+        });
+
+        var probe = new StreamHealthProbe
+        {
+            RequestHeaders = new Dictionary<string, string>
+            {
+                ["cookie"] = "session=abc; cdn=1",
+                ["origin"] = "http://player.example.com",
+                ["referer"] = "http://player.example.com/"
+            }
+        };
+
+        // Act
+        var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://fallback.example.com", probe);
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.Healthy, result.Status);
+        Assert.Contains(handler.Requests, r =>
+            r.RequestUri!.ToString() == manifestUrl
+            && r.Headers.TryGetValues("Cookie", out var cookies)
+            && cookies.Any(c => c.Contains("session=abc", StringComparison.Ordinal)));
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new();
+        public List<HttpRequestMessage> Requests { get; } = [];
 
         public void AddResponse(string url, HttpResponseMessage response)
         {
@@ -430,6 +478,7 @@ public class StreamHealthCheckerTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            Requests.Add(request);
             var url = request.RequestUri?.ToString() ?? "";
 
             if (request.Method == HttpMethod.Head && _responses.TryGetValue($"HEAD:{url}", out var headResp))
