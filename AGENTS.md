@@ -30,14 +30,6 @@ scrape plugins advertise `mp.chrome` but fail `/mp` with `v2 scrape plugin not r
 
 Never commit `packageSourceCredentials` / clear-text PATs into repo `NuGet.config`.
 
-## Website vs GitHub vs source installers
-
-The public site serves **Client** installers from this repo’s GitHub Releases
-(`/releases/latest`, plus an R2 snapshot fallback) and **LocalService** helpers
-from R2 stable keys (not from Client Releases). Offline local releases must
-commit `Version.props` before tagging so the display/build on the tag matches
-the APK/MSIX. Channel detail: sibling `M3U8-resolver/docs/INSTALLER_CHANNELS.md`.
-
 ## API preview deploy
 
 The API preview Worker is connected to GitHub. Pushing an API pull-request branch deploys `headless-m3u8-preview` through Cloudflare Workers Builds. Do not follow that push with a local `npm run deploy` or `wrangler deploy`. Uncommitted API files are not on the worker until they are committed and pushed. See `AGENTS.md` in the API repo.
