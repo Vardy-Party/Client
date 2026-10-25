@@ -353,6 +353,15 @@ public class StreamHealthChecker(
         return true;
     }
 
+    private static readonly HashSet<string> PlaybackHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "user-agent",
+        "referer",
+        "origin",
+        "cookie",
+        "authorization"
+    };
+
     private static void ApplyPlaybackHeaders(
         HttpRequestMessage request,
         string? refererUrl,
@@ -366,9 +375,23 @@ public class StreamHealthChecker(
         if (!string.IsNullOrEmpty(referer) && Uri.TryCreate(referer, UriKind.Absolute, out var refUri))
             request.Headers.Referrer = refUri;
 
-        var origin = GetHeader(requestHeaders, "origin");
-        if (!string.IsNullOrEmpty(origin))
-            request.Headers.TryAddWithoutValidation("Origin", origin);
+        // LocalService /play captures Cookie (+ Origin / Authorization). ExoPlayer
+        // already sends them; health used to drop Cookie and get CDN 403/HTML.
+        if (requestHeaders is null)
+            return;
+
+        foreach (var pair in requestHeaders)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value)
+                || !PlaybackHeaderNames.Contains(pair.Key)
+                || pair.Key.Equals("user-agent", StringComparison.OrdinalIgnoreCase)
+                || pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            request.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+        }
     }
 
     private static string? GetHeader(IReadOnlyDictionary<string, string>? headers, string name)
