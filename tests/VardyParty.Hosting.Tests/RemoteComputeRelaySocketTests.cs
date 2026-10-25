@@ -151,11 +151,14 @@ public class RemoteComputeRelaySocketTests
             return;
         }
 
+        // Seed WaitForAsync(null) completes only after probe-ready rewritten segments
+        // (playlist-only ReleaseChipThenSoak must not finish the harvest early).
         var line = JsonSerializer.Serialize(new
         {
             type = "chip",
             label = "Chip A",
-            url = Playlist
+            url = Playlist,
+            rewrittenSegments = new[] { "https://cdn.example.test/a.exe?_s2=1" }
         });
         socket.PushText(JsonSerializer.Serialize(new { t = "rpc-part", id, body = line }));
     }

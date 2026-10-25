@@ -7,10 +7,12 @@ namespace VardyParty.HomeUi.Views;
 /// it is never focusable (D-pad/tab traversal skips it; the menu button
 /// beside it stays focusable).
 /// While the catalog loads (<see cref="HomeViewModel.IsContentLoading"/>)
-/// the crest mark spins in the plane of the disc. The sphere highlight, rim,
-/// bezel, gloss, and sheen stay fixed. When rows render, the mark finishes
-/// the turn it is on and eases to upright rest with a sheen sweep. Catalog
-/// paint must not abort the spinner — that froze the crest mid-turn.
+/// the crest turns as a thick disc: metal bezel yaws on <c>RotationY</c>,
+/// the crest is printed on both faces (<c>ScaleX = |cos|</c>; opacity picks
+/// front vs back), and an edge rim is the disc thickness. Gloss and sheen
+/// stay camera-facing. When rows render, the disc finishes the turn it is on
+/// and eases to face-on rest with a sheen sweep. Catalog paint must not abort
+/// the spinner — that froze the crest mid-turn.
 /// </summary>
 public partial class BrandLogoView : ContentView
 {
@@ -150,16 +152,17 @@ public partial class BrandLogoView : ContentView
 
     private async Task EnsureCrestAsync()
     {
-        if (CrestDisc.Source != null && CrestMark.Source != null)
+        // Face is the #0E1526 plate + mark; gold bezel/rim supply the metal.
+        // Do not paint brand_crest_disc (silver sphere) — it washes the blue face.
+        if (CrestMark.Source != null && CrestMarkBack.Source != null)
         {
             return;
         }
 
         try
         {
-            var disc = await BrandCrestImageLoader.GetDiscAsync().ConfigureAwait(false);
             var mark = await BrandCrestImageLoader.GetMarkAsync().ConfigureAwait(false);
-            if (disc is null && mark is null)
+            if (mark is null)
             {
                 return;
             }
@@ -171,20 +174,13 @@ public partial class BrandLogoView : ContentView
                     return;
                 }
 
-                if (disc != null)
-                {
-                    CrestDisc.Source ??= disc;
-                }
-
-                if (mark != null)
-                {
-                    CrestMark.Source ??= mark;
-                }
+                CrestMark.Source ??= mark;
+                CrestMarkBack.Source ??= mark;
             });
         }
         catch
         {
-            // Crest is decorative; leave the spin chrome without an image.
+            // Crest is decorative; leave the gold rim + blue plate without a mark.
         }
     }
 
@@ -234,7 +230,7 @@ public partial class BrandLogoView : ContentView
         this.AbortAnimation(SheenAnimation);
         this.AbortAnimation(SettleAnimation);
 
-        ApplyFixedCrestPose();
+        ApplyCrestPose(BrandCrestSpin.Pose(0));
         LogoSheen.Opacity = 0;
 
         var spin = new Animation(ApplySpinFrame, 0, 360);
@@ -416,32 +412,45 @@ public partial class BrandLogoView : ContentView
     {
         _angle = 0;
         LogoOuter.Opacity = 1;
-        ApplyFixedCrestPose();
+        LogoOuter.RotationY = 0;
+        ApplyCrestPose(BrandCrestSpin.Pose(0));
         LogoSheen.Opacity = 0;
         LogoSheen.TranslationX = -26;
     }
 
     /// <summary>
-    /// Bezel yaw, face scale, and the upright mark. Set when a spin starts
-    /// and when the crest rests — not from <see cref="ApplySpinFrame"/>.
+    /// Apply one turntable pose. Fixed <c>RotationX</c> tilt keeps rim depth
+    /// on; bezel yaws on <c>RotationY</c>; front/back crest grids are the two
+    /// logo surfaces. Edge rim opacity never drops to zero.
     /// </summary>
-    private void ApplyFixedCrestPose()
+    private void ApplyCrestPose(BrandCrestSpin.BrandCrestSpinPose pose)
     {
-        var pose = BrandCrestSpin.Pose(0);
-        LogoOuter.RotationY = pose.BezelRotationY;
+        LogoOuter.RotationX = pose.FaceRotationX;
+        LogoOuter.RotationY = pose.FaceRotationY;
+
+        // Do not put RotationY on the crest grids: nested Image under a yawing
+        // parent paints blank on WinUI/Android. Tilt still applies.
+        CrestFace.RotationX = pose.FaceRotationX;
         CrestFace.ScaleX = pose.FaceScaleX;
-        CrestFace.Opacity = 1;
-        CrestMark.Rotation = pose.MarkRotationDegrees;
+        CrestFace.Opacity = pose.FrontOpacity;
+
+        CrestFaceBack.RotationX = pose.FaceRotationX;
+        CrestFaceBack.ScaleX = pose.FaceScaleX;
+        CrestFaceBack.Opacity = pose.BackOpacity;
+
+        EdgeRim.RotationX = pose.FaceRotationX;
+        EdgeRim.ScaleX = pose.EdgeScaleX;
+        EdgeRim.TranslationX = pose.EdgeTranslationX;
+        EdgeRim.Opacity = pose.EdgeOpacity;
+
+        LogoSheen.Opacity = pose.SheenOpacity;
+        LogoSheen.TranslationX = -26 + (SheenTravel + 26) * pose.SheenTravelFraction;
     }
 
     private void ApplySpinFrame(double angleDegrees)
     {
         _angle = angleDegrees;
-
-        // Copy the in-plane mark rotation only. Pose.DrivesSheen is false,
-        // and bezel yaw / face scale are planted by ApplyFixedCrestPose.
-        var pose = BrandCrestSpin.Pose(angleDegrees);
-        CrestMark.Rotation = pose.MarkRotationDegrees;
+        ApplyCrestPose(BrandCrestSpin.Pose(angleDegrees));
     }
 
     private double SheenTravel => Math.Max(Width, 40) + 26;
