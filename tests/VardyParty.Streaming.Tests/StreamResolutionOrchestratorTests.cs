@@ -447,6 +447,140 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
+    public async Task StartAsync_MpChipSiblings_JoinPoolBeforeRemainingCatalogFinishes()
+    {
+        // Arrange — seed MP plays; sibling chips must reach the healthy pool while
+        // a later catalog row is still unresolved (not wait for full catalog).
+        const string seedUrl = "https://cdn.example.com/live/chip-a.m3u8";
+        const string siblingUrl = "https://cdn.example.com/live/chip-b.m3u8";
+        const string laterUrl = "https://cdn.example.com/live/later.m3u8";
+        const string pageUrl = "https://streams.example.com/mp-match.html";
+
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var seedStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl)
+            .With(s => s.Channel, "Chip A")
+            .With(s => s.PlayerStream, "Chip A")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Source, "mp")
+            .Create();
+        var laterStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl + "#later")
+            .With(s => s.Channel, "Channel South")
+            .Create();
+        var siblingStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, pageUrl)
+            .With(s => s.Channel, "Chip B")
+            .With(s => s.PlayerStream, "Chip B")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Source, "mp")
+            .Create();
+
+        var seed = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, seedStream)
+            .With(e => e.ResolvedM3U8Url, seedUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+        var sibling = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, siblingStream)
+            .With(e => e.ResolvedM3U8Url, siblingUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+        var later = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, laterStream)
+            .With(e => e.ResolvedM3U8Url, laterUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, pageUrl)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, seedStream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, laterStream).Create()
+            });
+
+        var siblingsYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLater = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns(() => YieldSeedSiblingThenLater(seed, sibling, later, siblingsYielded, releaseLater.Task));
+
+        var playbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        player.Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Returns(() =>
+            {
+                playbackStarted.TrySetResult();
+                return playbackGate.Task;
+            });
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var startTask = sut.StartAsync(game, player.Object);
+
+        // Act
+        await playbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await siblingsYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var poolCountBeforeLaterCatalog = 0;
+        for (var i = 0; i < 50 && poolCountBeforeLaterCatalog < 2; i++)
+        {
+            poolCountBeforeLaterCatalog = switching.GetHealthyStreams().Count;
+            if (poolCountBeforeLaterCatalog < 2)
+                await Task.Delay(20);
+        }
+
+        releaseLater.TrySetResult();
+        playbackGate.SetResult(PlaybackResult.SuccessResult("Playing"));
+        var outcome = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(2, poolCountBeforeLaterCatalog);
+        Assert.True(outcome.PlaybackResult?.Success);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                seedUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task StartAsync_FirstHealthyInvokesPlayer_LaterHealthyJoinPoolOnly()
     {
         // Arrange
@@ -1038,6 +1172,21 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<IReadOnlyDictionary<string, string>?>()))
             .Returns(result);
+
+    private static async IAsyncEnumerable<EnrichedStream> YieldSeedSiblingThenLater(
+        EnrichedStream seed,
+        EnrichedStream sibling,
+        EnrichedStream later,
+        TaskCompletionSource siblingsYielded,
+        Task releaseLater,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        yield return seed;
+        yield return sibling;
+        siblingsYielded.TrySetResult();
+        await releaseLater.WaitAsync(ct);
+        yield return later;
+    }
 
     private static async IAsyncEnumerable<EnrichedStream> YieldThenBlock(
         EnrichedStream first,

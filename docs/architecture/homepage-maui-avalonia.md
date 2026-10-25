@@ -395,6 +395,7 @@ Guest resolve over the compute relay:
 - A clean ICE miss stays on the relay. The guest sends `signal kind=failed` and does not raise a banner.
 - A drop after transport `webrtc` and before `rpc-result` banners `This phone failed: direct connection dropped. Correlation id: {id}`.
 - CONNECT DNS is DoH-first when DoH is enabled. Carrier DNS on 4G often answers and would skip DoH.
+- Internet `HttpClient` / stream health DNS uses the same DoH-first order when the preference is on (`SystemThenDohHostNameResolver` → `PhonePathDns`), so a successful-but-wrong system answer cannot starve CDN probes of Cloudflare.
 - Leftover MP chips after the first `/mp` keep resolving like LAN.
 - Leave always cancels headed Chrome.
 
@@ -431,30 +432,35 @@ flowchart TD
   probe -->|signed out or the check threw| signin[Open sign-in]
 ```
 
-### The brand logo (metallic, animated)
+### The brand logo (gold-rim coin, animated)
 
 The header is a brand row: the Vardy Party crest left of the wordmark with
 the subtitle beneath, on every adaptive layout
 (`HomeLayoutMetrics.BrandLogoSize`: TV 68 / desktop 58 / phone 46–40 dip).
 
-- **Asset**: the app-icon soccer-ball geometry (`Resources/AppIcon/appiconfg.svg`)
-  with chrome/navy metallic gradients, split so the light does not spin.
-  `brand_crest_disc.svg` is the sphere fill and rim (highlight stays upper-left).
-  `brand_crest_mark.svg` is the transparent diamond, panels, and seams.
+- **Asset**: mark-only layers on a solid face plate. `brand_crest_mark.svg`
+  is the transparent diamond, panels, and seams (the only layer
+  `BrandLogoView` paints). `brand_crest_disc.svg` remains in the loader
+  (`BrandCrestImageLoader.GetDisc` / tests) but is **not** assigned onto the
+  coin faces — the old silver sphere wash would fight the brand-blue plate.
   `BrandCrestImageLoader` rasterises each layer once per process (embedded PNG
   first, Svg.Skia fallback). `brand_crest.svg` is the composed reference; the
   view does not rotate it.
-- **Treatment** (`BrandLogoView`): the badges' brushed-metal gradient
-  ring, a dark inner plate, a glass gloss over the upper hemisphere, and a
-  drop shadow. Those overlays sit above the mark and do not rotate.
+- **Treatment** (`BrandLogoView`): a gold bezel ring (`LogoRingBrush`), a
+  reflective brand-blue inner plate (`#0E1526`), a cool gloss wash over the
+  upper hemisphere, a gold coin-edge rim for thickness, and a drop shadow.
+  Gloss and sheen stay camera-facing above the mark and do not yaw with the
+  disc.
 - **Animation**: while `HomeViewModel.IsContentLoading`, `BrandCrestSpin.Pose`
-  turns only the mark in the plane of the screen (`Image.Rotation` about the
-  disc center). Bezel `RotationY` stays 0, face `ScaleX` stays 1, and the
-  spin frame does not drive the sheen. When the first catalog lands, the
-  mark **finishes the turn it is on** and eases to upright rest (0°/360°)
-  with a sheen — catalog paint must not `AbortAnimation` mid-rotation (that
-  froze the crest mid-turn). If layout kills the spinner, `HomeView` tells
-  the logo after apply and it settles from the last angle.
+  turns a thick gold-rim disc: bezel `RotationY` for true 3D chrome, crest
+  face `ScaleX = |cos|` (logo is the disc surface — nested `Image` under yaw
+  paints blank on WinUI/Android), edge rim for disc thickness; sheen glints
+  with the flip so direction stays readable.
+  When the first catalog lands, the mark **finishes the turn it is on** and
+  eases to face-on rest (0°/360°) with a sheen — catalog paint must not
+  `AbortAnimation` mid-rotation (that froze the crest mid-turn). If layout
+  kills the spinner, `HomeView` tells the logo after apply and it settles
+  from the last angle.
   After rest, a slow ambient shimmer loop (a low-opacity sheen crosses the
   crest for a quarter of a 6 s loop) — **suspended entirely on the TV class**
   (`HomeIdleAnimationPolicy.AllowAmbientCrestShimmer`; the idle TV homepage
@@ -485,9 +491,9 @@ the subtitle beneath, on every adaptive layout
     `SettleOverdueMs` (turn + ease + slack) **snaps** to face-on with
     direct property writes layout cannot abort. Invariant: once content
     is ready the crest always reaches face-on rest, on every platform.
-  - **The settle never reverses the in-plane turn**: angles at or past
-    180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — upside-down —
-    rests at 360, not 0.
+  - **The settle never reverses the turntable yaw**: angles at or past
+    180° ease forward to 360° (`RestTargetDegrees`); exactly 180° — edge-on /
+    reverse-face freeze — rests at 360, not 0.
 
 ### UI sound design
 

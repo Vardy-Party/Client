@@ -443,11 +443,11 @@ public class BrandCrestSpinMachineTests
     }
 
     [Fact]
-    public void SettleFromExactlyUpsideDown_EasesForwardNeverReversesTurn()
+    public void SettleFromExactlyEdgeOn_EasesForwardNeverReversesTurn()
     {
         // Arrange — the machine's SettleAnimated step eases toward
-        // RestTargetDegrees: from upside-down (180°) the target is 360
-        // (forward). Easing back to 0 would reverse the in-plane turn.
+        // RestTargetDegrees: from edge-on / reverse face (180°) the target
+        // is 360 (forward). Easing back to 0 would reverse the turntable yaw.
         var machine = new BrandCrestSpinMachine();
         machine.BeginLoading();
 

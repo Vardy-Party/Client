@@ -67,6 +67,8 @@ public class StreamResolverTests
             .Create();
         var m3u8 = _fixture.Build<M3U8Response>()
             .With(r => r.Url, "https://cdn.example.test/playlist.m3u8?token=abc")
+            .With(r => r.RequestHeaders, (Dictionary<string, string>?)null)
+            .With(r => r.RewrittenSegments, (List<string>?)null)
             .Create();
         var health = _fixture.Build<StreamHealth>()
             .With(h => h.Status, StreamHealthStatus.Healthy)
@@ -938,6 +940,98 @@ public class StreamResolverTests
                 It.IsAny<StreamHealthProbe?>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_V1CookieHeaders_UsesProbeHealthOverload()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.test/fb/match-1")
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+        var m3u8 = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
+            .With(r => r.RequestHeaders, new Dictionary<string, string>
+            {
+                ["cookie"] = "cdn=1",
+                ["referer"] = "https://player.example.test/"
+            })
+            .With(r => r.RewrittenSegments, (List<string>?)null)
+            .Create();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(
+                m3u8.Url,
+                It.IsAny<string>(),
+                It.Is<StreamHealthProbe?>(p =>
+                    p != null
+                    && p.RequestHeaders != null
+                    && p.RequestHeaders.ContainsKey("cookie")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(health);
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                m3u8.Url,
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveStreamsIncrementallyAsync_TrustsLocalServiceSoak_WhenCdnProbeFails()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://streams.example.test/fb/match-2")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+        var m3u8 = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
+            .With(r => r.RequestHeaders, new Dictionary<string, string> { ["cookie"] = "cdn=1" })
+            .With(r => r.RewrittenSegments, (List<string>?)null)
+            .Create();
+        var failed = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.ManifestUnreachable)
+            .Create();
+
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8);
+        _healthChecker
+            .Setup(h => h.CheckStreamHealthAsync(
+                m3u8.Url,
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failed);
+
+        // Act
+        var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        Assert.Equal(StreamHealthStatus.Healthy, results[0].Health!.Status);
+        Assert.Contains("Trusted LocalService soak", results[0].Health!.ErrorMessage);
     }
 
     private static async Task<List<EnrichedStream>> CollectAsync(IAsyncEnumerable<EnrichedStream> source)
