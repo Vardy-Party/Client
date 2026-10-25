@@ -179,8 +179,15 @@ public class StreamResolutionOrchestrator(
             while (frontier < orderedStreams.Count && resolvedCatalog.Contains(frontier))
                 frontier++;
 
+            // Catalog rows stay held until the frontier passes (first play follows
+            // catalog order). MP chip siblings use nextExtraIndex (>= catalog
+            // count); holding them until every catalog row finishes left the UI
+            // on one V2 stream while /mp had already harvested the rest.
             var ready = heldHealthy
-                .Where(pair => pair.Key < frontier || frontier >= orderedStreams.Count)
+                .Where(pair =>
+                    pair.Key < frontier
+                    || frontier >= orderedStreams.Count
+                    || (pair.Key >= orderedStreams.Count && hasPlayedFirstStream))
                 .Select(pair => pair.Key)
                 .ToList();
             foreach (var index in ready)

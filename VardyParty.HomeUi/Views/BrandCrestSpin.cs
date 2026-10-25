@@ -20,6 +20,35 @@ public static class BrandCrestSpin
     /// </summary>
     public const uint SettleOverdueMs = TurnMs + SettleMs + 200;
 
+    public const double RimMinScaleX = 0.06;
+    public const double RimMaxScaleX = 0.34;
+    public const double RimDriftPx = 7.0;
+
+    /// <summary>
+    /// Minimum |sin| contribution when blending rim
+    /// <see cref="BrandCrestSpinPose.EdgeScaleX"/>, so foreshortened
+    /// thickness never collapses at near face-on yaw.
+    /// </summary>
+    public const double RimScaleSinFloor = 0.35;
+
+    /// <summary>
+    /// Floor for front/back face opacity from |cos|, so a near edge-on crest
+    /// still paints faintly instead of vanishing.
+    /// </summary>
+    public const double FaceOpacityCosFloor = 0.08;
+
+    /// <summary>
+    /// Fixed camera lean so the gold rim stays visible at every yaw. A pure
+    /// <c>RotationY</c> coin-flip goes face-on twice per turn and depth
+    /// vanishes; this tilt keeps thickness on for the whole turntable.
+    /// </summary>
+    public const double CameraTiltXDegrees = -18.0;
+
+    /// <summary>
+    /// Floor for edge-rim opacity so depth never blinks off at face-on yaw.
+    /// </summary>
+    public const double RimOpacityFloor = 0.42;
+
     public static double NormalizeDegrees(double angle)
     {
         var n = angle % 360.0;
@@ -27,11 +56,11 @@ public static class BrandCrestSpin
     }
 
     /// <summary>
-    /// Nearest upright rest (0° or 360°). Turning the short way never crosses
-    /// a full extra revolution; angles at or past 180 ease forward to 360 so
-    /// the settle never reverses the in-plane turn. Exactly 180 — upside-down,
-    /// the old mid-turn freeze — must also rest forward at 360: easing it
-    /// back to 0 would spin the mark backward.
+    /// Nearest face-on rest. Turning the short way never crosses a full extra
+    /// revolution; angles at or past 180 ease forward to 360 so the settle
+    /// never reverses through the coin-edge. Exactly 180 — the edge-on freeze
+    /// case — must also rest forward at 360: easing it back to 0 would swing
+    /// the crest backward through the edge it froze on.
     /// </summary>
     public static double RestTargetDegrees(double current)
     {
@@ -40,7 +69,7 @@ public static class BrandCrestSpin
     }
 
     /// <summary>
-    /// Upright rest: the mark is at 0° or 360°. 180° is upside-down, not rest.
+    /// Face-on rest: the crest is at 0° or 360°. 180° is edge-on, not rest.
     /// </summary>
     public static bool IsFaceOnRest(double current, double epsilon = RestEpsilonDegrees)
     {
@@ -57,28 +86,52 @@ public static class BrandCrestSpin
         spinning && !settleRequested;
 
     /// <summary>
-    /// One frame of the in-plane crest turn. Only
-    /// <see cref="MarkRotationDegrees"/> follows the angle.
+    /// One frame of the tilted turntable. <see cref="FaceRotationX"/> is the
+    /// fixed camera lean; <see cref="FaceRotationY"/> is yaw; crest faces use
+    /// <c>|cos|</c> scale with front/back opacity. Edge rim stays at least
+    /// <see cref="RimOpacityFloor"/> so depth never drops out.
     /// </summary>
     public readonly record struct BrandCrestSpinPose(
-        double MarkRotationDegrees,
-        double BezelRotationY,
+        double FaceRotationX,
+        double FaceRotationY,
         double FaceScaleX,
+        double FrontOpacity,
+        double BackOpacity,
+        double EdgeScaleX,
+        double EdgeTranslationX,
+        double EdgeOpacity,
         double SheenOpacity,
-        bool DrivesSheen);
+        double SheenTravelFraction);
 
     /// <summary>
-    /// In-plane pose for <paramref name="angleDegrees"/>. The mark rotation is
-    /// the only value that changes. Bezel yaw and face scale stay at rest, and
-    /// <see cref="BrandCrestSpinPose.DrivesSheen"/> is false: this frame does
-    /// not paint the sheen. Gloss, sheen, and the disc (highlight and rim) are
-    /// fixed overlays.
+    /// Turntable pose for yaw <paramref name="angleDegrees"/>. Persistent
+    /// tilt keeps disc thickness visible; crest on both faces; sheen glints
+    /// with the yaw so direction stays readable.
     /// </summary>
-    public static BrandCrestSpinPose Pose(double angleDegrees) =>
-        new(
-            MarkRotationDegrees: angleDegrees,
-            BezelRotationY: 0,
-            FaceScaleX: 1,
-            SheenOpacity: 0,
-            DrivesSheen: false);
+    public static BrandCrestSpinPose Pose(double angleDegrees)
+    {
+        var radians = angleDegrees * Math.PI / 180.0;
+        var sin = Math.Sin(radians);
+        var cos = Math.Cos(radians);
+        var absSin = Math.Abs(sin);
+        var absCos = Math.Abs(cos);
+        var faceVisibility = Math.Clamp(absCos, FaceOpacityCosFloor, 1.0);
+        var glint = Math.Abs(Math.Sin(2 * radians));
+        var frontFacing = cos >= 0.0;
+        // Tilt keeps a foreshortened rim even at yaw 0 / 180.
+        var rimFromYaw = 0.9 * absSin;
+        var rimFromTilt = RimOpacityFloor;
+
+        return new(
+            FaceRotationX: CameraTiltXDegrees,
+            FaceRotationY: angleDegrees,
+            FaceScaleX: absCos,
+            FrontOpacity: frontFacing ? faceVisibility : 0.0,
+            BackOpacity: frontFacing ? 0.0 : faceVisibility,
+            EdgeScaleX: RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * Math.Max(absSin, RimScaleSinFloor),
+            EdgeTranslationX: sin * RimDriftPx,
+            EdgeOpacity: Math.Max(rimFromTilt, rimFromYaw),
+            SheenOpacity: absCos * (0.12 + 0.68 * glint * glint * glint),
+            SheenTravelFraction: (NormalizeDegrees(angleDegrees) % 180.0) / 180.0);
+    }
 }

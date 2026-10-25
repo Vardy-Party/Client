@@ -1,3 +1,4 @@
+using System;
 using Xunit;
 using VardyParty.HomeUi.Views;
 
@@ -27,10 +28,10 @@ public class BrandCrestSpinTests
     }
 
     [Fact]
-    public void RestTargetDegrees_ExactlyUpsideDown_EasesForwardNeverReversesTurn()
+    public void RestTargetDegrees_ExactlyEdgeOn_EasesForwardNeverReversesTurn()
     {
-        // Arrange — 180° is upside-down (the old mid-turn freeze): the
-        // settle must ease forward to 360 and must not reverse the in-plane turn.
+        // Arrange — 180° is edge-on / reverse face (the old mid-turn freeze):
+        // the settle must ease forward to 360 and must not reverse the coin-flip.
         const double current = 180;
 
         // Act
@@ -43,7 +44,7 @@ public class BrandCrestSpinTests
     [Fact]
     public void RestTargetDegrees_540_NormalizesThenRestsForwardAt360()
     {
-        // Arrange — 540° normalizes to 180° (upside-down), which rests forward.
+        // Arrange — 540° normalizes to 180° (edge-on), which rests forward.
         const double current = 540;
 
         // Act
@@ -62,7 +63,7 @@ public class BrandCrestSpinTests
     [InlineData(180, false)]
     [InlineData(359, true)]
     [InlineData(360, true)]
-    public void IsFaceOnRest_DetectsUprightRest(double angle, bool expected)
+    public void IsFaceOnRest_DetectsFaceOnRest(double angle, bool expected)
     {
         // Arrange
         // Act
@@ -106,18 +107,71 @@ public class BrandCrestSpinTests
     [InlineData(180)]
     [InlineData(270)]
     [InlineData(359.5)]
-    public void Pose_InPlaneTurn_RotatesMarkAndLeavesBezelScaleAndSheen(double angle)
+    public void Pose_CoinFlip_YawsMarkAndDrivesEdgeSheen(double angle)
     {
-        // Arrange — 90° is the mid-turn case the view must lock.
+        // Arrange — 90° is the edge-on mid-turn the view must lock.
+        var radians = angle * Math.PI / 180.0;
+        var cos = Math.Cos(radians);
+        var absCos = Math.Abs(cos);
+        var absSin = Math.Abs(Math.Sin(radians));
+
         // Act
         var pose = BrandCrestSpin.Pose(angle);
 
-        // Assert — the mark carries the angle. Bezel yaw stays 0, the face
-        // is not squashed, and this frame does not drive the sheen.
-        Assert.Equal(angle, pose.MarkRotationDegrees);
-        Assert.Equal(0, pose.BezelRotationY);
-        Assert.Equal(1, pose.FaceScaleX);
-        Assert.Equal(0, pose.SheenOpacity);
-        Assert.False(pose.DrivesSheen);
+        // Assert — disc yaws; both faces use |cos|; front/back opacity by hemisphere.
+        Assert.Equal(BrandCrestSpin.CameraTiltXDegrees, pose.FaceRotationX);
+        Assert.Equal(angle, pose.FaceRotationY);
+        Assert.Equal(absCos, pose.FaceScaleX, 5);
+        Assert.True(pose.EdgeOpacity >= BrandCrestSpin.RimOpacityFloor - 0.001);
+        var rimSin = Math.Max(absSin, BrandCrestSpin.RimScaleSinFloor);
+        Assert.Equal(BrandCrestSpin.RimMinScaleX + (BrandCrestSpin.RimMaxScaleX - BrandCrestSpin.RimMinScaleX) * rimSin, pose.EdgeScaleX, 5);
+        Assert.True(pose.SheenOpacity >= 0);
+        if (cos >= 0)
+        {
+            Assert.Equal(0, pose.BackOpacity, 5);
+            Assert.True(pose.FrontOpacity > 0);
+        }
+        else
+        {
+            Assert.Equal(0, pose.FrontOpacity, 5);
+            Assert.True(pose.BackOpacity > 0);
+        }
+
+        if (absCos < 0.01)
+        {
+            Assert.True(pose.EdgeOpacity > 0.5);
+        }
+    }
+
+    [Fact]
+    public void Pose_FaceOnYaw_KeepsTiltAndRimDepth()
+    {
+        // Arrange — yaw 0 used to blank the rim; tilt + floor keep depth.
+
+        // Act
+        var pose = BrandCrestSpin.Pose(0);
+
+        // Assert
+        Assert.Equal(0, pose.FaceRotationY);
+        Assert.Equal(BrandCrestSpin.CameraTiltXDegrees, pose.FaceRotationX);
+        Assert.Equal(1, pose.FaceScaleX, 5);
+        Assert.Equal(BrandCrestSpin.RimOpacityFloor, pose.EdgeOpacity, 5);
+        Assert.Equal(1, pose.FrontOpacity, 5);
+        Assert.Equal(0, pose.BackOpacity, 5);
+    }
+
+    [Fact]
+    public void Pose_BackFaceOn_ShowsBackCrest()
+    {
+        // Arrange — 180° is the reverse logo surface.
+
+        // Act
+        var pose = BrandCrestSpin.Pose(180);
+
+        // Assert
+        Assert.Equal(180, pose.FaceRotationY);
+        Assert.Equal(1, pose.FaceScaleX, 5);
+        Assert.Equal(0, pose.FrontOpacity, 5);
+        Assert.Equal(1, pose.BackOpacity, 5);
     }
 }
