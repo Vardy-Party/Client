@@ -238,9 +238,9 @@ public class StreamResolver(
             enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
-            // Step 2: Health — but never burn a one-shot signed m3u8 on a Client
-            // CDN probe when LocalService already soaked Referer/Cookie / V2 samples.
-            // Probe-then-trust was too late: ExoPlayer gets the second (dead) use.
+            // Step 2: Health — never burn a one-shot signed m3u8 on a Client CDN
+            // probe when LocalService already soaked Referer/Cookie / V2 samples.
+            // Skip and trust are the same evidence set; do not probe-then-trust.
             StreamHealth health;
             if (LocalServiceSoakTrust.ShouldSkipClientCdnProbe(m3u8Response))
             {
@@ -263,26 +263,6 @@ public class StreamResolver(
                 health = probe is null
                     ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
                     : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
-
-                if (health.Status != StreamHealthStatus.Healthy
-                    && LocalServiceSoakTrust.ShouldTrust(m3u8Response, health.Status))
-                {
-                    logger.LogInformation(
-                        "[StreamResolver] Trusting LocalService soak for {Channel} after Client CDN probe {Status}",
-                        stream.Channel, health.Status);
-                    health = new StreamHealth
-                    {
-                        Url = m3u8Url,
-                        Status = StreamHealthStatus.Healthy,
-                        ErrorMessage = $"Trusted LocalService soak (Client probe was {health.Status})",
-                        CheckDurationMs = health.CheckDurationMs,
-                        Resolution = health.Resolution,
-                        FrameRate = health.FrameRate,
-                        Bitrate = health.Bitrate,
-                        VideoCodec = health.VideoCodec,
-                        AudioCodec = health.AudioCodec
-                    };
-                }
             }
 
             enriched.Health = health;

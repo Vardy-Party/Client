@@ -77,6 +77,8 @@ public class StreamResolutionOrchestratorTests
             .With(e => e.ResolvedM3U8Url, cachedUrl)
             .With(e => e.Status, StreamResolutionStatus.Healthy)
             .With(e => e.Referer, pageUrl)
+            .Without(e => e.RequestHeaders)
+            .Without(e => e.RewrittenSegments)
             .Create();
 
         var switching = _fixture.Create<StreamSwitchingService>();
@@ -100,12 +102,19 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<Action<int>?>()))
             .Returns(() => Yield(enriched));
 
+        var freshResponse = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, freshUrl)
+            .With(r => r.RequestHeaders, (Dictionary<string, string>?)null)
+            .With(r => r.RewrittenSegments, (List<string>?)null)
+            .Create();
         _fixture.GetMock<IApiService>()
-            .Setup(a => a.ResolveM3U8ForPlaybackAsync(
-                stream,
-                It.IsAny<string>(),
+            .Setup(a => a.GetM3U8UrlAsync(
+                stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(freshUrl);
+            .ReturnsAsync(freshResponse);
 
         var player = _fixture.GetMock<INativeVideoPlayerService>();
         player.SetupSequence(p => p.PlayVideoAsync(

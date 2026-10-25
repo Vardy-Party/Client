@@ -898,7 +898,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_RewrittenSegments_UsesProbeHealthOverload()
+    public async Task ResolveStreamsIncrementallyAsync_RewrittenSegments_SkipsClientCdnProbe()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
@@ -908,23 +908,14 @@ public class StreamResolverTests
         var m3u8 = _fixture.Build<M3U8Response>()
             .With(r => r.Url, "https://streams.example.test/playlist.m3u8")
             .With(r => r.RewrittenSegments, ["https://media.example.test/cfall/seg.exe?_s2=1"])
+            .With(r => r.RequestHeaders, (Dictionary<string, string>?)null)
             .With(r => r.Streams, (List<string>?)null)
             .With(r => r.SelectedStream, (string?)null)
-            .Create();
-        var health = _fixture.Build<StreamHealth>()
-            .With(h => h.Status, StreamHealthStatus.Healthy)
             .Create();
 
         _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(m3u8);
-        _healthChecker
-            .Setup(h => h.CheckStreamHealthAsync(
-                m3u8.Url,
-                It.IsAny<string>(),
-                It.Is<StreamHealthProbe?>(p => p != null && p.RewrittenSegmentUrls!.Contains("https://media.example.test/cfall/seg.exe?_s2=1")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(health);
 
         // Act
         var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
@@ -933,17 +924,24 @@ public class StreamResolverTests
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
         Assert.Equal(["https://media.example.test/cfall/seg.exe?_s2=1"], results[0].RewrittenSegments);
+        Assert.Contains("CDN probe skipped", results[0].Health!.ErrorMessage);
         _healthChecker.Verify(
             h => h.CheckStreamHealthAsync(
-                m3u8.Url,
+                It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<StreamHealthProbe?>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_V1CookieHeaders_UsesProbeHealthOverload()
+    public async Task ResolveStreamsIncrementallyAsync_V1CookieHeaders_SkipsClientCdnProbe()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
@@ -961,23 +959,10 @@ public class StreamResolverTests
             })
             .With(r => r.RewrittenSegments, (List<string>?)null)
             .Create();
-        var health = _fixture.Build<StreamHealth>()
-            .With(h => h.Status, StreamHealthStatus.Healthy)
-            .Create();
 
         _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(m3u8);
-        _healthChecker
-            .Setup(h => h.CheckStreamHealthAsync(
-                m3u8.Url,
-                It.IsAny<string>(),
-                It.Is<StreamHealthProbe?>(p =>
-                    p != null
-                    && p.RequestHeaders != null
-                    && p.RequestHeaders.ContainsKey("cookie")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(health);
 
         // Act
         var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
@@ -985,17 +970,24 @@ public class StreamResolverTests
         // Assert
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
+        Assert.Contains("CDN probe skipped", results[0].Health!.ErrorMessage);
         _healthChecker.Verify(
             h => h.CheckStreamHealthAsync(
-                m3u8.Url,
+                It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<StreamHealthProbe?>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_TrustsLocalServiceSoak_WhenCdnProbeFails()
+    public async Task ResolveStreamsIncrementallyAsync_SkipsClientCdnProbe_WhenLocalServiceSoakPresent()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()
@@ -1009,20 +1001,10 @@ public class StreamResolverTests
             .With(r => r.RequestHeaders, new Dictionary<string, string> { ["cookie"] = "cdn=1" })
             .With(r => r.RewrittenSegments, (List<string>?)null)
             .Create();
-        var failed = _fixture.Build<StreamHealth>()
-            .With(h => h.Status, StreamHealthStatus.ManifestUnreachable)
-            .Create();
 
         _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(m3u8);
-        _healthChecker
-            .Setup(h => h.CheckStreamHealthAsync(
-                m3u8.Url,
-                It.IsAny<string>(),
-                It.IsAny<StreamHealthProbe?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(failed);
 
         // Act
         var results = await CollectAsync(Sut.ResolveStreamsIncrementallyAsync([stream]));
@@ -1031,7 +1013,20 @@ public class StreamResolverTests
         Assert.Single(results);
         Assert.Equal(StreamResolutionStatus.Healthy, results[0].Status);
         Assert.Equal(StreamHealthStatus.Healthy, results[0].Health!.Status);
-        Assert.Contains("Trusted LocalService soak", results[0].Health!.ErrorMessage);
+        Assert.Contains("CDN probe skipped", results[0].Health!.ErrorMessage);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<StreamHealthProbe?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _healthChecker.Verify(
+            h => h.CheckStreamHealthAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     private static async Task<List<EnrichedStream>> CollectAsync(IAsyncEnumerable<EnrichedStream> source)

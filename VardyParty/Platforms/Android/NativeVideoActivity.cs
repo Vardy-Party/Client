@@ -831,6 +831,7 @@ namespace VardyParty.Platforms.Android
         }
 
         private int _switchAttachGeneration;
+        private CancellationTokenSource? _attachLifetimeCts;
 
         private void TrySwitchToCurrentStream()
         {
@@ -845,7 +846,8 @@ namespace VardyParty.Platforms.Android
             if (LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(current))
             {
                 var gen = Interlocked.Increment(ref _switchAttachGeneration);
-                _ = AttachOneShotFreshAsync(current, gen);
+                var token = ReplaceAttachLifetimeToken();
+                _ = AttachOneShotFreshAsync(current, gen, token);
                 return;
             }
 
@@ -880,7 +882,10 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private async Task AttachOneShotFreshAsync(EnrichedStream current, int generation)
+        private async Task AttachOneShotFreshAsync(
+            EnrichedStream current,
+            int generation,
+            CancellationToken cancellationToken)
         {
             try
             {
@@ -895,8 +900,9 @@ namespace VardyParty.Platforms.Android
                 _logger?.LogInformation(
                     "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
                     current.Stream?.Channel ?? "(null)");
-                var url = await _resolveFresh(current, CancellationToken.None).ConfigureAwait(false);
-                if (generation != Volatile.Read(ref _switchAttachGeneration))
+                var url = await _resolveFresh(current, cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested
+                    || generation != Volatile.Read(ref _switchAttachGeneration))
                     return;
 
                 if (string.IsNullOrWhiteSpace(url))
@@ -913,7 +919,8 @@ namespace VardyParty.Platforms.Android
 
                 RunOnUiThread(() =>
                 {
-                    if (generation != Volatile.Read(ref _switchAttachGeneration))
+                    if (cancellationToken.IsCancellationRequested
+                        || generation != Volatile.Read(ref _switchAttachGeneration))
                         return;
                     if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
                         return;
@@ -926,11 +933,31 @@ namespace VardyParty.Platforms.Android
                     AttachViaSession(url, usedCachedUrl: false);
                 });
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Fresh one-shot /play failed for {Channel}",
                     current.Stream?.Channel ?? "(null)");
             }
+        }
+
+        private CancellationToken ReplaceAttachLifetimeToken()
+        {
+            CancelAttachLifetime();
+            var cts = new CancellationTokenSource();
+            _attachLifetimeCts = cts;
+            return cts.Token;
+        }
+
+        private void CancelAttachLifetime()
+        {
+            var cts = Interlocked.Exchange(ref _attachLifetimeCts, null);
+            if (cts is null)
+                return;
+            try { cts.Cancel(); } catch { }
+            try { cts.Dispose(); } catch { }
         }
 
         public void SwitchToStreamUrl(string m3u8Url) => AttachViaSession(m3u8Url, usedCachedUrl: true);
@@ -1012,6 +1039,7 @@ namespace VardyParty.Platforms.Android
             try
             {
                 BeginClosing();
+                CancelAttachLifetime();
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);

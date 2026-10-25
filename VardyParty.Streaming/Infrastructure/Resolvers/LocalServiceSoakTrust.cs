@@ -31,6 +31,11 @@ public static class LocalServiceSoakTrust
         return HasPlaybackSoakHeaders(stream.RequestHeaders);
     }
 
+    /// <summary>
+    /// Soak evidence that would have justified trust after a failed CDN probe.
+    /// Callers must skip the probe via <see cref="ShouldSkipClientCdnProbe"/> instead —
+    /// probe-then-trust is unreachable when skip uses the same evidence.
+    /// </summary>
     public static bool ShouldTrust(M3U8Response? response, StreamHealthStatus failedStatus)
     {
         if (response is null || failedStatus == StreamHealthStatus.Healthy)

@@ -78,30 +78,41 @@ public class LocalServiceSoakTrustTests
     [Fact]
     public void ShouldSkipClientCdnProbe_WhenRefererSoakPresent()
     {
+        // Arrange
         var response = new M3U8Response
         {
             Url = "https://streams.example.test/list.m3u8",
             RequestHeaders = new Dictionary<string, string> { ["referer"] = "https://player.example.test/" }
         };
 
-        Assert.True(LocalServiceSoakTrust.ShouldSkipClientCdnProbe(response));
+        // Act
+        var skip = LocalServiceSoakTrust.ShouldSkipClientCdnProbe(response);
+
+        // Assert
+        Assert.True(skip);
     }
 
     [Fact]
     public void ShouldSkipClientCdnProbe_False_WithoutSoak()
     {
+        // Arrange
         var response = new M3U8Response
         {
             Url = "https://streams.example.test/list.m3u8",
             RequestHeaders = new Dictionary<string, string> { ["user-agent"] = "TestAgent/1.0" }
         };
 
-        Assert.False(LocalServiceSoakTrust.ShouldSkipClientCdnProbe(response));
+        // Act
+        var skip = LocalServiceSoakTrust.ShouldSkipClientCdnProbe(response);
+
+        // Assert
+        Assert.False(skip);
     }
 
     [Fact]
     public void RequiresFreshM3u8ForPlayback_WhenPoolRowHasRefererSoak()
     {
+        // Arrange
         var stream = new EnrichedStream
         {
             Stream = new Stream { Url = "https://page.example.test/x", Channel = "FB" },
@@ -109,6 +120,10 @@ public class LocalServiceSoakTrustTests
             RequestHeaders = new Dictionary<string, string> { ["referer"] = "https://embed.example.test/" }
         };
 
-        Assert.True(LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(stream));
+        // Act
+        var requiresFresh = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(stream);
+
+        // Assert
+        Assert.True(requiresFresh);
     }
 }

@@ -437,8 +437,6 @@ public class StreamResolutionOrchestrator(
         IPlaybackLauncher launcher,
         CancellationToken cancellationToken)
     {
-        var gamePath = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
-
         // FB /play tokens are one-shot: find-phase URLs must not be reused for
         // ExoPlayer. Soak rows always re-/play; others keep the cached fast path
         // with a single fresh retry on failure below.
@@ -457,9 +455,7 @@ public class StreamResolutionOrchestrator(
                     ? "[StreamResolution] Resolving fresh one-shot M3U8 for playback: {Channel}"
                     : "[StreamResolution] Resolving fresh M3U8 for playback: {Channel}",
                 enrichedStream.Stream.Channel);
-            m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
-            if (!string.IsNullOrEmpty(m3u8Url))
-                enrichedStream.ResolvedM3U8Url = m3u8Url;
+            m3u8Url = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
         }
 
         if (string.IsNullOrEmpty(m3u8Url))
@@ -520,10 +516,9 @@ public class StreamResolutionOrchestrator(
             !result.ViewerLeft)
         {
             logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
-            var freshUrl = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+            var freshUrl = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
             if (StreamCandidateRules.ShouldAcceptFreshM3U8(m3u8Url, freshUrl))
             {
-                enrichedStream.ResolvedM3U8Url = freshUrl;
                 // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.
                 return await PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
             }
@@ -531,6 +526,32 @@ public class StreamResolutionOrchestrator(
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Full <c>/play</c> resolve onto the pool row — URL plus Referer/headers/segments —
+    /// so first attach matches chip-switch fresh-resolve behavior.
+    /// </summary>
+    private async Task<string?> ResolveFreshPlaybackOntoAsync(
+        EnrichedStream enrichedStream,
+        CancellationToken cancellationToken)
+    {
+        var stream = enrichedStream.Stream;
+        if (stream is null)
+            return null;
+
+        var response = await apiService.GetM3U8UrlAsync(
+            stream.Url,
+            EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
+            stream.ResolutionStrategy,
+            stream.Source,
+            cancellationToken);
+
+        if (response is null || string.IsNullOrWhiteSpace(response.Url))
+            return null;
+
+        EnrichedStreamM3U8Apply.Apply(enrichedStream, response);
+        return response.Url;
     }
 
     private async Task StartPlaybackHealthReportingAsync(

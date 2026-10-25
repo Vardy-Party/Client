@@ -38,19 +38,21 @@ public class ApiService(
         }
     }
 
-    public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl)
-    {
-        return await GetM3U8UrlAsync(streamUrl, playerStreamName: null);
-    }
+    public Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
+        GetM3U8UrlAsync(streamUrl, playerStreamName: null, cancellationToken);
 
-    public async Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName) =>
-        await GetM3U8UrlAsync(streamUrl, playerStreamName, resolutionStrategy: null, source: null);
+    public Task<M3U8Response?> GetM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        CancellationToken cancellationToken = default) =>
+        GetM3U8UrlAsync(streamUrl, playerStreamName, resolutionStrategy: null, source: null, cancellationToken);
 
     public async Task<M3U8Response?> GetM3U8UrlAsync(
         string streamUrl,
         string? playerStreamName,
         string? resolutionStrategy,
-        string? source)
+        string? source,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -61,7 +63,8 @@ public class ApiService(
                 streamUrl,
                 playerStreamName,
                 resolutionStrategy,
-                source);
+                source,
+                cancellationToken);
             if (!string.IsNullOrEmpty(result?.Url))
             {
                 logger.LogInformation("[Api] M3U8 fetched for {Url}", streamUrl);
@@ -71,6 +74,10 @@ public class ApiService(
                 logger.LogWarning("[Api] Local LAN service returned no m3u8 URL for {Url}", streamUrl);
             }
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -87,16 +94,13 @@ public class ApiService(
         try
         {
             logger.LogInformation("[Api] Resolving m3u8 for playback: {Channel}", stream.Channel);
-            var playerStreamName = stream.RequiresV2StreamSelection
-                && !stream.IsCountdown
-                && !string.IsNullOrWhiteSpace(stream.PlayerStream)
-                    ? stream.PlayerStream.Trim()
-                    : null;
+            var playerStreamName = EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream);
             var m3u8Response = await GetM3U8UrlAsync(
                 stream.Url,
                 playerStreamName,
                 stream.ResolutionStrategy,
-                stream.Source);
+                stream.Source,
+                cancellationToken);
 
             if (m3u8Response != null && !string.IsNullOrEmpty(m3u8Response.Url))
             {
