@@ -80,14 +80,6 @@
         <Grid x:Name="CrestFace"
               Margin="7"
               InputTransparent="True">
-            <!-- Kept for loader API compatibility; opacity 0 — silver disc would wash the blue face -->
-            <Image x:Name="CrestDisc"
-                   Aspect="AspectFit"
-                   Opacity="0"
-                   IsVisible="False"
-                   HorizontalOptions="Fill"
-                   VerticalOptions="Fill"
-                   InputTransparent="True" />
             <Image x:Name="CrestMark"
                    Aspect="AspectFit"
                    HorizontalOptions="Fill"
@@ -103,13 +95,6 @@
               Margin="7"
               Opacity="0"
               InputTransparent="True">
-            <Image x:Name="CrestDiscBack"
-                   Aspect="AspectFit"
-                   Opacity="0"
-                   IsVisible="False"
-                   HorizontalOptions="Fill"
-                   VerticalOptions="Fill"
-                   InputTransparent="True" />
             <Image x:Name="CrestMarkBack"
                    Aspect="AspectFit"
                    HorizontalOptions="Fill"

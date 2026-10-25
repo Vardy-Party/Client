@@ -25,6 +25,19 @@ public static class BrandCrestSpin
     public const double RimDriftPx = 7.0;
 
     /// <summary>
+    /// Minimum |sin| contribution when blending rim
+    /// <see cref="BrandCrestSpinPose.EdgeScaleX"/>, so foreshortened
+    /// thickness never collapses at near face-on yaw.
+    /// </summary>
+    public const double RimScaleSinFloor = 0.35;
+
+    /// <summary>
+    /// Floor for front/back face opacity from |cos|, so a near edge-on crest
+    /// still paints faintly instead of vanishing.
+    /// </summary>
+    public const double FaceOpacityCosFloor = 0.08;
+
+    /// <summary>
     /// Fixed camera lean so the gold rim stays visible at every yaw. A pure
     /// <c>RotationY</c> coin-flip goes face-on twice per turn and depth
     /// vanishes; this tilt keeps thickness on for the whole turntable.
@@ -79,7 +92,6 @@ public static class BrandCrestSpin
     /// <see cref="RimOpacityFloor"/> so depth never drops out.
     /// </summary>
     public readonly record struct BrandCrestSpinPose(
-        double MarkRotationDegrees,
         double FaceRotationX,
         double FaceRotationY,
         double FaceScaleX,
@@ -89,8 +101,7 @@ public static class BrandCrestSpin
         double EdgeTranslationX,
         double EdgeOpacity,
         double SheenOpacity,
-        double SheenTravelFraction,
-        bool DrivesSheen);
+        double SheenTravelFraction);
 
     /// <summary>
     /// Turntable pose for yaw <paramref name="angleDegrees"/>. Persistent
@@ -104,7 +115,7 @@ public static class BrandCrestSpin
         var cos = Math.Cos(radians);
         var absSin = Math.Abs(sin);
         var absCos = Math.Abs(cos);
-        var faceVisibility = Math.Clamp(absCos, 0.08, 1.0);
+        var faceVisibility = Math.Clamp(absCos, FaceOpacityCosFloor, 1.0);
         var glint = Math.Abs(Math.Sin(2 * radians));
         var frontFacing = cos >= 0.0;
         // Tilt keeps a foreshortened rim even at yaw 0 / 180.
@@ -112,17 +123,15 @@ public static class BrandCrestSpin
         var rimFromTilt = RimOpacityFloor;
 
         return new(
-            MarkRotationDegrees: 0,
             FaceRotationX: CameraTiltXDegrees,
             FaceRotationY: angleDegrees,
             FaceScaleX: absCos,
             FrontOpacity: frontFacing ? faceVisibility : 0.0,
             BackOpacity: frontFacing ? 0.0 : faceVisibility,
-            EdgeScaleX: RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * Math.Max(absSin, 0.35),
+            EdgeScaleX: RimMinScaleX + (RimMaxScaleX - RimMinScaleX) * Math.Max(absSin, RimScaleSinFloor),
             EdgeTranslationX: sin * RimDriftPx,
             EdgeOpacity: Math.Max(rimFromTilt, rimFromYaw),
             SheenOpacity: absCos * (0.12 + 0.68 * glint * glint * glint),
-            SheenTravelFraction: (NormalizeDegrees(angleDegrees) % 180.0) / 180.0,
-            DrivesSheen: true);
+            SheenTravelFraction: (NormalizeDegrees(angleDegrees) % 180.0) / 180.0);
     }
 }

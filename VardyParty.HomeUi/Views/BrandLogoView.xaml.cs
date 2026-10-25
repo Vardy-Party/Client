@@ -433,23 +433,18 @@ public partial class BrandLogoView : ContentView
         CrestFace.RotationX = pose.FaceRotationX;
         CrestFace.ScaleX = pose.FaceScaleX;
         CrestFace.Opacity = pose.FrontOpacity;
-        CrestMark.Rotation = pose.MarkRotationDegrees;
 
         CrestFaceBack.RotationX = pose.FaceRotationX;
         CrestFaceBack.ScaleX = pose.FaceScaleX;
         CrestFaceBack.Opacity = pose.BackOpacity;
-        CrestMarkBack.Rotation = pose.MarkRotationDegrees;
 
         EdgeRim.RotationX = pose.FaceRotationX;
         EdgeRim.ScaleX = pose.EdgeScaleX;
         EdgeRim.TranslationX = pose.EdgeTranslationX;
         EdgeRim.Opacity = pose.EdgeOpacity;
 
-        if (pose.DrivesSheen)
-        {
-            LogoSheen.Opacity = pose.SheenOpacity;
-            LogoSheen.TranslationX = -26 + (SheenTravel + 26) * pose.SheenTravelFraction;
-        }
+        LogoSheen.Opacity = pose.SheenOpacity;
+        LogoSheen.TranslationX = -26 + (SheenTravel + 26) * pose.SheenTravelFraction;
     }
 
     private void ApplySpinFrame(double angleDegrees)
