@@ -5,17 +5,13 @@
 #   pwsh ./package-windows.ps1
 #   pwsh ./package-windows.ps1 -KeepPatchedAppSettings
 #
-# The build embeds user-secrets into MauiAsset/EmbeddedResource by patching
-# SOURCE VardyParty/appsettings.json before CoreCompile
+# The build embeds user-secrets into MauiAsset/EmbeddedResource by patching a
+# copy under IntermediateOutputPath (not the git template) before CoreCompile
 # (-p:PatchAppSettings=true -> PatchAppSettingsForLocalAndroid, which also
-# covers the Windows TFM). Same contract as package-android.ps1: this script
-# does NOT git-restore afterward (mid-build restore races with compile).
-# Restore yourself before committing:
-#   git restore VardyParty/appsettings.json
+# covers the Windows TFM). Source appsettings.json is left untouched.
 
 param(
-    # After a successful build, leave secrets in source appsettings.json.
-    # Default is also leave them (no auto git restore). Kept for compat.
+    # Compat no-op: secrets are written under obj/, not the source template.
     [switch]$KeepPatchedAppSettings
 )
 
@@ -41,13 +37,11 @@ $publishFailed = $false
 & dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) { $publishFailed = $true }
 
+Write-Host ''
 if ($KeepPatchedAppSettings) {
-    Write-Host ''
-    Write-Host '-KeepPatchedAppSettings: source appsettings.json was patched and is left dirty (default now). Restore with: git restore VardyParty/appsettings.json'
+    Write-Host '-KeepPatchedAppSettings: ignored — Auth0/API secrets were patched under obj/ only; source appsettings.json was not modified.'
 } else {
-    Write-Host ''
-    Write-Host 'NOTE: VardyParty/appsettings.json may contain local secrets after this build. Restore before committing:'
-    Write-Host '  git restore VardyParty/appsettings.json'
+    Write-Host 'NOTE: Auth0/API secrets were patched under obj/ only; source VardyParty/appsettings.json was not modified.'
 }
 
 if ($publishFailed) {
@@ -75,8 +69,8 @@ Write-Host "[WIN CHECK] $appsettingsPath Auth0.ClientId=$clientState Auth0.Domai
 if ($clientState -ne 'NON_EMPTY' -or $domainState -ne 'NON_EMPTY') {
     throw @"
 Packaged Windows output has empty Auth0 ClientId/Domain in appsettings.json.
-Ensure user-secrets are set, then re-run: pwsh ./package-windows.ps1
-Do not git restore VardyParty/appsettings.json until publish finishes.
+Ensure user-secrets Auth0:ClientId/Domain are set and -p:PatchAppSettings=true, then re-run:
+  pwsh ./package-windows.ps1
 "@
 }
 

@@ -51,9 +51,9 @@ Write-Host "[APK CHECK] assets/appsettings.json Auth0.ClientId=$clientState Auth
 if ($clientState -ne 'NON_EMPTY' -or $domainState -ne 'NON_EMPTY') {
     throw @"
 Packaged APK has empty Auth0 ClientId/Domain in assets/appsettings.json.
-The patch target likely ran, then appsettings.json was restored to the empty
-git template before CoreCompile/MauiAssets (e.g. git restore/checkout mid-build).
-Re-run: pwsh ./package-android.ps1
-Do not git restore VardyParty/appsettings.json until the APK exists.
+Expected PatchAppSettingsForLocalAndroid to patch IntermediateOutputPath
+local-appsettings/appsettings.json (not the git template) before MauiAssets.
+Check -p:PatchAppSettings=true and user-secrets Auth0:ClientId/Domain, then re-run:
+  pwsh ./package-android.ps1
 "@
 }

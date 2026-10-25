@@ -17,12 +17,11 @@
 # command line (INSTALL_FAILED_NO_MATCHING_ABIS / NETSDK1083 / MSB1006):
 # the csproj selects the RID set from AndroidArmOnly.
 #
-# The build embeds your user secrets into the APK by patching SOURCE
-# VardyParty/appsettings.json before CoreCompile/MauiAssets
-# (-p:PatchAppSettings=true -> PatchAppSettingsForLocalAndroid).
-# This script does NOT git-restore afterward (that used to race with compile
-# when something else checked out the template mid-build). Restore yourself:
-#   git restore VardyParty/appsettings.json
+# The build embeds your user secrets into the APK by copying the committed
+# template into IntermediateOutputPath, patching that copy, and retargeting
+# MauiAsset/EmbeddedResource (-p:PatchAppSettings=true ->
+# PatchAppSettingsForLocalAndroid). Source VardyParty/appsettings.json is left
+# untouched so concurrent git restore/checkout cannot empty Auth0 mid-publish.
 
 param(
     [ValidateSet('device', 'all')]
@@ -34,8 +33,7 @@ param(
     [ValidateSet('local', 'preview', 'production')]
     [string]$Api,
 
-    # After a successful build, leave secrets in source appsettings.json.
-    # Default is also leave them (no auto git restore). Kept for compat.
+    # Compat no-op: secrets are written under obj/, not the source template.
     [switch]$KeepPatchedAppSettings
 )
 
@@ -141,13 +139,11 @@ finally {
 }
 if ($LASTEXITCODE -ne 0) { $buildFailed = $true }
 
+Write-Host ''
 if ($KeepPatchedAppSettings) {
-    Write-Host ''
-    Write-Host '-KeepPatchedAppSettings: source appsettings.json was patched and is left dirty (default now). Restore with: git restore VardyParty/appsettings.json'
+    Write-Host '-KeepPatchedAppSettings: ignored — Auth0/API secrets were patched under obj/ only; source appsettings.json was not modified.'
 } else {
-    Write-Host ''
-    Write-Host 'NOTE: VardyParty/appsettings.json may contain local secrets after this build. Restore before committing:'
-    Write-Host '  git restore VardyParty/appsettings.json'
+    Write-Host 'NOTE: Auth0/API secrets were patched under obj/ only; source VardyParty/appsettings.json was not modified.'
 }
 
 if ($buildFailed) {

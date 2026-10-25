@@ -513,10 +513,11 @@
         <Message Text="[BUILD] Ensuring EmbeddedResource appsettings.json is passed to CoreCompile" Importance="high" />
     </Target>
 
-    <!-- Local Development: patch SOURCE appsettings.json from user-secrets so
-         MauiAsset + EmbeddedResource embed real Auth0/API values.
+    <!-- Local Development: copy the committed template into IntermediateOutputPath,
+         patch THAT copy from user-secrets, then retarget MauiAsset + EmbeddedResource
+         to the obj copy. Do not mutate source appsettings.json — concurrent
+         git restore/checkout mid-publish was wiping Auth0 out of the APK.
          Usage: -p:PatchAppSettings=true
-         WARNING: modifies the source file. Restore: git restore VardyParty\appsettings.json
          Runs immediately before CoreCompile/MauiAssets (and before
          EnsureAppSettingsEmbeddedResource via target order below). -->
     <Target Name="PatchAppSettingsForLocalAndroid"
@@ -524,12 +525,29 @@
             Condition="'$(PatchAppSettings)' == 'true' AND ('$(TargetFramework)' == 'net11.0-android' OR '$(TargetFramework)' == 'net11.0-windows10.0.19041.0')">
         <PropertyGroup>
             <SourceAppSettingsPath>$(MSBuildProjectDirectory)\appsettings.json</SourceAppSettingsPath>
+            <!-- Keep the leaf name appsettings.json so EnsureAppSettingsEmbeddedResource's
+                 Filename+Extension filter and MauiAsset packaging still match. -->
+            <_PatchedAppSettingsDir>$(IntermediateOutputPath)local-appsettings\</_PatchedAppSettingsDir>
+            <_PatchedAppSettingsPath>$(_PatchedAppSettingsDir)appsettings.json</_PatchedAppSettingsPath>
             <ApiTargetArg Condition="'$(ApiTarget)' != ''">-ApiTarget &quot;$(ApiTarget)&quot;</ApiTargetArg>
         </PropertyGroup>
-        <Message Text="[LOCAL BUILD] Patching SOURCE appsettings.json with user secrets BEFORE CoreCompile/MauiAssets" Importance="high" />
-        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(SourceAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot; $(ApiTargetArg)" />
+        <MakeDir Directories="$(_PatchedAppSettingsDir)" />
+        <Copy SourceFiles="$(SourceAppSettingsPath)"
+              DestinationFiles="$(_PatchedAppSettingsPath)"
+              OverwriteReadOnlyFiles="true"
+              SkipUnchangedFiles="false" />
+        <Message Text="[LOCAL BUILD] Patching IntermediateOutputPath appsettings.json with user secrets BEFORE CoreCompile/MauiAssets (source template left untouched)" Importance="high" />
+        <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\patch-appsettings.ps1&quot; -AppSettingsPath &quot;$(_PatchedAppSettingsPath)&quot; -UserSecretsId &quot;$(UserSecretsId)&quot; $(ApiTargetArg)" />
         <ItemGroup>
-            <CustomAdditionalCompileInputs Include="$(SourceAppSettingsPath)" />
+            <!-- Drop the committed template from package/compile inputs; use the patched obj copy. -->
+            <MauiAsset Remove="appsettings.json" />
+            <EmbeddedResource Remove="appsettings.json" />
+            <MauiAsset Include="$(_PatchedAppSettingsPath)" LogicalName="appsettings.json" CopyToOutputDirectory="Always" />
+            <EmbeddedResource Include="$(_PatchedAppSettingsPath)">
+                <LogicalName>VardyParty.appsettings.json</LogicalName>
+            </EmbeddedResource>
+            <CustomAdditionalCompileInputs Include="$(_PatchedAppSettingsPath)" />
+            <FileWrites Include="$(_PatchedAppSettingsPath)" />
         </ItemGroup>
     </Target>
 
