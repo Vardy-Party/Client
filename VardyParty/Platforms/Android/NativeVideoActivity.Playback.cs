@@ -110,7 +110,10 @@ namespace VardyParty.Platforms.Android
                     activity._logger?.LogWarning("[NativeVideoActivity] Reverting to last good stream: {Url}", url);
                 }
 
-                _ = activity._engine.AttachAsync(url);
+                // Pool switches used to keep Intent/first-stream headers (often dembed.st)
+                // while health checks used each stream's LS Referer — ExoPlayer then 403s.
+                activity.ApplySoakHeadersForPlaybackUrl(url);
+                _ = activity._engine.AttachAsync(url, activity._requestHeaders);
             }
 
             public void AttachCurrentAfterRemove() => _ = activity._pool?.AttachCurrentFromPoolAsync();
@@ -275,6 +278,61 @@ namespace VardyParty.Platforms.Android
             if (System.Uri.TryCreate(_refererUrl, System.UriKind.Absolute, out var refererUri))
                 headers["Origin"] = $"{refererUri.Scheme}://{refererUri.Authority}";
             return headers;
+        }
+
+        private void ApplySoakHeadersForPlaybackUrl(string? m3u8Url)
+        {
+            if (string.IsNullOrWhiteSpace(m3u8Url) || _switching is null)
+                return;
+
+            EnrichedStream? match = null;
+            var current = _switching.GetCurrentStream();
+            if (current is not null
+                && string.Equals(current.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
+            {
+                match = current;
+            }
+            else
+            {
+                foreach (var stream in _switching.GetHealthyStreams())
+                {
+                    if (string.Equals(stream.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = stream;
+                        break;
+                    }
+                }
+            }
+
+            ApplySoakHeadersFromStream(match);
+        }
+
+        private void ApplySoakHeadersFromStream(EnrichedStream? stream)
+        {
+            if (stream is null)
+                return;
+
+            if (stream.RequestHeaders is { Count: > 0 })
+                _requestHeaders = stream.RequestHeaders;
+
+            if (!string.IsNullOrWhiteSpace(stream.Referer))
+            {
+                _refererUrl = stream.Referer;
+                return;
+            }
+
+            if (_requestHeaders is null)
+                return;
+
+            foreach (var pair in _requestHeaders)
+            {
+                if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    _refererUrl = pair.Value;
+                    return;
+                }
+            }
         }
 
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>

@@ -8,6 +8,11 @@ public interface IApiService
     Task<StreamResponse?> GetStreamsAsync(string league, string homeTeam, string awayTeam, bool forceRefresh = false);
     Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl);
     Task<M3U8Response?> GetM3U8UrlAsync(string streamUrl, string? playerStreamName);
+    Task<M3U8Response?> GetM3U8UrlAsync(
+        string streamUrl,
+        string? playerStreamName,
+        string? resolutionStrategy,
+        string? source);
 
     /// <summary>
     /// Resolves m3u8 URL for a single stream for playback

@@ -439,11 +439,11 @@ public class StreamResolutionOrchestrator(
     {
         var gamePath = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
 
-        // Use the cached URL from health-check / prefetch if available (fast path).
-        // If absent, resolve fresh now. Either way, if the first attempt fails we
-        // resolve a brand-new URL and retry once — CDN tokens can be connection-bound
-        // and the cached URL may have been invalidated since it was fetched.
-        bool usedCachedUrl = !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
+        // FB /play tokens are one-shot: find-phase URLs must not be reused for
+        // ExoPlayer. Soak rows always re-/play; others keep the cached fast path
+        // with a single fresh retry on failure below.
+        var oneShot = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(enrichedStream);
+        bool usedCachedUrl = !oneShot && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
         string? m3u8Url;
         if (usedCachedUrl)
         {
@@ -452,8 +452,14 @@ public class StreamResolutionOrchestrator(
         }
         else
         {
-            logger.LogInformation("[StreamResolution] Resolving fresh M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+            logger.LogInformation(
+                oneShot
+                    ? "[StreamResolution] Resolving fresh one-shot M3U8 for playback: {Channel}"
+                    : "[StreamResolution] Resolving fresh M3U8 for playback: {Channel}",
+                enrichedStream.Stream.Channel);
             m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+            if (!string.IsNullOrEmpty(m3u8Url))
+                enrichedStream.ResolvedM3U8Url = m3u8Url;
         }
 
         if (string.IsNullOrEmpty(m3u8Url))

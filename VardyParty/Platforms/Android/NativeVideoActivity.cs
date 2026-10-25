@@ -48,7 +48,19 @@ namespace VardyParty.Platforms.Android
             _engine.AttachHandler = (url, requestHeaders, _) =>
             {
                 if (requestHeaders is { Count: > 0 })
+                {
                     _requestHeaders = requestHeaders;
+                    foreach (var pair in requestHeaders)
+                    {
+                        if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(pair.Value))
+                        {
+                            _refererUrl = pair.Value;
+                            break;
+                        }
+                    }
+                }
+
                 AttachEngine(url);
                 return Task.CompletedTask;
             };
@@ -818,33 +830,106 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private int _switchAttachGeneration;
+
         private void TrySwitchToCurrentStream()
         {
+            if (_suppressIndexDrivenSwitch)
+                return;
+
+            var current = _switching?.GetCurrentStream();
+            if (current is null)
+                return;
+
+            // FB soak tokens are one-shot — never hand ExoPlayer the find-phase URL.
+            if (LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(current))
+            {
+                var gen = Interlocked.Increment(ref _switchAttachGeneration);
+                _ = AttachOneShotFreshAsync(current, gen);
+                return;
+            }
+
             try
             {
-                if (_suppressIndexDrivenSwitch)
-                {
-                    return;
-                }
-
-                var current = _switching?.GetCurrentStream();
-                var url = current?.ResolvedM3U8Url;
+                var url = current.ResolvedM3U8Url;
                 if (string.IsNullOrWhiteSpace(url))
                 {
+                    // Index already advanced in the overlay; without a URL the
+                    // ExoPlayer keeps the previous stream (often V2) — revert so
+                    // the badge matches what is actually playing.
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Current stream has no ResolvedM3U8Url — reverting index (was showing {Channel})",
+                        current.Stream?.Channel ?? "(null)");
+                    _switching?.SwitchToPreviousStream();
                     return;
                 }
 
                 if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
-                {
                     return;
-                }
 
-                _logger?.LogInformation("[NativeVideoActivity] Switching player to current stream URL {Url}", url);
+                ApplySoakHeadersFromStream(current);
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Switching player to current stream URL {Url} Referer={Referer}",
+                    url,
+                    _refererUrl ?? "(none)");
                 AttachViaSession(url, usedCachedUrl: true);
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed switching to current stream URL");
+            }
+        }
+
+        private async Task AttachOneShotFreshAsync(EnrichedStream current, int generation)
+        {
+            try
+            {
+                if (_resolveFresh is null)
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] One-shot stream {Channel} needs fresh /play but resolveFresh is null",
+                        current.Stream?.Channel ?? "(null)");
+                    return;
+                }
+
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
+                    current.Stream?.Channel ?? "(null)");
+                var url = await _resolveFresh(current, CancellationToken.None).ConfigureAwait(false);
+                if (generation != Volatile.Read(ref _switchAttachGeneration))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} — reverting index",
+                        current.Stream?.Channel ?? "(null)");
+                    RunOnUiThread(() => _switching?.SwitchToPreviousStream());
+                    return;
+                }
+
+                if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                RunOnUiThread(() =>
+                {
+                    if (generation != Volatile.Read(ref _switchAttachGeneration))
+                        return;
+                    if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
+                        return;
+
+                    ApplySoakHeadersFromStream(current);
+                    _logger?.LogInformation(
+                        "[NativeVideoActivity] Switching player to fresh one-shot URL {Url} Referer={Referer}",
+                        url,
+                        _refererUrl ?? "(none)");
+                    AttachViaSession(url, usedCachedUrl: false);
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Fresh one-shot /play failed for {Channel}",
+                    current.Stream?.Channel ?? "(null)");
             }
         }
 

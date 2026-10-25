@@ -238,36 +238,51 @@ public class StreamResolver(
             enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
-            // Step 2: Test health and extract metadata
-            logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
-                stream.Channel);
-            logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-            // V1/FB needs Cookie (+ Referer/Origin) from LocalService; V2/MP needs
-            // rewritten segment samples. Always forward LS soak data into health —
-            // do not probe the CDN as a bare UA/Referer client.
-            var probe = TryLocalServiceHealthProbe(m3u8Response);
-            var health = probe is null
-                ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
-                : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
-
-            if (health.Status != StreamHealthStatus.Healthy
-                && LocalServiceSoakTrust.ShouldTrust(m3u8Response, health.Status))
+            // Step 2: Health — but never burn a one-shot signed m3u8 on a Client
+            // CDN probe when LocalService already soaked Referer/Cookie / V2 samples.
+            // Probe-then-trust was too late: ExoPlayer gets the second (dead) use.
+            StreamHealth health;
+            if (LocalServiceSoakTrust.ShouldSkipClientCdnProbe(m3u8Response))
             {
                 logger.LogInformation(
-                    "[StreamResolver] Trusting LocalService soak for {Channel} after Client CDN probe {Status}",
-                    stream.Channel, health.Status);
+                    "[StreamResolver] Skipping Client CDN probe for {Channel} — LocalService soak present (one-shot token)",
+                    stream.Channel);
                 health = new StreamHealth
                 {
                     Url = m3u8Url,
                     Status = StreamHealthStatus.Healthy,
-                    ErrorMessage = $"Trusted LocalService soak (Client probe was {health.Status})",
-                    CheckDurationMs = health.CheckDurationMs,
-                    Resolution = health.Resolution,
-                    FrameRate = health.FrameRate,
-                    Bitrate = health.Bitrate,
-                    VideoCodec = health.VideoCodec,
-                    AudioCodec = health.AudioCodec
+                    ErrorMessage = "Trusted LocalService soak (CDN probe skipped — one-shot token)"
                 };
+            }
+            else
+            {
+                logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
+                    stream.Channel);
+                logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
+                var probe = TryLocalServiceHealthProbe(m3u8Response);
+                health = probe is null
+                    ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
+                    : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
+
+                if (health.Status != StreamHealthStatus.Healthy
+                    && LocalServiceSoakTrust.ShouldTrust(m3u8Response, health.Status))
+                {
+                    logger.LogInformation(
+                        "[StreamResolver] Trusting LocalService soak for {Channel} after Client CDN probe {Status}",
+                        stream.Channel, health.Status);
+                    health = new StreamHealth
+                    {
+                        Url = m3u8Url,
+                        Status = StreamHealthStatus.Healthy,
+                        ErrorMessage = $"Trusted LocalService soak (Client probe was {health.Status})",
+                        CheckDurationMs = health.CheckDurationMs,
+                        Resolution = health.Resolution,
+                        FrameRate = health.FrameRate,
+                        Bitrate = health.Bitrate,
+                        VideoCodec = health.VideoCodec,
+                        AudioCodec = health.AudioCodec
+                    };
+                }
             }
 
             enriched.Health = health;
