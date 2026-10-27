@@ -22,9 +22,9 @@ public class RefererHandlingTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public async Task ResolveStreams_RefererSoak_SkipsCdnProbeAndKeepsPlayReferer()
+    public async Task ResolveStreams_RefererSoak_ProbesWithSoakAndKeepsPlayReferer()
     {
-        // Arrange — Referer soak skips Client CDN probe (one-shot); row still gets play Referer.
+        // Arrange — Referer soak probes WITH headers (not bare); row still gets play Referer.
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "http://source.example/stream1")
             .With(s => s.Channel, "C1")
@@ -64,11 +64,10 @@ public class RefererHandlingTests
 
         // Assert
         Assert.Single(list);
-        Assert.Null(healthChecker.CapturedReferer);
-        Assert.Null(healthChecker.CapturedM3U8);
+        Assert.Equal("https://cdn.example.test/playlist.m3u8", healthChecker.CapturedM3U8);
+        Assert.NotNull(healthChecker.CapturedProbe);
         Assert.Equal("https://player.example.test/player.html", list[0].Referer);
         Assert.Equal(StreamHealthStatus.Healthy, list[0].Health!.Status);
-        Assert.Contains("CDN probe skipped", list[0].Health!.ErrorMessage);
     }
 
     [Fact]
@@ -206,6 +205,7 @@ public class RefererHandlingTests
     {
         public string? CapturedM3U8;
         public string? CapturedReferer;
+        public StreamHealthProbe? CapturedProbe;
 
         // ReSharper disable once InconsistentNaming
         public Task<StreamHealth> CheckStreamHealthAsync(string m3u8Url, string refererUrl,
@@ -213,6 +213,7 @@ public class RefererHandlingTests
         {
             CapturedReferer = refererUrl;
             CapturedM3U8 = m3u8Url;
+            CapturedProbe = null;
             var h = new StreamHealth { Url = m3u8Url, Status = StreamHealthStatus.Healthy };
             return Task.FromResult(h);
         }
@@ -221,7 +222,13 @@ public class RefererHandlingTests
             string m3u8Url,
             string refererUrl,
             StreamHealthProbe? probe,
-            CancellationToken cancellationToken = default) =>
-            CheckStreamHealthAsync(m3u8Url, refererUrl, cancellationToken);
+            CancellationToken cancellationToken = default)
+        {
+            CapturedReferer = refererUrl;
+            CapturedM3U8 = m3u8Url;
+            CapturedProbe = probe;
+            var h = new StreamHealth { Url = m3u8Url, Status = StreamHealthStatus.Healthy };
+            return Task.FromResult(h);
+        }
     }
 }

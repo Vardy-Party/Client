@@ -933,7 +933,7 @@ namespace VardyParty.Platforms.Android
                     AttachViaSession(url, usedCachedUrl: false);
                 });
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (System.OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
             }
             catch (Exception ex)

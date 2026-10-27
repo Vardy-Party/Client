@@ -41,18 +41,36 @@ public sealed class PlaybackPoolCommandActions(
         if (current == null)
             return;
 
-        var url = current.ResolvedM3U8Url;
-        if (string.IsNullOrWhiteSpace(url) && current.Stream != null && resolveFresh != null)
+        // FB/V1 soak tokens are one-shot. Find/prefetch ResolvedM3U8Url is often
+        // already burned — always /play again when a resolver is wired. Fall back
+        // to the cached URL only when fresh resolve fails (and mark usedCachedUrl
+        // so ShouldRetryFreshResolve can still fire once).
+        string? url = null;
+        var usedCachedUrl = false;
+        if (current.Stream != null && resolveFresh != null)
         {
-            url = await resolveFresh(current, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(url))
-                current.ResolvedM3U8Url = url;
+            try
+            {
+                url = await resolveFresh(current, CancellationToken.None);
+                if (!string.IsNullOrWhiteSpace(url))
+                    current.ResolvedM3U8Url = url;
+            }
+            catch
+            {
+                // Fall through to cached URL below.
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            url = current.ResolvedM3U8Url;
+            usedCachedUrl = !string.IsNullOrWhiteSpace(url);
         }
 
         if (string.IsNullOrWhiteSpace(url))
             return;
 
-        attachViaSession(url, false, true);
+        attachViaSession(url, usedCachedUrl, true);
     }
 
     public async Task RetryFreshResolveAsync()

@@ -238,32 +238,28 @@ public class StreamResolver(
             enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
-            // Step 2: Health — never burn a one-shot signed m3u8 on a Client CDN
-            // probe when LocalService already soaked Referer/Cookie / V2 samples.
-            // Skip and trust are the same evidence set; do not probe-then-trust.
-            StreamHealth health;
-            if (LocalServiceSoakTrust.ShouldSkipClientCdnProbe(m3u8Response))
+            // Step 2: Health — when LocalService left soak headers, probe WITH those
+            // headers (never bare CDN). That still rejects TikTok/.image/image/*
+            // decoy segments. Blind soak-trust used to mark those Healthy.
+            // One-shot burn on this GET is OK: RequiresFreshM3u8ForPlayback re-/plays
+            // on attach.
+            logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
+                stream.Channel);
+            logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
+            var probe = TryLocalServiceHealthProbe(m3u8Response);
+            if (LocalServiceSoakTrust.ShouldSkipClientCdnProbe(m3u8Response) && probe is null)
             {
-                logger.LogInformation(
-                    "[StreamResolver] Skipping Client CDN probe for {Channel} — LocalService soak present (one-shot token)",
-                    stream.Channel);
-                health = new StreamHealth
+                // Soak evidence without filterable headers — still build a probe from
+                // raw RequestHeaders so we never fall through to a bare CDN GET.
+                probe = new StreamHealthProbe
                 {
-                    Url = m3u8Url,
-                    Status = StreamHealthStatus.Healthy,
-                    ErrorMessage = "Trusted LocalService soak (CDN probe skipped — one-shot token)"
+                    RequestHeaders = FilterPlaybackHeaders(m3u8Response?.RequestHeaders)
                 };
             }
-            else
-            {
-                logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
-                    stream.Channel);
-                logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-                var probe = TryLocalServiceHealthProbe(m3u8Response);
-                health = probe is null
-                    ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
-                    : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
-            }
+
+            StreamHealth health = probe is null
+                ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
+                : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
 
             enriched.Health = health;
             if (health.Status == StreamHealthStatus.Healthy)

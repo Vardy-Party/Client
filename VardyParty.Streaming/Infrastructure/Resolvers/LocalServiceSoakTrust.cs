@@ -4,14 +4,15 @@ namespace VardyParty.Streaming;
 
 /// <summary>
 /// When LocalService already soaked a playlist (V1 cookies / Referer) or
-/// rewritten media (V2), skip Client CDN probing and trust that soak.
-/// Signed m3u8 tokens are often one-shot: a health GET burns the URL before
-/// ExoPlayer can play. Playback must <c>/play</c> again for every attach.
+/// rewritten media (V2), the Client must probe with those headers — never bare.
+/// Signed m3u8 tokens are often one-shot: find-phase health may burn the URL,
+/// so playback must <c>/play</c> again for every attach.
+/// Do not blind-trust soak: TikTok CDN / <c>image/*</c> decoy segments must fail.
 /// </summary>
 public static class LocalServiceSoakTrust
 {
     /// <summary>
-    /// LS left playback soak — do not HIT the CDN again from the Client.
+    /// LS left playback soak — Client health must use soak headers (not a bare CDN GET).
     /// </summary>
     public static bool ShouldSkipClientCdnProbe(M3U8Response? response) =>
         HasSoakEvidence(response);
@@ -32,9 +33,8 @@ public static class LocalServiceSoakTrust
     }
 
     /// <summary>
-    /// Soak evidence that would have justified trust after a failed CDN probe.
-    /// Callers must skip the probe via <see cref="ShouldSkipClientCdnProbe"/> instead —
-    /// probe-then-trust is unreachable when skip uses the same evidence.
+    /// Soak evidence that could justify retry/trust after a failed bare CDN probe.
+    /// Prefer probing with soak headers via <see cref="ShouldSkipClientCdnProbe"/> first.
     /// </summary>
     public static bool ShouldTrust(M3U8Response? response, StreamHealthStatus failedStatus)
     {
