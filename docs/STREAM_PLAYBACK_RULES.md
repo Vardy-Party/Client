@@ -353,6 +353,52 @@ Rules (normative; tests in `HealthyPoolDedupBusinessRulesTests` and `StreamUrlNo
 The old page-URL `StreamDeduplicator` (catalog `stream.Url` + V2 label) was never called in
 production (only DI-registered) and was removed; dedup of catalog rows by page URL is not
 done - distinct pages are resolved and merged here by what they actually play.
+## Switch speed: reuse, pre-resolve, make-before-break
+
+V1/FB rows carry soak evidence (Referer/Origin/Cookie headers or MP rewritten segments), so
+`PlaybackUrlReusePolicy.RequiresFreshM3u8ForPlayback` is true and historically every attach
+re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8TokenExpiry`):
+
+1. **Token expiry is read from the URL** - cowedd `t=<unix>.<sig>`, generic `e`/`exp`/`expires`/`expiry`/`x-expires`
+   (s or ms), a JWT `exp` in any query value (sporty-aoura `token=`), and the last 10-digit path segment
+   before the file name (uzhi `/main/secure/<hex>/<unix>/x.m3u8`). Sources can add a parser with
+   `M3u8TokenExpiry.Register` (runs first, exceptions ignored).
+2. **Reuse** - a one-shot row whose cached URL has a readable expiry with **> 60 s** left
+   (`MinComfortableLife`) and is not **known single-use** plays the cached URL straight away
+   (`usedCachedUrl: true`, so a failed start still gets the session's one fresh `/play` retry).
+3. **Known single-use** stays on the fresh path: Cookie-bound rows (FB), MP rewritten-segment rows,
+   hosts registered with `PlaybackUrlReusePolicy.RegisterSingleUseHost`, and any URL with **no readable
+   expiry** (unknown = single-use; keeps 5604455's tests).
+4. **Pre-resolve** - `UpcomingStreamPrewarmer` runs for the whole playback session and keeps the next
+   `PrewarmDepth` = 2 rows in switch order warm in `WarmPlaybackUrlCache` (never the current row). Single
+   flight: at most one `/play` in flight from it; 15 s tick; refreshes 30 s before the comfort margin.
+   Short-lived tokens (lifetime < 5 min, cowedd ~2 min) are kept warm only for the immediate next row.
+   A URL with no readable expiry marks the row unwarmable (no retry loop).
+5. **Switch uses the warm URL** - `PlaybackUrlResolver` (the platforms' fresh-resolve delegate) waits
+   for an in-flight pre-resolve of the same row, then consumes the warm entry once (> 60 s left) instead
+   of calling `/play`; otherwise `/play` as before.
+6. **No redundant re-scrape (d)** - the orchestrator no longer fires a bare
+   `ResolveM3U8ForPlaybackAsync` prefetch for one-shot rows on Next (Android ignored it, so every switch
+   cost two `/play`s, the second for the following row) and no longer resolves an empty one-shot row
+   before switching; it kicks the pre-resolver instead. A failed Android switch no longer calls
+   `SwitchToPreviousStream` + re-attach (which re-`/play`ed the stream being left).
+7. **Make-before-break** - `PlaybackPoolCommandActions.SwitchToCurrentAsync`: the playing stream keeps
+   playing while the target resolves, with "Switching to X..." shown; on failure the pool index is put
+   back on the playing row **without re-attaching it** and "Couldn't switch to X - staying on the current
+   stream" is shown. A newer switch supersedes an older pending one.
+
+Platform limits: every platform has one player instance, so the cut-over happens once the new URL is
+resolved, not after its first segments are buffered (true pre-buffer needs a second ExoPlayer /
+MediaPlayer / LibVLC instance and a surface swap). Status text: Android toast, Windows stream-count
+line, Linux log only (no overlay).
+
+Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuseBusinessRulesTests`
+(Kernel); `WarmPlaybackUrlCacheTests`, `UpcomingStreamPrewarmerTests`, `SwitchPrewarmBusinessRulesTests`,
+`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
+`PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests` (Playback).
+
+---
+
 ## Known remaining work
 
 | Item | Status |
