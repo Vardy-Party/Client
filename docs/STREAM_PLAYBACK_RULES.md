@@ -442,3 +442,17 @@ Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuse
 | Android bridge | `VardyParty/Platforms/Android/AndroidVideoPlayerService.cs` |
 | Windows player | `VardyParty/Platforms/Windows/WindowsVideoPlayerService.cs` |
 | Crowd protocol | `docs/STREAM_HEALTH_PROTOCOL.md` |
+
+## Finding: "Totalsportek row played the wrong stream" (27 Oct 2026)
+
+Investigated from the 21:38:46 switch in the LocalService console log and the client log.
+
+- The client applied the URL it was given for the row it switched to. The switch target at 21:38:46 was the **Vivoentv** row; the `uzhi` m3u8 came from the `/play` for `cabgrass.cfd/vivoentv-013/30.php`.
+- The Totalsportek `/play` seen right before it was the **upcoming-row prefetch**, not the active switch. LocalService log lines have no timestamp or request id, so concurrent `/play` lines interleave and read as if Totalsportek returned the Vivoentv URL.
+- Mirrors of the same match legitimately expose different players (premium35 cowedd, edgestream7, sporty-aoura), so "a different stream than last time" on a mirror is not by itself a bug.
+
+Recommendations (not implemented; need a decision):
+
+1. `/play?prefer=<identity>` hint so LocalService prefers the player/identity the row last played.
+2. Client logs (or rejects) a fresh `/play` URL whose m3u8 identity differs from the row's known identity.
+3. LocalService log lines carry a timestamp and a per-request id.
