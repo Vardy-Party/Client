@@ -197,10 +197,14 @@ public class StreamHealthChecker(
             var segmentUrl = segmentUrls.FirstOrDefault(HlsMediaSegment.LooksLikeVideoSegment);
             if (string.IsNullOrEmpty(segmentUrl))
             {
-                logger.LogWarning(
-                    "[StreamHealthChecker] Media playlist lists only non-video segments for {Url}",
+                // Image-looking URLs (TikTok CDN ~tplv-/.image) are either plain
+                // placeholders (reject) or PNG-wrapped MPEG-TS (TIKTIKPX) that every
+                // client player unwraps. URL/Content-Type cannot tell them apart, so
+                // classify the bytes instead of trusting or rejecting by URL.
+                logger.LogInformation(
+                    "[StreamHealthChecker] Media playlist lists only image-like segments for {Url}; classifying bytes",
                     url);
-                return StreamHealthStatus.SegmentUnreachable;
+                return await ClassifySegmentBytesAsync(segmentUrls[0], refererUrl, ct, probe);
             }
 
             return await CheckSegmentAsync(segmentUrl, refererUrl, ct, probe);
@@ -305,14 +309,80 @@ public class StreamHealthChecker(
                 return StreamHealthStatus.Healthy;
             }
 
-            logger.LogWarning("Segment check failed for {Url}", url);
-            return StreamHealthStatus.SegmentUnreachable;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Segment exception for {Url}", url);
             return StreamHealthStatus.SegmentUnreachable;
         }
+
+        // Header checks failed (often image/* Content-Type on a PNG-wrapped TS
+        // segment). The bytes decide: wrapped TS / TS / fMP4 are playable.
+        return await ClassifySegmentBytesAsync(url, refererUrl, ct, probe);
+    }
+
+    /// <summary>
+    /// Ranged GET of the first <see cref="SegmentPayload.ProbeBytes"/> bytes and
+    /// <see cref="SegmentPayload.Classify"/>. Only playable kinds are healthy;
+    /// plain images, HTML/JSON and unknown bodies are rejected.
+    /// </summary>
+    private async Task<StreamHealthStatus> ClassifySegmentBytesAsync(
+        string url,
+        string? refererUrl,
+        CancellationToken ct,
+        StreamHealthProbe? probe)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyPlaybackHeaders(request, refererUrl, probe?.RequestHeaders);
+            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, SegmentPayload.ProbeBytes - 1);
+
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning("[StreamHealthChecker] Segment byte probe returned {StatusCode} for {Url}",
+                    response.StatusCode, url);
+                return StreamHealthStatus.SegmentUnreachable;
+            }
+
+            var prefix = await ReadPrefixAsync(response.Content, SegmentPayload.ProbeBytes, cts.Token);
+            var kind = SegmentPayload.Classify(prefix);
+            if (SegmentPayload.IsPlayable(kind))
+            {
+                logger.LogInformation("[StreamHealthChecker] Segment {Url} classified {Kind} — healthy", url, kind);
+                return StreamHealthStatus.Healthy;
+            }
+
+            logger.LogWarning(
+                "[StreamHealthChecker] Rejecting segment {Url}: bytes classified {Kind} (Content-Type={ContentType})",
+                url, kind, response.Content.Headers.ContentType?.MediaType ?? "(none)");
+            return StreamHealthStatus.SegmentUnreachable;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Segment byte probe exception for {Url}", url);
+            return StreamHealthStatus.SegmentUnreachable;
+        }
+    }
+
+    private static async Task<byte[]> ReadPrefixAsync(HttpContent content, int maxBytes, CancellationToken ct)
+    {
+        await using var stream = await content.ReadAsStreamAsync(ct);
+        var buffer = new byte[maxBytes];
+        var total = 0;
+        while (total < maxBytes)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total, maxBytes - total), ct);
+            if (read <= 0)
+                break;
+            total += read;
+        }
+
+        return total == maxBytes ? buffer : buffer[..total];
     }
 
     private async Task<bool> ProbeSegmentAsync(

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using VardyParty.Streaming;
 
 namespace VardyParty.Linux.Services;
 
@@ -181,6 +182,24 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                 ctx.Response.ContentType = "application/vnd.apple.mpegurl";
                 ctx.Response.ContentLength64 = bytes.Length;
                 await ctx.Response.OutputStream.WriteAsync(bytes, _cts.Token).ConfigureAwait(false);
+                return;
+            }
+
+            if (SegmentPayload.IsWrapperContainer(peek.AsSpan(0, peeked)))
+            {
+                // TikTok-CDN MPEG-TS wrapped in a PNG (TIKTIKPX) or WebP EXIF chunk: LibVLC's demuxer
+                // cannot read it. Unwrap via the shared rule; real images pass through
+                // unchanged (and fail in LibVLC exactly as before).
+                var rest = await ReadRemainingAsync(upstream, _cts.Token).ConfigureAwait(false);
+                var png = new byte[peeked + rest.Length];
+                Buffer.BlockCopy(peek, 0, png, 0, peeked);
+                Buffer.BlockCopy(rest, 0, png, peeked, rest.Length);
+                var segment = SegmentPayload.NormalizeForPlayback(png, out var unwrapped);
+                if (unwrapped)
+                    _logger?.LogInformation("[LinuxHlsProxy] Unwrapped image-wrapped TS ({Bytes} bytes) {Target}", segment.Length, target);
+                ctx.Response.ContentType = unwrapped ? SegmentPayload.MpegTsContentType : mediaType;
+                ctx.Response.ContentLength64 = segment.Length;
+                await ctx.Response.OutputStream.WriteAsync(segment, _cts.Token).ConfigureAwait(false);
                 return;
             }
 

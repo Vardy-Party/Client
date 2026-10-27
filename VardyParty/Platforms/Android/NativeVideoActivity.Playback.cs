@@ -399,7 +399,7 @@ namespace VardyParty.Platforms.Android
                             }
                             catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
 
-                            var customFactory = ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled);
+                            var customFactory = new UnwrappingDataSourceFactory(ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled));
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -445,7 +445,7 @@ namespace VardyParty.Platforms.Android
                         fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(dataSourceFactory)
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 

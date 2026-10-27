@@ -288,6 +288,38 @@ Until that exists, agents should reconstruct the timeline from the markers above
 
 ---
 
+## Segment payloads (image-wrapped MPEG-TS)
+
+Some providers (cowedd `premium1`, castppv/uzhi.ru) serve HLS media segments from
+TikTok image CDNs (`*.tiktokcdn*.com/...~tplv-...image`, `Content-Type: image/png`).
+Many of these are **not** decoys: the PNG (8-bit RGB, IHDR/IDAT/IEND only) carries
+pixels `TIKTIKPX` + uint32 BE length + a gzip member whose output is MPEG-TS.
+A second wrapper (castppv / uzhi.ru `tntsports1-uk`, `Content-Type: image/webp`) is a
+RIFF/WebP with a 1x1 `VP8L` image chunk followed by an `EXIF` chunk whose payload is
+raw MPEG-TS (`WebpWrappedTs.cs`).
+
+Rules (normative; tests in `SegmentPlayabilityBusinessRulesTests`):
+
+1. **Bytes decide, not URL or Content-Type.** `SegmentPayload.Classify` (first 64 KB)
+   returns `MpegTs`, `Fmp4`, `WrappedTs`, `Image`, `Text` or `Unknown`; only
+   `MpegTs`/`Fmp4`/`WrappedTs` are playable.
+2. **Wrapped TS is playable on every platform.** One shared decoder
+   (`VardyParty.Streaming/Domain/Media/PngWrappedTs.cs` + `WebpWrappedTs.cs`, via `SegmentPayload.TryUnwrap`; never throws, size-capped)
+   is used by every player path:
+   - Android: `UnwrappingDataSource` wraps the ExoPlayer/Media3 HLS DataSource
+     (non-ranged opens; serves the unwrapped TS as `video/mp2t`).
+   - Windows: `AdaptiveMediaSource.DownloadRequested` body for `MediaSegment`.
+   - Linux: `LinuxHlsLocalProxy` segment branch before LibVLC.
+   - iOS / Mac Catalyst: **not hooked** — AVPlayer fetches segments natively;
+     needs a loopback proxy (as Linux) to unwrap.
+3. **Plain images stay rejected.** PNG without the marker, WebP without a TS-carrying chunk, JPEG/GIF, marker
+   without a TS payload, and HTML/JSON are never converted to video.
+4. **Never trust soak without classification.** `StreamHealthChecker` falls back to
+   a ranged (0-65535) byte probe *with* soak headers for image-looking segments;
+   `ShouldSkipClientCdnProbe` alone never marks a stream Healthy.
+5. LocalService `/play` (Strategies `HlsVideoDataProbe` / `PlayEngine`) applies the same
+   byte rule via a copy of the decoder, so it keeps wrapped-TS playlists and still
+   rejects plain-image ones.
 ## Known remaining work
 
 | Item | Status |

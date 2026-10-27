@@ -207,6 +207,11 @@ namespace VardyParty.Platforms.Windows
             CancellationToken cancellationToken)
         {
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            return await CopyToRandomAccessStreamAsync(bytes).ConfigureAwait(false);
+        }
+
+        private static async Task<InMemoryRandomAccessStream> CopyToRandomAccessStreamAsync(byte[] bytes)
+        {
             var winrtStream = new InMemoryRandomAccessStream();
             using (var writer = new DataWriter(winrtStream))
             {

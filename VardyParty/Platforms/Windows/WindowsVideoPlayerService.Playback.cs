@@ -517,7 +517,25 @@ namespace VardyParty.Platforms.Windows
                                     managedResponse.Content.Headers.ContentType?.MediaType,
                                     args.ResourceUri.AbsolutePath,
                                     ToPlaybackResourceKind(args.ResourceType));
-                                var winrtStream = await CopyToRandomAccessStreamAsync(managedResponse, segmentToken);
+                                var body = await managedResponse.Content.ReadAsByteArrayAsync(segmentToken);
+                                // TikTok-CDN segments can be MPEG-TS wrapped in a PNG (TIKTIKPX):
+                                // Media Foundation would reject image bytes. Only whole segments
+                                // (no byte range) can be unwrapped. Shared rule: VardyParty.Streaming.SegmentPayload.
+                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment
+                                    && managedRequest.Headers.Range is null)
+                                {
+                                    body = SegmentPayload.NormalizeForPlayback(body, out var unwrapped);
+                                    if (unwrapped)
+                                    {
+                                        contentType = SegmentPayload.MpegTsContentType;
+                                        _host._logger.LogInformation(
+                                            "Unwrapped image-wrapped TS segment ({Bytes} bytes) {Uri}",
+                                            body.Length,
+                                            args.ResourceUri);
+                                    }
+                                }
+
+                                var winrtStream = await CopyToRandomAccessStreamAsync(body);
                                 if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
                                 {
                                     winrtStream.Dispose();

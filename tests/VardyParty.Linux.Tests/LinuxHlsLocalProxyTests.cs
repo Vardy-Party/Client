@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using VardyParty.Linux.Services;
+using VardyParty.Streaming.Tests;
 using Xunit;
 
 namespace VardyParty.Linux.Tests;
@@ -61,8 +62,66 @@ public class LinuxHlsLocalProxyTests
         Assert.DoesNotContain("left.json", playlist);
     }
 
+    [Fact]
+    public async Task Segment_PngWrappedTs_IsUnwrappedForLibVlc()
+    {
+        var ts = WrappedPngBuilder.FakeTs(400);
+        var handler = new ScriptedHandler { WrappedSegment = WrappedPngBuilder.Wrap(ts) };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var response = await client.GetAsync(SegmentThroughProxy(proxy, "https://p16.tiktokcdn-us.com/a~tplv-x.image"));
+        var body = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("video/mp2t", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(ts, body);
+    }
+
+    [Fact]
+    public async Task Segment_WebpExifWrappedTs_IsUnwrappedForLibVlc()
+    {
+        var ts = WrappedPngBuilder.FakeTs(400);
+        var handler = new ScriptedHandler { WrappedSegment = WrappedPngBuilder.Webp(ts) };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var response = await client.GetAsync(SegmentThroughProxy(proxy, "https://p16.tiktokcdn-us.com/a~tplv-tiktokx-origin.image"));
+        var body = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("video/mp2t", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(ts, body);
+    }
+
+    [Fact]
+    public async Task Segment_PlainPng_PassesThroughUnchanged()
+    {
+        var png = WrappedPngBuilder.Png(Enumerable.Repeat((byte)0x55, 32 * 32 * 3).ToArray(), 32, 2);
+        var handler = new ScriptedHandler { WrappedSegment = png };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var response = await client.GetAsync(SegmentThroughProxy(proxy, "https://p16.tiktokcdn-us.com/a~tplv-x.image"));
+        var body = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(png, body);
+    }
+
+    private static string SegmentThroughProxy(LinuxHlsLocalProxy proxy, string target) =>
+        LinuxHlsPlaylistRewriter.ToProxyUrl(target, proxy.Prefix);
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
+        public byte[]? WrappedSegment { get; init; }
+
         public string? LastReferer { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -95,6 +154,11 @@ public class LinuxHlsLocalProxyTests
                     #EXTINF:2.0,
                     seg.ts
                     """));
+            }
+
+            if (WrappedSegment is not null && url.Contains("tiktokcdn", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Bytes(WrappedSegment, "image/png"));
             }
 
             if (url.EndsWith("seg.ts", StringComparison.Ordinal))
