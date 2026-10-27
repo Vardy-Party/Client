@@ -133,7 +133,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _session,
             _switching,
             resolveFresh,
-            AttachViaSession,
+            AttachPoolUrl,
             ApplyPlaybackCommand);
         _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
         _engine.MetricsHandler = GetCurrentMetrics;
@@ -357,6 +357,28 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             var url = current?.ResolvedM3U8Url;
             if (string.IsNullOrWhiteSpace(url))
             {
+                return;
+            }
+
+            var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
+            if (plan.Kind == PlaybackSwitchKind.ResolveFresh)
+            {
+                // Make-before-break: LibVLC keeps the current stream while the one-shot
+                // row re-/plays (or takes its warm URL); failure puts the index back.
+                // No in-player overlay on Linux - status goes to the log.
+                _logger.LogInformation(
+                    "[LinuxVideoPlayerService] One-shot switch to {Channel} ({Reason})",
+                    current?.Stream?.Channel ?? "(unknown)",
+                    plan.Reason);
+                _ = _pool.SwitchToCurrentAsync(
+                    force: false,
+                    status => _logger.LogInformation("[LinuxVideoPlayerService] {Status}", status),
+                    revert =>
+                    {
+                        _suppressIndexDrivenSwitch = true;
+                        try { revert(); }
+                        finally { _suppressIndexDrivenSwitch = false; }
+                    });
                 return;
             }
 
@@ -808,6 +830,22 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _logger.LogWarning(ex, "[LinuxVideoPlayerService] DispatchEngine failed ({Kind})", engineEvent.Kind);
         }
+    }
+
+    /// <summary>
+    /// Pool attaches (fresh /play, warm URL, retry) carry the row's new Referer/headers.
+    /// </summary>
+    private void AttachPoolUrl(string url, bool usedCachedUrl, bool force)
+    {
+        var current = _switching.GetCurrentStream();
+        if (current != null && string.Equals(current.ResolvedM3U8Url, url, StringComparison.OrdinalIgnoreCase))
+        {
+            _requestHeaders = current.RequestHeaders ?? _requestHeaders;
+            if (!string.IsNullOrWhiteSpace(current.Referer))
+                _refererUrl = current.Referer;
+        }
+
+        AttachViaSession(url, usedCachedUrl, force);
     }
 
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)

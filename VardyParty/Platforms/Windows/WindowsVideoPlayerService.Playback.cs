@@ -557,120 +557,120 @@ namespace VardyParty.Platforms.Windows
                             }
                             catch (Exception ex)
                             {
-                            var statusCode = StatusCodeFromDownloadException(ex);
+                                var statusCode = StatusCodeFromDownloadException(ex);
 
-                            _host._logger.LogWarning(
-                                ex,
-                                "Segment download failed ({ResourceType}, status={StatusCode}, uri={Uri})",
-                                args.ResourceType,
-                                statusCode,
-                                args.ResourceUri);
+                                _host._logger.LogWarning(
+                                    ex,
+                                    "Segment download failed ({ResourceType}, status={StatusCode}, uri={Uri})",
+                                    args.ResourceType,
+                                    statusCode,
+                                    args.ResourceUri);
 
-                            var failureMessage =
-                                $"Segment download failed ({args.ResourceType}, status={statusCode})";
-                            var downloadCmd = PlaybackCommand.FromEffects(
-                                session.NotifyDownloadFailure(failureMessage));
-                            if (!downloadCmd.IsNoOp)
-                            {
-                                MainThread.BeginInvokeOnMainThread(() =>
+                                var failureMessage =
+                                    $"Segment download failed ({args.ResourceType}, status={statusCode})";
+                                var downloadCmd = PlaybackCommand.FromEffects(
+                                    session.NotifyDownloadFailure(failureMessage));
+                                if (!downloadCmd.IsNoOp)
                                 {
-                                    try
+                                    MainThread.BeginInvokeOnMainThread(() =>
                                     {
-                                        if (IsStaleAttach(generation))
-                                            return;
-                                        ApplyPlaybackCommand(downloadCmd);
-                                    }
-                                    catch (Exception marshalEx)
-                                    {
-                                        _host._logger.LogWarning(marshalEx, "Download-failure command failed");
-                                    }
-                                });
-                            }
+                                        try
+                                        {
+                                            if (IsStaleAttach(generation))
+                                                return;
+                                            ApplyPlaybackCommand(downloadCmd);
+                                        }
+                                        catch (Exception marshalEx)
+                                        {
+                                            _host._logger.LogWarning(marshalEx, "Download-failure command failed");
+                                        }
+                                    });
+                                }
 
+                                try
+                                {
+                                    args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
+                                }
+                                catch (Exception statusEx)
+                                {
+                                    _host._logger.LogWarning(statusEx, "Failed to set download extended status");
+                                }
+                            }
+                            finally
+                            {
+                                managedResponse?.Dispose();
+                                managedRequest?.Dispose();
+                                deferral.Complete();
+                            }
+                        };
+
+                        activeAdaptiveMediaSource = adaptiveResult.MediaSource;
+                        activeDownloadHandler = downloadHandler;
+                        adaptiveResult.MediaSource.DownloadRequested += downloadHandler;
+
+                        var mediaSource = MediaSource.CreateFromAdaptiveMediaSource(adaptiveResult.MediaSource);
+                        var playbackItem = new MediaPlaybackItem(mediaSource);
+
+                        if (IsStaleAttach(generation))
+                            return;
+
+                        // Ensure UI updates happen on the main thread
+                        MainThread.BeginInvokeOnMainThread(() =>
+                        {
                             try
                             {
-                                args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
+                                if (IsStaleAttach(generation))
+                                    return;
+
+                                mediaPlayer.Source = playbackItem;
+                                _host._currentPlaybackItem = playbackItem;
+
+                                // Add mediaPlayerElement to grid now that source is set
+                                if (playerGrid is { } overlayGrid && !overlayGrid.Children.Contains(mediaPlayerElement))
+                                {
+                                    overlayGrid.Children.Insert(0, mediaPlayerElement); // Insert at index 0 to be behind other elements
+                                }
+
+                                // Extract metadata immediately when source is set so orchestrator can get it after 2.5s
+                                if (mediaPlayer.Source is MediaPlaybackItem item)
+                                {
+                                    _host.ExtractVideoMetadata(item, mediaPlayer);
+                                    // Update bitrate from adaptive source during playback
+                                    _host.UpdateBitrateFromAdaptiveSource(item);
+                                }
+
+                                currentPlaybackUrl = url;
+                                // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
+                                // MediaPlaybackItem is assigned (before sustained play). Reset only in
+                                // AttachViaSession (intentional switch/start). Network-only recoverable
+                                // classification + this counter keeps MaxLiveHlsRecoveries effective.
+                                engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
+
+                                // Ensure the grid is visible and hit testable
+                                if (playerGrid is { } overlay)
+                                {
+                                    overlay.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                                    overlay.IsHitTestVisible = true;
+                                }
+
+                                ShowPlayerOverlay();
+                                _host._logger.LogInformation($"Playback source attached for {_title}");
+
+                                // Force layout update
+                                nativeWindow?.Activate();
                             }
-                            catch (Exception statusEx)
+                            catch (Exception ex)
                             {
-                                _host._logger.LogWarning(statusEx, "Failed to set download extended status");
+                                if (IsStaleAttach(generation))
+                                    return;
+
+                                _host._logger.LogError(ex, "Failed to attach playback source");
+                                engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration,
+                                    $"Failed to attach playback source: {ex.Message}"));
                             }
-                        }
-                        finally
-                        {
-                            managedResponse?.Dispose();
-                            managedRequest?.Dispose();
-                            deferral.Complete();
-                        }
-                    };
+                        });
 
-                    activeAdaptiveMediaSource = adaptiveResult.MediaSource;
-                    activeDownloadHandler = downloadHandler;
-                    adaptiveResult.MediaSource.DownloadRequested += downloadHandler;
-
-                    var mediaSource = MediaSource.CreateFromAdaptiveMediaSource(adaptiveResult.MediaSource);
-                    var playbackItem = new MediaPlaybackItem(mediaSource);
-
-                    if (IsStaleAttach(generation))
-                        return;
-
-                    // Ensure UI updates happen on the main thread
-                    MainThread.BeginInvokeOnMainThread(() =>
-                    {
-                        try
-                        {
-                            if (IsStaleAttach(generation))
-                                return;
-
-                            mediaPlayer.Source = playbackItem;
-                            _host._currentPlaybackItem = playbackItem;
-
-                            // Add mediaPlayerElement to grid now that source is set
-                            if (playerGrid is { } overlayGrid && !overlayGrid.Children.Contains(mediaPlayerElement))
-                            {
-                                overlayGrid.Children.Insert(0, mediaPlayerElement); // Insert at index 0 to be behind other elements
-                            }
-
-                            // Extract metadata immediately when source is set so orchestrator can get it after 2.5s
-                            if (mediaPlayer.Source is MediaPlaybackItem item)
-                            {
-                                _host.ExtractVideoMetadata(item, mediaPlayer);
-                                // Update bitrate from adaptive source during playback
-                                _host.UpdateBitrateFromAdaptiveSource(item);
-                            }
-
-                            currentPlaybackUrl = url;
-                            // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
-                            // MediaPlaybackItem is assigned (before sustained play). Reset only in
-                            // AttachViaSession (intentional switch/start). Network-only recoverable
-                            // classification + this counter keeps MaxLiveHlsRecoveries effective.
-                            engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
-
-                            // Ensure the grid is visible and hit testable
-                            if (playerGrid is { } overlay)
-                            {
-                                overlay.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                                overlay.IsHitTestVisible = true;
-                            }
-
-                            ShowPlayerOverlay();
-                            _host._logger.LogInformation($"Playback source attached for {_title}");
-
-                            // Force layout update
-                            nativeWindow?.Activate();
-                        }
-                        catch (Exception ex)
-                        {
-                            if (IsStaleAttach(generation))
-                                return;
-
-                            _host._logger.LogError(ex, "Failed to attach playback source");
-                            engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration,
-                                $"Failed to attach playback source: {ex.Message}"));
-                        }
-                    });
-
-                    // Do not set success result here. We wait for user close or media events;
+                        // Do not set success result here. We wait for user close or media events;
                     }
                     finally
                     {
@@ -702,6 +702,18 @@ namespace VardyParty.Platforms.Windows
 
             }
 
+            private void ShowSwitchStatus(string message)
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    try
+                    {
+                        streamCountText.Text = message;
+                    }
+                    catch (Exception ex) { _host.LogIgnored("ShowSwitchStatus", ex); }
+                });
+            }
+
             private async Task TrySwitchToCurrentStreamAsync(bool force = false)
             {
                 if (switchingService == null || cleanupInvoked) return;
@@ -710,11 +722,26 @@ namespace VardyParty.Platforms.Windows
                 try
                 {
                     var current = switchingService.GetCurrentStream();
-                    var url = current?.ResolvedM3U8Url;
-                    if (string.IsNullOrWhiteSpace(url)) return;
-                    if (!force && string.Equals(currentPlaybackUrl, url, StringComparison.OrdinalIgnoreCase)) return;
-                    _host._logger.LogInformation($"Switching playback source (force={force})");
-                    AttachViaSession(url, usedCachedUrl: false, force: force);
+                    var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
+                    _host._logger.LogInformation(
+                        "Switching playback source (force={Force}) to {Channel}: {Plan} ({Reason})",
+                        force,
+                        current?.Stream?.Channel ?? "(unknown)",
+                        plan.Kind,
+                        plan.Reason);
+
+                    // Make-before-break: the playing stream keeps playing while a one-shot
+                    // row re-/plays (or takes its warm URL); on failure the pool index goes
+                    // back to the playing row and the toast line says so.
+                    await pool.SwitchToCurrentAsync(
+                        force,
+                        ShowSwitchStatus,
+                        revert =>
+                        {
+                            suppressIndexDrivenSwitch = true;
+                            try { revert(); }
+                            finally { suppressIndexDrivenSwitch = false; }
+                        });
                 }
                 catch (Exception ex)
                 {

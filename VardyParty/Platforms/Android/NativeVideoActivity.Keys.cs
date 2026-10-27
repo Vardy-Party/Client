@@ -65,6 +65,18 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private void ShowSwitchStatusToast(string message)
+        {
+            RunOnUiThread(() =>
+            {
+                try
+                {
+                    Toast.MakeText(this, message, ToastLength.Short)?.Show();
+                }
+                catch (Exception ex) { LogIgnored("Toast.SwitchStatus", ex); }
+            });
+        }
+
         private void ShowSwitchFeedbackToast(bool switched, bool next)
         {
             try

@@ -843,7 +843,19 @@ namespace VardyParty.Platforms.Android
                 return;
 
             // FB soak tokens are one-shot — never hand ExoPlayer the find-phase URL.
-            if (LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(current))
+            // Row already on screen (e.g. index put back after a failed switch):
+            // never re-/play the stream being left.
+            if (!string.IsNullOrWhiteSpace(current.ResolvedM3U8Url)
+                && string.Equals(_m3u8Url, current.ResolvedM3U8Url, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
+            _logger?.LogInformation(
+                "[NativeVideoActivity] Switch plan for {Channel}: {Plan} ({Reason})",
+                current.Stream?.Channel ?? "(null)",
+                plan.Kind,
+                plan.Reason);
+            if (plan.Kind == PlaybackSwitchKind.ResolveFresh)
             {
                 var gen = Interlocked.Increment(ref _switchAttachGeneration);
                 var token = ReplaceAttachLifetimeToken();
@@ -900,10 +912,41 @@ namespace VardyParty.Platforms.Android
                 _logger?.LogInformation(
                     "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
                     current.Stream?.Channel ?? "(null)");
+                // Make-before-break: ExoPlayer keeps playing the current stream while
+                // /play (or the warm pre-resolve) runs; only the overlay changes.
+                var playingUrl = _m3u8Url;
+                var playing = _pool?.FindPlayingRow(playingUrl, current);
+                ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchPendingText(current.Stream?.Channel));
                 var url = await _resolveFresh(current, cancellationToken).ConfigureAwait(false);
                 if (cancellationToken.IsCancellationRequested
                     || generation != Volatile.Read(ref _switchAttachGeneration))
                     return;
+
+                if (string.IsNullOrWhiteSpace(url) && playing != null)
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} - staying on {Playing}",
+                        current.Stream?.Channel ?? "(null)",
+                        playing.Stream?.Channel ?? "(null)");
+                    ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
+                    RunOnUiThread(() =>
+                    {
+                        // TrySwitchToCurrentStream ignores the row that is already playing,
+                        // so moving the index back does not re-/play it.
+                        var healthy = _switching?.GetHealthyStreams();
+                        if (healthy == null || !ReferenceEquals(_switching?.GetCurrentStream(), current))
+                            return;
+                        for (var i = 0; i < healthy.Count; i++)
+                        {
+                            if (ReferenceEquals(healthy[i], playing))
+                            {
+                                _switching?.SwitchToStream(i);
+                                return;
+                            }
+                        }
+                    });
+                    return;
+                }
 
                 if (string.IsNullOrWhiteSpace(url))
                 {

@@ -45,6 +45,15 @@ public sealed class PlaybackPoolCommandActions(
         // already burned — always /play again when a resolver is wired. Fall back
         // to the cached URL only when fresh resolve fails (and mark usedCachedUrl
         // so ShouldRetryFreshResolve can still fire once).
+        // Expiry-aware reuse: a readable token with comfortable life left (and not a
+        // known single-use source) plays now; a failed start still re-/plays once.
+        if (resolveFresh != null
+            && PlaybackUrlReusePolicy.CanReuseCached(current, DateTimeOffset.UtcNow))
+        {
+            attachViaSession(current.ResolvedM3U8Url!, true, true);
+            return;
+        }
+
         string? url = null;
         var usedCachedUrl = false;
         if (current.Stream != null && resolveFresh != null)
@@ -71,6 +80,113 @@ public sealed class PlaybackPoolCommandActions(
             return;
 
         attachViaSession(url, usedCachedUrl, true);
+    }
+
+    /// <summary>
+    /// Make-before-break index-driven switch (Next / Previous / chip) onto the pool's
+    /// current row. Reusable URLs (<see cref="PlaybackUrlReusePolicy.PlanSwitch"/>) attach
+    /// straight away with one fresh retry on a failed start. Otherwise the stream that is
+    /// playing keeps playing while <c>/play</c> (or a warm pre-resolve) runs, with
+    /// <paramref name="showStatus"/> told "Switching to X..."; on failure the pool index is
+    /// put back on the playing row (without re-attaching it) and the error is shown.
+    /// </summary>
+    /// <returns>True when a new source was handed to the player.</returns>
+    public async Task<bool> SwitchToCurrentAsync(
+        bool force,
+        Action<string>? showStatus,
+        Action<Action> runWithIndexSwitchSuppressed,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(runWithIndexSwitchSuppressed);
+        var target = switching.GetCurrentStream();
+        var playingUrl = session.Snapshot.CurrentUrl;
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(target, DateTimeOffset.UtcNow);
+        if (plan.Kind == PlaybackSwitchKind.None || target is null)
+            return false;
+
+        if (plan.Kind == PlaybackSwitchKind.AttachCached || resolveFresh is null)
+        {
+            var cached = plan.Url ?? target.ResolvedM3U8Url;
+            if (string.IsNullOrWhiteSpace(cached)
+                || (!force && string.Equals(playingUrl, cached, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            attachViaSession(cached, true, true);
+            return true;
+        }
+
+        var playing = FindPlayingRow(playingUrl, target);
+        var channel = target.Stream?.Channel;
+        showStatus?.Invoke(PlaybackUrlReusePolicy.SwitchPendingText(channel));
+
+        string? fresh = null;
+        try
+        {
+            fresh = await resolveFresh(target, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch
+        {
+            // Treated as a failed switch below.
+        }
+
+        // A newer switch owns the pool now.
+        if (cancellationToken.IsCancellationRequested || !ReferenceEquals(switching.GetCurrentStream(), target))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(fresh))
+        {
+            showStatus?.Invoke(PlaybackUrlReusePolicy.SwitchFailedText(channel));
+            if (playing != null)
+                RevertIndexTo(playing, runWithIndexSwitchSuppressed);
+            else if (string.IsNullOrWhiteSpace(playingUrl) && !string.IsNullOrWhiteSpace(target.ResolvedM3U8Url))
+                attachViaSession(target.ResolvedM3U8Url, true, true);
+            return false;
+        }
+
+        if (!force && string.Equals(playingUrl, fresh, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        attachViaSession(fresh, false, true);
+        return true;
+    }
+
+    /// <summary>Pool row whose resolved URL is the one the session is playing.</summary>
+    internal EnrichedStream? FindPlayingRow(string? playingUrl, EnrichedStream? exclude)
+    {
+        if (string.IsNullOrWhiteSpace(playingUrl))
+            return null;
+        foreach (var row in switching.GetHealthyStreams())
+        {
+            if (!ReferenceEquals(row, exclude)
+                && string.Equals(row.ResolvedM3U8Url, playingUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                return row;
+            }
+        }
+
+        return null;
+    }
+
+    private void RevertIndexTo(EnrichedStream playing, Action<Action> runWithIndexSwitchSuppressed)
+    {
+        var healthy = switching.GetHealthyStreams();
+        for (var i = 0; i < healthy.Count; i++)
+        {
+            if (ReferenceEquals(healthy[i], playing))
+            {
+                var index = i;
+                // Suppressed: the row is already playing - re-attaching it would re-/play
+                // the stream being left.
+                runWithIndexSwitchSuppressed(() => switching.SwitchToStream(index));
+                return;
+            }
+        }
     }
 
     public async Task RetryFreshResolveAsync()
