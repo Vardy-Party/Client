@@ -24,7 +24,6 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<IGameMatcher, GameMatcher>();
         services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
-        services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
         services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
         services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();

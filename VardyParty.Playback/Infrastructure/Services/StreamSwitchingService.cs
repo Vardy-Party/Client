@@ -12,8 +12,20 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     private string _homeTeam = string.Empty;
     private string _awayTeam = string.Empty;
 
+    // Healthy-pool dedup (docs/STREAM_PLAYBACK_RULES.md "Healthy pool dedup"): one visible
+    // entry per m3u8 identity. The key is captured when a stream enters the pool because
+    // ResolvedM3U8Url is mutated afterwards (fresh one-shot /play, cleared on failure).
+    private readonly Dictionary<EnrichedStream, string> _identityKeys = new(ReferenceEqualityComparer.Instance);
+
+    // Merged duplicates per identity key. Never shown; promoted in place when the visible
+    // entry for that key fails (RemoveCurrentStream).
+    private readonly Dictionary<string, List<EnrichedStream>> _fallbacks = new(StringComparer.OrdinalIgnoreCase);
+
     private static string BuildDedupKey(EnrichedStream stream) =>
-        StreamUrlNormalizer.NormalizeForDedup(stream.ResolvedM3U8Url);
+        StreamUrlNormalizer.M3u8IdentityKey(stream.ResolvedM3U8Url);
+
+    private static StreamReputation RankOf(EnrichedStream stream) =>
+        stream.Stream?.Reputation ?? StreamReputation.None;
 
     private readonly BehaviorSubject<IReadOnlyList<EnrichedStream>> _healthyStreamsSubject =
         new(new List<EnrichedStream>().AsReadOnly());
@@ -34,6 +46,8 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         _homeTeam = homeTeam;
         _awayTeam = awayTeam;
         _healthyStreams.Clear();
+        _identityKeys.Clear();
+        _fallbacks.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -45,13 +59,24 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     {
         lock (_healthyStreams)
         {
-            var incomingKey = BuildDedupKey(stream);
-            var duplicate = _healthyStreams.Any(existing =>
-                string.Equals(BuildDedupKey(existing), incomingKey, StringComparison.OrdinalIgnoreCase));
-
-            if (duplicate)
+            if (_healthyStreams.Any(existing => ReferenceEquals(existing, stream)))
             {
                 return;
+            }
+
+            // Empty key (no resolved URL) is never a dedup match - collapsing every
+            // keyless stream into one would hide distinct sources.
+            var incomingKey = BuildDedupKey(stream);
+            if (incomingKey.Length > 0)
+            {
+                var existingIndex = IndexOfKey(incomingKey);
+                if (existingIndex >= 0)
+                {
+                    MergeDuplicate(existingIndex, incomingKey, stream);
+                    return;
+                }
+
+                _identityKeys[stream] = incomingKey;
             }
 
             _healthyStreams.Add(stream);
@@ -72,6 +97,121 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 GetCurrentStream(),
                 GetCurrentStreamIndex(),
                 _healthyStreams.Count));
+        }
+    }
+
+    private int IndexOfKey(string key)
+    {
+        for (var i = 0; i < _healthyStreams.Count; i++)
+        {
+            if (_identityKeys.TryGetValue(_healthyStreams[i], out var existingKey)
+                && string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Same media as a visible entry: keep the visible one (first healthy, catalog order)
+    /// unless the incoming one has a strictly higher reputation and the visible one is not
+    /// playing. The loser is kept as a hidden fallback for that key.
+    /// </summary>
+    private void MergeDuplicate(int existingIndex, string key, EnrichedStream incoming)
+    {
+        if (!_fallbacks.TryGetValue(key, out var alternates))
+        {
+            alternates = new List<EnrichedStream>();
+            _fallbacks[key] = alternates;
+        }
+
+        if (alternates.Any(a => ReferenceEquals(a, incoming)))
+        {
+            return;
+        }
+
+        var existing = _healthyStreams[existingIndex];
+        var outranks = existingIndex != _currentStreamIndex && RankOf(incoming) > RankOf(existing);
+        if (!outranks)
+        {
+            alternates.Add(incoming);
+            return;
+        }
+
+        _identityKeys.Remove(existing);
+        _identityKeys[incoming] = key;
+        _healthyStreams[existingIndex] = incoming;
+        alternates.Insert(0, existing);
+
+        _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+        _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+            GetCurrentStream(),
+            GetCurrentStreamIndex(),
+            _healthyStreams.Count));
+    }
+
+    /// <summary>Pops the best merged duplicate for <paramref name="failed"/>'s key, if any.</summary>
+    private bool TryTakeFallback(EnrichedStream failed, out EnrichedStream promoted)
+    {
+        promoted = null!;
+        if (!_identityKeys.TryGetValue(failed, out var key))
+        {
+            return false;
+        }
+
+        _identityKeys.Remove(failed);
+        if (!_fallbacks.TryGetValue(key, out var alternates) || alternates.Count == 0)
+        {
+            _fallbacks.Remove(key);
+            return false;
+        }
+
+        var best = 0;
+        for (var i = 1; i < alternates.Count; i++)
+        {
+            if (RankOf(alternates[i]) > RankOf(alternates[best]))
+            {
+                best = i;
+            }
+        }
+
+        promoted = alternates[best];
+        alternates.RemoveAt(best);
+        if (alternates.Count == 0)
+        {
+            _fallbacks.Remove(key);
+        }
+
+        _identityKeys[promoted] = key;
+        return true;
+    }
+
+    /// <summary>Visible entry for a merged duplicate, or null when it is not a fallback.</summary>
+    private EnrichedStream? RepresentativeOf(EnrichedStream stream)
+    {
+        foreach (var (key, alternates) in _fallbacks)
+        {
+            if (alternates.Any(a => ReferenceEquals(a, stream)))
+            {
+                var index = IndexOfKey(key);
+                return index >= 0 ? _healthyStreams[index] : null;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Hidden fallbacks merged into the visible entry (test/diagnostic seam).</summary>
+    public IReadOnlyList<EnrichedStream> GetMergedFallbacks(EnrichedStream visible)
+    {
+        lock (_healthyStreams)
+        {
+            return _identityKeys.TryGetValue(visible, out var key)
+                   && _fallbacks.TryGetValue(key, out var alternates)
+                ? alternates.ToList().AsReadOnly()
+                : Array.Empty<EnrichedStream>();
         }
     }
 
@@ -176,9 +316,11 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             var reordered = new List<EnrichedStream>(_healthyStreams.Count);
             foreach (var preferred in preferredFirst)
             {
-                if (_healthyStreams.Contains(preferred) && seen.Add(preferred))
+                // A merged duplicate stands for its visible entry.
+                var target = _healthyStreams.Contains(preferred) ? preferred : RepresentativeOf(preferred);
+                if (target != null && seen.Add(target))
                 {
-                    reordered.Add(preferred);
+                    reordered.Add(target);
                 }
             }
 
@@ -214,6 +356,16 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 if (MatchesCatalogIdentity(_healthyStreams[i].Stream, streamUrl, streamName))
                 {
                     return SwitchToStream(i);
+                }
+            }
+
+            // The chip may name a source merged into another entry (same m3u8).
+            foreach (var (key, alternates) in _fallbacks)
+            {
+                if (alternates.Any(a => MatchesCatalogIdentity(a.Stream, streamUrl, streamName)))
+                {
+                    var index = IndexOfKey(key);
+                    return index >= 0 && SwitchToStream(index);
                 }
             }
 
@@ -262,6 +414,8 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             _healthyStreams.Clear();
+            _identityKeys.Clear();
+            _fallbacks.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
@@ -276,6 +430,21 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             if (_currentStreamIndex < 0 || _currentStreamIndex >= _healthyStreams.Count) return false;
+
+            // Same media from another source page: swap it in at the same index rather
+            // than shrinking the pool (each source gets its own fresh /play token).
+            if (TryTakeFallback(_healthyStreams[_currentStreamIndex], out var promoted))
+            {
+                _healthyStreams[_currentStreamIndex] = promoted;
+                _currentIndexSubject.OnNext(_currentStreamIndex);
+                _currentStreamSubject.OnNext(promoted);
+                _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+                _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                    promoted,
+                    GetCurrentStreamIndex(),
+                    _healthyStreams.Count));
+                return true;
+            }
 
             _healthyStreams.RemoveAt(_currentStreamIndex);
 

@@ -22,8 +22,7 @@ internal class Program
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(() => DualStackSocketsHttpHandler.Create());
 
-        services.AddSingleton<IStreamResolver, StreamResolver>()
-            .AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
+        services.AddSingleton<IStreamResolver, StreamResolver>();
         services.AddHttpClient<IApiService, ApiService>();
 
 

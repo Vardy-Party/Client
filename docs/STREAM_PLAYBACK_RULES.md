@@ -320,6 +320,39 @@ Rules (normative; tests in `SegmentPlayabilityBusinessRulesTests`):
 5. LocalService `/play` (Strategies `HlsVideoDataProbe` / `PlayEngine`) applies the same
    byte rule via a copy of the decoder, so it keeps wrapped-TS playlists and still
    rejects plain-image ones.
+
+## Healthy pool dedup (same m3u8 from several sites)
+
+Many catalog sites embed the same upstream channel. The 27 Oct 2026 session showed
+Liveverse, 1ststreams and Pitchstream all resolving to cowedd `premium38/index.m3u8?t=...`,
+and soccermlbstream, All-Sports-HD and Vivoentv all resolving to uzhi.ru
+`/main/secure/<64-hex>/<expiry>/skysportsfootball-uk.m3u8` - six "streams", two channels.
+
+Rules (normative; tests in `HealthyPoolDedupBusinessRulesTests` and `StreamUrlNormalizerTests`):
+
+1. **One visible entry per m3u8 identity.** `StreamSwitchingService.AddHealthyStream`
+   keys on `StreamUrlNormalizer.M3u8IdentityKey(ResolvedM3U8Url)`: query/fragment stripped,
+   scheme+host lowercased, and token-like *directory* segments dropped - pure digits (9+,
+   expiry), hex (32+), mixed-case base64url (32+). Host and every other segment are kept and
+   the final filename is never dropped, so `premium38` vs `premium35`, different channel
+   filenames, and different hosts stay separate. The pool is what Android, Windows, Linux and
+   Apple all render, so this is the single dedup point for every platform.
+2. **Who stays visible.** First healthy (the flush is already catalog/ranked order) wins.
+   A later duplicate replaces it only with a strictly higher `Reputation` *and* when the
+   visible one is not the stream playing - never swap under the viewer.
+3. **Merged duplicates are fallbacks.** Losers are kept hidden per key. When the visible
+   entry fails (`RemoveCurrentStream`), the best-reputation fallback is promoted *at the same
+   index* (index re-published, so hosts re-attach with a fresh `/play` for that source);
+   only when a key has no fallbacks does the pool shrink.
+4. **Identity is captured on add.** `ResolvedM3U8Url` is mutated later (fresh one-shot
+   `/play`, cleared to null on failure); the key is stored when the stream enters the pool.
+5. **No URL, no merge.** An empty key never matches, so unresolved entries are not collapsed.
+6. Chip selection (`SwitchToMatchingStream`) and `ReorderHealthyStreams` naming a merged
+   source act on its visible entry.
+
+The old page-URL `StreamDeduplicator` (catalog `stream.Url` + V2 label) was never called in
+production (only DI-registered) and was removed; dedup of catalog rows by page URL is not
+done - distinct pages are resolved and merged here by what they actually play.
 ## Known remaining work
 
 | Item | Status |
