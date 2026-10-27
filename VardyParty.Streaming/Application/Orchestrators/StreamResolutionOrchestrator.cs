@@ -17,7 +17,9 @@ public class StreamResolutionOrchestrator(
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
     ILocalLanPlayService? localLanPlayService = null,
-    IRemoteComputeKeepAlive? keepAlive = null) : IStreamResolutionOrchestrator
+    IRemoteComputeKeepAlive? keepAlive = null,
+    WarmPlaybackUrlCache? warmUrls = null,
+    IUpcomingStreamPrewarmer? prewarmer = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -440,7 +442,10 @@ public class StreamResolutionOrchestrator(
         // FB /play tokens are one-shot: find-phase URLs must not be reused for
         // ExoPlayer. Soak rows always re-/play; others keep the cached fast path
         // with a single fresh retry on failure below.
-        var oneShot = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(enrichedStream);
+        // One-shot rows whose token expiry is readable with comfortable life left (and
+        // that are not known single-use) play the cached URL; a failed start re-/plays once.
+        var oneShot = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(enrichedStream)
+            && !PlaybackUrlReusePolicy.CanReuseCached(enrichedStream, DateTimeOffset.UtcNow);
         bool usedCachedUrl = !oneShot && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
         string? m3u8Url;
         if (usedCachedUrl)
@@ -482,6 +487,8 @@ public class StreamResolutionOrchestrator(
 
         var reportingTask = StartPlaybackHealthReportingAsync(game, enrichedStream.Stream, launcher, playbackCts.Token);
         PlaybackResult? result;
+        // One-shot V1 rows: keep the next 1-2 warm (single-flight) for the whole session.
+        using var prewarmLoop = prewarmer?.Start(playbackCts.Token);
         try
         {
             // Warm the next candidate while this one plays so the first Next click is instant.
@@ -539,6 +546,17 @@ public class StreamResolutionOrchestrator(
         var stream = enrichedStream.Stream;
         if (stream is null)
             return null;
+
+        if (warmUrls != null)
+        {
+            await warmUrls.WaitForInFlightAsync(enrichedStream, cancellationToken);
+            if (warmUrls.TryTake(enrichedStream, DateTimeOffset.UtcNow, out var warm))
+            {
+                logger.LogInformation("[StreamResolution] Using warm pre-resolved M3U8 for {Channel}", stream.Channel);
+                EnrichedStreamM3U8Apply.Apply(enrichedStream, warm);
+                return warm.Url;
+            }
+        }
 
         var response = await apiService.GetM3U8UrlAsync(
             stream.Url,
@@ -651,7 +669,15 @@ public class StreamResolutionOrchestrator(
 
         // Use the prefetched URL if available (instant). If not, resolve fresh now.
         // The caller (PlayStreamAsync) will retry with a fresh URL if the cached one 403s.
-        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
+        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url)
+            && LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(nextStream))
+        {
+            // One-shot row: the player's make-before-break switch resolves (or takes the
+            // warm URL) on attach - resolving here too would be a second /play.
+            logger.LogInformation("[StreamResolution] Next onto one-shot {Channel} - player resolves on attach",
+                nextStream.Stream.Channel);
+        }
+        else if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
             _status = "Switch requested - resolving stream URL...";
             PublishProgress();
@@ -769,6 +795,15 @@ public class StreamResolutionOrchestrator(
         var upcoming = streamSwitchingService.GetNextHealthyStream();
         // With a single candidate, "next" wraps to current — don't re-resolve the live stream.
         if (upcoming?.Stream == null || ReferenceEquals(upcoming, current)) return;
+
+        // One-shot rows: every attach re-/plays or takes a warm URL, so a bare
+        // ResolveM3U8ForPlaybackAsync write-back here was a wasted second /play per
+        // switch (Android ignored it). The single-flight pre-resolver owns these rows.
+        if (LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(upcoming))
+        {
+            prewarmer?.Kick();
+            return;
+        }
 
         var channel = upcoming.Stream.Channel;
         var path = $"/{game.ApiLeague}/{game.Home}/{game.Away}";

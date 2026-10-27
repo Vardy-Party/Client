@@ -1136,6 +1136,69 @@ public class StreamResolutionOrchestratorTests
     }
 
 
+    [Fact]
+    public async Task Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay()
+    {
+        // (d): every switch used to fire a bare ResolveM3U8ForPlaybackAsync for the
+        // following row that Android then ignored - a wasted /play per switch.
+        var (game, first) = BuildGameAndHealthyStream();
+        first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/north" };
+        var second = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Build<StreamModel>()
+                .With(s => s.Url, "https://streams.example.com/south.html")
+                .With(s => s.Channel, "Channel South")
+                .Create())
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, "https://streams.example.com/south.html")
+            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south" })
+            .Create();
+        var bothYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangeCommon(game, first.Stream);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                YieldSeedSiblingThenLater(first, second, second, bothYielded, Task.Delay(Timeout.Infinite, ct), ct));
+        Func<Task>? onNext = null;
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fixture.GetMock<INativeVideoPlayerService>()
+            .Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback<string, string, string, Func<Task>?, string?, string?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, next, _, _, _, _) => onNext = next)
+            .Returns(playbackGate.Task);
+        _fixture.GetMock<IApiService>()
+            .Setup(a => a.GetM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new M3U8Response
+            {
+                Url = "https://cdn.example.com/live/fresh.m3u8",
+                RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
+            });
+        var prewarmer = _fixture.Freeze<Mock<IUpcomingStreamPrewarmer>>();
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var statuses = new List<string>();
+        sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
+
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        await bothYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 100 && onNext == null; i++)
+            await Task.Delay(20);
+        Assert.NotNull(onNext);
+        second.ResolvedM3U8Url = null;
+        await onNext!();
+        await Task.Delay(100);
+        playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        _fixture.GetMock<IApiService>().Verify(
+            a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        prewarmer.Verify(p => p.Kick(), Times.AtLeastOnce);
+    }
     private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()
     {
         var game = _fixture.Build<Game>()

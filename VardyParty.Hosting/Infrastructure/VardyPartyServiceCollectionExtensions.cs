@@ -29,6 +29,8 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
+        services.AddSingleton<WarmPlaybackUrlCache>();
+        services.AddSingleton<IUpcomingStreamPrewarmer, UpcomingStreamPrewarmer>();
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
         services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
         services.AddSingleton<ISessionIdProvider, SessionIdProvider>();

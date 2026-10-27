@@ -70,7 +70,9 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<IApiService>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<IGamesCatalogApi>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<ResolveFreshPlaybackUrlAsync>(sp =>
-            PlaybackUrlResolver.Bind(sp.GetRequiredService<IApiService>()));
+            PlaybackUrlResolver.Bind(
+                sp.GetRequiredService<IApiService>(),
+                sp.GetService<WarmPlaybackUrlCache>()));
         services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
