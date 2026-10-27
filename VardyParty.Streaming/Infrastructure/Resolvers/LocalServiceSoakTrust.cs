@@ -22,15 +22,7 @@ public static class LocalServiceSoakTrust
     /// treat as one-shot FB/V1 (or V2) and re-resolve before ExoPlayer.
     /// </summary>
     public static bool RequiresFreshM3u8ForPlayback(EnrichedStream? stream)
-    {
-        if (stream is null)
-            return false;
-
-        if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
-            return true;
-
-        return HasPlaybackSoakHeaders(stream.RequestHeaders);
-    }
+        => PlaybackUrlReusePolicy.RequiresFreshM3u8ForPlayback(stream);
 
     /// <summary>
     /// Soak evidence that could justify retry/trust after a failed bare CDN probe.
@@ -61,30 +53,6 @@ public static class LocalServiceSoakTrust
         // V1/FB /play often returns Referer/Origin without Cookie; ExoPlayer still
         // plays with those. Cookie alone was too strict — TV CDN probes fail and
         // healthy FB rows get discarded.
-        return HasPlaybackSoakHeaders(response.RequestHeaders);
-    }
-
-    private static bool HasPlaybackSoakHeaders(IReadOnlyDictionary<string, string>? headers)
-    {
-        if (headers is null)
-            return false;
-
-        var hasRefererOrOrigin = false;
-        foreach (var pair in headers)
-        {
-            if (string.IsNullOrWhiteSpace(pair.Value))
-                continue;
-
-            if (pair.Key.Equals("cookie", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
-                || pair.Key.Equals("origin", StringComparison.OrdinalIgnoreCase))
-            {
-                hasRefererOrOrigin = true;
-            }
-        }
-
-        return hasRefererOrOrigin;
+        return PlaybackUrlReusePolicy.HasPlaybackSoakHeaders(response.RequestHeaders);
     }
 }
