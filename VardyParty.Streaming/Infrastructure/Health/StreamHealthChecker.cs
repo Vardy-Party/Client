@@ -49,7 +49,8 @@ public class StreamHealthChecker(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Health check failed for {Url}", m3u8Url);
-            health.Status = StreamHealthStatus.ManifestUnreachable;
+            health.Status = CdnReachabilityPolicy.ClassifyTransportFailure(ex, cancellationToken)
+                            ?? StreamHealthStatus.ManifestUnreachable;
             health.ErrorMessage = ex.Message;
         }
         finally
@@ -156,23 +157,37 @@ public class StreamHealthChecker(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.ManifestTimeoutSeconds));
 
-            content = await FetchManifestContentAsync(url, refererUrl, probe, cts.Token);
-            if (content is null && !string.IsNullOrEmpty(refererUrl))
+            var fetch = await FetchManifestContentAsync(url, refererUrl, probe, cts.Token);
+            if (fetch.Content is null && !string.IsNullOrEmpty(refererUrl))
             {
                 logger.LogInformation(
                     "[StreamHealthChecker] Manifest fetch with referer failed for {Url}; retrying without referer",
                     url);
-                content = await FetchManifestContentAsync(url, refererUrl: null, probe: null, cts.Token);
+                fetch = await FetchManifestContentAsync(url, refererUrl: null, probe: null, cts.Token);
             }
 
-            if (content is null)
+            if (fetch.Content is null)
             {
-                return StreamHealthStatus.ManifestUnreachable;
+                // 404/410 is dead (ManifestNotFound). 403/5xx never proved the
+                // playlist is gone: ManifestUnreachable, which is deferred.
+                return fetch.StatusCode is int code
+                    ? CdnReachabilityPolicy.ClassifyManifestHttpStatus(code) switch
+                    {
+                        StreamHealthStatus.Healthy => StreamHealthStatus.EmptyManifest,
+                        var status => status
+                    }
+                    : StreamHealthStatus.ManifestUnreachable;
             }
+
+            content = fetch.Content;
         }
-        catch
+        catch (Exception ex)
         {
-            return StreamHealthStatus.ManifestUnreachable;
+            // Connect timeout / refused / reset / TLS: CDN unreachable (deferred,
+            // rechecked). DNS: HostNotResolved (dead). The caller cancelling is no verdict.
+            var status = CdnReachabilityPolicy.ClassifyTransportFailure(ex, ct) ?? StreamHealthStatus.ManifestUnreachable;
+            logger.LogWarning(ex, "[StreamHealthChecker] Manifest fetch for {Url} failed: {Status}", url, status);
+            return status;
         }
 
         if (string.IsNullOrWhiteSpace(content)) return StreamHealthStatus.EmptyManifest;
@@ -279,7 +294,10 @@ public class StreamHealthChecker(
     private static string ResolveUrl(string baseUrl, string relativeUrl) =>
         HlsUriResolver.Resolve(baseUrl, relativeUrl);
 
-    private async Task<string?> FetchManifestContentAsync(
+    /// <summary>A manifest body, or null with the HTTP status that refused it.</summary>
+    private readonly record struct ManifestFetch(string? Content, int? StatusCode);
+
+    private async Task<ManifestFetch> FetchManifestContentAsync(
         string url,
         string? refererUrl,
         StreamHealthProbe? probe,
@@ -294,11 +312,13 @@ public class StreamHealthChecker(
         if (!response.IsSuccessStatusCode)
         {
             logger.LogWarning("Manifest fetch failed: {StatusCode} for {Url}", response.StatusCode, url);
-            return null;
+            return new ManifestFetch(null, (int)response.StatusCode);
         }
 
         var content = await response.Content.ReadAsStringAsync(ct);
-        return string.IsNullOrWhiteSpace(content) ? null : content;
+        return string.IsNullOrWhiteSpace(content)
+            ? new ManifestFetch(null, (int)response.StatusCode)
+            : new ManifestFetch(content, (int)response.StatusCode);
     }
 
     private async Task<StreamHealthStatus> CheckSegmentAsync(
@@ -333,8 +353,11 @@ public class StreamHealthChecker(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Segment exception for {Url}", url);
-            return StreamHealthStatus.SegmentUnreachable;
+            // Could not connect (timeout, refused, reset, TLS): CDN unreachable,
+            // deferred. DNS: HostNotResolved, dead. Anything else stays dead.
+            var status = SegmentFailureStatus(ex, ct);
+            logger.LogWarning(ex, "Segment exception for {Url}: {Status}", url, status);
+            return status;
         }
 
         // Header checks failed (often image/* Content-Type on a PNG-wrapped TS
@@ -385,10 +408,19 @@ public class StreamHealthChecker(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Segment byte probe exception for {Url}", url);
-            return StreamHealthStatus.SegmentUnreachable;
+            var status = SegmentFailureStatus(ex, ct);
+            logger.LogWarning(ex, "Segment byte probe exception for {Url}: {Status}", url, status);
+            return status;
         }
     }
+
+    /// <summary>
+    /// A segment request that threw. Transport failures are classified by
+    /// <see cref="CdnReachabilityPolicy.ClassifyTransportFailure"/>; anything
+    /// else (an invalid URI, a bad body) stays <see cref="StreamHealthStatus.SegmentUnreachable"/>.
+    /// </summary>
+    private static StreamHealthStatus SegmentFailureStatus(Exception ex, CancellationToken ct) =>
+        CdnReachabilityPolicy.ClassifyTransportFailure(ex, ct) ?? StreamHealthStatus.SegmentUnreachable;
 
     private static async Task<byte[]> ReadPrefixAsync(HttpContent content, int maxBytes, CancellationToken ct)
     {

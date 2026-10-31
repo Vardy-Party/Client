@@ -33,6 +33,12 @@ public class StreamResolutionOrchestrator(
     /// <summary>Test seam for the re-queue waits.</summary>
     internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
 
+    /// <summary>Test seam for the CDN-unreachable recheck waits (2 min, 5 min, then 10 min).</summary>
+    internal Func<TimeSpan, CancellationToken, Task> CdnRecheckDelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>Test seam for the clock that decides whether the game is still live for rechecks.</summary>
+    internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
     /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
     /// running and was not cancelled. When this runs out the outcome is
@@ -274,6 +280,7 @@ public class StreamResolutionOrchestrator(
         try
         {
             var deferred = new List<StreamModel>();
+            var cdnDeferred = new List<StreamModel>();
             var deferredIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
 
             // Returns true when the viewer has left and the outcome is final.
@@ -329,8 +336,13 @@ public class StreamResolutionOrchestrator(
                     case StreamResolutionStatus.Deferred:
                         // An infrastructure failure: nothing about the stream is
                         // known. Don't report it and don't drop it; re-queue it.
+                        // A CDN-unreachable row waits minutes, not seconds: it goes to
+                        // the CDN recheck (CdnReachabilityPolicy), not the 5s/15s passes.
                         deferredIndex[enrichedStream.Stream] = index;
-                        deferred.Add(enrichedStream.Stream);
+                        if (enrichedStream.DeferReason == StreamDeferReason.CdnUnreachable)
+                            cdnDeferred.Add(enrichedStream.Stream);
+                        else
+                            deferred.Add(enrichedStream.Stream);
                         break;
                 }
 
@@ -388,6 +400,36 @@ public class StreamResolutionOrchestrator(
                     "[StreamResolution] {Count} stream(s) still deferred after re-queue passes; local service unavailable (not reported, not dropped)",
                     deferred.Count);
             }
+
+            // CDN unreachable is never dead: recheck those rows after 2 min, 5 min,
+            // then every 10 min while the game is live. A row that comes back Healthy
+            // joins the pool through Accept (appended, stable numbering). Playback
+            // that is already running carries on meanwhile.
+            if (cdnDeferred.Count > 0)
+            {
+                var viewerLeft = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
+                    cdnDeferred,
+                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    row => Accept(row, requeued: true),
+                    () => playbackTask,
+                    ViewerLeftAsync,
+                    () => CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()),
+                    CdnRecheckDelayAsync,
+                    (count, wait) =>
+                    {
+                        if (playbackTask is { IsCompleted: false })
+                            return;
+                        _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {wait.TotalMinutes:F0} min";
+                        PublishProgress();
+                    },
+                    logger,
+                    enumerationCts.Token).ConfigureAwait(false);
+                if (viewerLeft)
+                    return outcome;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                outcome.CdnUnreachableStreamCount = cdnDeferred.Count;
+            }
         }
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {
@@ -428,8 +470,10 @@ public class StreamResolutionOrchestrator(
                 // no "failed" report, the row stays in the pool, and the outcome
                 // says "local service unavailable" (same as deferred rows).
                 logger.LogWarning("[StreamResolution] Playback deferred - {Message}", playbackResult.Message);
-                _status = PlaybackCloseReasons.LocalServiceUnavailable;
-                outcome.LocalServiceUnavailable = true;
+                _status = playbackResult.IsCdnUnreachable
+                    ? PlaybackCloseReasons.CdnUnreachable
+                    : PlaybackCloseReasons.LocalServiceUnavailable;
+                outcome.LocalServiceUnavailable = !playbackResult.IsCdnUnreachable;
                 PublishProgress();
             }
             else if (playbackResult != null && !playbackResult.Success)
@@ -449,6 +493,13 @@ public class StreamResolutionOrchestrator(
             {
                 _status = remoteError;
                 outcome.RemoteComputeError = remoteError;
+            }
+            else if (outcome.CdnUnreachableStreamCount > 0 && outcome.DeferredStreamCount == 0)
+            {
+                // The CDN could not be reached (IP block, CDN down). The rows were
+                // not reported or dropped; the local service itself was fine.
+                _status = CdnReachabilityPolicy.RecheckingMessage;
+                outcome.NoWorkingStreams = true;
             }
             else if (outcome.DeferredStreamCount > 0)
             {

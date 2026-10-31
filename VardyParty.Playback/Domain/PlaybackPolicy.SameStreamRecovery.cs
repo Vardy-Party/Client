@@ -21,10 +21,18 @@ public enum PlaybackErrorKind
     TokenOrPlaylistInvalid,
 
     /// <summary>
-    /// The stream is gone: playlist 404/410, no m3u8, decoy, the CDN host cannot
-    /// be resolved or refuses connections, or the format is unsupported. Switch now.
+    /// The stream is gone: playlist 404/410, no m3u8, decoy, the CDN host name
+    /// does not resolve, or the format is unsupported. Switch now.
     /// </summary>
-    ConfirmedDead
+    ConfirmedDead,
+
+    /// <summary>
+    /// The CDN could not be reached: connection refused, connect or socket
+    /// timeout, reset, TLS handshake. Retried like <see cref="Transient"/>; when
+    /// the budget runs out the session moves on WITHOUT reporting or removing
+    /// the row (<see cref="VardyParty.Kernel.CdnReachabilityPolicy"/>). Never dead.
+    /// </summary>
+    CdnUnreachable
 }
 
 /// <summary>The next step of a same-stream retry.</summary>
@@ -60,18 +68,6 @@ public static partial class PlaybackPolicy
     [
         "no m3u8",
         "decoy",
-        "unable to resolve host",
-        "unknownhostexception",
-        "name not resolved",
-        "name or service not known",
-        "no such host",
-        "connection refused",
-        "econnrefused",
-        "failed to connect",
-        "unable to connect",
-        "connectexception",
-        "no route to host",
-        "network is unreachable",
         "not supported",
         "unsupported",
         "decoder init",
@@ -120,10 +116,25 @@ public static partial class PlaybackPolicy
             return PlaybackErrorKind.ConfirmedDead;
         }
 
+        // DNS failure stays dead (a retired or fake host); checked before the
+        // connect markers so "network connection failed ... unable to resolve
+        // host" is dead, not CDN unreachable.
+        if (VardyParty.Kernel.CdnReachabilityPolicy.MentionsHostNotResolved(text))
+            return PlaybackErrorKind.ConfirmedDead;
+
         foreach (var marker in ConfirmedDeadMarkers)
         {
             if (text.Contains(marker, StringComparison.Ordinal))
                 return PlaybackErrorKind.ConfirmedDead;
+        }
+
+        // Could not reach the CDN: never dead (connect refused / timed out,
+        // reset, TLS; Media3 2001/2002 network connection failed / timeout).
+        if (VardyParty.Kernel.CdnReachabilityPolicy.MentionsConnectFailure(text)
+            || text.Contains("network connection failed", StringComparison.Ordinal)
+            || text.Contains("network connection timeout", StringComparison.Ordinal))
+        {
+            return PlaybackErrorKind.CdnUnreachable;
         }
 
         foreach (var marker in TokenMarkers)
@@ -143,11 +154,11 @@ public static partial class PlaybackPolicy
         => kind != PlaybackErrorKind.ConfirmedDead && retriesUsed < MaxSameStreamRetries;
 
     /// <summary>
-    /// Attempt 1 of a transient error reloads the same URL. Any later attempt,
-    /// or any token or playlist error, fetches a fresh <c>/play</c>.
+    /// Attempt 1 of a transient or CDN-unreachable error reloads the same URL.
+    /// Any later attempt, or any token or playlist error, fetches a fresh <c>/play</c>.
     /// </summary>
     public static SameStreamRetryStep NextSameStreamRetryStep(PlaybackErrorKind kind, int attempt)
-        => kind == PlaybackErrorKind.Transient && attempt <= 1
+        => kind is PlaybackErrorKind.Transient or PlaybackErrorKind.CdnUnreachable && attempt <= 1
             ? SameStreamRetryStep.ReloadPlaylist
             : SameStreamRetryStep.FreshResolve;
 

@@ -37,7 +37,17 @@ public enum LocalServiceUnavailableReason
     /// The service refused our token (401) or role (403). A sign-in problem,
     /// not a dead stream.
     /// </summary>
-    Unauthorized
+    Unauthorized,
+
+    /// <summary>
+    /// The service ran, but the stream's CDN could not be reached from it:
+    /// page navigation timed out (504), or a Chromium connect, reset, timeout
+    /// or TLS error on the page or on media requests
+    /// (<see cref="LocalServicePlayFailure"/>). Deferred and rechecked after a
+    /// back-off, never reported (<see cref="CdnReachabilityPolicy"/>).
+    /// NAME_NOT_RESOLVED is not this: it stays dead.
+    /// </summary>
+    CdnUnreachable
 }
 
 /// <summary>
@@ -54,7 +64,12 @@ public sealed class LocalServiceUnavailableException(
 {
     public LocalServiceUnavailableReason Reason { get; } = reason;
 
-    /// <summary>MP-disabled and auth rejections do not clear up in seconds.</summary>
+    /// <summary>
+    /// MP-disabled and auth rejections do not clear up in seconds. Nor does an
+    /// unreachable CDN: that row waits for the minutes-long recheck instead.
+    /// </summary>
     public override bool IsRetryable =>
-        Reason is not (LocalServiceUnavailableReason.MpDisabled or LocalServiceUnavailableReason.Unauthorized);
+        Reason is not (LocalServiceUnavailableReason.MpDisabled
+            or LocalServiceUnavailableReason.Unauthorized
+            or LocalServiceUnavailableReason.CdnUnreachable);
 }

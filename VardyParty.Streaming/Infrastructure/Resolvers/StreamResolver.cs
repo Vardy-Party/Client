@@ -227,11 +227,22 @@ public class StreamResolver(
             {
                 m3u8Response = await ResolveWithInfrastructureRetryAsync(stream, cancellationToken);
             }
+            catch (LocalServiceUnavailableException ex) when (ex.Reason == LocalServiceUnavailableReason.CdnUnreachable)
+            {
+                // The service ran but could not reach the CDN. Not dead: the
+                // orchestrator rechecks it after a back-off (2 min, 5 min, 10 min).
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.CdnUnreachable;
+                enriched.ErrorMessage = ex.Message;
+                logger.LogWarning("[StreamResolver] Deferring {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+                return new ResolveOutcome(enriched, []);
+            }
             catch (LocalServiceUnavailableException ex)
             {
                 // The service didn't answer, so we know nothing about this
                 // stream. Never Failed, never reported; the orchestrator re-queues it.
                 enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.LocalService;
                 enriched.ErrorMessage = $"Local service unavailable ({ex.Reason}): {ex.Message}";
                 logger.LogWarning("[StreamResolver] Deferring {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
                 return new ResolveOutcome(enriched, []);
@@ -291,10 +302,20 @@ public class StreamResolver(
                 logger.LogInformation("[StreamResolver] Stream {Channel} is healthy: {Quality}",
                     stream.Channel, health.GetQualityLabel());
             }
+            else if (CdnReachabilityPolicy.IsCdnUnreachable(health.Status))
+            {
+                // Could not reach the CDN (connect timeout / refused / reset / TLS,
+                // or a manifest 403/5xx). Never dead: deferred, never reported,
+                // rechecked after a back-off while the game is live.
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.CdnUnreachable;
+                enriched.ErrorMessage = $"{CdnReachabilityPolicy.RecheckingMessage} ({health.Status})";
+                logger.LogWarning("[StreamResolver] Stream {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+            }
             else
             {
-                // ManifestUnreachable / SegmentUnreachable both mean the CDN refused the probe connection —
-                // and LocalService did not leave soak evidence (cookies / rewritten segments).
+                // Dead: manifest 404/410, host not resolved, empty/invalid
+                // manifest, or a segment HTTP error / decoy bytes.
                 enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = $"Health check failed: {health.Status}";
                 logger.LogWarning("[StreamResolver] Stream {Channel} failed health check: {Status}",

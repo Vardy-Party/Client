@@ -31,5 +31,11 @@ public class StreamResolutionOutcome
     /// </summary>
     public int DeferredStreamCount { get; set; }
 
+    /// <summary>
+    /// Rows whose CDN could not be reached and were still unreachable when the
+    /// session ended (or the game stopped being live). Never reported or dropped.
+    /// </summary>
+    public int CdnUnreachableStreamCount { get; set; }
+
     public PlaybackResult? PlaybackResult { get; set; }
 }

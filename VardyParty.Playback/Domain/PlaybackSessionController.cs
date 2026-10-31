@@ -44,6 +44,10 @@ public sealed class PlaybackSessionController
     // Feeds (m3u8 identity keys) that failed this cycle. A last-good stream whose feed
     // failed is never reverted to (docs "No loops").
     private readonly Dictionary<string, DateTimeOffset> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+    // Rows skipped as CDN unreachable (unreported, kept in the pool) since the
+    // last Ready. A full lap of the pool with nothing playing closes the session
+    // instead of cycling through blocked rows forever.
+    private int _cdnUnreachableSkips;
 
     public PlaybackSessionController(Func<DateTimeOffset>? clock = null)
     {
@@ -425,6 +429,7 @@ public sealed class PlaybackSessionController
         _cacheRetryUsed = false;
         _usedCachedUrl = false;
         _consecutiveDownloadFailures = 0;
+        _cdnUnreachableSkips = 0;
         _state = PlaybackSessionState.Playing;
         // The retry worked. The budget refills once SameStreamRetryWindow passes
         // with no error.
@@ -954,8 +959,45 @@ public sealed class PlaybackSessionController
         return ka.Length > 0 && string.Equals(ka, FeedKey(b), StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The CDN could not be reached (connect refused or timed out, reset, TLS) and
+    /// the same-stream retries are used up. Not a dead stream: nothing is reported
+    /// and the row stays in the pool (its resolved URL is cleared so the next visit
+    /// gets a fresh <c>/play</c>). The session moves on to the next row. With no
+    /// other row, or after a full lap with nothing playing, it closes with
+    /// <see cref="PlaybackCloseReasons.CdnUnreachable"/>, which the orchestrator
+    /// never reports.
+    /// </summary>
+    private List<PlaybackEffect> KeepCdnUnreachableAndMoveOn(string reason)
+    {
+        ResetSameStreamRecovery(clearBudget: true);
+        _isPreparing = false;
+        _cdnUnreachableSkips++;
+        var message = $"{PlaybackCloseReasons.CdnUnreachable}: {reason}";
+        var effects = new List<PlaybackEffect>
+        {
+            new(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: message)
+        };
+
+        // Not marked failed in the cycle (no verdict), but Next only goes to rows that
+        // have not failed this cycle, so a pool of failed rows plus this one closes.
+        if (_healthyStreamCount > 1 && _cdnUnreachableSkips < _healthyStreamCount && HasUntriedStream())
+        {
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: message));
+            return effects;
+        }
+
+        _state = PlaybackSessionState.Failed;
+        effects.Add(new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: message));
+        return effects;
+    }
+
     private List<PlaybackEffect> FailEstablishedOrAdvance(string reason)
     {
+        // CDN unreachable is never dead: keep the row, unreported.
+        if (PlaybackPolicy.ClassifyPlaybackError(reason) == PlaybackErrorKind.CdnUnreachable)
+            return KeepCdnUnreachableAndMoveOn(reason);
+
         // Retries are used up or the stream is confirmed dead: report it once and
         // switch. The next stream starts with a fresh budget.
         ResetSameStreamRecovery(clearBudget: true);
@@ -997,6 +1039,10 @@ public sealed class PlaybackSessionController
 
     private List<PlaybackEffect> FailStartOrAdvance(string reason)
     {
+        // CDN unreachable is never dead: keep the row, unreported.
+        if (PlaybackPolicy.ClassifyPlaybackError(reason) == PlaybackErrorKind.CdnUnreachable)
+            return KeepCdnUnreachableAndMoveOn(reason);
+
         ResetSameStreamRecovery(clearBudget: true);
         NotifyFailedInCycle(_currentUrl, reason, PlaybackPolicy.FailureMarksFeed(reason));
         var effects = new List<PlaybackEffect>

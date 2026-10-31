@@ -34,7 +34,8 @@ public static class LocalServiceSoakTrust
             return false;
 
         if (failedStatus is not (StreamHealthStatus.ManifestUnreachable
-            or StreamHealthStatus.SegmentUnreachable))
+            or StreamHealthStatus.SegmentUnreachable
+            or StreamHealthStatus.CdnUnreachable))
         {
             return false;
         }

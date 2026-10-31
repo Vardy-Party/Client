@@ -71,10 +71,11 @@ public class LocalLanPlayService(
     /// </summary>
     private static readonly TimeSpan SlowStreamMemory = TimeSpan.FromMinutes(10);
 
-    private static readonly TimeSpan MaxPlayCallTimeout = TimeSpan.FromSeconds(60);
-
-    private readonly TimeSpan _m3u8CallTimeout =
-        TimeSpan.FromSeconds(gamesApiSettings.Value?.M3U8CallTimeoutSeconds ?? 10);
+    // Never below LocalService's final wait plus a margin (35s + 30s = 65s, see
+    // LocalServicePlayBudget). The configured 20s cut the service off while it
+    // was still resolving. A larger configured value wins.
+    private readonly TimeSpan _m3u8CallTimeout = LocalServicePlayBudget.BaseTimeout(
+        gamesApiSettings.Value is { } settings ? TimeSpan.FromSeconds(settings.M3U8CallTimeoutSeconds) : null);
 
     private readonly LocalServiceEndpointCache _endpoints = new(DiscoveryCacheTtl, DiscoveryFailureCacheTtl);
 
@@ -407,14 +408,21 @@ public class LocalLanPlayService(
             : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
     }
 
-    private TimeSpan PlayTimeoutFor(string key)
+    /// <summary>Test seam: mark a resolve key slow, as our own <c>/play</c> timeout does.</summary>
+    internal void MarkSlowForTests(string key) => _slowStreams[key] = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// The <c>/play</c> timeout for a resolve key: the base (at least 65s), or
+    /// double it (capped at 120s) for a stream that hit our timeout in the last
+    /// 10 minutes.
+    /// </summary>
+    internal TimeSpan PlayTimeoutFor(string key)
     {
         if (_slowStreams.TryGetValue(key, out var markedAt))
         {
             if (DateTimeOffset.UtcNow - markedAt < SlowStreamMemory)
             {
-                var extended = TimeSpan.FromTicks(_m3u8CallTimeout.Ticks * 2);
-                return extended < MaxPlayCallTimeout ? extended : MaxPlayCallTimeout;
+                return LocalServicePlayBudget.ExtendedTimeout(_m3u8CallTimeout);
             }
 
             _slowStreams.TryRemove(key, out _);
@@ -1024,6 +1032,17 @@ public class LocalLanPlayService(
                         streamUrl);
                     throw new LocalServiceUnavailableException(
                         LocalServiceUnavailableReason.Unauthorized, "GET /play rejected with 403 Forbidden");
+                }
+                else if (LocalServicePlayFailure.TryDescribeCdnUnreachable((int)response.StatusCode, json, out var cdnReason))
+                {
+                    // The service ran, but could not reach the stream's CDN (IP block,
+                    // CDN down). Not a dead stream: defer it for the CDN recheck.
+                    logger.LogWarning(
+                        "[LocalLanPlay] GET /play returned {StatusCode} for {StreamUrl}: CDN unreachable ({Reason}). Deferred, not dead",
+                        (int)response.StatusCode, streamUrl, cdnReason);
+                    throw new LocalServiceUnavailableException(
+                        LocalServiceUnavailableReason.CdnUnreachable,
+                        $"{CdnReachabilityPolicy.RecheckingMessage} ({cdnReason})");
                 }
                 else
                 {

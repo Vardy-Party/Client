@@ -62,8 +62,8 @@ public class StreamHealthCheckerTests
         // Act
         var result = await checker.CheckStreamHealthAsync(manifestUrl, "http://player.example.com");
 
-        // Assert
-        Assert.Equal(StreamHealthStatus.ManifestUnreachable, result.Status);
+        // Assert: a 404 playlist is gone (dead), not "unreachable" (deferred).
+        Assert.Equal(StreamHealthStatus.ManifestNotFound, result.Status);
     }
 
     [Fact]

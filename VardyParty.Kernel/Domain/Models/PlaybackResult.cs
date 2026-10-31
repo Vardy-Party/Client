@@ -32,6 +32,14 @@ public static class PlaybackCloseReasons
     /// </summary>
     public const string LocalServiceUnavailable = "Local service unavailable";
 
+    /// <summary>
+    /// The session ended because the stream's CDN could not be reached (connect
+    /// refused or timed out, reset, TLS) after the same-stream retries. Not a
+    /// stream failure either: never reported, never dropped
+    /// (<see cref="CdnReachabilityPolicy"/>).
+    /// </summary>
+    public const string CdnUnreachable = CdnReachabilityPolicy.RecheckingMessage;
+
     /// <summary>The reason an Android player activity reports from OnDestroy.</summary>
     /// <param name="isChangingConfigurations">Activity.IsChangingConfigurations: a recreate, not a departure.</param>
     public static string ForDestroy(bool isChangingConfigurations) => isChangingConfigurations ? PlayerRecreated : PlayerClosed;
@@ -61,11 +69,22 @@ public class PlaybackResult
 
     /// <summary>
     /// The start or retry failed on infrastructure, not on the stream (see
-    /// <see cref="PlaybackCloseReasons.LocalServiceUnavailable"/>). Never report or drop the row.
+    /// <see cref="PlaybackCloseReasons.LocalServiceUnavailable"/>), or the CDN could
+    /// not be reached (<see cref="IsCdnUnreachable"/>). Either way there is no
+    /// verdict on the stream: never report or drop the row.
     /// </summary>
     [JsonIgnore]
     public bool IsLocalServiceUnavailable =>
-        (Message ?? string.Empty).Contains(PlaybackCloseReasons.LocalServiceUnavailable, StringComparison.OrdinalIgnoreCase);
+        (Message ?? string.Empty).Contains(PlaybackCloseReasons.LocalServiceUnavailable, StringComparison.OrdinalIgnoreCase)
+        || IsCdnUnreachable;
+
+    /// <summary>
+    /// The player gave up because the CDN could not be reached (see
+    /// <see cref="PlaybackCloseReasons.CdnUnreachable"/>). Never report or drop the row.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsCdnUnreachable =>
+        (Message ?? string.Empty).Contains(PlaybackCloseReasons.CdnUnreachable, StringComparison.OrdinalIgnoreCase);
 
     public static PlaybackResult Completed(string message, bool recoverable = false) => new()
     {

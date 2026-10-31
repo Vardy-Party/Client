@@ -46,6 +46,14 @@ public class EnrichedStream
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// Why a <see cref="StreamResolutionStatus.Deferred"/> row was deferred. A
+    /// CDN-unreachable row is rechecked after a back-off (2 min, 5 min, then
+    /// every 10 min) while the game is live; a local-service row is re-queued
+    /// within seconds.
+    /// </summary>
+    public StreamDeferReason DeferReason { get; set; }
+
+    /// <summary>
     /// Returns the quality label if metadata is available
     /// (e.g., "1080p 60fps 5000kbps")
     /// </summary>
@@ -63,6 +71,7 @@ public class EnrichedStream
             StreamResolutionStatus.Resolved => "Testing...",
             StreamResolutionStatus.Healthy => Health?.GetQualityLabel() ?? "Unknown Quality",
             StreamResolutionStatus.Failed => $"Failed: {ErrorMessage}",
+            StreamResolutionStatus.Deferred when DeferReason == StreamDeferReason.CdnUnreachable => CdnReachabilityPolicy.RecheckingMessage,
             StreamResolutionStatus.Deferred => "Waiting for local service...",
             _ => "Unknown"
         };
