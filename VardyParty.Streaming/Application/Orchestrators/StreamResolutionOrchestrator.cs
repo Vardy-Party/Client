@@ -415,13 +415,7 @@ public class StreamResolutionOrchestrator(
                     ViewerLeftAsync,
                     () => CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()),
                     CdnRecheckDelayAsync,
-                    (count, wait) =>
-                    {
-                        if (playbackTask is { IsCompleted: false })
-                            return;
-                        _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {wait.TotalMinutes:F0} min";
-                        PublishProgress();
-                    },
+                    OnCdnRecheckWaiting,
                     logger,
                     enumerationCts.Token).ConfigureAwait(false);
                 if (viewerLeft)
@@ -429,6 +423,123 @@ public class StreamResolutionOrchestrator(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 outcome.CdnUnreachableStreamCount = cdnDeferred.Count;
+            }
+
+            // The player gave up on its last row(s) as CDN unreachable
+            // (PlaybackCloseReasons.CdnUnreachable). Those rows stay in the pool,
+            // unreported, and are rechecked in the background on the same back-off.
+            // A row that comes back healthy starts playback again on its own pool
+            // row (same channel number); one now proven dead is reported and dropped;
+            // one still unreachable waits for the next round.
+            while (playbackTask != null && CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()))
+            {
+                var ended = playbackTask;
+                var endedResult = await ended.ConfigureAwait(false);
+                if (endedResult is not { Success: false, ViewerLeft: false, IsCdnUnreachable: true }
+                    || cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                var poolRows = new Dictionary<StreamModel, EnrichedStream>(ReferenceEqualityComparer.Instance);
+                lock (playbackLock)
+                {
+                    foreach (var row in streamSwitchingService.GetHealthyStreams())
+                    {
+                        if (row.Stream != null)
+                            poolRows.TryAdd(row.Stream, row);
+                    }
+                }
+
+                if (poolRows.Count == 0)
+                    break;
+
+                var pending = poolRows.Keys.ToList();
+                logger.LogInformation(
+                    "[StreamResolution] Player gave up on {Count} pool row(s) as CDN unreachable; rechecking in the background (not reported, not dropped)",
+                    pending.Count);
+                _status = CdnReachabilityPolicy.RecheckingMessage;
+                PublishProgress();
+
+                var viewerLeftDuringRecheck = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
+                    pending,
+                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    row => AcceptPoolRecheck(row, poolRows, pending),
+                    () => playbackTask,
+                    ViewerLeftAsync,
+                    () => CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()),
+                    CdnRecheckDelayAsync,
+                    OnCdnRecheckWaiting,
+                    logger,
+                    enumerationCts.Token).ConfigureAwait(false);
+                if (viewerLeftDuringRecheck)
+                    return outcome;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (pending)
+                    outcome.CdnUnreachableStreamCount = pending.Count;
+
+                // Nothing restarted (still unreachable, or the game ended): stop here.
+                if (ReferenceEquals(playbackTask, ended))
+                    break;
+            }
+
+            void OnCdnRecheckWaiting(int count, TimeSpan wait)
+            {
+                if (playbackTask is { IsCompleted: false })
+                    return;
+                _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {wait.TotalMinutes:F0} min";
+                PublishProgress();
+            }
+
+            // A recheck of a row the player gave up on as CDN unreachable.
+            void AcceptPoolRecheck(
+                EnrichedStream rechecked,
+                Dictionary<StreamModel, EnrichedStream> poolRows,
+                List<StreamModel> pending)
+            {
+                if (rechecked.Stream == null || !poolRows.TryGetValue(rechecked.Stream, out var poolRow))
+                    return;
+
+                switch (rechecked.Status)
+                {
+                    case StreamResolutionStatus.Healthy:
+                    {
+                        _ = ReportHealthAsync(game, rechecked.Stream, "working", null, rechecked.Health, cancellationToken);
+                        EnrichedStream? startOn = null;
+                        lock (playbackLock)
+                        {
+                            if (playbackTask is { IsCompleted: true } && SelectInPool(poolRow))
+                            {
+                                awaitingPlayableRow = false;
+                                startOn = poolRow;
+                            }
+                        }
+
+                        if (startOn != null)
+                        {
+                            logger.LogInformation(
+                                "[StreamResolution] CDN reachable again for {Channel}: restarting playback on its pool row",
+                                startOn.Stream?.Channel);
+                            StartPlaybackChain(startOn);
+                        }
+
+                        break;
+                    }
+                    case StreamResolutionStatus.Failed:
+                        // The recheck proved the stream itself dead (404, decoy, DNS).
+                        _ = ReportHealthAsync(game, rechecked.Stream, "failed", rechecked.ErrorMessage,
+                            rechecked.Health, cancellationToken);
+                        lock (playbackLock)
+                            RemoveFromPool(poolRow);
+                        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                        PublishProgress();
+                        break;
+                    case StreamResolutionStatus.Deferred:
+                        lock (pending)
+                            pending.Add(rechecked.Stream);
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
@@ -1094,6 +1205,23 @@ public class StreamResolutionOrchestrator(
         }
     }
 
+    /// <summary>Moves the pool index onto <paramref name="row"/>. False when it is no longer in the pool.</summary>
+    private bool SelectInPool(EnrichedStream row)
+    {
+        if (ReferenceEquals(streamSwitchingService.GetCurrentStream(), row))
+            return true;
+        var healthy = streamSwitchingService.GetHealthyStreams();
+        for (var i = 0; i < healthy.Count; i++)
+        {
+            if (ReferenceEquals(healthy[i], row))
+            {
+                streamSwitchingService.SwitchToStream(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
     private void RemoveFromPool(EnrichedStream failed)
     {
         if (!ReferenceEquals(streamSwitchingService.GetCurrentStream(), failed))

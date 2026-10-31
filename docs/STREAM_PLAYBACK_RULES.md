@@ -466,7 +466,8 @@ Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57
 
 | Class | Examples | First step |
 |---|---|---|
-| `ConfirmedDead` | DNS failure (`UnknownHostException`), connection refused, playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
+| `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
+| `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout" | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
 | `TokenOrPlaylistInvalid` | 401/403, `#EXTM3U` header missing, manifest parse error | Fresh `/play` for the same row |
 | `Transient` | Anything else, including a bare "Source error", timeouts, segment 404 | Reload the same URL |
 
@@ -521,7 +522,7 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
 - Single-flight per stream (url, stream name, strategy, source): concurrent callers share one call. One caller cancelling does not cancel the others; a caller arriving after the last waiter cancelled starts its own call.
 - The endpoint is kept. After the 120s TTL the cache returns `Stale(lastGood)` and probes in the background; a failed probe keeps last-good. Only `Invalidate()` forgets it, after 3 consecutive connection failures. Any HTTP answer resets the count. `IsAvailableAsync` no longer invalidates; it probes for a moved service.
 - Discovery misses are cached for 1s (was 5s) and discovery retries after 1s and 2.5s.
-- A stream whose `/play` timed out is marked slow for 10 minutes and gets double the timeout (capped at 60s) next time.
+- A stream whose `/play` timed out is marked slow for 10 minutes and gets double the timeout (capped at 120s) next time. The base timeout is never below 65s (see "`/play` timeout budget").
 
 ### Resolver and orchestrator
 
@@ -554,9 +555,30 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
 
 ### Known limitations
 
-- `/play` 5xx is still a stream verdict (`null`). LocalService passes the scrape plugin's status through, and also returns 500 for its own exceptions, so the client cannot tell the two apart. This needs a distinct LS status or an error code.
+- `/play` 5xx is still a stream verdict (`null`), unless the body shows the CDN could not be reached (`LocalServicePlayFailure`: 504, a Chromium connect/TLS error, or media requests that failed to connect or never answered). LocalService passes the scrape plugin's status through, and also returns 500 for its own exceptions, so the client cannot otherwise tell the two apart. This needs a distinct LS status or an error code.
 - Errors from remote compute (the paired relay) are not classified. They surface through `LastRemoteComputeError`.
 - `/mp` 400s (bad pop/DoH headers) still count as a miss.
+
+## CDN unreachable is never dead (31 Oct 2026)
+
+From 19:02 to 19:44 UK time on 31 Oct 2026 the MSI's IP was blocked by the CDN. 27 lshls rows plus durrfity, 643t8a, nothintd and instreams were marked dead and reported; every one was Healthy again after 19:52. A host we cannot connect to says nothing about the stream. Rules (`CdnReachabilityPolicy` in Kernel; tests in `CdnReachabilityPolicyTests`, `CdnUnreachableBusinessRulesTests`, `CdnUnreachablePlaybackBusinessRulesTests`):
+
+1. **CDN unreachable** = connect timeout, connection refused or reset, TLS failure, on the manifest or on a segment; a manifest HTTP status other than 2xx/404/410 (403, 5xx); or a LocalService `/play` that could not reach the CDN (`LocalServicePlayFailure`: HTTP 504, a `net::ERR_CONNECTION_*` / `ERR_TIMED_OUT` / `ERR_SSL_*` / `ERR_CERT_*` error, or a media-like `diagnostics.failedRequestHosts` entry with such an error or with requests still pending).
+2. **Still dead** (Failed, reported, dropped): manifest 404/410 (`StreamHealthStatus.ManifestNotFound`), "M3U8 not Found" with no connect evidence, decoy or non-video segments and segment HTTP errors (`SegmentUnreachable`), empty or invalid manifests, and DNS `NAME_NOT_RESOLVED` / `UnknownHostException` (`HostNotResolved`). DNS stays dead by choice: a name that does not resolve is almost always a retired or fake host, and keeping it would recheck it all game.
+3. Health check (`StreamHealthChecker`): transport exceptions go through `CdnReachabilityPolicy.ClassifyTransportFailure` (DNS → `HostNotResolved`, connect/TLS/timeout → `CdnUnreachable`); anything else keeps the old status. The caller cancelling is no verdict.
+4. Resolver (`StreamResolver`): `CdnUnreachable` or `ManifestUnreachable` health, or `LocalServiceUnavailableException(CdnUnreachable)` from `/play`, makes the row `Deferred` with `DeferReason = CdnUnreachable` and the message "CDN unreachable, rechecking". No 2s/5s infrastructure retries (`IsRetryable` false).
+5. Orchestrator (`StreamResolutionOrchestrator`, `CdnUnreachableRecheckLoop`): a CDN-deferred row is never reported and never dropped. It is rechecked after **2 min, then 5 min, then every 10 min** (`CdnReachabilityPolicy.RecheckDelays`) while the game is live (`ShouldKeepRechecking`: not finished, and within 4h of kick-off). Rechecks run alongside playback. A row that comes back Healthy goes through the normal accept path: reported `working`, appended to the pool, stable channel number; if nothing is playing it starts playback. A recheck that now proves the row dead reports it as usual. With no healthy row at the end the status is "CDN unreachable, rechecking" (`StreamResolutionOutcome.CdnUnreachableStreamCount`).
+6. Player (`PlaybackPolicy.ClassifyPlaybackError` → `PlaybackErrorKind.CdnUnreachable`): retried like `Transient` (reload first, then fresh `/play`). When the budget is spent, on an established stream or a first start, `PlaybackSessionController` keeps the row: no `ReportFailed`, no `RemoveCurrentFromPool`, its resolved URL is cleared, and the session advances to the next row. With one row, or after a full lap of the pool with nothing reaching Ready, it closes with `PlaybackCloseReasons.CdnUnreachable`. `PlaybackResult.IsLocalServiceUnavailable` is true for that reason, so every orchestrator and host path treats it as no verdict.
+7. When the player gives up on its last row(s) as CDN unreachable (`PlaybackCloseReasons.CdnUnreachable`), the orchestrator puts every row still in the pool on the same background recheck (2 min, 5 min, then every 10 min while the game is live). A row that comes back healthy is reported `working` and playback restarts on that same pool row (same channel number, fresh `/play`); a recheck that proves the row dead (404/410, decoy, DNS) reports and drops it; a row still unreachable waits for the next round. Nothing is reported or dropped for being unreachable. Tests: `CdnUnreachablePoolRecheckTests`.
+
+## `/play` timeout budget (31 Oct 2026)
+
+The client `/play` timeout must outlast LocalService's own final wait, or the client gives up (and asks again) while the service is still finishing. `LocalServicePlayBudget` (tests in `LocalServicePlayBudgetTests`):
+
+- LocalService final wait = page.goto timeout 30s + settled-playlist wait 5s = **35s**.
+- Margin 30s, so the base client timeout is **65s** (`MinimumPlayCallTimeout`). A configured `M3U8CallTimeoutSeconds` below that is raised to it; a larger one is kept.
+- A stream that hit our timeout in the last 10 minutes gets double the base, capped at **120s** (`MaxPlayCallTimeout`). The slowest V1 path observed is about 70s, which the doubled timeout covers.
+- `/mp` harvests keep their own 330s timeout.
 
 ## Known remaining work
 
