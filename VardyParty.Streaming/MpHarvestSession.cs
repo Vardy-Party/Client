@@ -16,6 +16,7 @@ public sealed class MpHarvestSession
     private readonly object _gate = new();
     private List<string> _streams = [];
     private string? _error;
+    private LocalServiceUnavailableException? _fault;
     private bool _done;
     private bool _cancelled;
 
@@ -31,6 +32,13 @@ public sealed class MpHarvestSession
     }
 
     public string? Error => _error;
+
+    /// <summary>
+    /// Set when the harvest ended on infrastructure (service unreachable, our
+    /// timeout, a 5xx, MP disabled). Waiters without a playlist throw it
+    /// instead of seeing <c>null</c>, which would read as "no playlist".
+    /// </summary>
+    public LocalServiceUnavailableException? Fault => _fault;
 
     public bool IsCompleted => _completed.Task.IsCompleted;
 
@@ -96,7 +104,20 @@ public sealed class MpHarvestSession
 
             case "error":
                 _error = ev.Error;
-                Complete(failed: true);
+                if (ev.StatusCode is >= 500)
+                {
+                    // LocalService's own failure (MpStreamResponse writes 500
+                    // "mp play execution failed"). Only a 4xx, e.g. 404 "M3U8 not
+                    // captured from MP page.", is the stream's verdict.
+                    Fail(new LocalServiceUnavailableException(
+                        LocalServiceUnavailableReason.ServiceError,
+                        $"POST /mp error {ev.StatusCode}: {ev.Error}"));
+                }
+                else
+                {
+                    Complete(failed: true);
+                }
+
                 break;
 
             case "done":
@@ -146,7 +167,11 @@ public sealed class MpHarvestSession
         if (_done)
         {
             ThrowIfCancelled(cancellationToken);
-            return _byLabel.TryGetValue(key, out var late) ? late : null;
+            if (_byLabel.TryGetValue(key, out var late))
+                return late;
+            if (_fault is not null)
+                throw _fault;
+            return null;
         }
 
         var waiter = _waiters.GetOrAdd(
@@ -162,7 +187,12 @@ public sealed class MpHarvestSession
         }
         else if (_done)
         {
-            waiter.TrySetResult(_byLabel.TryGetValue(key, out var afterClear) ? afterClear : null);
+            if (_byLabel.TryGetValue(key, out var afterClear))
+                waiter.TrySetResult(afterClear);
+            else if (_fault is not null)
+                waiter.TrySetException(_fault);
+            else
+                waiter.TrySetResult(null);
         }
 
         return await waiter.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -210,6 +240,40 @@ public sealed class MpHarvestSession
             // Prefer any playlist-only cache over null when soak never enriched.
             pair.Value.TrySetResult(
                 _byLabel.TryGetValue(pair.Key, out var cached) ? cached : null);
+        }
+
+        _waiters.Clear();
+        _completed.TrySetResult();
+    }
+
+    /// <summary>
+    /// The harvest ended on infrastructure, not on the stream. Labels that
+    /// already have a playlist still get it; every other waiter throws
+    /// <paramref name="fault"/> so the resolver defers the row instead of
+    /// marking it Failed.
+    /// </summary>
+    public void Fail(LocalServiceUnavailableException fault)
+    {
+        ArgumentNullException.ThrowIfNull(fault);
+        if (_done)
+            return;
+
+        _fault = fault;
+        _error = fault.Message;
+        _done = true;
+        if (_firstChip.TrySetException(fault))
+        {
+            // Nobody may be waiting on the seed; observe it so the fault is not
+            // raised as an unobserved task exception.
+            _ = _firstChip.Task.Exception;
+        }
+
+        foreach (var pair in _waiters)
+        {
+            if (_byLabel.TryGetValue(pair.Key, out var cached))
+                pair.Value.TrySetResult(cached);
+            else
+                pair.Value.TrySetException(fault);
         }
 
         _waiters.Clear();

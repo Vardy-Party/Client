@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using VardyParty.Kernel;
 using VardyParty.Streaming;
 using Xunit;
 
@@ -8,6 +9,70 @@ namespace VardyParty.Streaming.Tests;
 
 public sealed class MpHarvestSessionTests
 {
+    private static LocalServiceUnavailableException Fault() =>
+        new(LocalServiceUnavailableReason.ServiceError, "POST /mp returned 500");
+
+    [Fact]
+    public async Task Fail_WaitersWithoutPlaylist_ThrowInfrastructure_NotNull()
+    {
+        var harvest = new MpHarvestSession();
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+        var named = harvest.WaitForAsync("Chip B", CancellationToken.None);
+
+        harvest.Fail(Fault());
+
+        await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
+        await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => named);
+        Assert.True(harvest.IsCompleted);
+        Assert.NotNull(harvest.Fault);
+        // A failed harvest is not reused: the next row asks the service again.
+        Assert.False(harvest.CanReuseFor("https://page.example.test", "https://page.example.test"));
+    }
+
+    [Fact]
+    public async Task Fail_LabelWithCachedPlaylist_StillGetsIt_LateWaitersToo()
+    {
+        var harvest = new MpHarvestSession();
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8",
+            RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
+        });
+
+        harvest.Fail(Fault());
+
+        Assert.Equal("https://stream.example.test/a.m3u8", (await harvest.WaitForAsync("Chip A", CancellationToken.None))?.Url);
+        await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => harvest.WaitForAsync("Chip B", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ErrorEvent5xx_FailsAsInfrastructure_4xxIsAMiss()
+    {
+        var infra = new MpHarvestSession();
+        infra.Apply(new MpPlayEvent { Type = "error", StatusCode = 500, Error = "mp play execution failed" });
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => infra.WaitForAsync("Chip A", CancellationToken.None));
+        Assert.Equal(LocalServiceUnavailableReason.ServiceError, ex.Reason);
+
+        var miss = new MpHarvestSession();
+        miss.Apply(new MpPlayEvent { Type = "error", StatusCode = 404, Error = "M3U8 not captured from MP page." });
+        Assert.Null(await miss.WaitForAsync("Chip A", CancellationToken.None));
+        Assert.Null(miss.Fault);
+    }
+
+    [Fact]
+    public void Fail_AfterDone_IsIgnored()
+    {
+        var harvest = new MpHarvestSession();
+        harvest.Complete(failed: false);
+
+        harvest.Fail(Fault());
+
+        Assert.Null(harvest.Fault);
+    }
+
     [Fact]
     public async Task WaitForAsync_ReturnsFirstChipWithoutWaitingForLaterLabels()
     {

@@ -475,7 +475,8 @@ public class StreamResolver(
             {
                 return await ResolveM3U8ResponseInternalAsync(stream, cancellationToken).ConfigureAwait(false);
             }
-            catch (LocalServiceUnavailableException ex) when (attempt < InfrastructureRetryDelays.Length)
+            // MP disabled / auth rejected won't clear in seconds: defer at once.
+            catch (LocalServiceUnavailableException ex) when (attempt < InfrastructureRetryDelays.Length && ex.IsRetryable)
             {
                 logger.LogInformation(
                     "[StreamResolver] Local service unavailable for {Channel} ({Reason}); retry {Attempt}/{Max} in {Delay}s",

@@ -101,6 +101,21 @@ public class LocalLanPlayService(
     private MpHarvestSession? _mpHarvest;
     private string? _mpHarvestPage;
 
+    /// <summary>
+    /// After <c>/mp rejected: V2/MP scrape disabled</c>, MP rows on that
+    /// service are answered from memory for this long (no POST), as
+    /// <see cref="LocalServiceUnavailableReason.MpDisabled"/>. The client never
+    /// tries to switch V2/MP back on.
+    /// </summary>
+    internal static readonly TimeSpan MpDisabledMemory = TimeSpan.FromSeconds(60);
+
+    private readonly object _mpDisabledGate = new();
+    private string? _mpDisabledBaseUrl;
+    private DateTimeOffset _mpDisabledAt;
+
+    /// <summary>Test seam: clock for <see cref="MpDisabledMemory"/>.</summary>
+    internal Func<DateTimeOffset> Clock { get; set; } = static () => DateTimeOffset.UtcNow;
+
     public HttpStatusCode? LastHealthStatus { get; private set; }
 
     public string? DiscoveredServiceVersion => _cachedServiceVersion;
@@ -679,7 +694,8 @@ public class LocalLanPlayService(
         }
     }
 
-    private static readonly TimeSpan MpHarvestTimeout = TimeSpan.FromSeconds(330);
+    /// <summary>Our own cap on one /mp harvest (settable for tests).</summary>
+    internal TimeSpan MpHarvestTimeout { get; set; } = TimeSpan.FromSeconds(330);
 
     private Task<M3U8Response?> CallMpEndpointAsync(
         string baseUrl,
@@ -687,6 +703,11 @@ public class LocalLanPlayService(
         string? playerStreamName,
         CancellationToken cancellationToken)
     {
+        if (IsMpDisabledRemembered(baseUrl))
+        {
+            return Task.FromException<M3U8Response?>(MpDisabledException());
+        }
+
         lock (_mpHarvestGate)
         {
             if (_mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true)
@@ -745,12 +766,17 @@ public class LocalLanPlayService(
                 string.IsNullOrWhiteSpace(playerStreamName) ? "" : $" (stream={playerStreamName.Trim()})");
             using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             RecordServiceResponded();
+            // A 401/403 or a 5xx is the service talking about itself, not about
+            // the stream: fail the harvest as infrastructure so the resolver
+            // defers the row (never Failed, never reported). Only a 2xx with no
+            // playlist, or a 4xx such as 404 "M3U8 not captured", is a verdict.
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 logger.LogWarning(
                     "[LocalLanPlay] POST /mp rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
                     streamUrl);
-                harvest.Complete(failed: true);
+                harvest.Fail(new LocalServiceUnavailableException(
+                    LocalServiceUnavailableReason.Unauthorized, "POST /mp rejected with 401 Unauthorized"));
                 return;
             }
 
@@ -759,7 +785,32 @@ public class LocalLanPlayService(
                 logger.LogWarning(
                     "[LocalLanPlay] POST /mp rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
                     streamUrl);
-                harvest.Complete(failed: true);
+                harvest.Fail(new LocalServiceUnavailableException(
+                    LocalServiceUnavailableReason.Unauthorized, "POST /mp rejected with 403 Forbidden"));
+                return;
+            }
+
+            if ((int)response.StatusCode >= 500)
+            {
+                var body = await ReadErrorBodyAsync(response, cts.Token).ConfigureAwait(false);
+                if (IsMpScrapeDisabled(body))
+                {
+                    RememberMpDisabled(baseUrl);
+                    logger.LogInformation(
+                        "[LocalLanPlay] POST /mp rejected by {BaseUrl}: V2/MP scrape disabled. {StreamUrl} is unavailable here, not dead (deferred, not reported)",
+                        baseUrl, streamUrl);
+                    harvest.Fail(MpDisabledException());
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}: {Body}. Local service error, not a stream verdict",
+                        (int)response.StatusCode, streamUrl, body);
+                    harvest.Fail(new LocalServiceUnavailableException(
+                        LocalServiceUnavailableReason.ServiceError,
+                        $"POST /mp returned {(int)response.StatusCode}"));
+                }
+
                 return;
             }
 
@@ -826,13 +877,102 @@ public class LocalLanPlayService(
             logger.LogDebug(ex, "[LocalLanPlay] POST /mp cancelled for {StreamUrl}", streamUrl);
             harvest.Cancel();
         }
+        catch (Exception ex) when (ex is OperationCanceledException)
+        {
+            // Our MpHarvestTimeout, not the caller. Chrome may still be soaking:
+            // that proves nothing about the stream.
+            var alive = false;
+            try
+            {
+                alive = await CheckHealthAsync(baseUrl, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception healthEx) when (IsCallerCancellation(healthEx, cancellationToken))
+            {
+                harvest.Cancel();
+                return;
+            }
+            catch (Exception healthEx)
+            {
+                logger.LogDebug(healthEx, "[LocalLanPlay] Health check after POST /mp timeout failed");
+            }
+
+            logger.LogInformation(
+                "[LocalLanPlay] POST /mp for {StreamUrl} exceeded our {Timeout}s timeout (service alive: {Alive}); deferring, not failing",
+                streamUrl, MpHarvestTimeout.TotalSeconds, alive);
+            harvest.Fail(new LocalServiceUnavailableException(
+                alive || LastHealthStatus is not null
+                    ? LocalServiceUnavailableReason.CallTimeout
+                    : LocalServiceUnavailableReason.ConnectionFailed,
+                $"POST /mp exceeded {MpHarvestTimeout.TotalSeconds:F0}s", ex));
+        }
+        catch (Exception ex) when (IsConnectionFailure(ex))
+        {
+            logger.LogInformation(ex, "[LocalLanPlay] Could not connect to local service {BaseUrl} for POST /mp {StreamUrl}",
+                baseUrl, streamUrl);
+            RecordConnectionFailure(baseUrl, ex);
+            harvest.Fail(new LocalServiceUnavailableException(
+                LocalServiceUnavailableReason.ConnectionFailed,
+                "Connection to local service failed during POST /mp", ex));
+        }
         catch (Exception ex)
         {
             logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
                 baseUrl, streamUrl);
-            if (IsConnectionFailure(ex))
-                RecordConnectionFailure(baseUrl, ex);
-            harvest.Complete(failed: true);
+            harvest.Fail(new LocalServiceUnavailableException(
+                LocalServiceUnavailableReason.ConnectionFailed,
+                "POST /mp failed", ex));
+        }
+    }
+
+    private static async Task<string> ReadErrorBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.Content is null)
+            return string.Empty;
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return body.Length > 500 ? body[..500] : body;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// LocalService answers <c>503 {"error":"V2/MP scrape disabled on this local service"}</c>
+    /// when its MP gate is off (log line: <c>/mp rejected: V2/MP scrape disabled</c>).
+    /// </summary>
+    internal static bool IsMpScrapeDisabled(string? body) =>
+        !string.IsNullOrEmpty(body)
+        && body.Contains("scrape disabled", StringComparison.OrdinalIgnoreCase);
+
+    private static LocalServiceUnavailableException MpDisabledException() =>
+        new(LocalServiceUnavailableReason.MpDisabled, "V2/MP scrape disabled on the local service");
+
+    private void RememberMpDisabled(string baseUrl)
+    {
+        lock (_mpDisabledGate)
+        {
+            _mpDisabledBaseUrl = baseUrl;
+            _mpDisabledAt = Clock();
+        }
+    }
+
+    private bool IsMpDisabledRemembered(string baseUrl)
+    {
+        lock (_mpDisabledGate)
+        {
+            if (_mpDisabledBaseUrl is null)
+                return false;
+            if (!string.Equals(_mpDisabledBaseUrl, baseUrl, StringComparison.OrdinalIgnoreCase)
+                || Clock() - _mpDisabledAt >= MpDisabledMemory)
+            {
+                _mpDisabledBaseUrl = null;
+                return false;
+            }
+
+            return true;
         }
     }
 
@@ -873,12 +1013,17 @@ public class LocalLanPlayService(
                     logger.LogWarning(
                         "[LocalLanPlay] GET /play rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
                         streamUrl);
+                    // Our token, not the stream: never a Failed row or a crowd report.
+                    throw new LocalServiceUnavailableException(
+                        LocalServiceUnavailableReason.Unauthorized, "GET /play rejected with 401 Unauthorized");
                 }
                 else if (response.StatusCode == HttpStatusCode.Forbidden)
                 {
                     logger.LogWarning(
                         "[LocalLanPlay] GET /play rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
                         streamUrl);
+                    throw new LocalServiceUnavailableException(
+                        LocalServiceUnavailableReason.Unauthorized, "GET /play rejected with 403 Forbidden");
                 }
                 else
                 {
@@ -920,6 +1065,10 @@ public class LocalLanPlayService(
             // / TaskCanceledException, which must not fall through to "return
             // null" and invalidate discovery.
             throw ToCallerCancellation(ex, cancellationToken);
+        }
+        catch (LocalServiceUnavailableException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is OperationCanceledException)
         {
