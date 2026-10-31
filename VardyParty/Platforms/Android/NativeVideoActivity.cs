@@ -874,12 +874,20 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] Current stream has no ResolvedM3U8Url — reverting index (was showing {Channel})",
                         current.Stream?.Channel ?? "(null)");
-                    _switching?.SwitchToPreviousStream();
+                    RevertIndexToPlaying();
                     return;
                 }
 
                 if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
                     return;
+
+                // Rule 3 (docs "No loops"): same feed as a failed or the playing stream - skip it.
+                if (_pool?.DuplicateFeedReason(current, url, _m3u8Url) is { } dupCached)
+                {
+                    _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupCached);
+                    _pool.SkipDuplicateTarget(current, dupCached, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                    return;
+                }
 
                 ApplySoakHeadersFromStream(current);
                 _logger?.LogInformation(
@@ -965,7 +973,7 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] Fresh /play returned no URL for {Channel} — reverting index",
                         current.Stream?.Channel ?? "(null)");
-                    RunOnUiThread(() => _switching?.SwitchToPreviousStream());
+                    RunOnUiThread(RevertIndexToPlaying);
                     return;
                 }
 
@@ -979,6 +987,15 @@ namespace VardyParty.Platforms.Android
                         return;
                     if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
                         return;
+
+                    // Rule 3 (docs "No loops"): the fresh URL is a feed that failed this
+                    // cycle, or the one already playing - skip it, inherit its status.
+                    if (_pool?.DuplicateFeedReason(current, url, _m3u8Url) is { } dupFresh)
+                    {
+                        _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupFresh);
+                        _pool.SkipDuplicateTarget(current, dupFresh, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                        return;
+                    }
 
                     ApplySoakHeadersFromStream(current);
                     _logger?.LogInformation(
@@ -1580,6 +1597,8 @@ namespace VardyParty.Platforms.Android
                         _activity._behindLiveWindowRecoveries = 0;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
+                    // Ready is not "working" on Android until a picture shows (audio-only HLS is READY too).
+                    _activity.ProbeVideo();
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
                     // Update overlay UI now that player is ready
@@ -1638,7 +1657,16 @@ namespace VardyParty.Platforms.Android
                 }
             }
 
-            public void OnVideoSizeChanged(VideoSize? videoSize) { }
+            public void OnVideoSizeChanged(VideoSize? videoSize)
+            {
+                // A real picture size means the stream has video (docs "Audio-only streams").
+                try
+                {
+                    if (videoSize is { Width: > 0, Height: > 0 })
+                        _activity.NoteVideoSeen("size " + videoSize.Width + "x" + videoSize.Height);
+                }
+                catch (Exception ex) { _activity.LogIgnored("OnVideoSizeChanged", ex); }
+            }
             public void OnIsLoadingChanged(bool isLoading)
             {
                 // isLoading only means "fetching more media" (true for much of a healthy HLS stream, including
@@ -1686,7 +1714,11 @@ namespace VardyParty.Platforms.Android
                 _activity._statusTracker.Reset();
                 _activity.RefreshPlaybackStatus();
             }
-            public void OnRenderedFirstFrame() { }
+            public void OnRenderedFirstFrame()
+            {
+                try { _activity.NoteVideoSeen("first frame"); }
+                catch (Exception ex) { _activity.LogIgnored("OnRenderedFirstFrame", ex); }
+            }
             public void OnRepeatModeChanged(int repeatMode) { }
             public void OnSeekBackIncrementChanged(long seekBackIncrementMs) { }
             public void OnSeekForwardIncrementChanged(long seekForwardIncrementMs) { }

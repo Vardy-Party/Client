@@ -377,8 +377,11 @@ above shows both. They are merged only when the media proves it. Rules (normativ
 2. **Proof** (`MirrorProofPolicy.Evaluate`, pure). Either
    (a) both names are a PTS clock with the same stem, and the live-edge numbers differ by the time
    between the two reads (33-bit wrap aware) within **+/-5 s**; or
-   (b) live-edge PROGRAM-DATE-TIME agrees within **~2 s** after the same elapsed-time correction,
-   with the same target duration and the same naming pattern (letter runs `a`, digit runs `9`).
+   (b) both sides have the **same segment-name stem** (ordinal, non-empty; different stems are
+   "different segment-name stems", not proven) and live-edge PROGRAM-DATE-TIME agrees within **~2 s**
+   after the same elapsed-time correction, with the same target duration and the same naming pattern
+   (letter runs `a`, digit runs `9`). Two channels from one packager share a clock and a naming
+   pattern, so PDT alone never proves a mirror (31 Oct 2026, v224).
    If (a) applies and is out of tolerance it is not proven; (b) is not tried.
 3. **Never a reason:** host-name similarity, URL shape, or catalog labels. Missing or ambiguous
    evidence (no playlist evidence, single segment, counter names without PROGRAM-DATE-TIME) never merges.
@@ -494,6 +497,23 @@ At 20:26:04 and 20:26:20 UK on 31 Oct 2026, techydeals and 4Kstream were reporte
 6. Every revert also puts the pool index back on the last-good row (`IPlaybackCommandHost.RevertPoolIndexTo`, under index-switch suppression), so the channel shown matches what plays on every platform.
 7. A first start (no last-good) is unchanged: fresh `/play` once, then drop and advance.
 
+### Audio-only streams (31 Oct 2026, v224)
+
+On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture (0x0, a looping AAC segment). ExoPlayer raised READY, so the session reported it working and made it last good; every failure then reverted to it and Next kept landing on it. Rules (`PlaybackSessionController`, `PlaybackPolicy`; tests in `AudioOnlyLoopGuardBusinessRulesTests`):
+
+1. **Video confirmation (Android only).** `EnableVideoConfirmation()` makes Ready alone "established, not working". The host raises `MediaEngineEvent.VideoProbe(generation, hasVideo)` on READY, on the first rendered frame or a non-zero video size, and on every status-watchdog tick (500 ms) until confirmed. The first probe with video after Ready sends `ReportWorking` once and sets last good.
+2. **No picture = stream failure.** `NoVideoTimeout` (default 8 s, configurable) after Ready with no video fails the stream with `"No video (audio only)"`: reported failed (never working), its feed is marked failed, no same-stream retry. It reverts to an eligible last good on another feed, otherwise advances to an untried stream, otherwise stops.
+3. **Windows, Linux and Apple keep confirmation off**: Ready still reports working and sets last good there. Their hosts do not raise `VideoProbe` yet.
+
+### No loops (31 Oct 2026, v224)
+
+1. **Revert eligibility.** Last good is only ever a stream that showed video (rule 1 above) and whose feed has not failed this cycle. A stream that fails clears last good when it is the last good stream or the same feed.
+2. **Tried this cycle.** A stream that fails for a stream reason is marked in the pool (`IStreamSwitchingService.MarkTriedInCycle`) for `FailedInCycleTtl` (2 min). A failure that is not a token/playlist error also marks its **feed** (m3u8 identity key, including proven-mirror aliases), so every row resolving to it is skipped. Token failures mark the row only, so a promoted fallback with its own token still plays. Video confirmation clears the marks. Marks never remove a row or change a number.
+3. **Resolved-URL identity (Rule 3).** After `/play` (or with a reusable cached URL), a target whose `M3u8IdentityKey` is a feed that failed this cycle is a duplicate: on auto-advance it is skipped and dropped inheriting the failure (`NotifyDuplicateOfFailed`, no extra report); on Next/Prev/chip it is marked, the index goes back to the playing row and the session moves on. A target resolving to the feed already playing on another row is skipped the same way (unless forced).
+4. **Next only goes to untried streams.** `SwitchToNextStream`/`SwitchToPreviousStream`/`GetNextHealthyStream`/`WouldWrapOnNext` skip marked rows; with no marks the index arithmetic (and wraparound) is unchanged. "Untried" means not failed or skipped this cycle; streams that played fine earlier stay eligible.
+5. **Nothing untried.** User Next/Prev stays on the current stream with the toast "No other working stream right now". An automatic advance with nothing untried goes back to an eligible last good, otherwise closes with `"No working stream right now — retrying in background"` (testing resumes). Back always closes the player.
+6. **Infrastructure failures never mark or drop** a stream (unchanged).
+7. Logs: `[Cycle] tried+failed: <channel url> feed=<bool> (<reason>)`, `[Cycle] Next: no untried stream`, `[NativeVideoActivity] Video confirmed (first frame|size WxH)`, `Skipping <channel>: Same feed as ...`.
 ### Local service (`LocalLanPlayService`, `LocalServiceEndpointCache`)
 
 - `ResolveM3U8UrlAsync` returns `null` only when the service answered with no playlist (a stream failure). Infrastructure failures throw `LocalServiceUnavailableException` with `EndpointUnknown`, `CallTimeout` or `ConnectionFailed`.

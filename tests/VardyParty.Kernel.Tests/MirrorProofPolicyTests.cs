@@ -212,12 +212,12 @@ public class MirrorProofPolicyTests
     [Fact]
     public void ProgramDateTime_WithinTwoSeconds_SameTargetAndPattern_IsProven()
     {
-        // Counter-named segments (no PTS clock) but PROGRAM-DATE-TIME agrees once the
-        // 60s between the reads is taken out.
+        // Counter-named segments (no PTS clock) with the same name stem, and
+        // PROGRAM-DATE-TIME agrees once the 60s between the reads is taken out.
         var a = Evidence("https://a.example/live/x.m3u8",
             PtsPlaylist("chA", 1001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z"), At2021);
         var b = Evidence("https://b.example/live/y.m3u8",
-            PtsPlaylist("chB", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:22:31.000Z"), At2021.AddSeconds(60));
+            PtsPlaylist("chA", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:22:31.000Z"), At2021.AddSeconds(60));
 
         var proof = MirrorProofPolicy.Evaluate(a, b);
         Assert.True(proof.IsProven);
@@ -231,9 +231,9 @@ public class MirrorProofPolicyTests
         var a = Evidence("https://a.example/live/x.m3u8",
             PtsPlaylist("chA", 1001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z"), At2021);
         var late = Evidence("https://b.example/live/y.m3u8",
-            PtsPlaylist("chB", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:21:33.000Z"), At2021);
+            PtsPlaylist("chA", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:21:33.000Z"), At2021);
         var otherTarget = Evidence("https://b.example/live/y.m3u8",
-            PtsPlaylist("chB", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z", targetDuration: 4),
+            PtsPlaylist("chA", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z", targetDuration: 4),
             At2021);
 
         Assert.False(MirrorProofPolicy.Evaluate(a, late).IsProven);
@@ -248,5 +248,22 @@ public class MirrorProofPolicyTests
         var b = Evidence("https://b.example/live/y.m3u8",
             PtsPlaylist("media_v1_x", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z"), At2021);
         Assert.False(MirrorProofPolicy.Evaluate(a, b).IsProven);
+    }
+
+    [Fact]
+    public void ProgramDateTime_Agrees_ButSegmentStemsDiffer_IsNotProven()
+    {
+        // Rule (b) tightened (31 Oct 2026): two unrelated live streams can have wall
+        // clocks that agree to the second. Without the same segment-name stem the
+        // clock is not proof.
+        var a = Evidence("https://a.example/live/x.m3u8",
+            PtsPlaylist("chA", 1001, ptsStep: 1, programDateTime: "2026-10-31T20:21:30.000Z"), At2021);
+        var b = Evidence("https://b.example/live/y.m3u8",
+            PtsPlaylist("chB", 2001, ptsStep: 1, programDateTime: "2026-10-31T20:22:30.500Z"), At2021.AddSeconds(60));
+
+        var proof = MirrorProofPolicy.Evaluate(a, b);
+        Assert.False(proof.IsProven);
+        Assert.Equal(MirrorProofBasis.None, proof.Basis);
+        Assert.Equal("different segment-name stems", proof.Reason);
     }
 }

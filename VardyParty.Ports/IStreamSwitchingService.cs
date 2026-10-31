@@ -95,4 +95,24 @@ public interface IStreamSwitchingService
     /// Removes the current stream from the healthy list (used when playback fails)
     /// </summary>
     bool RemoveCurrentStream();
+
+    // ---- Tried-this-cycle marks (docs/STREAM_PLAYBACK_RULES.md "No loops") ----
+    // A row that failed for a stream reason (including "No video (audio only)") is
+    // skipped by Next/Previous/auto-advance for a short TTL. Rows keep their numbers;
+    // marks never remove anything. Defaults keep other implementations unchanged.
+
+    /// <summary>Marks <paramref name="row"/> as tried-and-failed this cycle; when <paramref name="feedUrl"/> is set its feed (m3u8 identity) is marked failed too.</summary>
+    void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason) { }
+
+    /// <summary>Clears the tried mark of <paramref name="row"/> and the failed mark of <paramref name="feedUrl"/>'s feed (it showed video).</summary>
+    void ClearTriedInCycle(EnrichedStream? row, string? feedUrl) { }
+
+    /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, or its feed failed).</summary>
+    bool IsSkippedInCycle(EnrichedStream? row) => false;
+
+    /// <summary>The reason <paramref name="feedUrl"/>'s feed failed this cycle, or null.</summary>
+    string? FailedFeedReason(string? feedUrl) => null;
+
+    /// <summary>True when Next has somewhere untried to go (another unskipped row, or untried fallbacks for the current one).</summary>
+    bool HasUntriedOther() => true;
 }

@@ -11,7 +11,61 @@ namespace VardyParty.Platforms.Android
 {
     public partial class NativeVideoActivity
     {
-        private readonly PlaybackSessionController _session = new();
+        // Android: ExoPlayer reports READY for audio-only HLS, so a stream is only
+        // "working" once it shows a picture (docs/STREAM_PLAYBACK_RULES.md "Audio-only streams").
+        private readonly PlaybackSessionController _session = CreateSession();
+        private long _videoSeenGeneration = -1;
+
+        private static PlaybackSessionController CreateSession()
+        {
+            var session = new PlaybackSessionController();
+            session.EnableVideoConfirmation();
+            return session;
+        }
+
+        /// <summary>ExoPlayer showed a picture for the current attach (first frame or a real video size).</summary>
+        private void NoteVideoSeen(string signal)
+        {
+            var gen = CurrentAttachGeneration;
+            if (Interlocked.Exchange(ref _videoSeenGeneration, gen) != gen)
+                _logger?.LogInformation("[NativeVideoActivity] Video confirmed ({Signal})", signal);
+            ProbeVideo();
+        }
+
+        /// <summary>
+        /// Tells the session whether this attach has shown video. Called on READY, on the
+        /// first picture and on every status-watchdog tick until confirmed; the session fails
+        /// the stream with "No video (audio only)" after its no-video timeout.
+        /// </summary>
+        private void ProbeVideo()
+        {
+            try
+            {
+                if (_session.Snapshot.IsVideoConfirmed || _player == null)
+                    return;
+                var gen = CurrentAttachGeneration;
+                _engine.Raise(MediaEngineEvent.VideoProbe(gen, Interlocked.Read(ref _videoSeenGeneration) == gen));
+            }
+            catch (Exception ex) { LogIgnored("ProbeVideo", ex); }
+        }
+
+        /// <summary>Puts the pool index back on the row that is playing (no re-attach); falls back to Previous.</summary>
+        private void RevertIndexToPlaying()
+        {
+            if (_pool?.RevertIndexToPlayingUrl(_m3u8Url) == true)
+                return;
+            if (_pool?.FindPlayingRow(_m3u8Url, null) is { } playing && ReferenceEquals(playing, _switching?.GetCurrentStream()))
+                return;
+            _switching?.SwitchToPreviousStream();
+        }
+
+        private void RunWithIndexSwitchSuppressed(Action action)
+        {
+            var previous = _suppressIndexDrivenSwitch;
+            _suppressIndexDrivenSwitch = true;
+            try { action(); }
+            finally { _suppressIndexDrivenSwitch = previous; }
+        }
         private readonly DelegatingMediaEngine _engine = new();
         private PlaybackPoolCommandActions? _pool;
         private bool _suppressIndexDrivenSwitch;
@@ -382,6 +436,7 @@ namespace VardyParty.Platforms.Android
 
                         _isPreparing = true;
                         _m3u8Url = m3u8Url;
+                        Interlocked.Exchange(ref _videoSeenGeneration, -1);
                         _playerFaulted = false;
                         _statusTracker.Reset();
                         StartStatusWatchdog();

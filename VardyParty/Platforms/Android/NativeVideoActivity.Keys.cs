@@ -83,7 +83,9 @@ namespace VardyParty.Platforms.Android
             {
                 var message = switched
                     ? (next ? "Next stream…" : "Previous stream…")
-                    : "No other stream yet";
+                    : (_switching?.GetHealthyStreams().Count ?? 0) > 1
+                        ? PlaybackPolicy.NoOtherWorkingStreamText
+                        : "No other stream yet";
                 Toast.MakeText(this, message, ToastLength.Short)?.Show();
             }
             catch (Exception ex) { LogIgnored("Toast.SwitchFeedback", ex); }

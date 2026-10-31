@@ -180,6 +180,8 @@ namespace VardyParty.Platforms.Android
                 {
                     if (!live || PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle) || IsFinishing || IsDestroyed) return;
                     RefreshPlaybackStatus();
+                    // Until a picture shows, let the session time out an audio-only stream.
+                    ProbeVideo();
                 }
                 catch (Exception ex) { LogIgnored("StatusWatchdogTick", ex); }
                 finally

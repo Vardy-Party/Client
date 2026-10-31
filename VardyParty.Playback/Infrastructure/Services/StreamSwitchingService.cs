@@ -38,6 +38,17 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     // the visible entry's key, so later rows resolving to that mirror URL merge directly.
     private readonly Dictionary<string, string> _mirrorKeyAliases = new(StringComparer.OrdinalIgnoreCase);
 
+    // Tried-this-cycle marks (docs "No loops"). A row that failed for a stream reason is
+    // skipped by Next/Previous/auto-advance until the TTL passes; a feed (m3u8 identity)
+    // that failed makes every row resolving to it skipped too. Marks never drop a row or
+    // change a number. With no active marks the original index arithmetic is unchanged.
+    private readonly Dictionary<EnrichedStream, (DateTimeOffset At, string Reason)> _triedRows = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, (DateTimeOffset At, string Reason)> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+    private Func<DateTimeOffset> _clock = static () => DateTimeOffset.UtcNow;
+
+    /// <summary>Test seam: the clock the tried-this-cycle TTL reads (a method so property-filling fixtures leave it alone).</summary>
+    public void SetClock(Func<DateTimeOffset> clock) => _clock = clock ?? (static () => DateTimeOffset.UtcNow);
+
     private static string BuildDedupKey(EnrichedStream stream) =>
         StreamUrlNormalizer.M3u8IdentityKey(stream.ResolvedM3U8Url);
 
@@ -66,6 +77,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _identityKeys.Clear();
         _fallbacks.Clear();
         _mirrorKeyAliases.Clear();
+        _triedRows.Clear();
+        _failedFeeds.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -297,6 +310,18 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         {
             if (_healthyStreams.Count == 0) return false;
 
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                if (untried < 0)
+                {
+                    _logger.LogInformation("[Cycle] Next: no untried stream (all others failed this cycle)");
+                    return false;
+                }
+
+                return SwitchToStream(untried);
+            }
+
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return SwitchToStream(nextIndex);
         }
@@ -307,6 +332,18 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         lock (_healthyStreams)
         {
             if (_healthyStreams.Count == 0) return false;
+
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(-1);
+                if (untried < 0)
+                {
+                    _logger.LogInformation("[Cycle] Previous: no untried stream (all others failed this cycle)");
+                    return false;
+                }
+
+                return SwitchToStream(untried);
+            }
 
             int prevIndex = (_currentStreamIndex - 1 + _healthyStreams.Count) % _healthyStreams.Count;
             return SwitchToStream(prevIndex);
@@ -356,6 +393,12 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             if (_healthyStreams.Count == 0)
                 return null;
 
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                return untried >= 0 ? _healthyStreams[untried] : null;
+            }
+
             // Get the next stream without switching to it
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return nextIndex < _healthyStreams.Count ? _healthyStreams[nextIndex] : null;
@@ -369,6 +412,12 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             if (_healthyStreams.Count == 0 || _currentStreamIndex < 0)
             {
                 return false;
+            }
+
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                return untried >= 0 && untried <= _currentStreamIndex;
             }
 
             return ((_currentStreamIndex + 1) % _healthyStreams.Count) == 0;
@@ -445,6 +494,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             _identityKeys.Clear();
             _fallbacks.Clear();
             _mirrorKeyAliases.Clear();
+            _triedRows.Clear();
+            _failedFeeds.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
@@ -502,6 +553,210 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
             return true;
         }
+    }
+
+    // ---- Tried-this-cycle (docs/STREAM_PLAYBACK_RULES.md "No loops") ----
+
+    public void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason)
+    {
+        lock (_healthyStreams)
+        {
+            var now = _clock();
+            if (row is not null)
+            {
+                _triedRows[row] = (now, reason);
+            }
+
+            var feedKey = StreamUrlNormalizer.M3u8IdentityKey(feedUrl);
+            if (feedKey.Length > 0)
+            {
+                _failedFeeds[feedKey] = (now, reason);
+                if (row is not null && _identityKeys.TryGetValue(row, out var rowKey) && rowKey.Length > 0)
+                {
+                    _failedFeeds[rowKey] = (now, reason);
+                }
+            }
+
+            _logger.LogInformation("[Cycle] tried+failed: {Row} feed={Feed} ({Reason})",
+                row is null ? "?" : Describe(row), feedKey.Length > 0, reason);
+        }
+    }
+
+    public void ClearTriedInCycle(EnrichedStream? row, string? feedUrl)
+    {
+        lock (_healthyStreams)
+        {
+            if (row is not null)
+            {
+                _triedRows.Remove(row);
+                if (_identityKeys.TryGetValue(row, out var rowKey))
+                {
+                    _failedFeeds.Remove(rowKey);
+                }
+            }
+
+            var feedKey = StreamUrlNormalizer.M3u8IdentityKey(feedUrl);
+            if (feedKey.Length > 0)
+            {
+                _failedFeeds.Remove(feedKey);
+            }
+        }
+    }
+
+    public bool IsSkippedInCycle(EnrichedStream? row)
+    {
+        lock (_healthyStreams)
+        {
+            return row is not null && IsRowSkipped(row);
+        }
+    }
+
+    public string? FailedFeedReason(string? feedUrl)
+    {
+        lock (_healthyStreams)
+        {
+            return TryGetFailedFeed(StreamUrlNormalizer.M3u8IdentityKey(feedUrl), out var reason) ? reason : null;
+        }
+    }
+
+    public bool HasUntriedOther()
+    {
+        lock (_healthyStreams)
+        {
+            for (var i = 0; i < _healthyStreams.Count; i++)
+            {
+                if (i != _currentStreamIndex && !IsRowSkipped(_healthyStreams[i]))
+                {
+                    return true;
+                }
+            }
+
+            // Hidden fallbacks for the current entry (promoted in place on removal) are
+            // untried only while that feed has not failed.
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+            return current is not null
+                   && _identityKeys.TryGetValue(current, out var key)
+                   && _fallbacks.TryGetValue(key, out var alternates)
+                   && alternates.Count > 0
+                   && !TryGetFailedFeed(key, out _);
+        }
+    }
+
+    private bool AnySkippedRow()
+    {
+        if (_triedRows.Count == 0 && _failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var row in _healthyStreams)
+        {
+            if (IsRowSkipped(row))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>First unskipped index walking <paramref name="step"/> from current, never current itself; -1 when none.</summary>
+    private int FindUntried(int step)
+    {
+        var count = _healthyStreams.Count;
+        var start = _currentStreamIndex < 0 ? (step > 0 ? -1 : count) : _currentStreamIndex;
+        for (var k = 1; k <= count; k++)
+        {
+            var i = ((start + (step * k)) % count + count) % count;
+            if (i == _currentStreamIndex)
+            {
+                continue;
+            }
+
+            if (!IsRowSkipped(_healthyStreams[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private bool IsRowSkipped(EnrichedStream row)
+    {
+        if (_triedRows.TryGetValue(row, out var mark))
+        {
+            if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)
+            {
+                return true;
+            }
+
+            _triedRows.Remove(row);
+        }
+
+        if (_failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        if (_identityKeys.TryGetValue(row, out var key) && TryGetFailedFeed(key, out _))
+        {
+            return true;
+        }
+
+        var resolvedKey = BuildDedupKey(row);
+        return resolvedKey.Length > 0 && TryGetFailedFeed(resolvedKey, out _);
+    }
+
+    /// <summary>The feed <paramref name="key"/> failed this cycle, directly or through a proven-mirror alias.</summary>
+    private bool TryGetFailedFeed(string key, out string reason)
+    {
+        reason = string.Empty;
+        if (key.Length == 0 || _failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        if (IsLiveFailedFeed(key, out reason))
+        {
+            return true;
+        }
+
+        if (_mirrorKeyAliases.TryGetValue(key, out var target) && IsLiveFailedFeed(target, out reason))
+        {
+            return true;
+        }
+
+        foreach (var (alias, aliasTarget) in _mirrorKeyAliases)
+        {
+            if (string.Equals(aliasTarget, key, StringComparison.OrdinalIgnoreCase)
+                && IsLiveFailedFeed(alias, out reason))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsLiveFailedFeed(string key, out string reason)
+    {
+        reason = string.Empty;
+        if (!_failedFeeds.TryGetValue(key, out var mark))
+        {
+            return false;
+        }
+
+        if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)
+        {
+            reason = mark.Reason;
+            return true;
+        }
+
+        _failedFeeds.Remove(key);
+        return false;
     }
 
     public void Dispose()

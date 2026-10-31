@@ -32,7 +32,78 @@ public sealed class PlaybackPoolCommandActions(
     private static bool WireHealthyCount(PlaybackSessionController session, IStreamSwitchingService switching)
     {
         session.HealthyStreamCountProvider = () => switching.GetHealthyStreams().Count;
+
+        // Tried-this-cycle (docs "No loops"): a stream that fails for a stream reason is
+        // skipped by Next/auto-advance; one that shows video is cleared; the session asks
+        // the pool whether anything untried is left before advancing.
+        session.ConfigureCycleTracking(
+            streamFailed: (url, reason, feedFailed) =>
+                switching.MarkTriedInCycle(FindRowByUrl(switching, url) ?? switching.GetCurrentStream(), feedFailed ? url : null, reason),
+            streamConfirmed: url =>
+                switching.ClearTriedInCycle(FindRowByUrl(switching, url) ?? switching.GetCurrentStream(), url),
+            untriedStreamAvailable: switching.HasUntriedOther);
         return true;
+    }
+
+    private static EnrichedStream? FindRowByUrl(IStreamSwitchingService switching, string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+        foreach (var row in switching.GetHealthyStreams())
+        {
+            if (string.Equals(row.ResolvedM3U8Url, url, StringComparison.OrdinalIgnoreCase))
+                return row;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Rule 3 (docs "No loops"): after <c>/play</c>, a target whose m3u8 identity is a feed
+    /// that failed this cycle, or the feed already playing on another row, is a duplicate.
+    /// Returns why, or null when <paramref name="targetUrl"/> is new.
+    /// </summary>
+    public string? DuplicateFeedReason(EnrichedStream? target, string? targetUrl, string? playingUrl, bool force = false)
+    {
+        if (string.IsNullOrWhiteSpace(targetUrl))
+            return null;
+        if (switching.FailedFeedReason(targetUrl) is { } failed)
+            return $"Same feed as a failed stream ({failed})";
+        if (force || string.IsNullOrWhiteSpace(playingUrl))
+            return null;
+        var targetKey = StreamUrlNormalizer.M3u8IdentityKey(targetUrl);
+        return targetKey.Length > 0
+               && FindPlayingRow(playingUrl, target) is not null
+               && string.Equals(targetKey, StreamUrlNormalizer.M3u8IdentityKey(playingUrl), StringComparison.OrdinalIgnoreCase)
+            ? "Same feed as the playing stream"
+            : null;
+    }
+
+    /// <summary>
+    /// Skips a duplicate switch target (Rule 3): marks the row tried, puts the pool index
+    /// back on the playing row (suppressed, no re-attach), then moves on to the next
+    /// untried stream, or tells the user there is none. Nothing is reported or removed.
+    /// </summary>
+    public void SkipDuplicateTarget(
+        EnrichedStream target,
+        string why,
+        string? playingUrl,
+        Action<string>? showStatus,
+        Action<Action> runWithIndexSwitchSuppressed)
+    {
+        switching.MarkTriedInCycle(target, null, why);
+        var playing = FindPlayingRow(playingUrl, target);
+        if (playing != null)
+            RevertIndexTo(playing, runWithIndexSwitchSuppressed);
+        if (switching.HasUntriedOther())
+        {
+            applyCommand(PlaybackCommand.FromEffects([new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: why)]));
+            return;
+        }
+
+        showStatus?.Invoke(PlaybackPolicy.NoOtherWorkingStreamText);
+        if (playing is null)
+            applyCommand(PlaybackCommand.FromEffects(session.NotifyNoUntriedStream()));
     }
 
     public void ClearCurrentResolvedUrl()
@@ -55,6 +126,18 @@ public sealed class PlaybackPoolCommandActions(
         if (current == null)
             return;
 
+        // A promoted fallback / clamped row that already failed this cycle is never
+        // replayed (docs "No loops"): move to the next untried row, or stop.
+        if (switching.IsSkippedInCycle(current))
+        {
+            if (!switching.SwitchToNextStream() || (current = switching.GetCurrentStream()) == null
+                || switching.IsSkippedInCycle(current))
+            {
+                applyCommand(PlaybackCommand.FromEffects(session.NotifyNoUntriedStream()));
+                return;
+            }
+        }
+
         // FB/V1 soak tokens are one-shot. Find/prefetch ResolvedM3U8Url is often
         // already burned — always /play again when a resolver is wired. Fall back
         // to the cached URL only when fresh resolve fails (and mark usedCachedUrl
@@ -64,6 +147,8 @@ public sealed class PlaybackPoolCommandActions(
         if (resolveFresh != null
             && PlaybackUrlReusePolicy.CanReuseCached(current, DateTimeOffset.UtcNow))
         {
+            if (TryRejectFailedFeed(current.ResolvedM3U8Url))
+                return;
             attachViaSession(current.ResolvedM3U8Url!, true, true);
             return;
         }
@@ -93,7 +178,19 @@ public sealed class PlaybackPoolCommandActions(
         if (string.IsNullOrWhiteSpace(url))
             return;
 
+        if (TryRejectFailedFeed(url))
+            return;
+
         attachViaSession(url, usedCachedUrl, true);
+    }
+
+    /// <summary>Rule 3 on the auto-advance path: a URL whose feed failed this cycle is skipped, inheriting that failure.</summary>
+    private bool TryRejectFailedFeed(string? url)
+    {
+        if (switching.FailedFeedReason(url) is not { } failed)
+            return false;
+        applyCommand(PlaybackCommand.FromEffects(session.NotifyDuplicateOfFailed($"Same feed as a failed stream ({failed})")));
+        return true;
     }
 
     /// <summary>
@@ -127,6 +224,12 @@ public sealed class PlaybackPoolCommandActions(
             if (string.IsNullOrWhiteSpace(cached)
                 || (!force && string.Equals(playingUrl, cached, StringComparison.OrdinalIgnoreCase)))
             {
+                return false;
+            }
+
+            if (DuplicateFeedReason(target, cached, playingUrl, force) is { } dupCached)
+            {
+                SkipDuplicateTarget(target, dupCached, playingUrl, showStatus, runWithIndexSwitchSuppressed);
                 return false;
             }
 
@@ -168,6 +271,12 @@ public sealed class PlaybackPoolCommandActions(
 
         if (!force && string.Equals(playingUrl, fresh, StringComparison.OrdinalIgnoreCase))
             return false;
+
+        if (DuplicateFeedReason(target, fresh, playingUrl, force) is { } dupFresh)
+        {
+            SkipDuplicateTarget(target, dupFresh, playingUrl, showStatus, runWithIndexSwitchSuppressed);
+            return false;
+        }
 
         attachViaSession(fresh, false, true);
         return true;

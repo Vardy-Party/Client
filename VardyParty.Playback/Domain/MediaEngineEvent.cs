@@ -20,6 +20,12 @@ public sealed class MediaEngineEvent
     /// <summary>For UserNext/UserPrevious eligibility checks against a candidate URL.</summary>
     public string? CandidateUrl { get; init; }
 
+    /// <summary>
+    /// <see cref="MediaEngineEventKind.VideoProbe"/>: true once the engine has a video
+    /// track with a picture (first frame rendered or a non-zero video size).
+    /// </summary>
+    public bool? HasVideo { get; init; }
+
     public static MediaEngineEvent Ready(long generation) => new()
     {
         Kind = MediaEngineEventKind.Ready,
@@ -54,6 +60,18 @@ public sealed class MediaEngineEvent
         Generation = generation
     };
 
+    /// <summary>
+    /// Whether the attached stream is showing a picture. Engines send it on Ready, when a
+    /// frame or a video size first arrives, and on their status tick until video is
+    /// confirmed (docs/STREAM_PLAYBACK_RULES.md "Audio-only streams").
+    /// </summary>
+    public static MediaEngineEvent VideoProbe(long generation, bool hasVideo) => new()
+    {
+        Kind = MediaEngineEventKind.VideoProbe,
+        Generation = generation,
+        HasVideo = hasVideo
+    };
+
     public static MediaEngineEvent UserNext() => new() { Kind = MediaEngineEventKind.UserNext };
 
     public static MediaEngineEvent UserPrevious() => new() { Kind = MediaEngineEventKind.UserPrevious };
@@ -77,5 +95,8 @@ public enum MediaEngineEventKind
     UserNext,
     UserPrevious,
     UserClose,
-    UserReportBad
+    UserReportBad,
+
+    /// <summary>Engine says whether the stream has video yet (see <see cref="MediaEngineEvent.VideoProbe"/>).</summary>
+    VideoProbe
 }

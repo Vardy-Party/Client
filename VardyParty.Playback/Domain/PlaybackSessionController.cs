@@ -35,9 +35,85 @@ public sealed class PlaybackSessionController
     // to last good WITHOUT reporting or removing the target (docs "Failed switch").
     private bool _recoveringSwitch;
 
+    // Audio-only detection (docs "Audio-only streams"). Per attach: Ready time, whether
+    // the engine has shown a picture, and whether the session has confirmed it.
+    private bool _videoConfirmed;
+    private bool _videoSeen;
+    private DateTimeOffset? _readyAt;
+
+    // Feeds (m3u8 identity keys) that failed this cycle. A last-good stream whose feed
+    // failed is never reverted to (docs "No loops").
+    private readonly Dictionary<string, DateTimeOffset> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+
     public PlaybackSessionController(Func<DateTimeOffset>? clock = null)
     {
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// When true, Ready alone does not make a stream "working": it must also show a
+    /// picture (<see cref="MediaEngineEventKind.VideoProbe"/> with video). A stream that is
+    /// Ready for <see cref="NoVideoTimeout"/> with no picture fails with
+    /// <see cref="PlaybackPolicy.NoVideoReason"/>, and only a stream with video becomes
+    /// last good. Android turns it on (ExoPlayer raises READY for audio-only HLS).
+    /// </summary>
+    /// <remarks>Set through <see cref="EnableVideoConfirmation"/> (a method, so property-filling
+    /// test fixtures never turn it on by accident).</remarks>
+    public bool RequireVideoConfirmation { get; private set; }
+
+    /// <summary>How long after Ready a stream may go without a picture. Default <see cref="PlaybackPolicy.NoVideoTimeout"/>.</summary>
+    public TimeSpan NoVideoTimeout { get; private set; } = PlaybackPolicy.NoVideoTimeout;
+
+    /// <summary>Turns on video confirmation (Android). <paramref name="noVideoTimeout"/> overrides the default 8s.</summary>
+    public void EnableVideoConfirmation(TimeSpan? noVideoTimeout = null)
+    {
+        RequireVideoConfirmation = true;
+        if (noVideoTimeout is { } t && t > TimeSpan.Zero)
+            NoVideoTimeout = t;
+    }
+
+    /// <summary>
+    /// Called when a stream fails for a stream reason, BEFORE the effects run (the pool's
+    /// current row is still the failing one): (url, reason, feedFailed). Infrastructure
+    /// failures never call it. <see cref="PlaybackPoolCommandActions"/> wires it to
+    /// <see cref="Ports.IStreamSwitchingService.MarkTriedInCycle"/>.
+    /// </summary>
+    public Action<string?, string, bool>? StreamFailedInCycle { get; private set; }
+
+    /// <summary>Called when the current stream confirms video (clears its tried mark).</summary>
+    public Action<string?>? StreamConfirmedInCycle { get; private set; }
+
+    /// <summary>
+    /// True when the pool has a stream other than the current one that has not failed
+    /// this cycle. Next and auto-advance only go to untried streams; when there is none
+    /// the session stops instead of looping. Null means "assume yes" (old behaviour).
+    /// </summary>
+    public Func<bool>? UntriedStreamAvailableProvider { get; private set; }
+
+    /// <summary>
+    /// Wires the cycle sinks (a method, not setters, so property-filling fixtures leave them null).
+    /// <see cref="PlaybackPoolCommandActions"/> calls it with the pool.
+    /// </summary>
+    public void ConfigureCycleTracking(
+        Action<string?, string, bool>? streamFailed,
+        Action<string?>? streamConfirmed,
+        Func<bool>? untriedStreamAvailable)
+    {
+        StreamFailedInCycle = streamFailed;
+        StreamConfirmedInCycle = streamConfirmed;
+        UntriedStreamAvailableProvider = untriedStreamAvailable;
+    }
+
+    /// <summary>True when <paramref name="url"/>'s feed failed this cycle.</summary>
+    public bool IsFeedFailedInCycle(string? url)
+    {
+        var key = FeedKey(url);
+        if (key.Length == 0 || !_failedFeeds.TryGetValue(key, out var at))
+            return false;
+        if (_clock() - at < PlaybackPolicy.FailedInCycleTtl)
+            return true;
+        _failedFeeds.Remove(key);
+        return false;
     }
 
     /// <summary>
@@ -64,7 +140,8 @@ public sealed class PlaybackSessionController
         ConsecutiveDownloadFailures = _consecutiveDownloadFailures,
         IsRecovering = _recovering,
         IsRecoveringSwitch = _recoveringSwitch,
-        SameStreamRetries = _sameStreamRetries
+        SameStreamRetries = _sameStreamRetries,
+        IsVideoConfirmed = _videoConfirmed
     };
 
     public StreamMetricsWindow MetricsWindow => _metricsWindow;
@@ -92,6 +169,9 @@ public sealed class PlaybackSessionController
         _isBuffering = false;
         _usedCachedUrl = usedCachedUrl;
         _consecutiveDownloadFailures = 0;
+        _videoConfirmed = false;
+        _videoSeen = false;
+        _readyAt = null;
         // Cache retry flag is sticky for the stream attempt until established or failed start completes.
 
         if (isRecoveryAttach && _recovering)
@@ -136,6 +216,7 @@ public sealed class PlaybackSessionController
             MediaEngineEventKind.UserPrevious => OnUserNavigate(next: false),
             MediaEngineEventKind.UserClose => OnUserClose(),
             MediaEngineEventKind.UserReportBad => OnUserReportBad(engineEvent.Message),
+            MediaEngineEventKind.VideoProbe => OnVideoProbe(engineEvent),
             _ => [new PlaybackEffect(PlaybackEffectKind.None)]
         };
     }
@@ -188,7 +269,7 @@ public sealed class PlaybackSessionController
         if (_state == PlaybackSessionState.Closed)
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
 
-        if (_recoveringSwitch && _hasEstablishedPlayback && !string.IsNullOrWhiteSpace(_lastGoodUrl))
+        if (_recoveringSwitch && _hasEstablishedPlayback && HasEligibleLastGood())
         {
             // Retrying a switch target and the service is unreachable: nothing was
             // learned about either stream. Keep watching last good, report nothing.
@@ -198,17 +279,85 @@ public sealed class PlaybackSessionController
             return RevertSwitchKeepingTarget(why, clearTargetUrl: false);
         }
 
+        return CloseForInfrastructure(reason);
+    }
+
+    private List<PlaybackEffect> CloseForInfrastructure(string? reason)
+    {
         ResetSameStreamRecovery(clearBudget: true);
         _isPreparing = false;
         _state = PlaybackSessionState.Failed;
         var message = string.IsNullOrWhiteSpace(reason)
             ? PlaybackCloseReasons.LocalServiceUnavailable
-            : $"{PlaybackCloseReasons.LocalServiceUnavailable}: {reason}";
+            : reason.StartsWith(PlaybackCloseReasons.LocalServiceUnavailable, StringComparison.OrdinalIgnoreCase)
+                ? reason
+                : $"{PlaybackCloseReasons.LocalServiceUnavailable}: {reason}";
         return
         [
             new PlaybackEffect(PlaybackEffectKind.Stop, Reason: message),
             new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: message)
         ];
+    }
+
+    /// <summary>
+    /// The pool row about to be attached resolved (at <c>/play</c>) to a feed that already
+    /// failed this cycle: sportylive, alxsports ch-9 and smlbn all resolved to premium261
+    /// (audio only) on 31 Oct 2026. It is the same failure, so the row is skipped and
+    /// dropped without being played or reported, and the session moves to the next untried
+    /// stream (or stops when there is none).
+    /// </summary>
+    public IReadOnlyList<PlaybackEffect> NotifyDuplicateOfFailed(string reason)
+    {
+        if (_state == PlaybackSessionState.Closed)
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
+
+        RefreshHealthyStreamCount();
+        ResetSameStreamRecovery(clearBudget: true);
+        _isPreparing = false;
+        // Row only: the feed is already marked.
+        NotifyFailedInCycle(null, reason, feedFailed: false);
+
+        var effects = new List<PlaybackEffect>
+        {
+            new(PlaybackEffectKind.ClearResolvedUrl, Reason: reason),
+            new(PlaybackEffectKind.RemoveCurrentFromPool, Reason: reason)
+        };
+        _healthyStreamCount = Math.Max(0, _healthyStreamCount - 1);
+        if (_healthyStreamCount >= 1 && HasUntriedStream())
+        {
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
+            return effects;
+        }
+
+        effects.AddRange(StopWithNothingUntried(reason));
+        return effects;
+    }
+
+    /// <summary>
+    /// The pool has nothing untried to attach. Go back to a last-good stream that showed
+    /// video and has not failed, or stop with <see cref="PlaybackPolicy.NoWorkingStreamReason"/>.
+    /// </summary>
+    public IReadOnlyList<PlaybackEffect> NotifyNoUntriedStream()
+    {
+        if (_state == PlaybackSessionState.Closed)
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
+        ResetSameStreamRecovery(clearBudget: true);
+        _isPreparing = false;
+        return StopWithNothingUntried(PlaybackPolicy.NoWorkingStreamReason);
+    }
+
+    private List<PlaybackEffect> StopWithNothingUntried(string reason)
+    {
+        if (HasEligibleLastGood())
+        {
+            // Already on it (it is still playing): keep watching it.
+            if (string.Equals(_lastGoodUrl, _currentUrl, StringComparison.OrdinalIgnoreCase))
+                return [new PlaybackEffect(PlaybackEffectKind.None, Reason: PlaybackPolicy.NoOtherWorkingStreamText)];
+            return [RevertToLastGoodEffect($"No untried stream - back to last good. ({reason})")];
+        }
+
+        _state = PlaybackSessionState.Failed;
+        return [new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: PlaybackPolicy.NoWorkingStreamReason)];
     }
 
     /// <summary>
@@ -258,6 +407,10 @@ public sealed class PlaybackSessionController
         _isBuffering = false;
         _consecutiveDownloadFailures = 0;
         _metricsWindow = new StreamMetricsWindow();
+        _videoConfirmed = false;
+        _videoSeen = false;
+        _readyAt = null;
+        _failedFeeds.Clear();
         ResetSameStreamRecovery(clearBudget: true);
     }
 
@@ -269,7 +422,6 @@ public sealed class PlaybackSessionController
         _isPreparing = false;
         _isBuffering = false;
         _hasEstablishedPlayback = true;
-        _lastGoodUrl = _currentUrl;
         _cacheRetryUsed = false;
         _usedCachedUrl = false;
         _consecutiveDownloadFailures = 0;
@@ -280,11 +432,82 @@ public sealed class PlaybackSessionController
         _recoveryAttachPending = false;
         _recoveringSwitch = false;
 
-        return
-        [
-            new PlaybackEffect(PlaybackEffectKind.MarkEstablished, Url: _currentUrl, Generation: _attachGeneration),
-            new PlaybackEffect(PlaybackEffectKind.ReportWorking, Url: _currentUrl, Generation: _attachGeneration)
-        ];
+        if (!RequireVideoConfirmation)
+        {
+            _lastGoodUrl = _currentUrl;
+            return
+            [
+                new PlaybackEffect(PlaybackEffectKind.MarkEstablished, Url: _currentUrl, Generation: _attachGeneration),
+                new PlaybackEffect(PlaybackEffectKind.ReportWorking, Url: _currentUrl, Generation: _attachGeneration)
+            ];
+        }
+
+        // Ready is not "working" yet: ExoPlayer raises READY for an audio-only HLS feed
+        // (premium261, 0x0, looping AAC). Last good and ReportWorking wait for a picture.
+        _readyAt ??= _clock();
+        var effects = new List<PlaybackEffect>
+        {
+            new(PlaybackEffectKind.MarkEstablished, Url: _currentUrl, Generation: _attachGeneration)
+        };
+        if (!_videoConfirmed && _videoSeen)
+            ConfirmVideo(effects);
+        return effects;
+    }
+
+    private IReadOnlyList<PlaybackEffect> OnVideoProbe(MediaEngineEvent e)
+    {
+        if (!PlaybackPolicy.IsCurrentGeneration(Snapshot, e.Generation))
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Stale VideoProbe")];
+
+        if (!RequireVideoConfirmation || _videoConfirmed)
+            return [new PlaybackEffect(PlaybackEffectKind.None)];
+
+        if (e.HasVideo == true)
+        {
+            _videoSeen = true;
+            if (_readyAt is null || _isPreparing)
+                return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Video before Ready")];
+            var effects = new List<PlaybackEffect>();
+            ConfirmVideo(effects);
+            return effects;
+        }
+
+        // Sound but no picture. Wait out a same-stream retry or a prepare first.
+        if (_recovering || _isPreparing || _state is not (PlaybackSessionState.Playing or PlaybackSessionState.Buffering))
+            return [new PlaybackEffect(PlaybackEffectKind.None)];
+
+        if (!PlaybackPolicy.HasNoVideoTimedOut(_readyAt, _clock(), NoVideoTimeout))
+            return [new PlaybackEffect(PlaybackEffectKind.None)];
+
+        return FailNoVideo();
+    }
+
+    /// <summary>
+    /// The stream played for <see cref="NoVideoTimeout"/> with no picture. It is a stream
+    /// failure: reported failed (never working), its feed is marked failed for the cycle,
+    /// and the session goes back to a last good stream with video, or on to the next
+    /// untried stream. It is not retried: a reload gives the same audio-only feed.
+    /// </summary>
+    private List<PlaybackEffect> FailNoVideo()
+    {
+        var reason = PlaybackPolicy.NoVideoReason;
+        _readyAt = null;
+        ResetSameStreamRecovery(clearBudget: true);
+        if (HasEligibleLastGood() && !SameFeed(_lastGoodUrl, _currentUrl))
+            return FailSwitchAndRevert(reason);
+        return FailEstablishedOrAdvance(reason);
+    }
+
+    private void ConfirmVideo(List<PlaybackEffect> effects)
+    {
+        _videoConfirmed = true;
+        _lastGoodUrl = _currentUrl;
+        var key = FeedKey(_currentUrl);
+        if (key.Length > 0)
+            _failedFeeds.Remove(key);
+        try { StreamConfirmedInCycle?.Invoke(_currentUrl); }
+        catch { /* the pool mark is advisory */ }
+        effects.Add(new PlaybackEffect(PlaybackEffectKind.ReportWorking, Url: _currentUrl, Generation: _attachGeneration));
     }
 
     private IReadOnlyList<PlaybackEffect> OnBuffering(MediaEngineEvent e)
@@ -371,7 +594,7 @@ public sealed class PlaybackSessionController
             return TryRecoverSameStream(reason, kind) ?? FailEstablishedOrAdvance(reason);
         }
 
-        if (PlaybackPolicy.ShouldRevertAfterFailedSwitch(Snapshot))
+        if (PlaybackPolicy.ShouldRevertAfterFailedSwitch(Snapshot) && HasEligibleLastGood())
         {
             // Same classification as an established stream: only a confirmed-dead
             // switch target is reported and removed. A token/playlist blip ("Input
@@ -426,6 +649,11 @@ public sealed class PlaybackSessionController
         if (!PlaybackPolicy.CanUserNavigate(Snapshot, _healthyStreamCount))
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Navigate not allowed")];
 
+        // Every other stream failed this cycle: stay put (Back still closes) instead of
+        // cycling back onto a stream that already failed.
+        if (!HasUntriedStream())
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: PlaybackPolicy.NoOtherWorkingStreamText)];
+
         // The user picked another stream, so drop any same-stream retry.
         ResetSameStreamRecovery(clearBudget: true);
 
@@ -456,6 +684,7 @@ public sealed class PlaybackSessionController
     private IReadOnlyList<PlaybackEffect> OnUserReportBad(string? reason)
     {
         var message = reason ?? "User reported bad stream";
+        NotifyFailedInCycle(_currentUrl, message, PlaybackPolicy.FailureMarksFeed(message));
         var effects = new List<PlaybackEffect>
         {
             new(PlaybackEffectKind.ReportFailed, Reason: message, Generation: _attachGeneration),
@@ -466,9 +695,13 @@ public sealed class PlaybackSessionController
         var remaining = Math.Max(0, _healthyStreamCount - 1);
         _healthyStreamCount = remaining;
 
-        if (remaining >= 1)
+        if (remaining >= 1 && HasUntriedStream())
         {
             effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: message));
+        }
+        else if (remaining >= 1)
+        {
+            effects.AddRange(StopWithNothingUntried(message));
         }
         else
         {
@@ -577,6 +810,7 @@ public sealed class PlaybackSessionController
     private List<PlaybackEffect> FailSwitchAndRevert(string reason)
     {
         ResetSameStreamRecovery(clearBudget: true);
+        NotifyFailedInCycle(_currentUrl, reason, PlaybackPolicy.FailureMarksFeed(reason));
         var effects = new List<PlaybackEffect>
         {
             new(PlaybackEffectKind.ReportFailed, Reason: reason, Generation: _attachGeneration),
@@ -586,21 +820,19 @@ public sealed class PlaybackSessionController
 
         _healthyStreamCount = Math.Max(0, _healthyStreamCount - 1);
 
-        if (!string.IsNullOrWhiteSpace(_lastGoodUrl))
+        if (HasEligibleLastGood())
         {
             // Revert attaches last-good without treating it as a new switch failure loop.
-            _isPreparing = false;
-            _state = PlaybackSessionState.Playing;
-            _currentUrl = _lastGoodUrl;
-            effects.Add(new PlaybackEffect(
-                PlaybackEffectKind.RevertToLastGood,
-                Url: _lastGoodUrl,
-                Reason: $"Switch failed — reverted to last good. ({reason})",
-                Generation: _attachGeneration));
+            // Only a last good that showed video and has not failed this cycle.
+            effects.Add(RevertToLastGoodEffect($"Switch failed — reverted to last good. ({reason})"));
+        }
+        else if (_healthyStreamCount >= 1 && HasUntriedStream())
+        {
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
         }
         else if (_healthyStreamCount >= 1)
         {
-            effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
+            effects.AddRange(StopWithNothingUntried(reason));
         }
         else
         {
@@ -623,25 +855,103 @@ public sealed class PlaybackSessionController
         ResetSameStreamRecovery(clearBudget: true);
         var effects = new List<PlaybackEffect>();
         if (clearTargetUrl)
-            effects.Add(new PlaybackEffect(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason));
-
-        if (!string.IsNullOrWhiteSpace(_lastGoodUrl))
         {
-            _isPreparing = false;
-            _isBuffering = false;
-            _state = PlaybackSessionState.Playing;
-            _currentUrl = _lastGoodUrl;
-            _metricsWindow = new StreamMetricsWindow();
-            effects.Add(new PlaybackEffect(
-                PlaybackEffectKind.RevertToLastGood,
-                Url: _lastGoodUrl,
-                Reason: $"Switch did not start - back to last good, stream kept. ({reason})",
-                Generation: _attachGeneration));
+            // The target stays in the pool, unreported, but Next skips it for the cycle
+            // (row only: a token blip says nothing about the feed). Infrastructure
+            // (clearTargetUrl: false) marks nothing.
+            NotifyFailedInCycle(_currentUrl, reason, feedFailed: false);
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason));
+        }
+
+        if (HasEligibleLastGood())
+        {
+            effects.Add(RevertToLastGoodEffect($"Switch did not start - back to last good, stream kept. ({reason})"));
             return effects;
         }
 
+        // Infrastructure never drops a stream: with nothing to go back to, defer.
+        if (!clearTargetUrl)
+            return CloseForInfrastructure(reason);
+
         // No last good to go back to: same as before (should not happen while switching).
         return FailEstablishedOrAdvance(reason);
+    }
+
+    /// <summary>
+    /// Re-attach the last-good stream in the same generation. It showed video before, so
+    /// it is confirmed again at once (no new no-video timer).
+    /// </summary>
+    private PlaybackEffect RevertToLastGoodEffect(string reason)
+    {
+        _isPreparing = false;
+        _isBuffering = false;
+        _state = PlaybackSessionState.Playing;
+        _currentUrl = _lastGoodUrl;
+        _metricsWindow = new StreamMetricsWindow();
+        _videoConfirmed = true;
+        _videoSeen = true;
+        _readyAt = null;
+        return new PlaybackEffect(
+            PlaybackEffectKind.RevertToLastGood,
+            Url: _lastGoodUrl,
+            Reason: reason,
+            Generation: _attachGeneration);
+    }
+
+    /// <summary>
+    /// A last good stream that may be reverted to: it showed video (or Ready, when video
+    /// confirmation is off) and its feed has not failed this cycle. premium261 was the
+    /// "last good" every failed switch went back to on 31 Oct 2026.
+    /// </summary>
+    private bool HasEligibleLastGood()
+        => !string.IsNullOrWhiteSpace(_lastGoodUrl) && !IsFeedFailedInCycle(_lastGoodUrl);
+
+    private bool HasUntriedStream()
+    {
+        if (UntriedStreamAvailableProvider is not { } provider)
+            return true;
+        try
+        {
+            return provider();
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Records a stream failure for the cycle (pool row, and the feed when
+    /// <paramref name="feedFailed"/>), and forgets last good when it is the stream that
+    /// failed. Never called for infrastructure failures.
+    /// </summary>
+    private void NotifyFailedInCycle(string? url, string reason, bool feedFailed)
+    {
+        if (feedFailed)
+        {
+            var key = FeedKey(url);
+            if (key.Length > 0)
+                _failedFeeds[key] = _clock();
+        }
+
+        if (!string.IsNullOrWhiteSpace(url)
+            && (string.Equals(_lastGoodUrl, url, StringComparison.OrdinalIgnoreCase)
+                || (feedFailed && SameFeed(_lastGoodUrl, url))))
+        {
+            _lastGoodUrl = null;
+        }
+
+        try { StreamFailedInCycle?.Invoke(url, reason, feedFailed); }
+        catch { /* the pool mark is advisory; the session decision stands */ }
+    }
+
+    private static string FeedKey(string? url)
+        => string.IsNullOrWhiteSpace(url) ? string.Empty : StreamUrlNormalizer.M3u8IdentityKey(url);
+
+    private static bool SameFeed(string? a, string? b)
+    {
+        var ka = FeedKey(a);
+        return ka.Length > 0 && string.Equals(ka, FeedKey(b), StringComparison.OrdinalIgnoreCase);
     }
 
     private List<PlaybackEffect> FailEstablishedOrAdvance(string reason)
@@ -649,6 +959,7 @@ public sealed class PlaybackSessionController
         // Retries are used up or the stream is confirmed dead: report it once and
         // switch. The next stream starts with a fresh budget.
         ResetSameStreamRecovery(clearBudget: true);
+        NotifyFailedInCycle(_currentUrl, reason, PlaybackPolicy.FailureMarksFeed(reason));
         var effects = new List<PlaybackEffect>
         {
             new(PlaybackEffectKind.ReportFailed, Reason: reason, Generation: _attachGeneration),
@@ -659,10 +970,15 @@ public sealed class PlaybackSessionController
         _healthyStreamCount = Math.Max(0, _healthyStreamCount - 1);
         _isPreparing = false;
 
-        if (_healthyStreamCount >= 1)
+        if (_healthyStreamCount >= 1 && HasUntriedStream())
         {
             effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
             // Host will BeginAttach the next URL → Switching/Starting.
+        }
+        else if (_healthyStreamCount >= 1)
+        {
+            // Every other stream failed this cycle: stop rather than loop.
+            effects.AddRange(StopWithNothingUntried(reason));
         }
         else
         {
@@ -682,6 +998,7 @@ public sealed class PlaybackSessionController
     private List<PlaybackEffect> FailStartOrAdvance(string reason)
     {
         ResetSameStreamRecovery(clearBudget: true);
+        NotifyFailedInCycle(_currentUrl, reason, PlaybackPolicy.FailureMarksFeed(reason));
         var effects = new List<PlaybackEffect>
         {
             new(PlaybackEffectKind.ReportFailed, Reason: reason, Generation: _attachGeneration),
@@ -693,9 +1010,14 @@ public sealed class PlaybackSessionController
         _isPreparing = false;
         _hasEstablishedPlayback = false;
 
-        if (PlaybackPolicy.ShouldAdvanceAfterFailedStart(Snapshot, _healthyStreamCount))
+        if (PlaybackPolicy.ShouldAdvanceAfterFailedStart(Snapshot, _healthyStreamCount) && HasUntriedStream())
         {
             effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
+        }
+        else if (PlaybackPolicy.ShouldAdvanceAfterFailedStart(Snapshot, _healthyStreamCount))
+        {
+            _state = PlaybackSessionState.Failed;
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: PlaybackPolicy.NoWorkingStreamReason));
         }
         else
         {

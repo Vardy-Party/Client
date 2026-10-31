@@ -25,4 +25,10 @@ public sealed class PlaybackSessionSnapshot
 
     /// <summary>Same-stream retries used in the current retry window.</summary>
     public int SameStreamRetries { get; init; }
+
+    /// <summary>
+    /// The current stream has shown a picture (only tracked when
+    /// <see cref="PlaybackSessionController.RequireVideoConfirmation"/> is on).
+    /// </summary>
+    public bool IsVideoConfirmed { get; init; }
 }

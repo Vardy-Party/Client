@@ -7,7 +7,7 @@ public enum MirrorProofBasis
     None,
     /// <summary>Same segment name stem and the 90 kHz numbers in the names advance in step.</summary>
     PtsClock,
-    /// <summary>Live-edge PROGRAM-DATE-TIME agrees, same target duration and naming pattern.</summary>
+    /// <summary>Live-edge PROGRAM-DATE-TIME agrees, same segment-name stem, target duration and naming pattern.</summary>
     ProgramDateTime,
 }
 
@@ -70,7 +70,16 @@ public static class MirrorProofPolicy
                 : MirrorProof.No($"pts out of tolerance ({delta:+0.00;-0.00}s)", delta);
         }
 
-        // (b) Live-edge PROGRAM-DATE-TIME, same target duration and naming pattern.
+        // (b) Live-edge PROGRAM-DATE-TIME, same segment-name stem, target duration and
+        // naming pattern. Any two live streams can have wall clocks that agree, so the
+        // clock alone never proves a mirror (31 Oct 2026: merge only when proven).
+        if (a.EdgeProgramDateTime is { } && b.EdgeProgramDateTime is { }
+            && !(a.SegmentNameStem is { Length: > 0 } pdtStemA
+                 && string.Equals(pdtStemA, b.SegmentNameStem, StringComparison.Ordinal)))
+        {
+            return MirrorProof.No("different segment-name stems");
+        }
+
         if (a.EdgeProgramDateTime is { } pdtA && b.EdgeProgramDateTime is { } pdtB
             && a.TargetDurationSeconds is { } tdA && b.TargetDurationSeconds is { } tdB
             && Math.Abs(tdA - tdB) < 0.001
