@@ -25,5 +25,11 @@ public class StreamResolutionOutcome
     /// </summary>
     public string? RemoteComputeError { get; set; }
 
+    /// <summary>
+    /// Rows still unresolved after the re-queue passes because the local
+    /// service never answered. They were not reported or marked failed.
+    /// </summary>
+    public int DeferredStreamCount { get; set; }
+
     public PlaybackResult? PlaybackResult { get; set; }
 }

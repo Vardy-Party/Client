@@ -12,6 +12,15 @@ public class StreamResolver(
     IDiscoveredChipNormalizer chipNormalizer,
     ILogger<StreamResolver> logger) : IStreamResolver
 {
+    /// <summary>
+    /// Waits before re-asking an unavailable local service about the same row.
+    /// After these the row is <see cref="StreamResolutionStatus.Deferred"/>, never Failed.
+    /// </summary>
+    internal static readonly TimeSpan[] InfrastructureRetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5)];
+
+    /// <summary>Test seam for the infrastructure retry waits.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
+
     public async IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
         List<Stream> streams,
         int batchSize = 3,
@@ -213,7 +222,21 @@ public class StreamResolver(
         {
             // Step 1: Resolve m3u8 URL
             logger.LogInformation("[StreamResolver] Resolving m3u8 for {Channel}", stream.Channel);
-            var m3u8Response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
+            M3U8Response? m3u8Response;
+            try
+            {
+                m3u8Response = await ResolveWithInfrastructureRetryAsync(stream, cancellationToken);
+            }
+            catch (LocalServiceUnavailableException ex)
+            {
+                // The service didn't answer, so we know nothing about this
+                // stream. Never Failed, never reported; the orchestrator re-queues it.
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.ErrorMessage = $"Local service unavailable ({ex.Reason}): {ex.Message}";
+                logger.LogWarning("[StreamResolver] Deferring {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+                return new ResolveOutcome(enriched, []);
+            }
+
             var m3u8Url = m3u8Response?.Url;
 
             if (string.IsNullOrEmpty(m3u8Url))
@@ -440,6 +463,29 @@ public class StreamResolver(
         return null;
     }
 
+    /// <summary>
+    /// Asks the local service again (with backoff) while it is unavailable. A
+    /// <c>null</c> answer is the stream's verdict and is returned at once.
+    /// </summary>
+    private async Task<M3U8Response?> ResolveWithInfrastructureRetryAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await ResolveM3U8ResponseInternalAsync(stream, cancellationToken).ConfigureAwait(false);
+            }
+            catch (LocalServiceUnavailableException ex) when (attempt < InfrastructureRetryDelays.Length)
+            {
+                logger.LogInformation(
+                    "[StreamResolver] Local service unavailable for {Channel} ({Reason}); retry {Attempt}/{Max} in {Delay}s",
+                    stream.Channel, ex.Reason, attempt + 1, InfrastructureRetryDelays.Length,
+                    InfrastructureRetryDelays[attempt].TotalSeconds);
+                await DelayAsync(InfrastructureRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)
     {
         var response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
@@ -466,6 +512,11 @@ public class StreamResolver(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (LocalServiceUnavailableException)
+        {
+            // Infrastructure, not the stream: the caller decides (retry / defer).
             throw;
         }
         catch (Exception ex)

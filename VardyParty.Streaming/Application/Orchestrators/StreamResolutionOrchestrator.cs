@@ -24,6 +24,16 @@ public class StreamResolutionOrchestrator(
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Waits before each re-queue pass over rows the resolver deferred because
+    /// the local service was unavailable. Deferred rows are never reported or
+    /// dropped; they get these extra passes after the main sweep.
+    /// </summary>
+    internal static readonly TimeSpan[] DeferredRequeueDelays = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)];
+
+    /// <summary>Test seam for the re-queue waits.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
     /// running and was not cancelled. When this runs out the outcome is
     /// StartRefused — surfaced to the user — never a silent empty outcome.
@@ -227,6 +237,71 @@ public class StreamResolutionOrchestrator(
 
         try
         {
+            var deferred = new List<StreamModel>();
+            var deferredIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
+
+            // Returns true when the viewer has left and the outcome is final.
+            async Task<bool> ViewerLeftAsync()
+            {
+                if (playbackTask == null || !playbackTask.IsCompleted)
+                    return false;
+
+                var playbackResult = await playbackTask;
+                if (playbackResult?.ViewerLeft != true)
+                    return false;
+
+                outcome.UserClosed = true;
+                outcome.PlaybackResult = playbackResult;
+                return true;
+            }
+
+            void Accept(EnrichedStream enrichedStream, bool requeued)
+            {
+                if (!requeued)
+                {
+                    streamCount++;
+                    _streamsTested++;
+                    PublishProgress();
+                }
+
+                int index;
+                if (deferredIndex.Remove(enrichedStream.Stream, out var earlier))
+                    index = earlier;
+                else if (catalogIndex.TryGetValue(enrichedStream.Stream, out var known))
+                    index = known;
+                else
+                    index = nextExtraIndex++;
+
+                // A deferred row still counts as "done" for the first-play
+                // frontier, so one unreachable /play can't hold back a healthy
+                // later row.
+                resolvedCatalog.Add(index);
+
+                switch (enrichedStream.Status)
+                {
+                    case StreamResolutionStatus.Failed:
+                        _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
+                            enrichedStream.Health, cancellationToken);
+                        break;
+                    case StreamResolutionStatus.Healthy:
+                        // The client's own probe passed: report "working". It used to
+                        // send "unknown", which looked like no verdict.
+                        _ = ReportHealthAsync(game, enrichedStream.Stream, "working", null, enrichedStream.Health,
+                            cancellationToken);
+                        heldHealthy[index] = enrichedStream;
+                        break;
+                    case StreamResolutionStatus.Deferred:
+                        // An infrastructure failure: nothing about the stream is
+                        // known. Don't report it and don't drop it; re-queue it.
+                        deferredIndex[enrichedStream.Stream] = index;
+                        deferred.Add(enrichedStream.Stream);
+                        break;
+                }
+
+                // Start playback without awaiting so stream testing can continue.
+                FlushReadyForPlayback();
+            }
+
             await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
                                orderedStreams,
                                2,
@@ -238,45 +313,45 @@ public class StreamResolutionOrchestrator(
                                }).WithCancellation(enumerationCts.Token))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (await ViewerLeftAsync())
+                    return outcome;
 
-                // Check if playback was closed by user
-                if (playbackTask != null && playbackTask.IsCompleted)
-                {
-                    var playbackResult = await playbackTask;
-                    if (playbackResult?.ViewerLeft == true)
-                    {
-                        outcome.UserClosed = true;
-                        outcome.PlaybackResult = playbackResult;
-                        return outcome;
-                    }
-                }
-
-                streamCount++;
-                _streamsTested++;
-                PublishProgress();
-
-                var index = catalogIndex.TryGetValue(enrichedStream.Stream, out var known)
-                    ? known
-                    : nextExtraIndex++;
-                resolvedCatalog.Add(index);
-
-                if (enrichedStream.Status == StreamResolutionStatus.Failed)
-                {
-                    _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
-                        enrichedStream.Health, cancellationToken);
-                }
-                else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
-                {
-                    _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
-                        cancellationToken);
-                    heldHealthy[index] = enrichedStream;
-                }
-
-                // Start playback without awaiting so stream testing can continue.
-                FlushReadyForPlayback();
+                Accept(enrichedStream, requeued: false);
             }
 
             FlushReadyForPlayback();
+
+            for (var pass = 0; pass < DeferredRequeueDelays.Length && deferred.Count > 0; pass++)
+            {
+                var retry = deferred.ToList();
+                deferred.Clear();
+                logger.LogInformation(
+                    "[StreamResolution] Re-queueing {Count} stream(s) deferred by local-service unavailability (pass {Pass}/{Max}) in {Delay}s",
+                    retry.Count, pass + 1, DeferredRequeueDelays.Length, DeferredRequeueDelays[pass].TotalSeconds);
+                await DelayAsync(DeferredRequeueDelays[pass], enumerationCts.Token).ConfigureAwait(false);
+                if (await ViewerLeftAsync())
+                    return outcome;
+
+                await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
+                                   retry, 2, enumerationCts.Token).WithCancellation(enumerationCts.Token))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (await ViewerLeftAsync())
+                        return outcome;
+
+                    Accept(enrichedStream, requeued: true);
+                }
+
+                FlushReadyForPlayback();
+            }
+
+            outcome.DeferredStreamCount = deferred.Count;
+            if (deferred.Count > 0)
+            {
+                logger.LogWarning(
+                    "[StreamResolution] {Count} stream(s) still deferred after re-queue passes; local service unavailable (not reported, not dropped)",
+                    deferred.Count);
+            }
         }
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {
@@ -334,6 +409,12 @@ public class StreamResolutionOrchestrator(
             {
                 _status = remoteError;
                 outcome.RemoteComputeError = remoteError;
+            }
+            else if (outcome.DeferredStreamCount > 0)
+            {
+                // Rows were never answered: the local service, not the streams.
+                _status = "Local service unavailable";
+                outcome.LocalServiceUnavailable = true;
             }
             else if (localLanPlayService?.UsesRemoteCompute == true)
             {
@@ -580,7 +661,10 @@ public class StreamResolutionOrchestrator(
     {
         try
         {
-            var streamName = StreamHealthIdentity.GetStreamName(stream);
+            // Report the row that is playing NOW. The native session can
+            // make-before-break onto another pool row, and this loop used to keep
+            // reporting the first stream's URL long after it had been switched away.
+            StreamModel Playing() => streamSwitchingService.GetCurrentStream()?.Stream ?? stream;
             var softRefreshTicks = 0;
 
             // Wait for player to initialize and extract metadata
@@ -589,8 +673,9 @@ public class StreamResolutionOrchestrator(
 
             // Get real metrics from the player service after playback has started
             var initialMetrics = launcher.GetCurrentMetrics();
-            _ = streamHealthReporter.ReportPlaybackStartedAsync(stream.Url, null, streamName, initialMetrics,
-                cancellationToken);
+            var started = Playing();
+            _ = streamHealthReporter.ReportPlaybackStartedAsync(started.Url, null,
+                StreamHealthIdentity.GetStreamName(started), initialMetrics, cancellationToken);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -604,8 +689,9 @@ public class StreamResolutionOrchestrator(
                 }
 
                 // Report periodic metrics without duplicating metadata
-                _ = streamHealthReporter.ReportPlaybackMetricsAsync(stream.Url, null, streamName, metrics,
-                    cancellationToken);
+                var playing = Playing();
+                _ = streamHealthReporter.ReportPlaybackMetricsAsync(playing.Url, null,
+                    StreamHealthIdentity.GetStreamName(playing), metrics, cancellationToken);
 
                 // Soft-refresh recommendations about every 60s (every other 30s tick).
                 softRefreshTicks++;

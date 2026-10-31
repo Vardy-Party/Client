@@ -63,6 +63,7 @@ public class EnrichedStream
             StreamResolutionStatus.Resolved => "Testing...",
             StreamResolutionStatus.Healthy => Health?.GetQualityLabel() ?? "Unknown Quality",
             StreamResolutionStatus.Failed => $"Failed: {ErrorMessage}",
+            StreamResolutionStatus.Deferred => "Waiting for local service...",
             _ => "Unknown"
         };
     }
@@ -97,5 +98,13 @@ public enum StreamResolutionStatus
     /// <summary>
     /// M3U8 resolution or health test failed
     /// </summary>
-    Failed
+    Failed,
+
+    /// <summary>
+    /// Not resolved because of an infrastructure failure (local service
+    /// unreachable, discovery miss, our own call timeout). This says nothing
+    /// about the stream: it must not be reported to the health API or dropped,
+    /// and the orchestrator re-queues it.
+    /// </summary>
+    Deferred
 }
