@@ -34,8 +34,7 @@ public class PlaybackCommandTests
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
         // Act
-        var cmd = PlaybackCommand.FromEffects(
-            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "decoder")));
+        var cmd = PlaybackCommand.FromEffects(SameStreamRetryDriver.FailUntilSwitch(session, "decoder"));
 
         // Assert
         Assert.True(cmd.RemoveCurrentFromPool);
@@ -130,8 +129,7 @@ public class PlaybackCommandTests
         session.BeginAttach("http://a.m3u8");
 
         // Act
-        var cmd = PlaybackCommand.FromEffects(
-            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "start fail")));
+        var cmd = PlaybackCommand.FromEffects(SameStreamRetryDriver.FailUntilSwitch(session, "start fail"));
 
         // Assert
         Assert.True(cmd.RemoveCurrentFromPool);
@@ -149,8 +147,7 @@ public class PlaybackCommandTests
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
         // Act
-        var cmd = PlaybackCommand.FromEffects(
-            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "decoder")));
+        var cmd = PlaybackCommand.FromEffects(SameStreamRetryDriver.FailUntilSwitch(session, "decoder"));
 
         // Assert
         Assert.True(cmd.CloseSession);

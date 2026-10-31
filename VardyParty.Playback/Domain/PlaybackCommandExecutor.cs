@@ -17,6 +17,14 @@ public static class PlaybackCommandExecutor
         host.BeginIndexSwitchSuppression();
         try
         {
+            // Report BEFORE clear or remove, while the pool's current row is still
+            // the stream that failed. Hosts key the report on that row's catalog URL.
+            if (cmd.ReportFailed)
+                host.ReportFailed(cmd.Reason);
+
+            if (cmd.ReportDeclined)
+                host.ReportDeclined(cmd.Reason ?? "Health declined");
+
             if (cmd.ClearResolvedUrl)
                 host.ClearCurrentResolvedUrl();
 
@@ -24,12 +32,6 @@ public static class PlaybackCommandExecutor
                 host.RemoveCurrentFromPool();
 
             host.SyncHealthyStreamCount();
-
-            if (cmd.ReportFailed)
-                host.ReportFailed(cmd.Reason);
-
-            if (cmd.ReportDeclined)
-                host.ReportDeclined(cmd.Reason ?? "Health declined");
 
             if (cmd.MarkEstablished)
                 host.MarkEstablished();

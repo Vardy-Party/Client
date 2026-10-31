@@ -43,11 +43,12 @@ public class PlaybackCommandExecutorTests
             new[]
             {
                 nameof(IPlaybackCommandHost.BeginIndexSwitchSuppression),
+                // Reports first, while the pool's current row is still the failing stream.
+                nameof(IPlaybackCommandHost.ReportFailed),
+                nameof(IPlaybackCommandHost.ReportDeclined),
                 nameof(IPlaybackCommandHost.ClearCurrentResolvedUrl),
                 nameof(IPlaybackCommandHost.RemoveCurrentFromPool),
                 nameof(IPlaybackCommandHost.SyncHealthyStreamCount),
-                nameof(IPlaybackCommandHost.ReportFailed),
-                nameof(IPlaybackCommandHost.ReportDeclined),
                 nameof(IPlaybackCommandHost.EndIndexSwitchSuppression)
             },
             host.Calls);
@@ -241,8 +242,7 @@ public class PlaybackCommandExecutorTests
         session.SetHealthyStreamCount(3);
         session.BeginAttach("http://northgate.m3u8");
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
-        var cmd = PlaybackCommand.FromEffects(
-            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "decoder")));
+        var cmd = PlaybackCommand.FromEffects(SameStreamRetryDriver.FailUntilSwitch(session, "decoder"));
 
         // Act
         PlaybackCommandExecutor.Apply(cmd, host);
@@ -332,11 +332,12 @@ public class PlaybackCommandExecutorTests
             new[]
             {
                 nameof(IPlaybackCommandHost.BeginIndexSwitchSuppression),
+                // Reports first, while the pool's current row is still the failing stream.
+                nameof(IPlaybackCommandHost.ReportFailed),
+                nameof(IPlaybackCommandHost.ReportDeclined),
                 nameof(IPlaybackCommandHost.ClearCurrentResolvedUrl),
                 nameof(IPlaybackCommandHost.RemoveCurrentFromPool),
                 nameof(IPlaybackCommandHost.SyncHealthyStreamCount),
-                nameof(IPlaybackCommandHost.ReportFailed),
-                nameof(IPlaybackCommandHost.ReportDeclined),
                 nameof(IPlaybackCommandHost.MarkEstablished),
                 nameof(IPlaybackCommandHost.ReportWorking),
                 nameof(IPlaybackCommandHost.RaiseBuffering),

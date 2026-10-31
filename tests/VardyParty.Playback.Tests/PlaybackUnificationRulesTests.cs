@@ -31,8 +31,8 @@ public class PlaybackUnificationRulesTests
         // Arrange
         var session = Established(healthy: 3);
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "MediaFailed"));
+        // Act: same-stream retries first on every OS, then remove and advance.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "MediaFailed");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RemoveCurrentFromPool);
@@ -48,8 +48,8 @@ public class PlaybackUnificationRulesTests
         session.SetHealthyStreamCount(2);
         session.BeginAttach("http://start.m3u8");
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "MediaFailed"));
+        // Act: one fresh /play retry, then advance.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "MediaFailed");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
@@ -61,12 +61,15 @@ public class PlaybackUnificationRulesTests
     {
         // Arrange
         var session = Established(healthy: 2);
-        var gen = session.Snapshot.AttachGeneration;
 
         // Act
-        IReadOnlyList<PlaybackEffect> effects = [];
-        for (var i = 0; i < 4; i++)
-            effects = session.Handle(MediaEngineEvent.Buffering(gen, true));
+        var effects = SameStreamRetryDriver.DeclineAfterReload(session, () =>
+        {
+            IReadOnlyList<PlaybackEffect> last = [];
+            for (var i = 0; i < 4; i++)
+                last = session.Handle(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, true));
+            return last;
+        });
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportDeclined);
@@ -92,10 +95,18 @@ public class PlaybackUnificationRulesTests
         // Arrange
         var session = Established(healthy: 3);
         for (var i = 0; i < 4; i++)
-            session.NotifyDownloadFailure();
+            Assert.DoesNotContain(session.NotifyDownloadFailure(), e => e.Kind == PlaybackEffectKind.Attach);
 
-        // Act
-        var effects = session.NotifyDownloadFailure();
+        // The fifth failure starts same-stream recovery; repeated bursts use it up.
+        var fifth = session.NotifyDownloadFailure();
+        Assert.True(SameStreamRetryDriver.IsRetry(fifth));
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, () =>
+        {
+            IReadOnlyList<PlaybackEffect> last = [];
+            for (var i = 0; i < 5; i++)
+                last = session.NotifyDownloadFailure();
+            return last;
+        });
 
         // Assert
         Assert.Equal(5, PlaybackPolicy.MaxConsecutiveDownloadFailures);
@@ -180,7 +191,7 @@ public class PlaybackUnificationRulesTests
         var session = Established(healthy: 1);
 
         // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "MediaFailed"));
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "MediaFailed");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.CloseSession);

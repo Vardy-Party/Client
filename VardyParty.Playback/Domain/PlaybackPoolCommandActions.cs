@@ -21,6 +21,20 @@ public sealed class PlaybackPoolCommandActions(
     Action<string, bool, bool> attachViaSession,
     Action<PlaybackCommand> applyCommand)
 {
+    // Every host builds one of these per session. Wiring the live pool count here
+    // means no host can hand the controller a stale count again (Android synced
+    // only on user navigation, and an established error closed the whole session).
+    private readonly bool _healthyCountWired = WireHealthyCount(session, switching);
+
+    /// <summary>Test seam: delay before a same-stream fresh /play retry.</summary>
+    internal Func<TimeSpan, Task> DelayAsync { get; set; } = static d => d > TimeSpan.Zero ? Task.Delay(d) : Task.CompletedTask;
+
+    private static bool WireHealthyCount(PlaybackSessionController session, IStreamSwitchingService switching)
+    {
+        session.HealthyStreamCountProvider = () => switching.GetHealthyStreams().Count;
+        return true;
+    }
+
     public void ClearCurrentResolvedUrl()
     {
         var failed = switching.GetCurrentStream();
@@ -103,6 +117,9 @@ public sealed class PlaybackPoolCommandActions(
         var plan = PlaybackUrlReusePolicy.PlanSwitch(target, DateTimeOffset.UtcNow);
         if (plan.Kind == PlaybackSwitchKind.None || target is null)
             return false;
+
+        // An index-driven switch (Next, Prev, chip) replaces any same-stream retry.
+        session.CancelSameStreamRecovery();
 
         if (plan.Kind == PlaybackSwitchKind.AttachCached || resolveFresh is null)
         {
@@ -194,11 +211,31 @@ public sealed class PlaybackPoolCommandActions(
         try
         {
             var current = switching.GetCurrentStream();
+            var snapshot = session.Snapshot;
+            var recovering = snapshot.IsRecovering;
+            if (recovering)
+            {
+                // Same-stream retry: back off before the next /play (0s, 1s, 3s).
+                await DelayAsync(PlaybackPolicy.SameStreamRetryBackoff(snapshot.SameStreamRetries)).ConfigureAwait(false);
+
+                // The user moved on while we waited, so this retry is stale.
+                if (!session.Snapshot.IsRecovering || !ReferenceEquals(switching.GetCurrentStream(), current))
+                    return;
+            }
+
             var fresh = current != null && resolveFresh != null
                 ? await resolveFresh(current, CancellationToken.None)
                 : null;
-            if (string.IsNullOrWhiteSpace(fresh) ||
-                !PlaybackPolicy.ShouldAcceptFreshM3U8(session.Snapshot.CurrentUrl, fresh))
+            if (recovering && !session.Snapshot.IsRecovering)
+                return;
+
+            // During a same-stream retry, the same URL counts too. Reattaching
+            // reloads the playlist, and some CDNs re-sign a stable URL server-side.
+            var accept = recovering
+                ? !string.IsNullOrWhiteSpace(fresh)
+                : !string.IsNullOrWhiteSpace(fresh)
+                  && PlaybackPolicy.ShouldAcceptFreshM3U8(session.Snapshot.CurrentUrl, fresh);
+            if (!accept)
             {
                 applyCommand(PlaybackCommand.FromEffects(session.NotifyFreshResolveUnavailable()));
                 return;
@@ -207,7 +244,7 @@ public sealed class PlaybackPoolCommandActions(
             if (current != null)
                 current.ResolvedM3U8Url = fresh;
 
-            attachViaSession(fresh, false, true);
+            attachViaSession(fresh!, false, true);
         }
         catch (Exception ex)
         {

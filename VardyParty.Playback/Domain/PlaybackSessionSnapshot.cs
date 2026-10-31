@@ -16,4 +16,10 @@ public sealed class PlaybackSessionSnapshot
     public int HealthyStreamCount { get; init; }
     public bool IsBuffering { get; init; }
     public int ConsecutiveDownloadFailures { get; init; }
+
+    /// <summary>A same-stream retry (reload or fresh /play) is in progress.</summary>
+    public bool IsRecovering { get; init; }
+
+    /// <summary>Same-stream retries used in the current retry window.</summary>
+    public int SameStreamRetries { get; init; }
 }

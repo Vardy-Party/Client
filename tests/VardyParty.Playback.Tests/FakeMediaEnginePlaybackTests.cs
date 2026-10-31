@@ -39,6 +39,82 @@ public class FakeMediaEnginePlaybackTests
     }
 
     [Fact]
+    public void FakeEngine_TransientErrorWhilePlaying_ReloadsSameStreamAndKeepsPool()
+    {
+        // Arrange
+        var current = _fixture.Create<Stream>();
+        var next = _fixture.Create<Stream>();
+        var (session, pool, engine, host) = CreateHost(current, next);
+        host.AttachFromPool();
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Act: a network blip on the live playlist.
+        engine.RaiseError(session.Snapshot.AttachGeneration, "Source error: HttpDataSourceException timeout");
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Assert: same row, same URL re-attached, nothing removed, playing again.
+        Assert.Equal(current.Channel, pool.GetCurrentStream()!.Stream.Channel);
+        Assert.Equal(new[] { current.Url, current.Url }, engine.AttachLog);
+        Assert.Equal(2, pool.GetHealthyStreams().Count);
+        Assert.Empty(host.Failed);
+        Assert.Equal(PlaybackSessionState.Playing, session.Snapshot.State);
+    }
+
+    [Fact]
+    public void FakeEngine_PlaylistRejected_FreshPlaySameStreamBeforeSwitching()
+    {
+        // Arrange
+        var current = _fixture.Create<Stream>();
+        var next = _fixture.Create<Stream>();
+        var resolves = 0;
+        var (session, pool, engine, host) = CreateHost(
+            (_, _) => Task.FromResult<string?>($"http://fresh-{++resolves}.m3u8"),
+            current, next);
+        host.AttachFromPool();
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Act: the token expired (HTML instead of #EXTM3U), then the fresh URL plays.
+        engine.RaiseError(session.Snapshot.AttachGeneration, "Input does not start with the #EXTM3U header");
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Assert
+        Assert.Equal(1, resolves);
+        Assert.Equal(current.Channel, pool.GetCurrentStream()!.Stream.Channel);
+        Assert.Equal("http://fresh-1.m3u8", engine.LastAttached);
+        Assert.Empty(host.Failed);
+        Assert.Equal(PlaybackSessionState.Playing, session.Snapshot.State);
+    }
+
+    [Fact]
+    public void FakeEngine_RetriesExhausted_ReportsOnceAndSwitchesToNext()
+    {
+        // Arrange
+        var current = _fixture.Create<Stream>();
+        var next = _fixture.Create<Stream>();
+        var resolves = 0;
+        var (session, pool, engine, host) = CreateHost(
+            (s, _) =>
+            {
+                if (s.Stream.Channel == current.Channel)
+                    resolves++;
+                return Task.FromResult<string?>($"http://fresh-{resolves}-{s.Stream.Channel}.m3u8");
+            },
+            current, next);
+        host.AttachFromPool();
+        engine.RaiseReady(session.Snapshot.AttachGeneration);
+
+        // Act: the stream keeps failing through every retry.
+        for (var i = 0; i <= PlaybackPolicy.MaxSameStreamRetries; i++)
+            engine.RaiseError(session.Snapshot.AttachGeneration, "Source error: stalled");
+
+        // Assert: reload, then two fresh /play calls, then exactly one failed report and a switch.
+        Assert.Equal(2, resolves);
+        Assert.Single(host.Failed);
+        Assert.Equal(next.Channel, pool.GetCurrentStream()!.Stream.Channel);
+        Assert.Contains(next.Channel, engine.LastAttached ?? next.Url);
+    }
+
+    [Fact]
     public void FakeEngine_ErrorWhilePlaying_AttachesNextPoolEntryWithoutSkipping()
     {
         // Arrange
@@ -49,8 +125,9 @@ public class FakeMediaEnginePlaybackTests
         host.AttachFromPool();
         engine.RaiseReady(session.Snapshot.AttachGeneration);
 
-        // Act
-        engine.RaiseError(session.Snapshot.AttachGeneration, _fixture.Create<string>());
+        // Act: a confirmed-dead error (CDN host gone) switches at once; a
+        // transient one would retry this stream first.
+        engine.RaiseError(session.Snapshot.AttachGeneration, "Unable to resolve host cdn.example");
 
         // Assert
         Assert.Equal(next.Channel, pool.GetCurrentStream()!.Stream.Channel);
@@ -185,7 +262,7 @@ public class FakeMediaEnginePlaybackTests
         engine.RaiseReady(session.Snapshot.AttachGeneration);
 
         // Act
-        engine.RaiseError(session.Snapshot.AttachGeneration, _fixture.Create<string>());
+        engine.RaiseError(session.Snapshot.AttachGeneration, "Unable to resolve host cdn.example");
 
         // Assert
         Assert.Null(pool.GetCurrentStream());
@@ -195,7 +272,10 @@ public class FakeMediaEnginePlaybackTests
     }
 
     private (PlaybackSessionController session, StreamSwitchingService pool, FakeMediaEngine engine, EngineHost host)
-        CreateHost(params Stream[] streams)
+        CreateHost(params Stream[] streams) => CreateHost(null, streams);
+
+    private (PlaybackSessionController session, StreamSwitchingService pool, FakeMediaEngine engine, EngineHost host)
+        CreateHost(ResolveFreshPlaybackUrlAsync? resolveFresh, params Stream[] streams)
     {
         var pool = _fixture.Create<StreamSwitchingService>();
         pool.Initialize(_fixture.Create<string>(), _fixture.Create<string>(), _fixture.Create<string>());
@@ -212,7 +292,7 @@ public class FakeMediaEnginePlaybackTests
         var session = _fixture.Create<PlaybackSessionController>();
         session.SetHealthyStreamCount(pool.GetHealthyStreams().Count);
         var engine = new FakeMediaEngine();
-        var host = new EngineHost(session, pool, engine);
+        var host = new EngineHost(session, pool, engine, resolveFresh);
         engine.EngineEvent += (_, e) => host.Dispatch(e);
         return (session, pool, engine, host);
     }
@@ -253,10 +333,13 @@ public class FakeMediaEnginePlaybackTests
         private readonly FakeMediaEngine _engine;
         private readonly PlaybackPoolCommandActions _poolActions;
 
+        public List<string?> Failed { get; } = [];
+
         public EngineHost(
             PlaybackSessionController session,
             StreamSwitchingService pool,
-            FakeMediaEngine engine)
+            FakeMediaEngine engine,
+            ResolveFreshPlaybackUrlAsync? resolveFresh = null)
         {
             _session = session;
             _pool = pool;
@@ -264,7 +347,7 @@ public class FakeMediaEnginePlaybackTests
             _poolActions = new PlaybackPoolCommandActions(
                 session,
                 pool,
-                resolveFresh: null,
+                resolveFresh: resolveFresh,
                 attachViaSession: (url, usedCached, force) =>
                 {
                     session.SetHealthyStreamCount(pool.GetHealthyStreams().Count);
@@ -272,7 +355,10 @@ public class FakeMediaEnginePlaybackTests
                         PlaybackCommand.FromEffects(session.BeginAttach(url, usedCached, force)),
                         this);
                 },
-                applyCommand: cmd => PlaybackCommandExecutor.Apply(cmd, this));
+                applyCommand: cmd => PlaybackCommandExecutor.Apply(cmd, this))
+            {
+                DelayAsync = static _ => Task.CompletedTask
+            };
         }
 
         public void AttachFromPool()
@@ -301,9 +387,7 @@ public class FakeMediaEnginePlaybackTests
 
         public void SyncHealthyStreamCount() => _poolActions.SyncHealthyStreamCount();
 
-        public void ReportFailed(string? reason)
-        {
-        }
+        public void ReportFailed(string? reason) => Failed.Add(reason);
 
         public void ReportDeclined(string? reason)
         {

@@ -101,10 +101,9 @@ public class PlaybackSessionControllerTests
         var session = new PlaybackSessionController();
         session.SetHealthyStreamCount(1);
         session.BeginAttach("http://only.m3u8");
-        var gen = session.Snapshot.AttachGeneration;
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(gen, "boom"));
+        // Act: one fresh /play retry first, then the start fails for good.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "boom");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.CloseSession);
@@ -147,8 +146,8 @@ public class PlaybackSessionControllerTests
         session.BeginAttach("http://a.m3u8");
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "decoder"));
+        // Act: the same stream is retried first; it still fails, so it switches.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "decoder");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
@@ -168,10 +167,14 @@ public class PlaybackSessionControllerTests
         var gen = session.Snapshot.AttachGeneration;
         session.Handle(MediaEngineEvent.Ready(gen));
 
-        // Act
-        IReadOnlyList<PlaybackEffect> effects = [];
-        for (var i = 0; i < 4; i++)
-            effects = session.Handle(MediaEngineEvent.Buffering(gen, isBuffering: true));
+        // Act: one reload first, then the stream still stalls and is declined.
+        var effects = SameStreamRetryDriver.DeclineAfterReload(session, () =>
+        {
+            IReadOnlyList<PlaybackEffect> last = [];
+            for (var i = 0; i < 4; i++)
+                last = session.Handle(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, isBuffering: true));
+            return last;
+        });
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportDeclined);
@@ -378,6 +381,13 @@ public class PlaybackSessionControllerTests
         var session = new PlaybackSessionController();
         session.SetHealthyStreamCount(2);
         session.BeginAttach("http://fresh.m3u8", usedCachedUrl: false);
+
+        // A 403 on a fresh URL gets one fresh /play before anything is reported.
+        var first = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "403"));
+        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(first, e => e.Kind == PlaybackEffectKind.ReportFailed);
+        session.BeginAttach("http://fresh2.m3u8", usedCachedUrl: false, force: true);
+
         // Act
         var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "403"));
 
@@ -457,10 +467,14 @@ public class PlaybackSessionControllerTests
         var gen = session.Snapshot.AttachGeneration;
         session.Handle(MediaEngineEvent.Ready(gen));
 
-        session.Handle(MediaEngineEvent.Metrics(gen, bitrateKbps: 100));
-        session.Handle(MediaEngineEvent.Metrics(gen, bitrateKbps: 100));
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Metrics(gen, bitrateKbps: 100));
+        // Act: one reload first, then the stream is still slow and is declined.
+        var effects = SameStreamRetryDriver.DeclineAfterReload(session, () =>
+        {
+            var g = session.Snapshot.AttachGeneration;
+            session.Handle(MediaEngineEvent.Metrics(g, bitrateKbps: 100));
+            session.Handle(MediaEngineEvent.Metrics(g, bitrateKbps: 100));
+            return session.Handle(MediaEngineEvent.Metrics(g, bitrateKbps: 100));
+        });
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportDeclined);
@@ -497,10 +511,14 @@ public class PlaybackSessionControllerTests
         session.BeginAttach("http://a.m3u8");
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
-        // Act
-        IReadOnlyList<PlaybackEffect> effects = [];
-        for (var i = 0; i < PlaybackPolicy.MaxConsecutiveDownloadFailures; i++)
-            effects = session.NotifyDownloadFailure("404");
+        // Act: each burst of failures is retried on the same stream until the budget is gone.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, () =>
+        {
+            IReadOnlyList<PlaybackEffect> last = [];
+            for (var i = 0; i < PlaybackPolicy.MaxConsecutiveDownloadFailures; i++)
+                last = session.NotifyDownloadFailure("404");
+            return last;
+        });
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
@@ -545,8 +563,8 @@ public class PlaybackSessionControllerTests
         Assert.Equal(PlaybackSessionState.Playing, session.Snapshot.State);
         Assert.Equal("http://good.m3u8", session.Snapshot.CurrentUrl);
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "last-good also died"));
+        // Act: the reverted stream is retried in place, then switches; never another revert.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "last-good also died");
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
         // Assert
@@ -630,7 +648,7 @@ public class PlaybackSessionControllerTests
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
 
         // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "decoder"));
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "decoder");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.CloseSession);
