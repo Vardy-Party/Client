@@ -60,28 +60,35 @@ public class LocalLanPlayServiceCancellationTests
     }
 
     [Fact]
-    public async Task Play_HttpFailure_ReturnsNullAndInvalidatesDiscovery()
+    public async Task Play_HttpFailure_ReturnsNull_KeepsEndpoint_AndCallsPlayOnce()
     {
         var handler = new ScriptHandler((_, _) =>
             Task.FromResult(Json(HttpStatusCode.OK, "{}")));
         var service = CreateService(handler);
         service.DiscoverOverrideForTests = _ => Task.FromResult<string?>(null);
         service.EndpointsForTests.Remember("http://10.0.0.4:5070", DateTimeOffset.UtcNow);
+        var plays = 0;
         handler.Next = (request, _) =>
         {
             if (request.RequestUri?.AbsolutePath.Contains("/play/", StringComparison.Ordinal) == true)
+            {
+                Interlocked.Increment(ref plays);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            }
             return Task.FromResult(Json(HttpStatusCode.OK, "{}"));
         };
 
         var resolved = await service.ResolveM3U8UrlAsync("https://streams.example.test/match");
 
+        // The service answered, so this is a stream failure: null, one /play, and
+        // the endpoint is not thrown away (no re-discovery, no second /play).
         Assert.Null(resolved);
-        Assert.False(service.EndpointsForTests.HasFresh(DateTimeOffset.UtcNow));
+        Assert.Equal(1, plays);
+        Assert.True(service.EndpointsForTests.HasFresh(DateTimeOffset.UtcNow));
     }
 
     [Fact]
-    public async Task Play_TimeoutWithoutCallerCancel_ReturnsNullAndInvalidatesDiscovery()
+    public async Task Play_TimeoutWithoutCallerCancel_ThrowsInfrastructure_AndKeepsEndpoint()
     {
         var handler = new ScriptHandler((request, _) =>
         {
@@ -93,10 +100,12 @@ public class LocalLanPlayServiceCancellationTests
         service.DiscoverOverrideForTests = _ => Task.FromResult<string?>(null);
         service.EndpointsForTests.Remember("http://10.0.0.4:5070", DateTimeOffset.UtcNow);
 
-        var resolved = await service.ResolveM3U8UrlAsync("https://streams.example.test/match");
+        // Our own timeout is an infrastructure failure, not a dead stream.
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(
+            () => service.ResolveM3U8UrlAsync("https://streams.example.test/match"));
 
-        Assert.Null(resolved);
-        Assert.False(service.EndpointsForTests.HasFresh(DateTimeOffset.UtcNow));
+        Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
+        Assert.True(service.EndpointsForTests.HasFresh(DateTimeOffset.UtcNow));
     }
 
     [Fact]
