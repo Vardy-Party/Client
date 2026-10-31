@@ -1,3 +1,5 @@
+using VardyParty.Kernel;
+
 namespace VardyParty.Streaming;
 
 /// <summary>
@@ -20,7 +22,7 @@ public static class HlsMediaSegment
         if (string.IsNullOrWhiteSpace(url))
             return false;
 
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        if (!HlsUriResolver.TryCreateExplicitAbsolute(url, out var uri))
             return LooksLikeVideoPath(url);
 
         if (!LooksLikeVideoPath(uri.AbsolutePath))

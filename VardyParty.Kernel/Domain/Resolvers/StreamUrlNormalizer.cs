@@ -25,7 +25,7 @@ public static class StreamUrlNormalizer
             return path;
         }
 
-        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        if (!HlsUriResolver.TryCreateExplicitAbsolute(trimmed, out var uri))
         {
             var fragmentIndex = trimmed.IndexOf('#');
             if (fragmentIndex >= 0) trimmed = trimmed[..fragmentIndex];

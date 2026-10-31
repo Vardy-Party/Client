@@ -251,12 +251,10 @@ public class StreamHealthChecker(
         }
     }
 
-    private static string ResolveUrl(string baseUrl, string relativeUrl)
-    {
-        if (Uri.TryCreate(relativeUrl, UriKind.Absolute, out _)) return relativeUrl;
-        if (Uri.TryCreate(new Uri(baseUrl), relativeUrl, out var absoluteUri)) return absoluteUri.ToString();
-        return relativeUrl;
-    }
+    // Root-relative "/seg.ts" parses as file:/// on Android/Linux; the shared
+    // resolver only treats explicit http(s) URLs as absolute (same on every platform).
+    private static string ResolveUrl(string baseUrl, string relativeUrl) =>
+        HlsUriResolver.Resolve(baseUrl, relativeUrl);
 
     private async Task<string?> FetchManifestContentAsync(
         string url,
@@ -442,7 +440,7 @@ public class StreamHealthChecker(
         request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
 
         var referer = GetHeader(requestHeaders, "referer") ?? refererUrl;
-        if (!string.IsNullOrEmpty(referer) && Uri.TryCreate(referer, UriKind.Absolute, out var refUri))
+        if (HlsUriResolver.TryGetHttpUrl(referer, out var refUri))
             request.Headers.Referrer = refUri;
 
         // LocalService /play captures Cookie (+ Origin / Authorization). ExoPlayer

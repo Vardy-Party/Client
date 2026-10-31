@@ -135,7 +135,7 @@ public static class StreamHealthIdentity
             return string.Empty;
         }
 
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        if (!HlsUriResolver.TryCreateExplicitAbsolute(url, out var uri))
         {
             var noQuery = url.Split('?', 2)[0];
             return noQuery.Split('#', 2)[0].Trim();

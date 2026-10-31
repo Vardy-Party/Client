@@ -76,8 +76,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     /// <summary>Local playlist URI LibVLC should open (IPv4 loopback, never localhost).</summary>
     public Uri Wrap(string originUrl)
     {
-        if (!Uri.TryCreate(originUrl, UriKind.Absolute, out var origin)
-            || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
+        if (!VardyParty.Kernel.HlsUriResolver.TryGetHttpUrl(originUrl, out var origin))
         {
             throw new ArgumentException("originUrl must be an absolute http(s) URI.", nameof(originUrl));
         }

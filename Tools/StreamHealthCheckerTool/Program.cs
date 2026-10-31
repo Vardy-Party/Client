@@ -163,12 +163,12 @@ internal class Program
                     var lines = playlist.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
                     if (playlist.Contains("#EXT-X-STREAM-INF") && lines.Count > 0)
                     {
-                        var variant = new Uri(m3u8, lines[0]);
+                        var variant = ResolvePlaylistUri(m3u8, lines[0]);
                         playlist = await GetTextAsync(http, variant, e);
                         lines = playlist.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToList();
                         m3u8 = variant;
                     }
-                    segment = lines.Count > 0 ? new Uri(m3u8, lines[^1]).ToString() : null;
+                    segment = lines.Count > 0 ? ResolvePlaylistUri(m3u8, lines[^1]).AbsoluteUri : null;
                 }
                 if (segment is null) { row.VideoNote = "no segments"; continue; }
                 var segUri = new Uri(segment);
@@ -191,6 +191,11 @@ internal class Program
             }
         }
     }
+
+    private static Uri ResolvePlaylistUri(Uri playlist, string reference) =>
+        HlsUriResolver.TryResolve(playlist, reference, out Uri? resolved)
+            ? resolved
+            : throw new InvalidOperationException($"unresolvable playlist URI {reference}");
 
     private static async Task<string> TcpAsync(Uri uri, Dictionary<string, string> cache)
     {
