@@ -1457,8 +1457,9 @@ namespace VardyParty.Platforms.Android
                         metrics.IsBuffering = true;
                     }
 
+                    var (reportUrl, reportName) = CurrentHealthIdentity();
                     await _healthReporter.ReportPlaybackMetricsAsync(
-                        _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                        reportUrl, _refererUrl, reportName, metrics: metrics);
 
                     var generation = CurrentAttachGeneration;
                     var bitrate = metrics.BitrateKbps;
@@ -1479,8 +1480,9 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics();
+                var (reportUrl, reportName) = CurrentHealthIdentity();
                 _ = _healthReporter.ReportPlaybackStartedAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                    reportUrl, _refererUrl, reportName, metrics: metrics);
             }
             catch (Exception ex)
             {
@@ -1655,7 +1657,8 @@ namespace VardyParty.Platforms.Android
                     if (_activity.TryRecoverBehindLiveWindow(error))
                         return;
 
-                    var message = error.Message ?? "Playback error";
+                    var message = BuildEngineErrorMessage(error);
+                    _activity._logger?.LogWarning("[NativeVideoActivity] Player error: {Message}", message);
                     _activity._playerFaulted = true;
                     _activity._isPreparing = false;
                     _activity.RefreshPlaybackStatus();

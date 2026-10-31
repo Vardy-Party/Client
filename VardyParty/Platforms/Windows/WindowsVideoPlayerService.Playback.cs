@@ -203,6 +203,7 @@ namespace VardyParty.Platforms.Windows
             {
                 try
                 {
+                    SyncHealthyStreamCount();
                     ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.Handle(engineEvent)));
                 }
                 catch (Exception ex)
@@ -331,9 +332,11 @@ namespace VardyParty.Platforms.Windows
 
                 public void ReportWorking()
                 {
-                    var url = session.session.Snapshot.CurrentUrl;
-                    var stream = session.switchingService?.GetCurrentStream()?.Stream;
-                    var streamName = stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
+                    // Catalog page URL of the pool row, the same key the resolver reports.
+                    var (url, streamName) = StreamHealthIdentity.ResolvePlaybackReportIdentity(
+                        session.switchingService?.GetCurrentStream(),
+                        session.session.Snapshot.CurrentUrl,
+                        session._refererUrl);
                     _ = session._host._healthReporter.ReportPlaybackStartedAsync(
                         url,
                         session._refererUrl,

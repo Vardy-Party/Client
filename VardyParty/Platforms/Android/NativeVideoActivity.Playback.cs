@@ -28,10 +28,11 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                // Pool can grow while ExoPlayer is still preparing the first stream —
-                // refresh count before UserNext/Prev eligibility checks.
-                if (engineEvent.Kind is MediaEngineEventKind.UserNext or MediaEngineEventKind.UserPrevious)
-                    SyncHealthyStreamCount();
+                // The pool grows (find phase) and shrinks (drops) during the session.
+                // Refresh the count before EVERY event: a stale count of 1 used to turn
+                // an established error into "Closing playback session" while the pool
+                // still had streams (17:08:43 UK time, 31 Oct 2026).
+                SyncHealthyStreamCount();
 
                 var cmd = PlaybackCommand.FromEffects(_session.Handle(engineEvent));
                 ApplyPlaybackCommand(cmd);
@@ -138,19 +139,20 @@ namespace VardyParty.Platforms.Android
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
-        private string? CurrentHealthStreamName()
-        {
-            var stream = _switching?.GetCurrentStream()?.Stream;
-            return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
-        }
+        /// <summary>
+        /// Crowd-health key for in-player reports: the pool row's catalog URL (the
+        /// same key the resolver uses), not the CDN embed referer.
+        /// </summary>
+        private (string? StreamUrl, string? StreamName) CurrentHealthIdentity()
+            => StreamHealthIdentity.ResolvePlaybackReportIdentity(_switching?.GetCurrentStream(), _m3u8Url, _refererUrl);
 
         private void PostHealthError(string? error)
         {
             if (_healthReporter == null) return;
             try
             {
-                _ = _healthReporter.ReportPlaybackErrorAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), error: error);
+                var (url, name) = CurrentHealthIdentity();
+                _ = _healthReporter.ReportPlaybackErrorAsync(url, _refererUrl, name, error: error);
             }
             catch (Exception ex) { LogIgnored("ReportPlaybackError", ex); }
         }
@@ -161,8 +163,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics(isBuffering: true);
-                _ = _healthReporter.ReportBufferingAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                var (url, name) = CurrentHealthIdentity();
+                _ = _healthReporter.ReportBufferingAsync(url, _refererUrl, name, metrics: metrics);
             }
             catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }
@@ -225,6 +227,17 @@ namespace VardyParty.Platforms.Android
         }
 
         private static bool IsRecoverableLiveHlsStall(AndroidX.Media3.Common.PlaybackException error)
+            => PlaybackPolicy.IsRecoverableExoLiveHlsStall(error.ErrorCode, error.Message, DescribeCauses(error));
+
+        /// <summary>
+        /// The engine Error message: the message, the code name, then the cause
+        /// chain. The shared controller can then tell an expired token (fresh
+        /// /play) from a dead CDN (switch).
+        /// </summary>
+        private static string BuildEngineErrorMessage(AndroidX.Media3.Common.PlaybackException error)
+            => PlaybackPolicy.BuildEngineErrorMessage(error.Message, error.ErrorCode, DescribeCauses(error));
+
+        private static string? DescribeCauses(AndroidX.Media3.Common.PlaybackException error)
         {
             string? causeSummary = null;
             try
@@ -247,7 +260,7 @@ namespace VardyParty.Platforms.Android
                 // Ignore cause walk failures — ErrorCode / message checks remain.
             }
 
-            return PlaybackPolicy.IsRecoverableExoLiveHlsStall(error.ErrorCode, error.Message, causeSummary);
+            return causeSummary;
         }
 
         /// <summary>

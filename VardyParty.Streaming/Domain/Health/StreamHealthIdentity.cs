@@ -77,6 +77,28 @@ public static class StreamHealthIdentity
         return !string.IsNullOrWhiteSpace(streamUrl) ? streamUrl : refererUrl;
     }
 
+    /// <summary>
+    /// The crowd-health identity for an in-player report. The pool row's
+    /// catalog page URL (the same key the resolver reports at find time) wins
+    /// over the playing m3u8 and its CDN referer. Native players used to report
+    /// the embed referer (<c>https://dembed.st/</c>,
+    /// <c>247.aurasportsplayer.cfd/player/61</c>) while the orchestrator
+    /// reported the catalog URL. That logged one stream under two keys, and put
+    /// failures on a CDN host shared by unrelated streams.
+    /// </summary>
+    public static (string? StreamUrl, string? StreamName) ResolvePlaybackReportIdentity(
+        EnrichedStream? current,
+        string? playbackUrl,
+        string? refererUrl)
+    {
+        var stream = current?.Stream;
+        var streamName = stream == null ? null : GetStreamName(stream);
+        if (stream != null && !string.IsNullOrWhiteSpace(stream.Url) && !IsEphemeralPlaybackUrl(stream.Url))
+            return (stream.Url, streamName);
+
+        return (ResolveReportUrl(playbackUrl, refererUrl), streamName);
+    }
+
     public static string BuildStreamKey(string streamUrl, string? streamName = null)
     {
         var normalizedUrl = NormalizeUrl(streamUrl);

@@ -824,6 +824,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
+            _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
         }
         catch (Exception ex)
@@ -885,7 +886,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 error: reason);
@@ -895,7 +896,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 error: reason);
@@ -905,7 +906,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogInformation("[LinuxVideoPlayerService] Stream established");
             _ = player._healthReporter.ReportPlaybackStartedAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 metrics: player.GetCurrentMetrics());
@@ -922,7 +923,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             if (isBuffering)
             {
                 _ = player._healthReporter.ReportBufferingAsync(
-                    player._session.Snapshot.CurrentUrl,
+                    player.CurrentHealthReportUrl(),
                     player._refererUrl,
                     player.CurrentHealthStreamName(),
                     metrics: player.GetCurrentMetrics());
@@ -1244,6 +1245,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             BufferingStateChanged?.Invoke(this, isBuffering);
         }
     }
+
+    /// <summary>Crowd-health key: the pool row's catalog URL, not the CDN embed referer.</summary>
+    private string? CurrentHealthReportUrl()
+        => StreamHealthIdentity.ResolvePlaybackReportIdentity(
+            _switching.GetCurrentStream(), _session.Snapshot.CurrentUrl, _refererUrl).StreamUrl;
 
     private string? CurrentHealthStreamName()
     {
