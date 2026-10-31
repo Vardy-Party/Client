@@ -917,7 +917,19 @@ namespace VardyParty.Platforms.Android
                 var playingUrl = _m3u8Url;
                 var playing = _pool?.FindPlayingRow(playingUrl, current);
                 ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchPendingText(current.Stream?.Channel));
-                var url = await _resolveFresh(current, cancellationToken).ConfigureAwait(false);
+                string? url;
+                try
+                {
+                    url = await _resolveFresh(current, cancellationToken).ConfigureAwait(false);
+                }
+                catch (VardyParty.Kernel.InfrastructureUnavailableException ex)
+                {
+                    // The local service gave no verdict: same as "no URL" below - stay on
+                    // the playing row, put the index back. Nothing is reported or removed.
+                    _logger?.LogWarning("[NativeVideoActivity] Fresh /play for {Channel} deferred - local service unavailable: {Message}",
+                        current.Stream?.Channel ?? "(null)", ex.Message);
+                    url = null;
+                }
                 if (cancellationToken.IsCancellationRequested
                     || generation != Volatile.Read(ref _switchAttachGeneration))
                     return;

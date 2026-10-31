@@ -385,6 +385,17 @@ public class StreamResolutionOrchestrator(
             {
                 outcome.UserClosed = true;
             }
+            else if (playbackResult is { Success: false, IsLocalServiceUnavailable: true })
+            {
+                // The local service gave no verdict on the fresh /play even after
+                // the infrastructure retries. That says nothing about the stream:
+                // no "failed" report, the row stays in the pool, and the outcome
+                // says "local service unavailable" (same as deferred rows).
+                logger.LogWarning("[StreamResolution] Playback deferred - {Message}", playbackResult.Message);
+                _status = PlaybackCloseReasons.LocalServiceUnavailable;
+                outcome.LocalServiceUnavailable = true;
+                PublishProgress();
+            }
             else if (playbackResult != null && !playbackResult.Success)
             {
                 var current = streamSwitchingService.GetCurrentStream();
@@ -541,7 +552,14 @@ public class StreamResolutionOrchestrator(
                     ? "[StreamResolution] Resolving fresh one-shot M3U8 for playback: {Channel}"
                     : "[StreamResolution] Resolving fresh M3U8 for playback: {Channel}",
                 enrichedStream.Stream.Channel);
-            m3u8Url = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            try
+            {
+                m3u8Url = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                return LocalServiceUnavailableResult(enrichedStream, ex);
+            }
         }
 
         if (string.IsNullOrEmpty(m3u8Url))
@@ -601,10 +619,20 @@ public class StreamResolutionOrchestrator(
         // If we used a cached URL and it failed immediately, the token may have been
         // invalidated. Re-resolve fresh and retry this same stream once.
         if (usedCachedUrl && result != null && !result.Success &&
-            !result.ViewerLeft)
+            !result.ViewerLeft && !result.IsLocalServiceUnavailable)
         {
             logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
-            var freshUrl = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            string? freshUrl;
+            try
+            {
+                freshUrl = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                // The cached token failed and the service could not mint a new one.
+                // Without a fresh verdict the stream is not proven dead: defer.
+                return LocalServiceUnavailableResult(enrichedStream, ex);
+            }
             if (StreamCandidateRules.ShouldAcceptFreshM3U8(m3u8Url, freshUrl))
             {
                 // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.
@@ -639,12 +667,31 @@ public class StreamResolutionOrchestrator(
             }
         }
 
-        var response = await apiService.GetM3U8UrlAsync(
-            stream.Url,
-            EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
-            stream.ResolutionStrategy,
-            stream.Source,
-            cancellationToken);
+        M3U8Response? response;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                response = await apiService.GetM3U8UrlAsync(
+                    stream.Url,
+                    EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
+                    stream.ResolutionStrategy,
+                    stream.Source,
+                    cancellationToken);
+                break;
+            }
+            catch (InfrastructureUnavailableException ex)
+                when (InfrastructureRetryPolicy.ShouldRetryFreshResolve(ex, attempt))
+            {
+                // A blip (unreachable, our timeout, LS 5xx): ask again, same as
+                // the find phase. MP disabled / auth skip straight to the caller.
+                var delay = InfrastructureRetryPolicy.FreshResolveDelays[attempt];
+                logger.LogWarning(
+                    "[StreamResolution] Fresh resolve for {Channel} hit local service unavailable ({Message}) - retry {Attempt} in {Delay}s",
+                    stream.Channel, ex.Message, attempt + 1, delay.TotalSeconds);
+                await DelayAsync(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
 
         if (response is null || string.IsNullOrWhiteSpace(response.Url))
             return null;
@@ -768,10 +815,23 @@ public class StreamResolutionOrchestrator(
             _status = "Switch requested - resolving stream URL...";
             PublishProgress();
 
-            var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
-                nextStream.Stream,
-                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-                cancellationToken);
+            string? resolved;
+            try
+            {
+                resolved = await apiService.ResolveM3U8ForPlaybackAsync(
+                    nextStream.Stream,
+                    $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+                    cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                // Keep the current stream and the next row: nothing was proven dead.
+                logger.LogWarning("[StreamResolution] Next stream {Channel} deferred - local service unavailable: {Message}",
+                    nextStream.Stream.Channel, ex.Message);
+                _status = "Switch failed - local service unavailable";
+                PublishProgress();
+                return;
+            }
 
             if (string.IsNullOrEmpty(resolved))
             {
@@ -945,6 +1005,14 @@ public class StreamResolutionOrchestrator(
 
         await PlayStreamAsync(game, nextStream, launcher, cancellationToken);
         return true;
+    }
+
+    private PlaybackResult LocalServiceUnavailableResult(EnrichedStream enrichedStream, InfrastructureUnavailableException ex)
+    {
+        logger.LogWarning(
+            "[StreamResolution] Fresh resolve for {Channel} deferred - local service unavailable: {Message}",
+            enrichedStream.Stream?.Channel, ex.Message);
+        return PlaybackResult.Completed($"{PlaybackCloseReasons.LocalServiceUnavailable}: {ex.Message}", true);
     }
 
     private async Task HandlePlaybackFailureAsync(

@@ -315,6 +315,57 @@ namespace VardyParty.Streaming.Tests
             Assert.Equal(1, handler.RequestCount);
         }
 
+        // Business rule (31 Oct 2026): ApiService used to turn every exception into
+        // null, so a local-service blip on the first start read as "no playlist",
+        // failed the start and reported the stream. Infrastructure now propagates.
+        private ApiService CreateLanApi()
+            => new(
+                new HttpClient(new FakeHttpMessageHandler("{}")),
+                NullLogger<ApiService>.Instance,
+                _fixture.GetMock<ILocalLanPlayService>().Object,
+                Options.Create(_fixture.Create<GamesApiSettings>()),
+                Options.Create(_fixture.Build<APISettings>().With(s => s.HeadlessBaseUrl, "https://test.local/").Create()));
+
+        private void LanThrows(Exception ex)
+            => _fixture.GetMock<ILocalLanPlayService>()
+                .Setup(s => s.ResolveM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                    It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>()))
+                .ThrowsAsync(ex);
+
+        [Theory]
+        [InlineData(LocalServiceUnavailableReason.CallTimeout)]
+        [InlineData(LocalServiceUnavailableReason.ConnectionFailed)]
+        [InlineData(LocalServiceUnavailableReason.ServiceError)]
+        [InlineData(LocalServiceUnavailableReason.MpDisabled)]
+        [InlineData(LocalServiceUnavailableReason.Unauthorized)]
+        public async Task GetM3U8UrlAsync_LocalServiceUnavailable_Propagates(LocalServiceUnavailableReason reason)
+        {
+            LanThrows(new LocalServiceUnavailableException(reason, "blip"));
+
+            var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(
+                () => CreateLanApi().GetM3U8UrlAsync("https://streams.example.test/m", null, "v2", "mp"));
+
+            Assert.Equal(reason, ex.Reason);
+        }
+
+        [Fact]
+        public async Task ResolveM3U8ForPlaybackAsync_LocalServiceUnavailable_Propagates()
+        {
+            LanThrows(new LocalServiceUnavailableException(LocalServiceUnavailableReason.CallTimeout, "blip"));
+            var stream = _fixture.Build<Stream>().With(s => s.Url, "https://streams.example.test/m").Create();
+
+            await Assert.ThrowsAsync<LocalServiceUnavailableException>(
+                () => CreateLanApi().ResolveM3U8ForPlaybackAsync(stream, "/league/home/away"));
+        }
+
+        [Fact]
+        public async Task GetM3U8UrlAsync_OtherFailure_StillNull()
+        {
+            LanThrows(new InvalidOperationException("parser bug"));
+
+            Assert.Null(await CreateLanApi().GetM3U8UrlAsync("https://streams.example.test/m"));
+        }
+
         private class FakeHttpMessageHandler(
             string responseJson,
             System.Net.HttpStatusCode statusCode = System.Net.HttpStatusCode.OK) : HttpMessageHandler

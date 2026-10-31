@@ -25,6 +25,13 @@ public static class PlaybackCloseReasons
     /// </summary>
     public const string PlayerRecreated = "Video player recreated";
 
+    /// <summary>
+    /// The session ended because the local service could not give a verdict
+    /// (unreachable, timed out, failed itself). Not a stream failure: the
+    /// orchestrator must not report or drop the row.
+    /// </summary>
+    public const string LocalServiceUnavailable = "Local service unavailable";
+
     /// <summary>The reason an Android player activity reports from OnDestroy.</summary>
     /// <param name="isChangingConfigurations">Activity.IsChangingConfigurations: a recreate, not a departure.</param>
     public static string ForDestroy(bool isChangingConfigurations) => isChangingConfigurations ? PlayerRecreated : PlayerClosed;
@@ -51,6 +58,14 @@ public class PlaybackResult
     /// </summary>
     [JsonIgnore]
     public bool ViewerLeft => IsUserClosed || IsPlayerClosed;
+
+    /// <summary>
+    /// The start or retry failed on infrastructure, not on the stream (see
+    /// <see cref="PlaybackCloseReasons.LocalServiceUnavailable"/>). Never report or drop the row.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsLocalServiceUnavailable =>
+        (Message ?? string.Empty).Contains(PlaybackCloseReasons.LocalServiceUnavailable, StringComparison.OrdinalIgnoreCase);
 
     public static PlaybackResult Completed(string message, bool recoverable = false) => new()
     {

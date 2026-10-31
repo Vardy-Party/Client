@@ -156,6 +156,36 @@ public sealed class PlaybackSessionController
     }
 
     /// <summary>
+    /// A fresh <c>/play</c> (start retry or same-stream retry) could not get a
+    /// verdict from the local service even after
+    /// <see cref="InfrastructureRetryPolicy.FreshResolveDelays"/>: unreachable,
+    /// timed out, its own 5xx, MP disabled or auth. That says nothing about the
+    /// stream, so unlike <see cref="NotifyFreshResolveUnavailable"/> there is no
+    /// ReportFailed, no RemoveCurrentFromPool and no same-stream budget spent.
+    /// The session closes with <see cref="PlaybackCloseReasons.LocalServiceUnavailable"/>
+    /// and the orchestrator defers: every row stays in the pool, unreported.
+    /// It does not advance: the next row needs the same service, and a no-remove
+    /// advance could ping-pong between rows.
+    /// </summary>
+    public IReadOnlyList<PlaybackEffect> NotifyFreshResolveInfrastructureUnavailable(string? reason = null)
+    {
+        if (_state == PlaybackSessionState.Closed)
+            return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
+
+        ResetSameStreamRecovery(clearBudget: true);
+        _isPreparing = false;
+        _state = PlaybackSessionState.Failed;
+        var message = string.IsNullOrWhiteSpace(reason)
+            ? PlaybackCloseReasons.LocalServiceUnavailable
+            : $"{PlaybackCloseReasons.LocalServiceUnavailable}: {reason}";
+        return
+        [
+            new PlaybackEffect(PlaybackEffectKind.Stop, Reason: message),
+            new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: message)
+        ];
+    }
+
+    /// <summary>
     /// Windows AdaptiveMediaSource download failures. After
     /// <see cref="PlaybackPolicy.MaxConsecutiveDownloadFailures"/> this is a hard Error.
     /// </summary>

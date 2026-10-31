@@ -104,6 +104,29 @@ public class UpcomingStreamPrewarmerTests
     }
 
     [Fact]
+    public async Task TickAsync_LocalServiceUnavailable_IsSwallowed_RowKept_InFlightCleared()
+    {
+        // Arrange - ApiService now propagates infrastructure failures; the
+        // background prewarm must neither crash nor drop the row.
+        var current = SoakRow("current");
+        var next = SoakRow("next");
+        _pool.AddHealthyStream(current);
+        _pool.AddHealthyStream(next);
+        _api.Setup(a => a.GetM3U8UrlAsync(next.Stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new LocalServiceUnavailableException(LocalServiceUnavailableReason.CallTimeout, "GET /play exceeded 20s"));
+        var sut = CreateSut();
+
+        // Act
+        var issued = await sut.TickAsync(CancellationToken.None);
+
+        // Assert
+        Assert.True(issued);
+        Assert.Null(_cache.Peek(next));
+        Assert.Equal(2, _pool.GetHealthyStreams().Count);
+        Assert.True(_cache.BeginInFlight(next)); // the failed attempt released its slot
+    }
+
+    [Fact]
     public async Task TickAsync_IsSingleFlight()
     {
         // Arrange

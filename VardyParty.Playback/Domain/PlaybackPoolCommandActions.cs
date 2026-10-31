@@ -223,9 +223,26 @@ public sealed class PlaybackPoolCommandActions(
                     return;
             }
 
-            var fresh = current != null && resolveFresh != null
-                ? await resolveFresh(current, CancellationToken.None)
-                : null;
+            string? fresh = null;
+            if (current != null && resolveFresh != null)
+            {
+                for (var attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        fresh = await resolveFresh(current, CancellationToken.None).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (InfrastructureUnavailableException ex)
+                        when (InfrastructureRetryPolicy.ShouldRetryFreshResolve(ex, attempt))
+                    {
+                        // Service blip, not the stream: wait and ask again.
+                        await DelayAsync(InfrastructureRetryPolicy.FreshResolveDelays[attempt]).ConfigureAwait(false);
+                        if (IsStale(recovering, current))
+                            return;
+                    }
+                }
+            }
             if (recovering && !session.Snapshot.IsRecovering)
                 return;
 
@@ -246,9 +263,23 @@ public sealed class PlaybackPoolCommandActions(
 
             attachViaSession(fresh!, false, true);
         }
+        catch (InfrastructureUnavailableException ex)
+        {
+            // Retries exhausted (or MP disabled / auth): defer, never report or drop.
+            applyCommand(PlaybackCommand.FromEffects(session.NotifyFreshResolveInfrastructureUnavailable(ex.Message)));
+        }
         catch (Exception ex)
         {
             applyCommand(PlaybackCommand.FromEffects(session.NotifyFreshResolveUnavailable(ex.Message)));
         }
     }
+
+    /// <summary>
+    /// The user moved to another row (or the session closed) while an
+    /// infrastructure retry waited.
+    /// </summary>
+    private bool IsStale(bool recovering, EnrichedStream current)
+        => session.Snapshot.State == PlaybackSessionState.Closed
+           || (recovering && !session.Snapshot.IsRecovering)
+           || !ReferenceEquals(switching.GetCurrentStream(), current);
 }

@@ -79,6 +79,16 @@ public class ApiService(
         {
             throw;
         }
+        catch (LocalServiceUnavailableException ex)
+        {
+            // The service gave no verdict (unreachable, our timeout, its own
+            // error, MP disabled, auth). Returning null here used to read as
+            // "no playlist", so a blip failed the first start and reported the
+            // stream. Callers retry or defer on this instead.
+            logger.LogWarning("[Api] Local service unavailable ({Reason}) fetching M3U8 for {Url}: {Message}",
+                ex.Reason, streamUrl, ex.Message);
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "[Api] Failed to fetch M3U8 for {Url}", streamUrl);
@@ -110,6 +120,11 @@ public class ApiService(
 
             logger.LogWarning("[Api] No m3u8 URL returned for playback resolution: {Channel}", stream.Channel);
             return null;
+        }
+        catch (LocalServiceUnavailableException)
+        {
+            // Infrastructure, not the stream: let the caller decide.
+            throw;
         }
         catch (Exception ex)
         {
