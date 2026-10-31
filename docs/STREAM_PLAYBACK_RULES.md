@@ -446,10 +446,34 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - `StreamResolutionOrchestrator` never reports a Deferred row. It counts as done for the first-play frontier, and is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
 - Healthy rows are reported `working` (was `unknown`).
 
+### `/mp` harvest (`LocalLanPlayService`, `MpHarvestSession`)
+
+- Only "the service answered and found no playlist" is a verdict (`null`): a 2xx with no URL, NDJSON `error` with a 4xx (e.g. 404 "M3U8 not captured from MP page."), or a plain 4xx other than 401/403.
+- Infrastructure fails the harvest with `MpHarvestSession.Fail`, and waiters with no playlist throw `LocalServiceUnavailableException`. Labels that already have a playlist still get it. A failed harvest is never reused.
+  - HTTP 5xx or NDJSON `error` with a 5xx (e.g. 500 "mp play execution failed") → `ServiceError`.
+  - Our 330s harvest timeout → `CallTimeout` (or `ConnectionFailed` if `/health` is also down).
+  - Connection failure → `ConnectionFailed`.
+  - 401/403 → `Unauthorized` (also on `/play`).
+  - 503 "V2/MP scrape disabled on this local service" → `MpDisabled`. The client remembers it per endpoint for 60s (`MpDisabledMemory`), so other MP rows in the sweep are answered locally without a POST. The row is "unavailable here", not dead. The client never turns V2/MP on.
+- `MpDisabled` and `Unauthorized` are not retryable (`IsRetryable` false): the resolver defers them at once, without the 2s/5s retries.
+
+### First start and in-player fresh `/play` (`ApiService`, `InfrastructureRetryPolicy`)
+
+- `ApiService.GetM3U8UrlAsync` and `ResolveM3U8ForPlaybackAsync` rethrow `LocalServiceUnavailableException`. Other exceptions still return `null`.
+- One rule for every host, `InfrastructureRetryPolicy` (Kernel): a retryable infrastructure failure on a fresh `/play` is asked again after 2s, 5s and 15s. Non-retryable failures skip the waits.
+- First start (`StreamResolutionOrchestrator.PlayStreamAsync`): when the retries run out, on the fresh resolve or on the fresh retry after a failed cached URL, playback returns `PlaybackCloseReasons.LocalServiceUnavailable`. The orchestrator then sends no `failed` report, does not call `RemoveCurrentStream`, does not try the next row, and sets `StreamResolutionOutcome.LocalServiceUnavailable`.
+- In the player (`PlaybackPoolCommandActions.RetryFreshResolveAsync`, used by the failed-start retry and same-stream recovery on Android, Windows, Linux, iOS and MacCatalyst): the same waits apply, and the retry is dropped if the viewer moves on. When the retries run out it calls `PlaybackSessionController.NotifyFreshResolveInfrastructureUnavailable`.
+  - That method stops and closes the session with "Local service unavailable: ...".
+  - It sends no `ReportFailed`, does no removal, does not advance, and resets the same-stream budget.
+  - It does not advance because the next row needs the same service, and a no-remove advance could bounce between rows.
+- A Next-button resolve (`HandleNextStreamRequestedAsync`) that hits infrastructure shows "Switch failed - local service unavailable" and keeps the current stream. The Android one-shot switch treats it like "no URL": it stays on the playing row and puts the index back.
+- Prefetch and the prewarmer already swallow failures. They never report or drop a row.
+
 ### Known limitations
 
-- `/mp` harvest failures after the service answered still return `null`.
-- `ApiService` turns exceptions into `null`, so an infrastructure failure on a fresh `/play` during a first start can still fail that start. During recovery it only uses one attempt.
+- `/play` 5xx is still a stream verdict (`null`). LocalService passes the scrape plugin's status through, and also returns 500 for its own exceptions, so the client cannot tell the two apart. This needs a distinct LS status or an error code.
+- Errors from remote compute (the paired relay) are not classified. They surface through `LastRemoteComputeError`.
+- `/mp` 400s (bad pop/DoH headers) still count as a miss.
 
 ## Known remaining work
 
