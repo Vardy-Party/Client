@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using VardyParty.Kernel;
@@ -35,7 +36,11 @@ public class StreamHealthChecker(
             // but rely on caller's token primarily.
             // We'll enforce a specific timeout for the HTTP calls if needed.
 
-            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken);
+            var evidence = new StrongBox<MirrorEvidence?>();
+            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken,
+                m3u8Url, evidence);
+            if (health.Status == StreamHealthStatus.Healthy)
+                health.MirrorEvidence = evidence.Value;
 
             // Extract metadata from the manifest if check was successful
             if (health.Status == StreamHealthStatus.Healthy)
@@ -135,7 +140,9 @@ public class StreamHealthChecker(
         string refererUrl,
         int depth,
         StreamHealthProbe? probe,
-        CancellationToken ct)
+        CancellationToken ct,
+        string sourceUrl,
+        StrongBox<MirrorEvidence?> evidence)
     {
         if (depth > MaxRecursionDepth)
         {
@@ -176,12 +183,15 @@ public class StreamHealthChecker(
         {
             var nextUrl = ExtractFirstStreamUrl(content, url);
             if (string.IsNullOrEmpty(nextUrl)) return StreamHealthStatus.InvalidManifest;
-            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct);
+            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct, sourceUrl, evidence);
         }
 
         // Media playlist contains EXTINF
         if (content.Contains("#EXTINF"))
         {
+            // Mirror evidence is read from the playlist that is about to pass; the caller
+            // keeps it only when the status ends up Healthy (docs "Proven mirrors").
+            evidence.Value = CaptureMirrorEvidence(content, url, sourceUrl);
             var rewritten = probe?.RewrittenSegmentUrls?
                 .FirstOrDefault(segment => !string.IsNullOrWhiteSpace(segment));
             if (!string.IsNullOrEmpty(rewritten))
@@ -214,6 +224,19 @@ public class StreamHealthChecker(
         if (content.TrimStart().StartsWith("#EXTM3U")) return StreamHealthStatus.EmptyManifest;
 
         return StreamHealthStatus.InvalidManifest;
+    }
+
+    private MirrorEvidence? CaptureMirrorEvidence(string content, string playlistUrl, string sourceUrl)
+    {
+        try
+        {
+            return MirrorEvidence.FromMediaPlaylist(content, playlistUrl, sourceUrl, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamHealthChecker] Mirror evidence not captured for {Url}", playlistUrl);
+            return null;
+        }
     }
 
     private string? ExtractFirstStreamUrl(string content, string baseUrl)

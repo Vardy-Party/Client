@@ -1,4 +1,6 @@
 using System.Reactive.Subjects;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using VardyParty.Kernel;
 using VardyParty.Ports;
 
@@ -12,8 +14,11 @@ namespace VardyParty.Playback;
 /// later numbers down to close the gap. Merged duplicates never take a number; a
 /// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
 /// </summary>
-public class StreamSwitchingService : IStreamSwitchingService, IDisposable
+public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = null)
+    : IStreamSwitchingService, IDisposable
 {
+    private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
+
     private readonly List<EnrichedStream> _healthyStreams = new();
     private int _currentStreamIndex = -1;
     private string _league = string.Empty;
@@ -28,6 +33,10 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     // Merged duplicates per identity key. Never shown; promoted in place when the visible
     // entry for that key fails (RemoveCurrentStream).
     private readonly Dictionary<string, List<EnrichedStream>> _fallbacks = new(StringComparer.OrdinalIgnoreCase);
+
+    // Proven mirrors (docs "Proven mirrors"): a merged mirror's own identity key points at
+    // the visible entry's key, so later rows resolving to that mirror URL merge directly.
+    private readonly Dictionary<string, string> _mirrorKeyAliases = new(StringComparer.OrdinalIgnoreCase);
 
     private static string BuildDedupKey(EnrichedStream stream) =>
         StreamUrlNormalizer.M3u8IdentityKey(stream.ResolvedM3U8Url);
@@ -56,6 +65,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         _healthyStreams.Clear();
         _identityKeys.Clear();
         _fallbacks.Clear();
+        _mirrorKeyAliases.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -84,6 +94,31 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                     return;
                 }
 
+                // Same URL as an already-proven mirror: merge into the entry it mirrors.
+                if (_mirrorKeyAliases.TryGetValue(incomingKey, out var aliasedKey))
+                {
+                    var aliasedIndex = IndexOfKey(aliasedKey);
+                    if (aliasedIndex >= 0)
+                    {
+                        MergeDuplicate(aliasedIndex, aliasedKey, stream);
+                        return;
+                    }
+
+                    _mirrorKeyAliases.Remove(incomingKey);
+                }
+
+                // Different URL, same media: only when the health check's segment clocks
+                // prove it (MirrorProofPolicy). Host-name similarity is never a reason.
+                if (TryFindProvenMirror(stream, out var mirrorIndex, out var mirrorKey, out var proof))
+                {
+                    _logger.LogInformation(
+                        "[Dedup] proven mirror: {Incoming} == {Existing} ({Proof})",
+                        Describe(stream), Describe(_healthyStreams[mirrorIndex]), proof.Reason);
+                    _mirrorKeyAliases[incomingKey] = mirrorKey;
+                    MergeDuplicate(mirrorIndex, mirrorKey, stream);
+                    return;
+                }
+
                 _identityKeys[stream] = incomingKey;
             }
 
@@ -106,6 +141,54 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 GetCurrentStreamIndex(),
                 _healthyStreams.Count));
         }
+    }
+
+    private bool TryFindProvenMirror(
+        EnrichedStream incoming,
+        out int index,
+        out string key,
+        out MirrorProof proof)
+    {
+        index = -1;
+        key = string.Empty;
+        proof = MirrorProof.No("missing evidence");
+        var incomingEvidence = incoming.Health?.MirrorEvidence;
+        if (incomingEvidence is null)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < _healthyStreams.Count; i++)
+        {
+            var existing = _healthyStreams[i];
+            if (!_identityKeys.TryGetValue(existing, out var existingKey)
+                || existing.Health?.MirrorEvidence is not { } existingEvidence)
+            {
+                continue;
+            }
+
+            var candidate = MirrorProofPolicy.Evaluate(existingEvidence, incomingEvidence);
+            if (candidate.IsProven)
+            {
+                index = i;
+                key = existingKey;
+                proof = candidate;
+                return true;
+            }
+
+            _logger.LogDebug("[Dedup] not a proven mirror: {Incoming} vs {Existing} ({Reason})",
+                Describe(incoming), Describe(existing), candidate.Reason);
+        }
+
+        return false;
+    }
+
+    private static string Describe(EnrichedStream stream)
+    {
+        var label = stream.Stream?.Channel ?? "?";
+        var url = stream.ResolvedM3U8Url ?? string.Empty;
+        var cut = url.IndexOfAny(new[] { '?', '#' });
+        return $"{label} {(cut >= 0 ? url[..cut] : url)}";
     }
 
     private int IndexOfKey(string key)
@@ -361,6 +444,7 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             _healthyStreams.Clear();
             _identityKeys.Clear();
             _fallbacks.Clear();
+            _mirrorKeyAliases.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);

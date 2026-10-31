@@ -358,6 +358,45 @@ Rules (normative; tests in `HealthyPoolDedupBusinessRulesTests` and `StreamUrlNo
 The old page-URL `StreamDeduplicator` (catalog `stream.Url` + V2 label) was never called in
 production (only DI-registered) and was removed; dedup of catalog rows by page URL is not
 done - distinct pages are resolved and merged here by what they actually play.
+
+## Proven mirrors (31 Oct 2026)
+
+Some providers serve one encoder output from several hosts, e.g. `edgestream2.pro/hls/syaLqucEne4k.m3u8`
+and `edgestream5.pro/hls/syaLqucEne4k.m3u8`. Their identity keys differ (host is kept), so the rule
+above shows both. They are merged only when the media proves it. Rules (normative; tests in
+`MirrorProofPolicyTests`, `ProvenMirrorDedupBusinessRulesTests`, `StreamHealthCheckerMirrorEvidenceTests`):
+
+1. **Evidence comes from the health check.** When a media (variant) playlist passes,
+   `StreamHealthChecker` stores `StreamHealth.MirrorEvidence`: segment URIs, the segment name stem
+   (trailing number replaced by `{n}`, e.g. `syaLqucEne4k-{n}.ts`), the live-edge segment number,
+   whether those numbers are a 90 kHz PTS clock (consecutive numbers advance by EXTINF x 90000;
+   needs 2+ segments, a plain counter is not a clock), `EXT-X-MEDIA-SEQUENCE`, live-edge
+   `EXT-X-PROGRAM-DATE-TIME`, target duration and when it was read. A failed check stores none.
+   It reaches the pool on `EnrichedStream.Health` (`StreamResolver` -> `StreamResolutionOrchestrator`
+   -> `AddHealthyStream`).
+2. **Proof** (`MirrorProofPolicy.Evaluate`, pure). Either
+   (a) both names are a PTS clock with the same stem, and the live-edge numbers differ by the time
+   between the two reads (33-bit wrap aware) within **+/-5 s**; or
+   (b) live-edge PROGRAM-DATE-TIME agrees within **~2 s** after the same elapsed-time correction,
+   with the same target duration and the same naming pattern (letter runs `a`, digit runs `9`).
+   If (a) applies and is out of tolerance it is not proven; (b) is not tried.
+3. **Never a reason:** host-name similarity, URL shape, or catalog labels. Missing or ambiguous
+   evidence (no playlist evidence, single segment, counter names without PROGRAM-DATE-TIME) never merges.
+4. **Different `premiumNNN` ids never merge** (any `premium<digits>` in the source, playlist or
+   segment paths; present on one side only also counts as different), even when clocks agree:
+   wedd48c premium109/155/261 stay three channels.
+5. **Where:** `StreamSwitchingService.AddHealthyStream`, after the identity-key check (unchanged).
+   A proven mirror merges into the visible entry exactly like a same-key duplicate: hidden fallback,
+   no channel number, promoted in place when the visible entry fails, never swapped in under the
+   viewer. Its own key is aliased to that entry, so later rows on the mirror URL merge without new
+   evidence. Stable numbering rules are unchanged.
+6. **Log:** `[Dedup] proven mirror: <incoming channel url> == <visible channel url> (pts delta -0.90s)`
+   (or `pdt delta`). Rejections with evidence on both sides log at Debug as `[Dedup] not a proven mirror`.
+7. The lshls `secure_hls.php?path=` identity handling is untouched.
+
+Observed (v223, UTC): edgestream2 `-944307180.ts` at 20:21:45.362 and `-953640450.ts` at 20:23:31.002
+(103.70 s of media in 105.64 s, -1.94 s); edgestream5 `-957960270.ts` at 20:24:17.960 (151.70 s in
+152.60 s from the first read, -0.90 s).
 ## Stable channel numbering (31 Oct 2026)
 
 A channel number is the row's position in `StreamSwitchingService.GetHealthyStreams()` plus one. Every platform renders that list, so the numbers are the same on Android, Windows, Linux and Apple. Rules (tests in `StableChannelNumberingBusinessRulesTests`):

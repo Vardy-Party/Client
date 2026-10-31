@@ -40,6 +40,13 @@ public class StreamHealth
     public string? AudioCodec { get; set; }
 
     /// <summary>
+    /// What the passing media playlist looked like (segment names, 90 kHz numbers,
+    /// PROGRAM-DATE-TIME, target duration, when it was read). Only set when the check
+    /// passed. <see cref="MirrorProofPolicy"/> uses it to prove two URLs are one stream.
+    /// </summary>
+    public MirrorEvidence? MirrorEvidence { get; set; }
+
+    /// <summary>
     /// Human-readable quality string for UI display (e.g., "1080p 60fps 5000kbps")
     /// Derived from Resolution, FrameRate, and Bitrate
     /// </summary>
