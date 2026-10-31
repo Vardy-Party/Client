@@ -182,6 +182,8 @@ Only runs when `PlayVideoAsync` **returns** with `Success == false` (and not “
 
 Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)). `StreamHealthIdentity.ResolveReportUrl` prefers the catalog/page URL (referer) when the first argument is an ephemeral M3U8/DASH URL. Android still passes M3U8 + referer; the reporter stores the page URL.
 
+Native players report through `StreamHealthIdentity.ResolvePlaybackReportIdentity(current, playbackUrl, referer)`: the current pool entry's catalog URL and stream name win over the m3u8 and the embed referer, so the orchestrator and the player use one key. `StreamHealthReporter` drops a duplicate of the same status for the same key inside 20s (`working`, `buffering`, and the `started` report under its own key) and a duplicate `failed` inside 60s. `user-report` is never suppressed. The orchestrator's 30s health tick reports `streamSwitchingService.GetCurrentStream()`, not the stream playback started on.
+
 ---
 
 ## Unified policy (in Core)
@@ -208,6 +210,9 @@ Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL
 7. **Stale events**: ignore errors whose `generation != currentAttachGeneration`.
 8. **Single health reporter**: platforms push metrics/errors into Core; Core posts to API with one identity key.
 9. **Buffering always raises** `BufferingStateChanged` into Core on every OS.
+10. **Retry the same stream before switching** (supersedes the "remove + advance" in rules 3 and 5 for a stream that has played). See [Same-stream recovery](#same-stream-recovery-and-infrastructure-failures-31-oct-2026).
+11. **An infrastructure failure is never a stream failure.** No endpoint, our own `/play` timeout, or a refused connection never marks a row Failed and never reports it. The row is `Deferred` and re-queued.
+12. **Report once.** `ReportFailed` / `ReportDeclined` run before the pool is cleared, so the report carries the stream that failed; the reporter drops duplicates.
 
 ### Slim OS adapter surface (target)
 
@@ -398,6 +403,53 @@ Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuse
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests` (Playback).
 
 ---
+
+## Same-stream recovery and infrastructure failures (31 Oct 2026)
+
+Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57 cascade that dropped and reported reachable streams; a techydeals row whose `/play` was sent twice (16:49:54 and 16:50:14) because our 20s timeout fired while the service was still resolving, then failed at 16:50:34; re-discovery from 16:51:43 to 16:53:03 after the endpoint was thrown away; and the same `working` sample sent twice (16:49:27 and 16:49:29).
+
+### Error classes (`PlaybackPolicy.ClassifyPlaybackError`)
+
+| Class | Examples | First step |
+|---|---|---|
+| `ConfirmedDead` | DNS failure (`UnknownHostException`), connection refused, playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
+| `TokenOrPlaylistInvalid` | 401/403, `#EXTM3U` header missing, manifest parse error | Fresh `/play` for the same row |
+| `Transient` | Anything else, including a bare "Source error", timeouts, segment 404 | Reload the same URL |
+
+Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.
+
+### Same-stream retry budget (`PlaybackSessionController`)
+
+- Up to `MaxSameStreamRetries` (3) attempts per stream: attempt 1 of a transient error reloads the same URL; later attempts, and any token/playlist error, request a fresh `/play` (`RetryFreshResolve`) with backoff 0s / 1s / 3s.
+- No `ReportFailed`, no pool removal and no advance while attempts remain. The snapshot shows `IsRecovering` and `SameStreamRetries`.
+- The budget refills when the last retry was at least 90s ago (`SameStreamRetryWindow`). A recovered stream that flaps inside 90s keeps using the same budget.
+- A health decline (buffering or bitrate window) gets one reload (`MaxHealthDeclineRetries`), then `ReportDeclined` and a switch.
+- A burst of download failures uses one attempt, not the whole budget: the failure counter resets when a retry starts.
+- An empty fresh `/play` during recovery uses one attempt; the last one switches.
+- When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
+- A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
+- Make-before-break is unchanged: a failed switch candidate still reverts to last-good once.
+- User Next/Prev cancels recovery; the new stream starts with a full budget.
+
+### Local service (`LocalLanPlayService`, `LocalServiceEndpointCache`)
+
+- `ResolveM3U8UrlAsync` returns `null` only when the service answered with no playlist (a stream failure). Infrastructure failures throw `LocalServiceUnavailableException` with `EndpointUnknown`, `CallTimeout` or `ConnectionFailed`.
+- Exactly one `/play` (or `/mp`) per resolve. The old "invalidate and call `/play` again" path is gone.
+- Single-flight per stream (url, stream name, strategy, source): concurrent callers share one call. One caller cancelling does not cancel the others; a caller arriving after the last waiter cancelled starts its own call.
+- The endpoint is kept. After the 120s TTL the cache returns `Stale(lastGood)` and probes in the background; a failed probe keeps last-good. Only `Invalidate()` forgets it, after 3 consecutive connection failures. Any HTTP answer resets the count. `IsAvailableAsync` no longer invalidates; it probes for a moved service.
+- Discovery misses are cached for 1s (was 5s) and discovery retries after 1s and 2.5s.
+- A stream whose `/play` timed out is marked slow for 10 minutes and gets double the timeout (capped at 60s) next time.
+
+### Resolver and orchestrator
+
+- `StreamResolver` retries `LocalServiceUnavailableException` after 2s and 5s; then the row is `StreamResolutionStatus.Deferred` ("Waiting for local service...") with no siblings.
+- `StreamResolutionOrchestrator` never reports a Deferred row. It counts as done for the first-play frontier, and is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
+- Healthy rows are reported `working` (was `unknown`).
+
+### Known limitations
+
+- `/mp` harvest failures after the service answered still return `null`.
+- `ApiService` turns exceptions into `null`, so an infrastructure failure on a fresh `/play` during a first start can still fail that start. During recovery it only uses one attempt.
 
 ## Known remaining work
 
