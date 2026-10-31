@@ -43,7 +43,13 @@ public static class PlaybackCommandExecutor
                 host.RaiseBuffering(cmd.IsBuffering);
 
             if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
+            {
+                // A failed switch leaves the pool index on the target row. Point it
+                // back at the last-good row (still suppressed) before re-attaching it.
+                if (cmd.AttachIsRevert)
+                    host.RevertPoolIndexTo(cmd.AttachUrl);
                 host.Attach(cmd.AttachUrl, cmd.AttachIsRevert);
+            }
             else if (cmd.AttachCurrentAfterRemove)
                 host.AttachCurrentAfterRemove();
 

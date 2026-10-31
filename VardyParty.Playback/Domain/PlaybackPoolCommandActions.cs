@@ -190,6 +190,28 @@ public sealed class PlaybackPoolCommandActions(
         return null;
     }
 
+    /// <summary>
+    /// Revert after a failed switch: move the pool index to the row whose resolved URL
+    /// is <paramref name="playingUrl"/> (the last-good stream). No-op when no row
+    /// matches or it is already current. Callers hold index-switch suppression.
+    /// </summary>
+    /// <returns>True when the index moved.</returns>
+    public bool RevertIndexToPlayingUrl(string? playingUrl)
+    {
+        var row = FindPlayingRow(playingUrl, exclude: null);
+        if (row is null || ReferenceEquals(row, switching.GetCurrentStream()))
+            return false;
+
+        var healthy = switching.GetHealthyStreams();
+        for (var i = 0; i < healthy.Count; i++)
+        {
+            if (ReferenceEquals(healthy[i], row))
+                return switching.SwitchToStream(i);
+        }
+
+        return false;
+    }
+
     private void RevertIndexTo(EnrichedStream playing, Action<Action> runWithIndexSwitchSuppressed)
     {
         var healthy = switching.GetHealthyStreams();

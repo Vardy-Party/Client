@@ -45,7 +45,7 @@ public class PlaybackCommandTests
     }
 
     [Fact]
-    public void FailedSwitch_RevertsWithoutAdvancingPool()
+    public void FailedSwitch_DeadTarget_RevertsWithoutAdvancingPool()
     {
         // Arrange
         var session = new PlaybackSessionController();
@@ -54,9 +54,9 @@ public class PlaybackCommandTests
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
         session.BeginAttach("http://bad.m3u8");
 
-        // Act
+        // Act: a confirmed-dead target (404) is the only switch failure that removes.
         var cmd = PlaybackCommand.FromEffects(
-            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "switch fail")));
+            session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "Response code: 404 for index.m3u8")));
 
         // Assert
         Assert.True(cmd.AttachIsRevert);

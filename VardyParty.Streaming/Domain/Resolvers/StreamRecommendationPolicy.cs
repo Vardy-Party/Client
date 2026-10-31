@@ -146,10 +146,10 @@ public static class StreamRecommendationPolicy
     /// stream and is present in the healthy pool.
     /// </summary>
     /// <remarks>
-    /// Only use this on wraparound (after a full cycle). Using it on every Next
-    /// traps the user bouncing between the top recommended peers while other
-    /// healthy streams are never reached — Windows/TV showed 6 streams but
-    /// only cycled 2.
+    /// Never used to steer Next or wraparound: the pool is numbered and Next walks it
+    /// in order (docs/STREAM_PLAYBACK_RULES.md "Stable channel numbering"). Using it on
+    /// every Next trapped users between the top recommended peers (Windows/TV showed 6
+    /// streams but only cycled 2); using it on wraparound renumbered the channels.
     /// </remarks>
     public static EnrichedStream? PickPreferredNext(
         RecommendationResponse? recommendations,
@@ -203,13 +203,6 @@ public static class StreamRecommendationPolicy
 
         return null;
     }
-
-    /// <summary>
-    /// Hardware/UI Next must walk the full healthy pool in order. Recommendation
-    /// preference is reserved for wraparound reordering.
-    /// </summary>
-    public static bool ShouldPreferRecommendedPeerOnNext(bool wouldWrapAround) =>
-        wouldWrapAround;
 
     public static bool WouldWrapAround(int currentIndex, int healthyCount) =>
         healthyCount > 0 && currentIndex >= 0 && ((currentIndex + 1) % healthyCount) == 0;

@@ -93,7 +93,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 | **Soft live-HLS recover** | `PlaybackPolicy.MaxLiveHlsRecoveries` (+ BLWE / network gates) | Android: seek-to-live on BLWE; Windows: AdaptiveMediaSource reattach on **NetworkError only**; Linux: `--http-reconnect` (no budget) | Host-local; no session Error until budget exhausted |
 | **Soft decline (buffer/bitrate)** | `StreamMetricsWindow` via session Metrics/Buffering | Android 30s metrics; Windows throttled PositionChanged; Linux 30s timer | Shared window |
 | **Brief rebuffer tolerance** | `DesiredLiveOffsetSeconds` + Android LoadControl ms constants | Windows DesiredLiveOffset; Android DefaultLoadControl; Linux `--network-caching` | Named in `PlaybackPolicy` |
-| **Failed switch** | Restore last-good once | Hosts execute `PlaybackCommand` | Locked by `PlaybackUnificationRulesTests` |
+| **Failed switch** | Retry the target within the same-stream budget, then restore last-good; only a confirmed-dead target is reported and removed | Hosts execute `PlaybackCommand` (revert also puts the pool index back on last-good) | Locked by `PlaybackUnificationRulesTests`, `FailedSwitchRecoveryBusinessRulesTests` |
 | **Failed start (never established)** | Remove + advance if pool remains | Hosts execute `PlaybackCommand` | Shared |
 | **Stale failure during switch** | Ignore if `generation != AttachGeneration` | Hosts compare session generation | Shared |
 | **Buffering → Core** | Session Buffering effect | All three raise `MediaEngineEvent.Buffering` | Always raise |
@@ -165,18 +165,18 @@ flowchart TD
 - ≥ 10 bitrate samples and last 3 all &lt; 500 kbps → declined  
 - ≥ 3 errors in 300s → declined  
 
-`AndroidVideoPlayerService.ReportBufferingState` now forwards to `BufferingStateChanged`. Soft decline is a session effect (remove + advance). Orchestrator `HandlePlaybackFailureAsync` still runs when `PlayVideoAsync` returns failure — native auto-switch may already have drained the pool (session then resumes testing).
+`AndroidVideoPlayerService.ReportBufferingState` now forwards to `BufferingStateChanged`. Soft decline is a session effect (remove + advance). The orchestrator's playback chain (`RunPlaybackChainAsync`, section 6) handles a `PlayVideoAsync` that returns failure - native auto-switch may already have drained the pool (the chain then waits for the next healthy row).
 
-### 6. Orchestrator post-session failure (Core)
+### 6. Orchestrator start failure: the playback chain (Streaming)
 
-Only runs when `PlayVideoAsync` **returns** with `Success == false` (and not “User closed”):
+The first healthy row to clear the catalog frontier starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
 
-1. Report health `failed`
-2. `RemoveCurrentStream`
-3. `TryNextHealthyStreamAsync` → `PlayStreamAsync` on next healthy
-4. If none left → resume selection testing
+1. Local service unavailable (no verdict): no report, nothing removed; the chain parks and the next row to join the pool starts playback.
+2. Otherwise report health `failed` once for the row that failed (the row tried if the player never opened, else the pool's current row) and remove it.
+3. Play the row now under the pool index (the merged fallback or the following row). The old `TryNextHealthyStreamAsync` called `GetNextHealthyStream` here, skipped a row, left the index on a row that was not playing, and dropped the next play's result.
+4. Pool empty: status "All available streams failed - testing others..."; the next healthy row added by enumeration starts the chain again. After the sweep a failed chain resumes selection testing.
 
-**Problem:** Android/Windows often already auto-switched inside the native player, so this path is late, incomplete, or fighting platform logic.
+**Why (31 Oct 2026):** a first `/play` that came back empty ("Failed to resolve m3u8") used to be handled only after the whole sweep and the deferred re-queues (5s + 15s) finished, so the "Finding streams... 2 healthy" dialog sat with healthy rows unplayed. Rules: `StalledFirstPlayBusinessRulesTests`.
 
 ### 7. Health reporting identity
 
@@ -204,7 +204,7 @@ Native players report through `StreamHealthIdentity.ResolvePlaybackReportIdentit
    - If another healthy exists → switch to next (resolve/prefetch)  
    - Else → resume probing / fail session  
    - Do **not** silently revert unless switch itself failed after leaving last-good (see 4).
-4. **Failed switch** (new URL never established): restore `lastGoodUrl` **once**, keep failed candidate removed; then user/next can try again.
+4. **Failed switch** (new URL never established): retry the target with the same-stream budget, then restore `lastGoodUrl`. The target is kept and not reported unless the error is `ConfirmedDead` (see "Failed switch: retry the target, keep it").
 5. **Soft decline** (shared `StreamMetricsWindow` thresholds on all platforms): same as hard fail for pool removal + advance (tunable; start by matching Android numbers).
 6. **Cache retry**: one fresh resolve if first attach used cache and failed before established.
 7. **Stale events**: ignore errors whose `generation != currentAttachGeneration`.
@@ -352,12 +352,24 @@ Rules (normative; tests in `HealthyPoolDedupBusinessRulesTests` and `StreamUrlNo
 4. **Identity is captured on add.** `ResolvedM3U8Url` is mutated later (fresh one-shot
    `/play`, cleared to null on failure); the key is stored when the stream enters the pool.
 5. **No URL, no merge.** An empty key never matches, so unresolved entries are not collapsed.
-6. Chip selection (`SwitchToMatchingStream`) and `ReorderHealthyStreams` naming a merged
-   source act on its visible entry.
+6. Chip selection (`SwitchToMatchingStream`) naming a merged source selects its visible
+   entry. It never reorders the pool (see "Stable channel numbering").
 
 The old page-URL `StreamDeduplicator` (catalog `stream.Url` + V2 label) was never called in
 production (only DI-registered) and was removed; dedup of catalog rows by page URL is not
 done - distinct pages are resolved and merged here by what they actually play.
+## Stable channel numbering (31 Oct 2026)
+
+A channel number is the row's position in `StreamSwitchingService.GetHealthyStreams()` plus one. Every platform renders that list, so the numbers are the same on Android, Windows, Linux and Apple. Rules (tests in `StableChannelNumberingBusinessRulesTests`):
+
+1. **Numbers do not move while cycling.** Next, Previous, wraparound, chip selection and recommendations change only the current index, never the order. `ReorderHealthyStreams` was removed.
+2. **New healthy streams are appended** and take the next number.
+3. **A drop closes the gap.** Rows after it move up one and keep their relative order. A merged fallback promoted in place keeps the number.
+4. **Merged duplicates never take a number** (hidden fallbacks, see "Healthy pool dedup").
+5. **Wraparound:** Next on the last channel goes to channel 1; Previous on channel 1 goes to the last. Wraparound force-refreshes recommendations (chips and first pick) but does not jump to a "preferred recommended" stream and does not reorder. The old "switch to the preferred recommended stream on wraparound" behaviour was removed: it made Next land on an unexpected number.
+6. **Recommendations may jump** (chip selection selects the matching row) but never reorder.
+7. A switch that fails and reverts keeps the target in place (see "Failed switch: retry the target, keep it").
+
 ## Switch speed: reuse, pre-resolve, make-before-break
 
 V1/FB rows carry soak evidence (Referer/Origin/Cookie headers or MP rewritten segments), so
@@ -428,8 +440,20 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - An empty fresh `/play` during recovery uses one attempt; the last one switches.
 - When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
 - A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
-- Make-before-break is unchanged: a failed switch candidate still reverts to last-good once.
+- A failed switch gets the same budget for its target before reverting to last-good (next section).
 - User Next/Prev cancels recovery; the new stream starts with a full budget.
+
+### Failed switch: retry the target, keep it (31 Oct 2026)
+
+At 20:26:04 and 20:26:20 UK on 31 Oct 2026, techydeals and 4Kstream were reported failed and dropped after one `#EXTM3U` blip during a switch. `FailSwitchAndRevert` used to report, clear and remove the target on any switch error. Rules (`PlaybackSessionController`; tests in `FailedSwitchRecoveryBusinessRulesTests`):
+
+1. A switch error is classified like an established-stream error (`ClassifyPlaybackError`).
+2. `Transient` or `TokenOrPlaylistInvalid`: the target gets the same-stream budget (attempt 1 of a transient reloads, others fresh `/play`). No report and no removal while attempts remain. The snapshot shows `IsRecoveringSwitch`.
+3. Budget spent (including empty fresh `/play` results): revert to last-good with "Switch did not start - back to last good, stream kept." The target stays in the pool, unreported, and keeps its channel number. Its cached URL is cleared so the next visit runs a fresh `/play`.
+4. `ConfirmedDead` at any point (first error or during a retry): report, clear, remove the target, and revert to last-good.
+5. `LocalServiceUnavailable` during a retry: revert to last-good, no report, no removal, no Stop/Close.
+6. Every revert also puts the pool index back on the last-good row (`IPlaybackCommandHost.RevertPoolIndexTo`, under index-switch suppression), so the channel shown matches what plays on every platform.
+7. A first start (no last-good) is unchanged: fresh `/play` once, then drop and advance.
 
 ### Local service (`LocalLanPlayService`, `LocalServiceEndpointCache`)
 

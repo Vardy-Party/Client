@@ -29,6 +29,12 @@ public sealed class PlaybackSessionController
     private int _sameStreamRetries;
     private DateTimeOffset? _lastSameStreamRetryAt;
 
+    // Same-stream recovery of a SWITCH TARGET (a row we switched to that has not
+    // played yet, with a last-good stream to fall back on). A failure that is not
+    // confirmed dead retries the target first; if the budget runs out it reverts
+    // to last good WITHOUT reporting or removing the target (docs "Failed switch").
+    private bool _recoveringSwitch;
+
     public PlaybackSessionController(Func<DateTimeOffset>? clock = null)
     {
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
@@ -57,6 +63,7 @@ public sealed class PlaybackSessionController
         IsBuffering = _isBuffering,
         ConsecutiveDownloadFailures = _consecutiveDownloadFailures,
         IsRecovering = _recovering,
+        IsRecoveringSwitch = _recoveringSwitch,
         SameStreamRetries = _sameStreamRetries
     };
 
@@ -141,6 +148,15 @@ public sealed class PlaybackSessionController
         RefreshHealthyStreamCount();
         var message = reason ?? "Fresh M3U8 unavailable";
 
+        if (_recovering && _recoveringSwitch && _hasEstablishedPlayback)
+        {
+            // A switch target's fresh /play came back empty: spend an attempt; when
+            // the budget is gone go back to last good, keeping the target unreported.
+            _recoveryAttachPending = false;
+            var retry = TryRecoverSameStream(message, PlaybackErrorKind.TokenOrPlaylistInvalid);
+            return retry ?? RevertSwitchKeepingTarget(message);
+        }
+
         if (_recovering && _hasEstablishedPlayback)
         {
             // A same-stream fresh /play came back empty. That can be a slow service,
@@ -171,6 +187,16 @@ public sealed class PlaybackSessionController
     {
         if (_state == PlaybackSessionState.Closed)
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
+
+        if (_recoveringSwitch && _hasEstablishedPlayback && !string.IsNullOrWhiteSpace(_lastGoodUrl))
+        {
+            // Retrying a switch target and the service is unreachable: nothing was
+            // learned about either stream. Keep watching last good, report nothing.
+            var why = string.IsNullOrWhiteSpace(reason)
+                ? PlaybackCloseReasons.LocalServiceUnavailable
+                : $"{PlaybackCloseReasons.LocalServiceUnavailable}: {reason}";
+            return RevertSwitchKeepingTarget(why, clearTargetUrl: false);
+        }
 
         ResetSameStreamRecovery(clearBudget: true);
         _isPreparing = false;
@@ -252,6 +278,7 @@ public sealed class PlaybackSessionController
         // with no error.
         _recovering = false;
         _recoveryAttachPending = false;
+        _recoveringSwitch = false;
 
         return
         [
@@ -325,6 +352,16 @@ public sealed class PlaybackSessionController
         var reason = string.IsNullOrWhiteSpace(e.Message) ? "Playback error" : e.Message;
         var kind = PlaybackPolicy.ClassifyPlaybackError(reason);
 
+        // A switch target that is already being retried errored again: keep
+        // retrying it within the budget; dead reports and removes it; an empty
+        // budget goes back to last good and keeps the target, unreported.
+        if (_recoveringSwitch && _recovering && _hasEstablishedPlayback)
+        {
+            if (kind == PlaybackErrorKind.ConfirmedDead)
+                return FailSwitchAndRevert(reason);
+            return TryRecoverSameStream(reason, kind) ?? RevertSwitchKeepingTarget(reason);
+        }
+
         // The stream that is playing (or a same-stream retry of it) errored:
         // retry it before switching away. Only a confirmed-dead error, or an
         // empty budget, switches.
@@ -335,7 +372,24 @@ public sealed class PlaybackSessionController
         }
 
         if (PlaybackPolicy.ShouldRevertAfterFailedSwitch(Snapshot))
-            return FailSwitchAndRevert(reason);
+        {
+            // Same classification as an established stream: only a confirmed-dead
+            // switch target is reported and removed. A token/playlist blip ("Input
+            // does not start with the #EXTM3U header") or a transient error retries
+            // the target first (reload, then fresh /play). 4Kstream was dropped on
+            // its first #EXTM3U blip at 20:26:20 UK on 31 Oct 2026 after playing 1080p.
+            if (kind == PlaybackErrorKind.ConfirmedDead)
+                return FailSwitchAndRevert(reason);
+
+            var retry = TryRecoverSameStream(reason, kind);
+            if (retry != null)
+            {
+                _recoveringSwitch = true;
+                return retry;
+            }
+
+            return RevertSwitchKeepingTarget(reason);
+        }
 
         // Established but still Switching should have hit ShouldRevert; if last-good missing, advance.
         if (_hasEstablishedPlayback)
@@ -497,6 +551,7 @@ public sealed class PlaybackSessionController
     {
         _recovering = false;
         _recoveryAttachPending = false;
+        _recoveringSwitch = false;
         if (clearBudget)
         {
             _sameStreamRetries = 0;
@@ -554,6 +609,39 @@ public sealed class PlaybackSessionController
         }
 
         return effects;
+    }
+
+    /// <summary>
+    /// A switch target failed without being proven dead (retries used up, or the
+    /// service could not answer). Go back to the last-good stream and keep the
+    /// target in the pool, unreported: a #EXTM3U blip or a slow /play is not a
+    /// dead stream. Its resolved URL is cleared (usually a burned one-shot token)
+    /// so the next visit gets a fresh /play.
+    /// </summary>
+    private List<PlaybackEffect> RevertSwitchKeepingTarget(string reason, bool clearTargetUrl = true)
+    {
+        ResetSameStreamRecovery(clearBudget: true);
+        var effects = new List<PlaybackEffect>();
+        if (clearTargetUrl)
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason));
+
+        if (!string.IsNullOrWhiteSpace(_lastGoodUrl))
+        {
+            _isPreparing = false;
+            _isBuffering = false;
+            _state = PlaybackSessionState.Playing;
+            _currentUrl = _lastGoodUrl;
+            _metricsWindow = new StreamMetricsWindow();
+            effects.Add(new PlaybackEffect(
+                PlaybackEffectKind.RevertToLastGood,
+                Url: _lastGoodUrl,
+                Reason: $"Switch did not start - back to last good, stream kept. ({reason})",
+                Generation: _attachGeneration));
+            return effects;
+        }
+
+        // No last good to go back to: same as before (should not happen while switching).
+        return FailEstablishedOrAdvance(reason);
     }
 
     private List<PlaybackEffect> FailEstablishedOrAdvance(string reason)

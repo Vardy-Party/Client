@@ -4,6 +4,14 @@ using VardyParty.Ports;
 
 namespace VardyParty.Playback;
 
+/// <summary>
+/// The healthy pool every platform player shows. Its order is the channel numbering
+/// (docs/STREAM_PLAYBACK_RULES.md "Stable channel numbering"): a stream gets the next
+/// number when it first becomes healthy (append), keeps it while the user cycles
+/// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
+/// later numbers down to close the gap. Merged duplicates never take a number; a
+/// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
+/// </summary>
 public class StreamSwitchingService : IStreamSwitchingService, IDisposable
 {
     private readonly List<EnrichedStream> _healthyStreams = new();
@@ -188,21 +196,6 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         return true;
     }
 
-    /// <summary>Visible entry for a merged duplicate, or null when it is not a fallback.</summary>
-    private EnrichedStream? RepresentativeOf(EnrichedStream stream)
-    {
-        foreach (var (key, alternates) in _fallbacks)
-        {
-            if (alternates.Any(a => ReferenceEquals(a, stream)))
-            {
-                var index = IndexOfKey(key);
-                return index >= 0 ? _healthyStreams[index] : null;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>Hidden fallbacks merged into the visible entry (test/diagnostic seam).</summary>
     public IReadOnlyList<EnrichedStream> GetMergedFallbacks(EnrichedStream visible)
     {
@@ -296,54 +289,6 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             }
 
             return ((_currentStreamIndex + 1) % _healthyStreams.Count) == 0;
-        }
-    }
-
-    public void ReorderHealthyStreams(IReadOnlyList<EnrichedStream> preferredFirst)
-    {
-        lock (_healthyStreams)
-        {
-            if (_healthyStreams.Count <= 1 || preferredFirst.Count == 0)
-            {
-                return;
-            }
-
-            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
-                ? _healthyStreams[_currentStreamIndex]
-                : null;
-
-            var seen = new HashSet<EnrichedStream>();
-            var reordered = new List<EnrichedStream>(_healthyStreams.Count);
-            foreach (var preferred in preferredFirst)
-            {
-                // A merged duplicate stands for its visible entry.
-                var target = _healthyStreams.Contains(preferred) ? preferred : RepresentativeOf(preferred);
-                if (target != null && seen.Add(target))
-                {
-                    reordered.Add(target);
-                }
-            }
-
-            foreach (var existing in _healthyStreams)
-            {
-                if (seen.Add(existing))
-                {
-                    reordered.Add(existing);
-                }
-            }
-
-            _healthyStreams.Clear();
-            _healthyStreams.AddRange(reordered);
-            if (current != null)
-            {
-                _currentStreamIndex = _healthyStreams.IndexOf(current);
-            }
-
-            _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
-            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
-                GetCurrentStream(),
-                GetCurrentStreamIndex(),
-                _healthyStreams.Count));
         }
     }
 

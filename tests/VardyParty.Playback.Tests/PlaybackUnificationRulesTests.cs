@@ -17,8 +17,8 @@ public class PlaybackUnificationRulesTests
         // Arrange
         var session = PlayingThenSwitching();
 
-        // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "switch fail"));
+        // Act: the target gets the same-stream budget first on every OS.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "switch fail");
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RevertToLastGood);

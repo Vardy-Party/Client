@@ -198,17 +198,20 @@ public class HealthyPoolDedupBusinessRulesTests
     }
 
     [Fact]
-    public void Rule6_ReorderNamingMergedSource_MovesItsVisibleEntry()
+    public void Rule6_ChipNamingMergedSource_SelectsItsEntryWithoutReordering()
     {
+        // Stable channel numbering: a recommendation/chip naming a merged source
+        // jumps to its visible entry; the numbered order never changes.
         var pool = NewPool();
         pool.AddHealthyStream(Healthy("Totalsportek", Premium35));
         pool.AddHealthyStream(Healthy("Liveverse", Premium38A));
         var merged = Healthy("1ststreams", Premium38B);
         pool.AddHealthyStream(merged);
 
-        pool.ReorderHealthyStreams([merged]);
+        Assert.True(pool.SwitchToMatchingStream(merged.Stream.Url, null));
 
-        Assert.Equal(["Liveverse", "Totalsportek"], Visible(pool));
+        Assert.Equal(["Totalsportek", "Liveverse"], Visible(pool));
+        Assert.Equal(2, pool.GetCurrentStreamIndex());
     }
 
     [Fact]

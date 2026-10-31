@@ -359,6 +359,8 @@ namespace VardyParty.Platforms.Windows
                     _ = session.engine.AttachAsync(url, session._requestHeaders);
                 }
 
+                public void RevertPoolIndexTo(string url) => session.pool.RevertIndexToPlayingUrl(url);
+
                 public void AttachCurrentAfterRemove() => _ = session.pool.AttachCurrentFromPoolAsync();
 
                 public void RetryFreshResolve() => _ = session.pool.RetryFreshResolveAsync();

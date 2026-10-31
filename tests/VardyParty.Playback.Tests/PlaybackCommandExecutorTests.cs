@@ -427,6 +427,7 @@ public class PlaybackCommandExecutorTests
                 throw AttachThrows;
         }
 
+        public void RevertPoolIndexTo(string url) => Calls.Add(nameof(RevertPoolIndexTo));
         public void AttachCurrentAfterRemove() => Calls.Add(nameof(AttachCurrentAfterRemove));
         public void RetryFreshResolve() => Calls.Add(nameof(RetryFreshResolve));
         public void StopEngine() => Calls.Add(nameof(StopEngine));

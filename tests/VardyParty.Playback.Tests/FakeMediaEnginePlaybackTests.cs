@@ -147,11 +147,14 @@ public class FakeMediaEnginePlaybackTests
         pool.SwitchToNextStream();
         host.AttachFromPool();
 
-        // Act
-        engine.RaiseError(session.Snapshot.AttachGeneration, _fixture.Create<string>());
+        // Act: the target keeps failing; it is retried within the budget, then the host reverts.
+        var reason = _fixture.Create<string>();
+        for (var i = 0; i < 10 && engine.LastAttached != lastGood.Url; i++)
+            engine.RaiseError(session.Snapshot.AttachGeneration, reason);
 
         // Assert
         Assert.Equal(lastGood.Url, engine.LastAttached);
+        Assert.Equal(2, pool.GetHealthyStreams().Count);
         Assert.Equal(lastGood.Url, session.Snapshot.CurrentUrl);
         Assert.Equal(PlaybackSessionState.Playing, session.Snapshot.State);
     }
@@ -408,6 +411,8 @@ public class FakeMediaEnginePlaybackTests
 
         public void Attach(string url, bool isRevert)
             => _engine.AttachAsync(url).GetAwaiter().GetResult();
+
+        public void RevertPoolIndexTo(string url) => _poolActions.RevertIndexToPlayingUrl(url);
 
         public void AttachCurrentAfterRemove()
             => _poolActions.AttachCurrentFromPoolAsync().GetAwaiter().GetResult();

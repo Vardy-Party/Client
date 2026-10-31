@@ -185,6 +185,28 @@ public class StreamResolutionOrchestrator(
         // showing the "Finding streams" modal for as long as the remaining candidates took to test.
         using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        // A first play that fails (an empty /play, a start that never established)
+        // moves straight on to the next pool row inside RunPlaybackChainAsync. When
+        // the pool is empty it sets this flag, and the next healthy row to join the
+        // pool starts playback at once - the "Finding streams... N healthy" dialog
+        // no longer waits for the whole sweep to finish. The lock pairs the pool add
+        // with the flag check so a row is never added between "pool empty" and
+        // "flag set" without starting playback.
+        var playbackLock = new object();
+        var awaitingPlayableRow = false;
+
+        void StartPlaybackChain(EnrichedStream first)
+        {
+            playbackTask = RunPlaybackChainAsync(
+                game,
+                first,
+                launcher,
+                () => awaitingPlayableRow = true,
+                playbackLock,
+                cancellationToken);
+            _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
+        }
+
         void FlushReadyForPlayback()
         {
             var frontier = 0;
@@ -206,16 +228,30 @@ public class StreamResolutionOrchestrator(
             {
                 var readyStream = heldHealthy[index];
                 heldHealthy.Remove(index);
-                streamSwitchingService.AddHealthyStream(readyStream);
+                EnrichedStream? startOn = null;
+                lock (playbackLock)
+                {
+                    streamSwitchingService.AddHealthyStream(readyStream);
+                    if (!hasPlayedFirstStream)
+                    {
+                        hasPlayedFirstStream = true;
+                        startOn = readyStream;
+                    }
+                    else if (awaitingPlayableRow)
+                    {
+                        // Every earlier row failed and the pool ran dry: play the row
+                        // that now holds the pool index (the one just added, unless it
+                        // merged into an existing entry as a fallback).
+                        awaitingPlayableRow = false;
+                        startOn = streamSwitchingService.GetCurrentStream() ?? readyStream;
+                    }
+                }
+
                 _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
                 PublishProgress();
 
-                if (!hasPlayedFirstStream)
-                {
-                    hasPlayedFirstStream = true;
-                    playbackTask = PlayStreamAsync(game, readyStream, launcher, cancellationToken);
-                    _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
-                }
+                if (startOn != null)
+                    StartPlaybackChain(startOn);
             }
         }
 
@@ -398,18 +434,11 @@ public class StreamResolutionOrchestrator(
             }
             else if (playbackResult != null && !playbackResult.Success)
             {
-                var current = streamSwitchingService.GetCurrentStream();
-                if (current == null)
-                {
-                    // Native session already drained the pool; resume candidate testing.
-                    selectionCoordinator.ResumeTesting();
-                    _status = "Testing resumed";
-                    PublishProgress();
-                }
-                else
-                {
-                    await HandlePlaybackFailureAsync(game, current, playbackResult, launcher, cancellationToken);
-                }
+                // RunPlaybackChainAsync already reported the failed row, removed it and
+                // played the next one; it only ends on a failure when the pool is empty.
+                selectionCoordinator.ResumeTesting();
+                _status = "Testing resumed";
+                PublishProgress();
             }
         }
 
@@ -529,7 +558,8 @@ public class StreamResolutionOrchestrator(
         Game game,
         EnrichedStream enrichedStream,
         IPlaybackLauncher launcher,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        PlayAttempt? attempt = null)
     {
         // FB /play tokens are one-shot: find-phase URLs must not be reused for
         // ExoPlayer. Soak rows always re-/play; others keep the cached fast path
@@ -593,6 +623,8 @@ public class StreamResolutionOrchestrator(
             // Warm the next candidate while this one plays so the first Next click is instant.
             PrefetchUpcomingStreamUrl(game, cancellationToken);
 
+            if (attempt != null)
+                attempt.PlayerOpened = true;
             result = await launcher.PlayVideoAsync(
                 m3u8Url,
                 string.IsNullOrWhiteSpace(enrichedStream.Referer) ? enrichedStream.Stream.Url : enrichedStream.Referer,
@@ -636,7 +668,7 @@ public class StreamResolutionOrchestrator(
             if (StreamCandidateRules.ShouldAcceptFreshM3U8(m3u8Url, freshUrl))
             {
                 // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.
-                return await PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
+                return await PlayStreamAsync(game, enrichedStream, launcher, cancellationToken, attempt);
             }
             logger.LogWarning("[StreamResolution] Fresh M3U8 unavailable or identical for {Channel} — treating as failed", enrichedStream.Stream.Channel);
         }
@@ -755,40 +787,13 @@ public class StreamResolutionOrchestrator(
 
     private async Task HandleNextStreamRequestedAsync(Game game, CancellationToken cancellationToken)
     {
-        var wouldWrap = streamSwitchingService.WouldWrapOnNext();
-        var recommendations = await EnsureFreshRecommendationsAsync(
-            game,
-            force: wouldWrap,
-            cancellationToken);
-
-        if (wouldWrap && recommendations != null)
+        // Stable channel numbering (docs/STREAM_PLAYBACK_RULES.md): Next walks the
+        // numbered pool in order and Next on the last channel goes to channel 1.
+        // Recommendations never re-sort the pool or hijack Next; on wraparound they
+        // are only refreshed (chips and the first pick use them).
+        if (streamSwitchingService.WouldWrapOnNext())
         {
-            ApplyWraparoundReorder(recommendations);
-        }
-
-        var current = streamSwitchingService.GetCurrentStream();
-        var healthy = streamSwitchingService.GetHealthyStreams();
-
-        // Only on wraparound: jump to a high-confidence recommended peer.
-        // Mid-cycle Next must walk every healthy stream (UI total), otherwise
-        // users bounce between the 2–3 recommended chips forever.
-        if (StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrap)
-            && recommendations != null)
-        {
-            var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
-            if (preferred != null
-                && streamSwitchingService.SwitchToMatchingStream(
-                    preferred.Stream.Url,
-                    StreamHealthIdentity.GetStreamName(preferred.Stream)))
-            {
-                logger.LogInformation(
-                    "[StreamResolution] Wraparound switched to preferred recommended stream {Channel}",
-                    preferred.Stream.Channel);
-                _status = "Switched to recommended stream";
-                PublishProgress();
-                PrefetchUpcomingStreamUrl(game, cancellationToken);
-                return;
-            }
+            _ = await EnsureFreshRecommendationsAsync(game, force: true, cancellationToken);
         }
 
         var nextStream = streamSwitchingService.GetNextHealthyStream();
@@ -902,35 +907,6 @@ public class StreamResolutionOrchestrator(
         }
     }
 
-    private void ApplyWraparoundReorder(RecommendationResponse recommendations)
-    {
-        var healthy = streamSwitchingService.GetHealthyStreams();
-        if (healthy.Count <= 1 || recommendations.Recommended is not { Count: > 0 })
-        {
-            return;
-        }
-
-        var preferred = new List<EnrichedStream>();
-        foreach (var item in recommendations.Recommended
-                     .OrderByDescending(r => StreamTestOrderPolicy.RankConfidence(r.Confidence)))
-        {
-            var match = healthy.FirstOrDefault(candidate =>
-                StreamHealthIdentity.MatchesRecommendation(candidate.Stream, item.Url, item.StreamName));
-            if (match != null && !preferred.Contains(match))
-            {
-                preferred.Add(match);
-            }
-        }
-
-        if (preferred.Count > 0)
-        {
-            streamSwitchingService.ReorderHealthyStreams(preferred);
-            logger.LogInformation(
-                "[StreamResolution] Wraparound reordered healthy pool by recommendations ({Count} preferred)",
-                preferred.Count);
-        }
-    }
-
     /// <summary>
     /// Warm the next candidate's m3u8 in the background so the following Next click stays
     /// instant without relying on a long-lived health-check URL.
@@ -990,21 +966,110 @@ public class StreamResolutionOrchestrator(
         }, cancellationToken);
     }
 
-    private async Task<bool> TryNextHealthyStreamAsync(
+    /// <summary>
+    /// Plays <paramref name="first"/>, and while a start fails on the stream itself
+    /// (an empty <c>/play</c>, or a player session that ended without playing) reports
+    /// that row once, removes it and plays the row that takes its pool index. It runs
+    /// alongside candidate testing, so a failed first play no longer waits for the
+    /// whole sweep before the next healthy row is tried.
+    /// <para>
+    /// Ends on success, the viewer leaving, or a local-service failure (no report, no
+    /// removal: the row stays for a later attempt). With an empty pool it calls
+    /// <paramref name="onPoolEmpty"/> under <paramref name="playbackLock"/>, so the next
+    /// row to join the pool starts playback.
+    /// </para>
+    /// </summary>
+    internal async Task<PlaybackResult?> RunPlaybackChainAsync(
         Game game,
+        EnrichedStream first,
         IPlaybackLauncher launcher,
+        Action onPoolEmpty,
+        object playbackLock,
         CancellationToken cancellationToken)
     {
-        var nextStream = streamSwitchingService.GetNextHealthyStream();
-        if (nextStream == null)
+        var stream = first;
+        while (true)
         {
-            _status = "All available streams failed - testing others...";
+            var attempt = new PlayAttempt();
+            var result = await PlayStreamAsync(game, stream, launcher, cancellationToken, attempt).ConfigureAwait(false);
+            if (result is null || result.Success || result.ViewerLeft || cancellationToken.IsCancellationRequested)
+                return result;
+
+            if (result.IsLocalServiceUnavailable)
+            {
+                // Infrastructure, not the stream: no report, nothing removed. A row that
+                // joins the pool later (the service is back) starts playback again.
+                lock (playbackLock)
+                    onPoolEmpty();
+                return result;
+            }
+
+            // The player never opened: the row we tried is the one that failed. Once it
+            // opened, the native session may have moved through the pool, so the row
+            // under the pool index is the one it ended on.
+            var failed = attempt.PlayerOpened ? streamSwitchingService.GetCurrentStream() : stream;
+            if (failed != null)
+            {
+                _ = ReportHealthAsync(game, failed.Stream, "failed", result.Message, failed.Health, cancellationToken);
+                RemoveFromPool(failed);
+            }
+
+            EnrichedStream? next;
+            lock (playbackLock)
+            {
+                // RemoveCurrentStream leaves the index on the row that took the failed
+                // row's place (a merged fallback, or the following row). Play that one:
+                // the old TryNextHealthyStreamAsync took GetNextHealthyStream() here,
+                // which skipped a row, left the pool index on a row that was not playing,
+                // and dropped the result of the next play.
+                next = streamSwitchingService.GetCurrentStream();
+                if (next == null)
+                    onPoolEmpty();
+            }
+
+            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+            if (next == null)
+            {
+                _status = "All available streams failed - testing others...";
+                PublishProgress();
+                return result;
+            }
+
+            logger.LogInformation(
+                "[StreamResolution] Start failed on {Failed} ({Message}) - playing next healthy {Next}",
+                failed?.Stream?.Channel, result.Message, next.Stream?.Channel);
             PublishProgress();
-            return false;
+            stream = next;
+        }
+    }
+
+    private void RemoveFromPool(EnrichedStream failed)
+    {
+        if (!ReferenceEquals(streamSwitchingService.GetCurrentStream(), failed))
+        {
+            var healthy = streamSwitchingService.GetHealthyStreams();
+            var index = -1;
+            for (var i = 0; i < healthy.Count; i++)
+            {
+                if (ReferenceEquals(healthy[i], failed))
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            // Already gone (the native session removed it): nothing to do.
+            if (index < 0 || !streamSwitchingService.SwitchToStream(index))
+                return;
         }
 
-        await PlayStreamAsync(game, nextStream, launcher, cancellationToken);
-        return true;
+        streamSwitchingService.RemoveCurrentStream();
+    }
+
+    /// <summary>Whether a <see cref="PlayStreamAsync"/> call got as far as opening the player.</summary>
+    internal sealed class PlayAttempt
+    {
+        public bool PlayerOpened { get; set; }
     }
 
     private PlaybackResult LocalServiceUnavailableResult(EnrichedStream enrichedStream, InfrastructureUnavailableException ex)
@@ -1015,28 +1080,7 @@ public class StreamResolutionOrchestrator(
         return PlaybackResult.Completed($"{PlaybackCloseReasons.LocalServiceUnavailable}: {ex.Message}", true);
     }
 
-    private async Task HandlePlaybackFailureAsync(
-        Game game,
-        EnrichedStream enrichedStream,
-        PlaybackResult playbackResult,
-        IPlaybackLauncher launcher,
-        CancellationToken cancellationToken)
-    {
-        _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", playbackResult.Message, enrichedStream.Health,
-            cancellationToken);
 
-        streamSwitchingService.RemoveCurrentStream();
-        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-        PublishProgress();
-
-        var playedNext = await TryNextHealthyStreamAsync(game, launcher, cancellationToken);
-        if (!playedNext)
-        {
-            selectionCoordinator.ResumeTesting();
-            _status = "Testing resumed";
-            PublishProgress();
-        }
-    }
 
     private void PublishProgress()
     {

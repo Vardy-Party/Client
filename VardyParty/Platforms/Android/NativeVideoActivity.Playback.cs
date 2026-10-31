@@ -117,6 +117,8 @@ namespace VardyParty.Platforms.Android
                 _ = activity._engine.AttachAsync(url, activity._requestHeaders);
             }
 
+            public void RevertPoolIndexTo(string url) => activity._pool?.RevertIndexToPlayingUrl(url);
+
             public void AttachCurrentAfterRemove() => _ = activity._pool?.AttachCurrentFromPoolAsync();
 
             public void RetryFreshResolve() => _ = activity._pool?.RetryFreshResolveAsync();

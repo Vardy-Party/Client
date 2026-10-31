@@ -937,6 +937,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _ = player._engine.AttachAsync(url, player._requestHeaders);
         }
 
+        public void RevertPoolIndexTo(string url) => player._pool.RevertIndexToPlayingUrl(url);
+
         public void AttachCurrentAfterRemove() => _ = player._pool.AttachCurrentFromPoolAsync();
 
         public void RetryFreshResolve() => _ = player._pool.RetryFreshResolveAsync();

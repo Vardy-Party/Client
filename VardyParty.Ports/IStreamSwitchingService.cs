@@ -65,13 +65,11 @@ public interface IStreamSwitchingService
 
     /// <summary>
     /// True when the next SwitchToNextStream call would wrap to the first healthy stream.
+    /// The pool order IS the channel numbering (docs/STREAM_PLAYBACK_RULES.md "Stable
+    /// channel numbering"): append-only, gaps close on drop, never re-sorted.
     /// </summary>
     bool WouldWrapOnNext();
 
-    /// <summary>
-    /// Reorders the healthy pool (recommended first) while preserving the current stream identity.
-    /// </summary>
-    void ReorderHealthyStreams(IReadOnlyList<EnrichedStream> preferredFirst);
 
     /// <summary>
     /// Switches to a healthy stream matching catalog URL + optional chip name.

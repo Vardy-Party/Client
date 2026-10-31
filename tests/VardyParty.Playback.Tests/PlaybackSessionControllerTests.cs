@@ -113,7 +113,7 @@ public class PlaybackSessionControllerTests
     }
 
     [Fact]
-    public void FailedSwitch_RevertsToLastGood_AndRemovesBroken()
+    public void FailedSwitch_DeadTarget_RevertsToLastGood_AndRemovesBroken()
     {
         // Arrange
         var session = new PlaybackSessionController();
@@ -125,7 +125,7 @@ public class PlaybackSessionControllerTests
         Assert.Equal(PlaybackSessionState.Switching, session.Snapshot.State);
 
         // Act
-        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "switch fail"));
+        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "Response code: 404 for index.m3u8"));
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RevertToLastGood && e.Url == "http://good.m3u8");
@@ -538,10 +538,14 @@ public class PlaybackSessionControllerTests
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
         session.BeginAttach("http://bad.m3u8");
 
-        // Act
-        IReadOnlyList<PlaybackEffect> effects = [];
-        for (var i = 0; i < PlaybackPolicy.MaxConsecutiveDownloadFailures; i++)
-            effects = session.NotifyDownloadFailure("404");
+        // Act: each threshold hit spends one same-stream retry on the target, then reverts.
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, () =>
+        {
+            IReadOnlyList<PlaybackEffect> last = [];
+            for (var i = 0; i < PlaybackPolicy.MaxConsecutiveDownloadFailures; i++)
+                last = session.NotifyDownloadFailure("404");
+            return last;
+        });
 
         // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RevertToLastGood);
@@ -558,7 +562,7 @@ public class PlaybackSessionControllerTests
         session.BeginAttach("http://good.m3u8");
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
         session.BeginAttach("http://bad.m3u8");
-        session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, "switch fail"));
+        SameStreamRetryDriver.FailUntilSwitch(session, "switch fail");
 
         Assert.Equal(PlaybackSessionState.Playing, session.Snapshot.State);
         Assert.Equal("http://good.m3u8", session.Snapshot.CurrentUrl);

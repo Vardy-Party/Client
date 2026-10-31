@@ -274,9 +274,10 @@ public class SameStreamRecoveryBusinessRulesTests
         var session = Established(url: "http://good.m3u8");
         session.BeginAttach("http://candidate.m3u8");
 
-        var effects = Error(session, "Source error");
+        var effects = SameStreamRetryDriver.FailUntilSwitch(session, "Source error");
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RevertToLastGood);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
         Assert.False(session.Snapshot.IsRecovering);
     }
 
