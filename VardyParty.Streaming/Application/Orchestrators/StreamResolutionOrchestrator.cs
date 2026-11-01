@@ -19,7 +19,9 @@ public class StreamResolutionOrchestrator(
     ILocalLanPlayService? localLanPlayService = null,
     IRemoteComputeKeepAlive? keepAlive = null,
     WarmPlaybackUrlCache? warmUrls = null,
-    IUpcomingStreamPrewarmer? prewarmer = null) : IStreamResolutionOrchestrator
+    IUpcomingStreamPrewarmer? prewarmer = null,
+    ResolverRaceThrottle? raceThrottle = null,
+    IRacePlaylistProbe? playlistProbe = null) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
@@ -36,8 +38,19 @@ public class StreamResolutionOrchestrator(
     /// <summary>Test seam for the CDN-unreachable recheck waits (2 min, 5 min, then 10 min).</summary>
     internal Func<TimeSpan, CancellationToken, Task> CdnRecheckDelayAsync { get; set; } = Task.Delay;
 
+    /// <summary>
+    /// How long a fresh start looks for a second row already in the pool before
+    /// racing alone. Tests stretch it; production stays at a millisecond.
+    /// </summary>
+    internal Func<CancellationToken, Task> PartnerLookoutAsync { get; set; }
+        = static ct => Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+
     /// <summary>Test seam for the clock that decides whether the game is still live for rechecks.</summary>
     internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
+    /// <summary>Rows whose race <c>/play</c> this orchestrator marked in-flight, so a late leg is ended once.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _raceInFlight =
+        new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
@@ -1152,6 +1165,46 @@ public class StreamResolutionOrchestrator(
         var stream = first;
         while (true)
         {
+            var race = await RaceStartAsync(game, stream, playbackLock, cancellationToken).ConfigureAwait(false);
+            if (race.Ran)
+            {
+                if (race.Terminal != null)
+                {
+                    if (race.Terminal.IsLocalServiceUnavailable)
+                    {
+                        // No verdict: the chain parks and a later healthy row starts playback.
+                        lock (playbackLock)
+                            onPoolEmpty();
+                        return race.Terminal;
+                    }
+
+                    EnrichedStream? afterRace;
+                    lock (playbackLock)
+                    {
+                        afterRace = streamSwitchingService.GetCurrentStream();
+                        if (afterRace == null)
+                            onPoolEmpty();
+                    }
+
+                    _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                    if (afterRace == null)
+                    {
+                        _status = "All available streams failed - testing others...";
+                        PublishProgress();
+                        return race.Terminal;
+                    }
+
+                    logger.LogInformation(
+                        "[StreamResolution] Race produced no playable URL — playing {Next}",
+                        afterRace.Stream?.Channel);
+                    stream = afterRace;
+                    continue;
+                }
+
+                if (race.Play != null)
+                    stream = race.Play;
+            }
+
             var attempt = new PlayAttempt();
             var result = await PlayStreamAsync(game, stream, launcher, cancellationToken, attempt).ConfigureAwait(false);
             if (result is null || result.Success || result.ViewerLeft || cancellationToken.IsCancellationRequested)
@@ -1203,6 +1256,202 @@ public class StreamResolutionOrchestrator(
             PublishProgress();
             stream = next;
         }
+    }
+
+    /// <summary>What <see cref="RaceStartAsync"/> decided.</summary>
+    internal readonly record struct RaceStart(bool Ran, EnrichedStream? Play, PlaybackResult? Terminal);
+
+    /// <summary>
+    /// Races the start row's fresh <c>/play</c> against the next row's when both need one.
+    /// A playlist that proves video beats a URL we could not check. An audio-only playlist
+    /// never wins and is reported failed. When the recommended row is already empty and
+    /// another pooled row can play from cache, that row plays immediately — the partner
+    /// <c>/play</c> is not waited on (it stays warm if a URL comes back). Candidate testing
+    /// pauses for the decision so the two race calls do not stack on top of the find-phase
+    /// Chromium cap (<see cref="ResolverRaceThrottle"/>).
+    /// </summary>
+    internal async Task<RaceStart> RaceStartAsync(
+        Game game,
+        EnrichedStream stream,
+        object playbackLock,
+        CancellationToken cancellationToken)
+    {
+        if (warmUrls == null || stream.Stream is null)
+            return new RaceStart(false, null, null);
+
+        // Let the enumerator add healthy rows it has already produced before we look
+        // for a partner. One millisecond, not a sweep: a solo start is not held for
+        // candidates that are still resolving.
+        await Task.Yield();
+        await PartnerLookoutAsync(cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        if (!PlaybackRacePolicy.NeedsFreshPlay(stream, now) || warmUrls.IsWarmOrInFlight(stream))
+            return new RaceStart(false, null, null);
+
+        EnrichedStream? partner;
+        lock (playbackLock)
+        {
+            partner = PlaybackRacePolicy.PickPartner(
+                streamSwitchingService.GetHealthyStreams(),
+                stream,
+                DateTimeOffset.UtcNow,
+                warmUrls.IsWarmOrInFlight);
+        }
+
+        if (partner?.Stream is null)
+            return new RaceStart(false, null, null);
+
+        logger.LogInformation(
+            "[StreamResolution] Racing fresh /play: {Recommended} (recommended, {Grace}ms grace) vs {Partner}",
+            stream.Stream.Channel,
+            (int)PlaybackRacePolicy.RecommendedGrace.TotalMilliseconds,
+            partner.Stream.Channel);
+
+        using var raceHold = raceThrottle?.BeginRace();
+        if (raceThrottle != null)
+            await raceThrottle.DrainOthersAsync(cancellationToken).ConfigureAwait(false);
+
+        var race = await PlaybackUrlRacer.RaceAsync(
+            stream,
+            partner,
+            ResolveRaceLegAsync,
+            ClassifyRaceLegAsync,
+            OnRaceLegFinished,
+            () => OtherRowCanPlayNow(stream, partner, playbackLock),
+            cancellationToken).ConfigureAwait(false);
+
+        foreach (var verdict in race.StreamVerdicts)
+        {
+            if (verdict.Row.Stream is null)
+                continue;
+            var reason = verdict.State == RaceLegState.AudioOnly
+                ? "No video (audio only)"
+                : "Failed to resolve m3u8";
+            logger.LogInformation(
+                "[StreamResolution] Race verdict on {Channel}: {Reason}",
+                verdict.Row.Stream.Channel, reason);
+            _ = ReportHealthAsync(game, verdict.Row.Stream, "failed", reason, verdict.Row.Health, cancellationToken);
+            lock (playbackLock)
+                RemoveFromPool(verdict.Row);
+        }
+
+        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+
+        if (race.Winner is { } winner)
+        {
+            lock (playbackLock)
+                SelectInPool(winner);
+            logger.LogInformation(
+                "[StreamResolution] Race won by {Winner}{Which}",
+                winner.Stream?.Channel,
+                ReferenceEquals(winner, stream) ? " (recommended)" : " (partner)");
+            return new RaceStart(true, winner, null);
+        }
+
+        if (race.PlayReadyRow)
+        {
+            var ready = ReadyCachedRow(stream, partner, playbackLock);
+            if (ready != null)
+            {
+                lock (playbackLock)
+                    SelectInPool(ready);
+                logger.LogInformation(
+                    "[StreamResolution] Race recommended row had no video URL — playing cached {Channel}",
+                    ready.Stream?.Channel);
+                return new RaceStart(true, ready, null);
+            }
+        }
+
+        logger.LogWarning(
+            "[StreamResolution] Race produced no playable URL ({Recommended} vs {Partner})",
+            stream.Stream.Channel, partner.Stream.Channel);
+        return new RaceStart(
+            true,
+            null,
+            race.AnyInfrastructure
+                ? PlaybackResult.Completed(
+                    $"{PlaybackCloseReasons.LocalServiceUnavailable}: {race.InfrastructureError}", true)
+                : PlaybackResult.Completed("Failed to resolve m3u8", true));
+    }
+
+    private async Task<M3U8Response?> ResolveRaceLegAsync(EnrichedStream row, CancellationToken cancellationToken)
+    {
+        using var mark = raceThrottle?.MarkRaceLeg();
+        if (row.Stream is null)
+            return null;
+        if (warmUrls != null && warmUrls.BeginInFlight(row))
+            _raceInFlight.TryAdd(row, 0);
+        return await apiService.GetM3U8UrlAsync(
+            row.Stream.Url,
+            EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(row.Stream),
+            row.Stream.ResolutionStrategy,
+            row.Stream.Source,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<RaceLegState> ClassifyRaceLegAsync(M3U8Response response, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(response.Url))
+            return RaceLegState.Empty;
+        if (playlistProbe is null)
+            return RaceLegState.Unverified;
+
+        try
+        {
+            var verdict = await playlistProbe.ClassifyAsync(response, cancellationToken).ConfigureAwait(false);
+            return verdict switch
+            {
+                PlaylistVideoVerdict.Video => RaceLegState.Video,
+                PlaylistVideoVerdict.AudioOnly => RaceLegState.AudioOnly,
+                _ => RaceLegState.Unverified,
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamResolution] Race playlist probe failed; URL stays unverified");
+            return RaceLegState.Unverified;
+        }
+    }
+
+    private void OnRaceLegFinished(RaceLegResult<M3U8Response> leg)
+    {
+        if (warmUrls == null)
+            return;
+        if (leg.Value is { } response
+            && leg.State is RaceLegState.Video or RaceLegState.Unverified
+            && !string.IsNullOrWhiteSpace(response.Url))
+        {
+            var now = DateTimeOffset.UtcNow;
+            warmUrls.PutUntil(leg.Row, response, PlaybackRacePolicy.LoserTakeBy(response.Url, now), now);
+        }
+
+        if (_raceInFlight.TryRemove(leg.Row, out _))
+            warmUrls.EndInFlight(leg.Row);
+    }
+
+    private bool OtherRowCanPlayNow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
+        => ReadyCachedRow(recommended, partner, playbackLock) != null;
+
+    private EnrichedStream? ReadyCachedRow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
+    {
+        lock (playbackLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var row in streamSwitchingService.GetHealthyStreams())
+            {
+                if (ReferenceEquals(row, recommended) || ReferenceEquals(row, partner))
+                    continue;
+                if (!PlaybackRacePolicy.NeedsFreshPlay(row, now))
+                    return row;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Moves the pool index onto <paramref name="row"/>. False when it is no longer in the pool.</summary>

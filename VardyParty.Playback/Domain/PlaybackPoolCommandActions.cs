@@ -346,6 +346,9 @@ public sealed class PlaybackPoolCommandActions(
             var recovering = snapshot.IsRecovering;
             if (recovering)
             {
+                if (snapshot.SameStreamRetries <= 1)
+                    PlaybackRecoverySignals.RaiseSameStreamRetryStarted();
+
                 // Same-stream retry: back off before the next /play (0s, 1s, 3s).
                 await DelayAsync(PlaybackPolicy.SameStreamRetryBackoff(snapshot.SameStreamRetries)).ConfigureAwait(false);
 

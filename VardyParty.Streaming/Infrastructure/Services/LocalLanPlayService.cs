@@ -43,7 +43,8 @@ public class LocalLanPlayService(
     IDnsPreferencesStore? dnsPreferences = null,
     IDnsOverHttpsEndpoint? dnsEndpoint = null,
     IRemoteComputePlay? remoteCompute = null,
-    LocalServiceConnection? connection = null) : ILocalLanPlayService
+    LocalServiceConnection? connection = null,
+    ResolverRaceThrottle? raceThrottle = null) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -403,9 +404,21 @@ public class LocalLanPlayService(
         // time; every dead stream then caused a re-discovery
         // (16:51:43-16:53:03 UK time on 31 Oct 2026) and a double /play
         // (techydeals at 16:49:54 and 16:50:14).
-        return useMp
-            ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
-            : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
+        // One slot per browser /play or /mp. A startup race holds both slots; other
+        // callers wait so candidate testing cannot double the Chromium load.
+        if (raceThrottle is null)
+        {
+            return useMp
+                ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+                : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
+        }
+
+        using (await raceThrottle.EnterAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return useMp
+                ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
+                : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
+        }
     }
 
     /// <summary>Test seam: mark a resolve key slow, as our own <c>/play</c> timeout does.</summary>

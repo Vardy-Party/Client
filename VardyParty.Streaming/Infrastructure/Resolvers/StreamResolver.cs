@@ -10,7 +10,8 @@ public class StreamResolver(
     IStreamHealthChecker healthChecker,
     ILocalLanPlayService localLanPlayService,
     IDiscoveredChipNormalizer chipNormalizer,
-    ILogger<StreamResolver> logger) : IStreamResolver
+    ILogger<StreamResolver> logger,
+    ResolverRaceThrottle? raceThrottle = null) : IStreamResolver
 {
     /// <summary>
     /// Waits before re-asking an unavailable local service about the same row.
@@ -79,8 +80,24 @@ public class StreamResolver(
             }
         }
 
+        bool HasUnstarted()
+        {
+            for (var i = 0; i < pending.Count; i++)
+            {
+                if (!started.Contains(i))
+                    return true;
+            }
+
+            return false;
+        }
+
         void FillWindow()
         {
+            // A startup race already holds the LocalService cap. Finish what is in
+            // flight, but do not start another Chromium /play on top of it.
+            if (raceThrottle?.RaceInFlight == true)
+                return;
+
             while (inFlight.Count < concurrency)
             {
                 int? pick = null;
@@ -117,9 +134,22 @@ public class StreamResolver(
 
         FillWindow();
 
-        while (inFlight.Count > 0)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (inFlight.Count == 0)
+            {
+                if (raceThrottle?.RaceInFlight == true && HasUnstarted())
+                {
+                    logger.LogInformation(
+                        "[StreamResolver] Pausing candidate testing while a playback race holds the local-service cap");
+                    await raceThrottle.WaitUntilRaceEndsAsync(cancellationToken).ConfigureAwait(false);
+                    FillWindow();
+                    continue;
+                }
+
+                break;
+            }
 
             var completedTask = await Task.WhenAny(inFlight.Select(x => x.Task)).ConfigureAwait(false);
             var index = inFlight.FindIndex(x => ReferenceEquals(x.Task, completedTask));

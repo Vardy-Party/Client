@@ -456,6 +456,40 @@ Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuse
 `StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests` (Playback).
 
+## Startup race (two fresh /play calls)
+
+When nothing is playing yet and the row we would start needs a fresh `/play`, and the next
+pooled row needs one too, both resolve together (`PlaybackRacePolicy`, `PlaybackUrlRacer`).
+Rules (tests in `PlaybackRaceBusinessRulesTests`, `PlaylistVideoEvidenceTests`,
+`StartupRaceBusinessRulesTests`, `ResolverRaceThrottleTests`):
+
+1. **A non-empty URL is not a win by itself.** The playlist is read (`RacePlaylistProbe` /
+   `PlaylistVideoEvidence`). Proven video on the recommended row wins. Proven video on the
+   partner beats a recommended URL whose playlist could not be checked. A playlist that is
+   audio-only (0x0, audio codecs, or only `.aac` / `.m4a` segments) never wins: it is reported
+   failed as `No video (audio only)` and removed, the same stream failure as the player rule.
+   A fetch that fails or is blocked stays unverified and can still be played; the Android
+   8s video confirmation is unchanged.
+2. **Recommended grace** is 1.5s. A partner URL does not replace a recommended row that is
+   still resolving until that window has elapsed. After it, an unverified partner can win
+   only while the recommended row is still pending.
+3. **The finding-streams dialog does not wait.** If the recommended `/play` is already empty
+   or audio-only and another pooled row can play from cache, that row plays at once. The
+   partner `/play` is left to finish into the warm cache; it is not a second wait and it is
+   not reported.
+4. **Chromium stays capped at 2.** `ResolverRaceThrottle` allows two LocalService `/play` or
+   `/mp` calls at a time. The race marks its legs and drains plays that already started, and
+   candidate testing starts nothing new until the winner is known. The two race calls use the
+   cap; they do not add a second pair on top of the find phase.
+5. **A losing URL is kept warm** until its token expiry minus the comfort margin (or 60s when
+   the expiry is not readable) and is taken once, like any other warm entry. It is not reported.
+6. **Infrastructure is still not a verdict.** A leg the service could not answer is not
+   reported and not removed. If neither leg can be played, the chain parks the same way a
+   local-service failure does.
+
+The first same-stream retry raises `PlaybackRecoverySignals.SameStreamRetryStarted` so the
+prewarmer can refresh the next rows. That refresh takes a slot from the same cap.
+
 ---
 
 ## Same-stream recovery and infrastructure failures (31 Oct 2026)

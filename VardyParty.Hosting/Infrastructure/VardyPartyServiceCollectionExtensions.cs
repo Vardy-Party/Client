@@ -30,7 +30,13 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
         services.AddSingleton<WarmPlaybackUrlCache>();
-        services.AddSingleton<IUpcomingStreamPrewarmer, UpcomingStreamPrewarmer>();
+        services.AddSingleton<ResolverRaceThrottle>();
+        services.AddSingleton<IUpcomingStreamPrewarmer>(sp =>
+        {
+            var prewarmer = ActivatorUtilities.CreateInstance<UpcomingStreamPrewarmer>(sp);
+            PlaybackRecoverySignals.SameStreamRetryStarted += prewarmer.Kick;
+            return prewarmer;
+        });
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
         services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
         services.AddSingleton<ISessionIdProvider, SessionIdProvider>();

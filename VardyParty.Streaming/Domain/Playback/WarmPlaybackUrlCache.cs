@@ -36,6 +36,34 @@ public sealed class WarmPlaybackUrlCache
         }
     }
 
+    /// <summary>
+    /// Stores a never-played race URL (<see cref="PlaybackRacePolicy.LoserTakeBy"/>) so
+    /// one later switch can take it until <paramref name="takeBy"/>, even when its token
+    /// expiry is not readable. Single use, like every entry.
+    /// </summary>
+    public void PutUntil(EnrichedStream stream, M3U8Response response, DateTimeOffset takeBy, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(response);
+        if (takeBy <= now || string.IsNullOrWhiteSpace(response.Url))
+            return;
+        lock (_gate)
+        {
+            // TryTake needs MinComfortableLife left, so the stored expiry sits that far past takeBy.
+            _entries[stream] = new Entry(response, takeBy + PlaybackUrlReusePolicy.MinComfortableLife, now);
+            _unwarmable.Remove(stream);
+        }
+    }
+
+    /// <summary>True when <paramref name="stream"/> has a warm entry or a pre-resolve running.</summary>
+    public bool IsWarmOrInFlight(EnrichedStream stream)
+    {
+        lock (_gate)
+        {
+            return _entries.ContainsKey(stream) || _inFlight.ContainsKey(stream);
+        }
+    }
+
     public Entry? Peek(EnrichedStream stream)
     {
         lock (_gate)
