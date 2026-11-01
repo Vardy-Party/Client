@@ -182,6 +182,8 @@ namespace VardyParty.Platforms.Android
                     RefreshPlaybackStatus();
                     // Until a picture shows, let the session time out an audio-only stream.
                     ProbeVideo();
+                    if (_overlayLocked)
+                        UpdateOverlayFromCurrentStream();
                 }
                 catch (Exception ex) { LogIgnored("StatusWatchdogTick", ex); }
                 finally

@@ -35,6 +35,7 @@ public static class VardyPartyServiceCollectionExtensions
         {
             var prewarmer = ActivatorUtilities.CreateInstance<UpcomingStreamPrewarmer>(sp);
             PlaybackRecoverySignals.SameStreamRetryStarted += prewarmer.Kick;
+            prewarmer.PlayingTokenReady += PlaybackRecoverySignals.RaisePlayingTokenReady;
             return prewarmer;
         });
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();

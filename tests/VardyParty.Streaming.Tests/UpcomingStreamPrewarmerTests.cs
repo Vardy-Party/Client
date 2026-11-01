@@ -59,6 +59,31 @@ public class UpcomingStreamPrewarmerTests
     }
 
     [Fact]
+    public async Task TickAsync_RefreshesPlayingTokenInsideTheLead_BeforeTheNextRow()
+    {
+        // Arrange
+        var current = SoakRow("current", CoweddUrl(Now.ToUnixTimeSeconds() + 80));
+        var next = SoakRow("next");
+        _pool.AddHealthyStream(current);
+        _pool.AddHealthyStream(next);
+        var fresh = CoweddUrl(Now.ToUnixTimeSeconds() + 200);
+        Returns(current.Stream.Url, fresh);
+        Returns(next.Stream.Url, UzhiUrl);
+        string? swapped = null;
+        var sut = CreateSut();
+        sut.PlayingTokenReady += url => swapped = url;
+
+        // Act
+        var issued = await sut.TickAsync(CancellationToken.None);
+
+        // Assert
+        Assert.True(issued);
+        Assert.Equal(new[] { current.Stream.Url }, _resolved);
+        Assert.Equal(fresh, swapped);
+        Assert.Equal(fresh, current.ResolvedM3U8Url);
+    }
+
+    [Fact]
     public async Task TickAsync_SecondTickWarmsDepthTwo_ThenIdlesWhileWarm()
     {
         // Arrange

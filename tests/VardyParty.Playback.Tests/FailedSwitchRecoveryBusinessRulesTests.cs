@@ -59,7 +59,8 @@ public class FailedSwitchRecoveryBusinessRulesTests
 
         var first = Error(session, ExtM3uBlip);
 
-        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.Attach && e.Url == FourKUrl);
+        Assert.DoesNotContain(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
         Assert.DoesNotContain(first, e => e.Kind == PlaybackEffectKind.RevertToLastGood);
         AssertNoReportNoRemove(first);
         Assert.True(session.Snapshot.IsRecoveringSwitch);

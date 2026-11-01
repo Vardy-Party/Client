@@ -251,6 +251,8 @@ namespace VardyParty.Platforms.Android
         private string? _gameTitle;
         private bool _suppressOverlayShow;
         private int? _videoWidth;
+        private readonly PlaybackTransferMeter _transferMeter = new();
+        private bool _anticipatingToken;
         private int? _videoHeight;
         private string _m3u8Url = string.Empty;
         private string? _refererUrl;
@@ -353,6 +355,7 @@ namespace VardyParty.Platforms.Android
             _player = new ExoPlayerBuilder(this)
                 .SetLoadControl(loadControl)!
                 .Build()!;
+            PlaybackRecoverySignals.PlayingTokenReady += OnPlayingTokenReady;
             _playerView = new PlayerView(this) { Player = _player };
             _playerListener = new InternalPlayerListener(this);
             // disable built-in controller (remove play/prev/next/seek UI)
@@ -1110,6 +1113,8 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                PlaybackRecoverySignals.PlayingTokenReady -= OnPlayingTokenReady;
+                PlayingPlaylistRedirect.Clear();
                 BeginClosing();
                 CancelAttachLifetime();
                 RemoveCallback(_tickerHandler, _tickerRunnable);
@@ -1595,6 +1600,7 @@ namespace VardyParty.Platforms.Android
                     // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
                     if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
                         _activity._behindLiveWindowRecoveries = 0;
+                    _activity._anticipatingToken = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Ready is not "working" on Android until a picture shows (audio-only HLS is READY too).
@@ -1663,7 +1669,12 @@ namespace VardyParty.Platforms.Android
                 try
                 {
                     if (videoSize is { Width: > 0, Height: > 0 })
+                    {
+                        _activity._videoWidth = videoSize.Width;
+                        _activity._videoHeight = videoSize.Height;
                         _activity.NoteVideoSeen("size " + videoSize.Width + "x" + videoSize.Height);
+                        _activity.RunOnUiThread(_activity.UpdateOverlayFromCurrentStream);
+                    }
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnVideoSizeChanged", ex); }
             }
@@ -1699,6 +1710,7 @@ namespace VardyParty.Platforms.Android
 
                     var message = BuildEngineErrorMessage(error);
                     _activity._logger?.LogWarning("[NativeVideoActivity] Player error: {Message}", message);
+                    _activity._anticipatingToken = false;
                     _activity._playerFaulted = true;
                     _activity._isPreparing = false;
                     _activity.RefreshPlaybackStatus();

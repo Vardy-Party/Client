@@ -14,9 +14,10 @@ public enum PlaybackErrorKind
     Transient,
 
     /// <summary>
-    /// The token was rejected or has expired: 401/403, or a playlist body that is
-    /// not HLS (the CDN error page "Input does not start with the #EXTM3U header").
-    /// Reloading the same URL cannot help, so go straight to a fresh <c>/play</c>.
+    /// The token was rejected: 401/403. Reloading the same URL cannot help, so go
+    /// straight to a fresh <c>/play</c>. A playlist body that is not HLS (a 504
+    /// gateway page, "Input does not start with the #EXTM3U header") is
+    /// <see cref="Transient"/>: reload the same URL once before scraping again.
     /// </summary>
     TokenOrPlaylistInvalid,
 
@@ -54,6 +55,14 @@ public static partial class PlaybackPolicy
     /// </summary>
     public const int MaxSameStreamRetries = 3;
 
+    /// <summary>
+    /// Extra fresh <c>/play</c> attempts when a scrape returns no URL for a stream
+    /// that was already playing. A wedd/premium page often emits an unsigned
+    /// playlist first (rejected: no video bytes) and a signed one on the next
+    /// scrape. 1 Nov 2026: Liveverse was removed after two such rejects.
+    /// </summary>
+    public const int EmptyFreshPlayExtraAttempts = 2;
+
     /// <summary>A health decline gets one reload before the stream is declined.</summary>
     public const int MaxHealthDeclineRetries = 1;
 
@@ -80,11 +89,6 @@ public static partial class PlaybackPolicy
         "403",
         "forbidden",
         "unauthorized",
-        "#extm3u",
-        "playlist parse",
-        "manifest malformed",
-        "parsing_manifest_malformed",
-        "parsing manifest malformed",
         "invalid http content type"
     ];
 
@@ -130,9 +134,16 @@ public static partial class PlaybackPolicy
 
         // Could not reach the CDN: never dead (connect refused / timed out,
         // reset, TLS; Media3 2001/2002 network connection failed / timeout).
+        // A 5xx playlist body is the same kind of miss: the 1 Nov 2026 TV black
+        // screen was a 504 gateway page parsed as "not #EXTM3U", then a 13s
+        // /play of a URL that was still good.
         if (VardyParty.Kernel.CdnReachabilityPolicy.MentionsConnectFailure(text)
             || text.Contains("network connection failed", StringComparison.Ordinal)
-            || text.Contains("network connection timeout", StringComparison.Ordinal))
+            || text.Contains("network connection timeout", StringComparison.Ordinal)
+            || ContainsStatus(text, "500")
+            || ContainsStatus(text, "502")
+            || ContainsStatus(text, "503")
+            || ContainsStatus(text, "504"))
         {
             return PlaybackErrorKind.CdnUnreachable;
         }

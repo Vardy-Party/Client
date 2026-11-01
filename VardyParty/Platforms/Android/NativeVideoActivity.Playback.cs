@@ -256,6 +256,7 @@ namespace VardyParty.Platforms.Android
                 return false;
 
             _behindLiveWindowRecoveries++;
+            PlayedSegmentMemory.ArmTrimOnce();
             _logger?.LogWarning(
                 "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
                 _behindLiveWindowRecoveries,
@@ -404,6 +405,26 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private void OnPlayingTokenReady(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return;
+            RunOnUiThread(() =>
+            {
+                if (IsLifecycleClosing || string.IsNullOrEmpty(_m3u8Url)
+                    || string.Equals(url, _m3u8Url, StringComparison.Ordinal))
+                    return;
+                // Same ExoPlayer. Its next playlist reload fetches this URL, so the
+                // decoder and the buffered segments are not torn down.
+                PlayingPlaylistRedirect.Arm(_m3u8Url, url);
+                _session.NoteRefreshedPlayingUrl(url);
+                _m3u8Url = url;
+                _logger?.LogInformation(
+                    "[LinkRefresh] Next playlist reload will use the new token {Url}",
+                    url);
+            });
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
@@ -434,11 +455,25 @@ namespace VardyParty.Platforms.Android
                             return;
                         }
 
-                        _isPreparing = true;
+                        // A real attach fetches the URL it was given. Drop a token redirect
+                        // aimed at the playlist being replaced.
+                        PlayingPlaylistRedirect.Clear();
+
+                        if (!_anticipatingToken)
+                        {
+                            _isPreparing = true;
+                            Interlocked.Exchange(ref _videoSeenGeneration, -1);
+                            _playerFaulted = false;
+                            _statusTracker.Reset();
+                            _transferMeter.Reset();
+                        }
+                        else
+                        {
+                            _session.NoteRefreshedPlayingUrl(m3u8Url);
+                            _logger?.LogInformation("[LinkRefresh] Swapping to the next token while playback continues");
+                        }
+
                         _m3u8Url = m3u8Url;
-                        Interlocked.Exchange(ref _videoSeenGeneration, -1);
-                        _playerFaulted = false;
-                        _statusTracker.Reset();
                         StartStatusWatchdog();
                         RefreshPlaybackStatus();
 
@@ -469,7 +504,7 @@ namespace VardyParty.Platforms.Android
                             }
                             catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
 
-                            var customFactory = new UnwrappingDataSourceFactory(ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled));
+                            var customFactory = new UnwrappingDataSourceFactory(ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled), _transferMeter);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -515,7 +550,7 @@ namespace VardyParty.Platforms.Android
                         fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory))
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 

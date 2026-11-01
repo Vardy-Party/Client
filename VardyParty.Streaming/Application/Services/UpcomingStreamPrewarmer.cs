@@ -16,6 +16,9 @@ public interface IUpcomingStreamPrewarmer
 
     /// <summary>Runs one refresh step now (after a switch) without waiting.</summary>
     void Kick();
+
+    /// <summary>A new token for the row that is playing, ready to swap in.</summary>
+    event Action<string>? PlayingTokenReady;
 }
 
 public sealed class UpcomingStreamPrewarmer(
@@ -39,6 +42,8 @@ public sealed class UpcomingStreamPrewarmer(
         _ = LoopAsync(cts.Token);
         return new Stopper(this, cts);
     }
+
+    public event Action<string>? PlayingTokenReady;
 
     public void Kick()
     {
@@ -69,6 +74,15 @@ public sealed class UpcomingStreamPrewarmer(
                 switching.GetCurrentStream(),
                 PlaybackUrlReusePolicy.PrewarmDepth);
             var now = _time.GetUtcNow();
+            var playing = switching.GetCurrentStream();
+            if (playing != null
+                && PlaybackUrlReusePolicy.ShouldPrewarm(playing)
+                && !cache.IsUnwarmable(playing)
+                && PlaybackUrlReusePolicy.NeedsPlayingLinkRefresh(playing.ResolvedM3U8Url, now))
+            {
+                target = playing;
+            }
+
             for (var depth = 0; depth < upcoming.Count && target == null; depth++)
             {
                 var row = upcoming[depth];
@@ -84,7 +98,12 @@ public sealed class UpcomingStreamPrewarmer(
 
             try
             {
-                logger.LogInformation("[Prewarm] Pre-resolving upcoming {Channel}", stream.Channel);
+                var refreshingPlaying = ReferenceEquals(target, switching.GetCurrentStream());
+                logger.LogInformation(
+                    refreshingPlaying
+                        ? "[LinkRefresh] Fetching the next token for {Channel} before the one playing expires"
+                        : "[Prewarm] Pre-resolving upcoming {Channel}",
+                    stream.Channel);
                 var response = await apiService.GetM3U8UrlAsync(
                     stream.Url,
                     EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
@@ -99,10 +118,24 @@ public sealed class UpcomingStreamPrewarmer(
 
                 if (cache.Put(target, response, _time.GetUtcNow()))
                 {
-                    logger.LogInformation(
-                        "[Prewarm] Warm m3u8 ready for {Channel} (expires in {Seconds}s)",
-                        stream.Channel,
-                        (int)(cache.Peek(target)!.Expiry - _time.GetUtcNow()).TotalSeconds);
+                    if (refreshingPlaying)
+                    {
+                        if (response.RequestHeaders is { Count: > 0 })
+                            EnrichedStreamM3U8Apply.Apply(target, response);
+                        else
+                            target.ResolvedM3U8Url = response.Url;
+                        logger.LogInformation(
+                            "[LinkRefresh] Next token ready for {Channel}; swapping while the picture stays up",
+                            stream.Channel);
+                        PlayingTokenReady?.Invoke(response.Url);
+                    }
+                    else
+                    {
+                        logger.LogInformation(
+                            "[Prewarm] Warm m3u8 ready for {Channel} (expires in {Seconds}s)",
+                            stream.Channel,
+                            (int)(cache.Peek(target)!.Expiry - _time.GetUtcNow()).TotalSeconds);
+                    }
                 }
                 else
                 {

@@ -154,6 +154,18 @@ public sealed class PlaybackSessionController
     public void SetHealthyStreamCount(int count) => _healthyStreamCount = Math.Max(0, count);
 
     /// <summary>
+    /// The playing token was refreshed before it expired. Keep the same generation and
+    /// the video confirmation so the audio-only guard does not trip.
+    /// </summary>
+    public void NoteRefreshedPlayingUrl(string url)
+    {
+        if (_state == PlaybackSessionState.Closed || !_hasEstablishedPlayback || string.IsNullOrWhiteSpace(url))
+            return;
+        _currentUrl = url;
+        _lastGoodUrl = url;
+    }
+
+    /// <summary>
     /// Begin attaching a URL. Increments generation. Call before the OS engine Prepare/SetSource.
     /// </summary>
     public IReadOnlyList<PlaybackEffect> BeginAttach(string url, bool usedCachedUrl = false, bool force = false)
@@ -244,11 +256,16 @@ public sealed class PlaybackSessionController
 
         if (_recovering && _hasEstablishedPlayback)
         {
-            // A same-stream fresh /play came back empty. That can be a slow service,
-            // so it uses up an attempt; the last attempt switches.
+            // A same-stream fresh /play came back empty. That can be a slow service
+            // or an unsigned playlist sampled before the signed one. Keep scraping
+            // a little longer, then move on without reporting or removing the row:
+            // the channel was playing, so an empty scrape is not proof it is dead.
             _recoveryAttachPending = false;
-            var retry = TryRecoverSameStream(message, PlaybackErrorKind.TokenOrPlaylistInvalid);
-            return retry ?? FailEstablishedOrAdvance(message);
+            var retry = TryRecoverSameStream(
+                message,
+                PlaybackErrorKind.TokenOrPlaylistInvalid,
+                PlaybackPolicy.MaxSameStreamRetries + PlaybackPolicy.EmptyFreshPlayExtraAttempts);
+            return retry ?? KeepUnresolvedPlayAndMoveOn(message);
         }
 
         // Host tried RetryFreshResolve but got nothing / same URL — treat as failed start.
@@ -731,7 +748,7 @@ public sealed class PlaybackSessionController
         if (!_recovering && PlaybackPolicy.ShouldResetSameStreamRetries(_lastSameStreamRetryAt, now))
             _sameStreamRetries = 0;
 
-        if (_sameStreamRetries >= maxAttempts || !PlaybackPolicy.ShouldRetrySameStream(kind, _sameStreamRetries))
+        if (kind == PlaybackErrorKind.ConfirmedDead || _sameStreamRetries >= maxAttempts)
             return null;
 
         _sameStreamRetries++;
@@ -745,7 +762,7 @@ public sealed class PlaybackSessionController
         _metricsWindow = new StreamMetricsWindow();
 
         var attempt = _sameStreamRetries;
-        var label = $"Same-stream retry {attempt}/{PlaybackPolicy.MaxSameStreamRetries}";
+        var label = $"Same-stream retry {attempt}/{maxAttempts}";
         var effects = new List<PlaybackEffect>
         {
             new(PlaybackEffectKind.RaiseBuffering, Reason: "buffering", Generation: _attachGeneration)
@@ -989,6 +1006,32 @@ public sealed class PlaybackSessionController
 
         _state = PlaybackSessionState.Failed;
         effects.Add(new PlaybackEffect(PlaybackEffectKind.CloseSession, Reason: message));
+        return effects;
+    }
+
+    /// <summary>
+    /// The fresh <c>/play</c> for a stream that was already playing returned nothing
+    /// and the extra attempts are used up. The row stays in the pool, unreported.
+    /// It is skipped for this cycle so playback moves on, and its URL is cleared
+    /// so the next visit scrapes again.
+    /// </summary>
+    private List<PlaybackEffect> KeepUnresolvedPlayAndMoveOn(string reason)
+    {
+        ResetSameStreamRecovery(clearBudget: true);
+        NotifyFailedInCycle(_currentUrl, reason, feedFailed: false);
+        _isPreparing = false;
+        var effects = new List<PlaybackEffect>
+        {
+            new(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason)
+        };
+
+        if (_healthyStreamCount > 1 && HasUntriedStream())
+        {
+            effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: reason));
+            return effects;
+        }
+
+        effects.AddRange(StopWithNothingUntried(reason));
         return effects;
     }
 

@@ -12,6 +12,32 @@ public static class PlaybackRecoverySignals
     /// </summary>
     public static event Action? SameStreamRetryStarted;
 
+    /// <summary>
+    /// A new token for the stream that is already playing. The host swaps to it
+    /// without the wait spinner. The picture stays up until the player prepares the new link.
+    /// </summary>
+    public static event Action<string>? PlayingTokenReady;
+
+    public static void RaisePlayingTokenReady(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+        var handlers = PlayingTokenReady;
+        if (handlers is null)
+            return;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action<string>>())
+        {
+            try
+            {
+                handler(url);
+            }
+            catch
+            {
+                // A listener must never break the refresh.
+            }
+        }
+    }
+
     internal static void RaiseSameStreamRetryStarted()
     {
         var handlers = SameStreamRetryStarted;

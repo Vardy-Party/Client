@@ -429,10 +429,13 @@ re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8To
    hosts registered with `PlaybackUrlReusePolicy.RegisterSingleUseHost`, and any URL with **no readable
    expiry** (unknown = single-use; keeps 5604455's tests).
 4. **Pre-resolve** - `UpcomingStreamPrewarmer` runs for the whole playback session and keeps the next
-   `PrewarmDepth` = 2 rows in switch order warm in `WarmPlaybackUrlCache` (never the current row). Single
-   flight: at most one `/play` in flight from it; 15 s tick; refreshes 30 s before the comfort margin.
-   Short-lived tokens (lifetime < 5 min, cowedd ~2 min) are kept warm only for the immediate next row.
-   A URL with no readable expiry marks the row unwarmable (no retry loop).
+   `PrewarmDepth` = 2 rows in switch order warm in `WarmPlaybackUrlCache`. It also refreshes the
+   **current** row when the playing URL's readable expiry has 90 s or less left
+   (`PlaybackUrlReusePolicy.PlayingLinkRefreshLead`) and raises `PlayingTokenReady` with the new URL.
+   Single flight: at most one `/play` in flight from it; 15 s tick; upcoming rows refresh 30 s before
+   the comfort margin. Short-lived tokens (lifetime < 5 min, cowedd ~2 min) are kept warm only for the
+   immediate next row. A URL with no readable expiry marks the row unwarmable (no retry loop) and is
+   not refreshed on a timer.
 5. **Switch uses the warm URL** - `PlaybackUrlResolver` (the platforms' fresh-resolve delegate) waits
    for an in-flight pre-resolve of the same row, then consumes the warm entry once (> 60 s left) instead
    of calling `/play`; otherwise `/play` as before.
@@ -446,15 +449,20 @@ re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8To
    back on the playing row **without re-attaching it** and "Couldn't switch to X - staying on the current
    stream" is shown. A newer switch supersedes an older pending one.
 
-Platform limits: every platform has one player instance, so the cut-over happens once the new URL is
-resolved, not after its first segments are buffered (true pre-buffer needs a second ExoPlayer /
-MediaPlayer / LibVLC instance and a surface swap). Status text: Android toast, Windows stream-count
-line, Linux log only (no overlay).
+Platform limits: a channel switch still cuts over once the new URL is resolved, because replacing the
+media source clears the picture. A playing-token refresh does not. Android keeps the same ExoPlayer and,
+on that player's next playlist reload, fetches the new token URL (`PlaylistReloadRedirect`). The decoder
+and the buffered segments stay. That reload drops a leading run of segment URLs already fetched
+for this playlist path (query ignored) and advances `#EXT-X-MEDIA-SEQUENCE` by that many, so a
+prepare does not play them again. The last segment stays when the whole window was already fetched.
+Giving the same player a new media source is what blanks the screen.
+Status text: Android toast, Windows stream-count line, Linux log only (no overlay).
 
 Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuseBusinessRulesTests`
 (Kernel); `WarmPlaybackUrlCacheTests`, `UpcomingStreamPrewarmerTests`, `SwitchPrewarmBusinessRulesTests`,
 `StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
-`PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests` (Playback).
+`PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
+`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
 
 ## Startup race (two fresh /play calls)
 
@@ -501,9 +509,9 @@ Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57
 | Class | Examples | First step |
 |---|---|---|
 | `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
-| `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout" | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
-| `TokenOrPlaylistInvalid` | 401/403, `#EXTM3U` header missing, manifest parse error | Fresh `/play` for the same row |
-| `Transient` | Anything else, including a bare "Source error", timeouts, segment 404 | Reload the same URL |
+| `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout", HTTP 500/502/503/504 | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
+| `TokenOrPlaylistInvalid` | 401/403 | Fresh `/play` for the same row |
+| `Transient` | A playlist body that is not HLS (`#EXTM3U` missing, manifest parse error), a bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
 
 Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.
 
@@ -514,7 +522,7 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - The budget refills when the last retry was at least 90s ago (`SameStreamRetryWindow`). A recovered stream that flaps inside 90s keeps using the same budget.
 - A health decline (buffering or bitrate window) gets one reload (`MaxHealthDeclineRetries`), then `ReportDeclined` and a switch.
 - A burst of download failures uses one attempt, not the whole budget: the failure counter resets when a retry starts.
-- An empty fresh `/play` during recovery uses one attempt; the last one switches.
+- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects).
 - When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
 - A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
 - A failed switch gets the same budget for its target before reverting to last-good (next section).

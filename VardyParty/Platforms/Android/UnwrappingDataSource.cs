@@ -1,9 +1,12 @@
 #if ANDROID
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Android.Runtime;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.DataSource;
+using VardyParty.Playback;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 using Exception = System.Exception;
 using Uri = Android.Net.Uri;
@@ -21,14 +24,16 @@ namespace VardyParty.Platforms.Android
     public sealed class UnwrappingDataSource : Java.Lang.Object, IDataSource
     {
         private readonly IDataSource _upstream;
+        private readonly PlaybackTransferMeter? _meter;
         private byte[] _pending = Array.Empty<byte>();
         private int _pendingOffset;
         private bool _upstreamDone;
         private IDictionary<string, IList<string>>? _unwrappedHeaders;
 
-        public UnwrappingDataSource(IDataSource upstream)
+        public UnwrappingDataSource(IDataSource upstream, PlaybackTransferMeter? meter = null)
         {
             _upstream = upstream ?? throw new ArgumentNullException(nameof(upstream));
+            _meter = meter;
         }
 
         public void AddTransferListener(ITransferListener? transferListener)
@@ -44,6 +49,9 @@ namespace VardyParty.Platforms.Android
             _upstreamDone = false;
             _unwrappedHeaders = null;
 
+            if (dataSpec is not null)
+                dataSpec = PlayingPlaylistRedirect.Apply(dataSpec);
+
             // Upstream IOExceptions (HTTP 403, DNS) must reach Media3 unchanged.
             var length = _upstream.Open(dataSpec);
             if (dataSpec is null
@@ -52,6 +60,11 @@ namespace VardyParty.Platforms.Android
             {
                 return length;
             }
+
+            if (IsPlaylist(dataSpec))
+                return OpenTrimmedPlaylist(dataSpec);
+
+            PlayedSegmentMemory.Note(dataSpec.Uri?.ToString());
 
             WrappedSegmentRead read;
             try
@@ -82,6 +95,55 @@ namespace VardyParty.Platforms.Android
             return _pending.Length;
         }
 
+        private static bool IsPlaylist(DataSpec dataSpec)
+        {
+            var path = dataSpec.Uri?.Path;
+            return path is not null && path.Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Media playlists are small. Read the body, drop the segment URLs already fetched
+        /// for this path, and hand ExoPlayer only the tail.
+        /// </summary>
+        private long OpenTrimmedPlaylist(DataSpec dataSpec)
+        {
+            const int maxBytes = 1024 * 1024;
+            var buffer = new byte[8192];
+            using var body = new System.IO.MemoryStream();
+            while (body.Length < maxBytes)
+            {
+                var n = _upstream.Read(buffer, 0, (int)Math.Min(buffer.Length, maxBytes - body.Length));
+                if (n == C.ResultEndOfInput || n <= 0)
+                    break;
+                body.Write(buffer, 0, n);
+            }
+
+            var bytes = body.ToArray();
+            var text = Encoding.UTF8.GetString(bytes);
+            if (text.AsSpan().TrimStart().StartsWith("#EXTM3U", StringComparison.Ordinal))
+            {
+                var playlistUrl = dataSpec.Uri?.ToString();
+                PlayedSegmentMemory.NotePlaylist(playlistUrl);
+                var rewritten = PlayingPlaylistRedirect.LastApplyRewrote;
+                var stallPrepare = PlayedSegmentMemory.ConsumeTrim();
+                var dropPlayed = rewritten || stallPrepare;
+                var trimmed = dropPlayed
+                    ? UnplayedPlaylist.TrimPlayedPrefix(text, PlayedSegmentMemory.WasPlayed, playlistUrl)
+                    : new UnplayedPlaylist.Trim(text, 0);
+                if (trimmed.Dropped > 0)
+                {
+                    global::Android.Util.Log.Info(
+                        "VardyParty",
+                        $"Playlist reload dropped {trimmed.Dropped} played segments");
+                    bytes = Encoding.UTF8.GetBytes(trimmed.Text);
+                }
+            }
+
+            _pending = bytes;
+            _upstreamDone = true;
+            return bytes.Length;
+        }
+
         public int Read(byte[]? buffer, int offset, int length)
         {
             if (length == 0)
@@ -99,14 +161,20 @@ namespace VardyParty.Platforms.Android
                     return C.ResultEndOfInput;
                 Array.Copy(_pending, _pendingOffset, buffer, offset, n);
                 _pendingOffset += n;
+                NoteBytes(n);
                 return n;
             }
 
             if (_upstreamDone || _unwrappedHeaders is not null)
                 return C.ResultEndOfInput;
 
-            return _upstream.Read(buffer, offset, length);
+            var read = _upstream.Read(buffer, offset, length);
+            if (read > 0)
+                NoteBytes(read);
+            return read;
         }
+
+        private void NoteBytes(int count) => _meter?.Add(count, Environment.TickCount64);
 
         public Uri? Uri => _upstream.Uri;
 
@@ -156,17 +224,19 @@ namespace VardyParty.Platforms.Android
     public sealed class UnwrappingDataSourceFactory : Java.Lang.Object, IDataSourceFactory
     {
         private readonly IDataSourceFactory _inner;
+        private readonly PlaybackTransferMeter? _meter;
 
-        public UnwrappingDataSourceFactory(IDataSourceFactory inner)
+        public UnwrappingDataSourceFactory(IDataSourceFactory inner, PlaybackTransferMeter? meter = null)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            _meter = meter;
         }
 
         public IDataSource CreateDataSource()
         {
             var upstream = _inner.CreateDataSource()
                 ?? throw new InvalidOperationException("Upstream data source factory returned null.");
-            return new UnwrappingDataSource(upstream);
+            return new UnwrappingDataSource(upstream, _meter);
         }
     }
 }

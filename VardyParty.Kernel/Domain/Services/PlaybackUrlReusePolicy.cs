@@ -42,6 +42,14 @@ public static class PlaybackUrlReusePolicy
     /// <summary>How many upcoming streams in switch order are pre-resolved.</summary>
     public const int PrewarmDepth = 2;
 
+    /// <summary>
+    /// Fetch the next token for the stream that is playing once this much life remains
+    /// (<see cref="MinComfortableLife"/> plus <see cref="PrewarmRefreshLead"/>).
+    /// wedd/cowedd tokens last about two minutes; waiting for the playlist to fail
+    /// is the progress bar.
+    /// </summary>
+    public static readonly TimeSpan PlayingLinkRefreshLead = TimeSpan.FromSeconds(90);
+
     private static readonly object HostGate = new();
     private static string[] _singleUseHostSuffixes = [];
 
@@ -180,6 +188,17 @@ public static class PlaybackUrlReusePolicy
             PlaybackSwitchKind.ResolveFresh,
             null,
             IsKnownSingleUse(current) ? "known single-use token" : "token expiry unknown or too close");
+    }
+
+    /// <summary>
+    /// The playing URL should be re-resolved now, while it still works.
+    /// No readable expiry is not anticipated here (a timer swap would rebuffer a healthy player).
+    /// </summary>
+    public static bool NeedsPlayingLinkRefresh(string? playingUrl, DateTimeOffset now)
+    {
+        if (M3u8TokenExpiry.RemainingLife(playingUrl, now) is not { } left)
+            return false;
+        return left > TimeSpan.Zero && left <= PlayingLinkRefreshLead;
     }
 
     /// <summary>Rows the background pre-resolver may keep warm.</summary>

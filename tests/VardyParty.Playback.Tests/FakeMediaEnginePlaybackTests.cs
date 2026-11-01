@@ -73,8 +73,8 @@ public class FakeMediaEnginePlaybackTests
         host.AttachFromPool();
         engine.RaiseReady(session.Snapshot.AttachGeneration);
 
-        // Act: the token expired (HTML instead of #EXTM3U), then the fresh URL plays.
-        engine.RaiseError(session.Snapshot.AttachGeneration, "Input does not start with the #EXTM3U header");
+        // Act: the token was rejected, then the fresh URL plays.
+        engine.RaiseError(session.Snapshot.AttachGeneration, "Response code: 403");
         engine.RaiseReady(session.Snapshot.AttachGeneration);
 
         // Assert

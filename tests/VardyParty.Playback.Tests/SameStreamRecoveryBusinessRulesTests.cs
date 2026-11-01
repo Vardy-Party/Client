@@ -40,10 +40,11 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("No m3u8 URL returned", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("[decoder init failed] MediaCodecVideoDecoderException", PlaybackErrorKind.ConfirmedDead)]
-    [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.Transient)]
     [InlineData("Response code: 403", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 401 Unauthorized", PlaybackErrorKind.TokenOrPlaylistInvalid)]
-    [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("[parsing manifest malformed]", PlaybackErrorKind.Transient)]
+    [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
     [InlineData(null, PlaybackErrorKind.Transient)]
     public void ClassifyPlaybackError_SeparatesTransientTokenAndDead(string? message, PlaybackErrorKind expected)
@@ -68,7 +69,7 @@ public class SameStreamRecoveryBusinessRulesTests
         var message = PlaybackPolicy.BuildEngineErrorMessage("Source error", 3002, "ParserException: Input does not start with the #EXTM3U header");
 
         Assert.Equal("Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header", message);
-        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(message));
+        Assert.Equal(PlaybackErrorKind.Transient, PlaybackPolicy.ClassifyPlaybackError(message));
         Assert.Null(PlaybackPolicy.DescribeExoErrorCode(9999));
         Assert.Equal("Playback error", PlaybackPolicy.BuildEngineErrorMessage(null, null, null));
     }
@@ -120,11 +121,22 @@ public class SameStreamRecoveryBusinessRulesTests
     }
 
     [Fact]
-    public void ExpiredToken_GoesStraightToFreshPlay()
+    public void MalformedPlaylist_ReloadsSameUrlBeforeFreshPlay()
     {
         var session = Established();
 
         var effects = Error(session, "ParserException: Input does not start with the #EXTM3U header");
+
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.Attach && e.Url == "http://a.m3u8");
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+    }
+
+    [Fact]
+    public void ExpiredToken_GoesStraightToFreshPlay()
+    {
+        var session = Established();
+
+        var effects = Error(session, "Response code: 403");
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.Attach);
@@ -227,19 +239,31 @@ public class SameStreamRecoveryBusinessRulesTests
     }
 
     [Fact]
-    public void EmptyFreshPlayDuringRecovery_UsesAnAttempt_ThenSwitches()
+    public void EmptyFreshPlayDuringRecovery_KeepsScraping_ThenMovesOnWithoutRemoving()
     {
+        // Arrange
         var session = Established();
-        Error(session, "#EXTM3U missing");
+        Error(session, "Response code: 403");
         Assert.Equal(1, session.Snapshot.SameStreamRetries);
+        var cap = PlaybackPolicy.MaxSameStreamRetries + PlaybackPolicy.EmptyFreshPlayExtraAttempts;
 
-        var second = session.NotifyFreshResolveUnavailable();
-        Assert.Contains(second, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
-        var third = session.NotifyFreshResolveUnavailable();
-        Assert.Contains(third, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        // Act
+        IReadOnlyList<PlaybackEffect> last = [];
+        var freshPlays = 0;
+        for (var i = 0; i < cap; i++)
+        {
+            last = session.NotifyFreshResolveUnavailable();
+            if (last.Any(e => e.Kind == PlaybackEffectKind.RetryFreshResolve))
+                freshPlays++;
+            else
+                break;
+        }
 
-        var last = session.NotifyFreshResolveUnavailable();
+        // Assert
+        Assert.Equal(cap - 1, freshPlays);
         Assert.Contains(last, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Contains(last, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
+        Assert.DoesNotContain(last, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
     }
 
     [Fact]
