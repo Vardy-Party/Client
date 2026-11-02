@@ -39,9 +39,45 @@ permissions:
   contents: write
 
 jobs:
+  # Fail before any platform package when releasing a display version that
+  # already has a GitHub Release (e.g. re-dispatching CD without Bump Display).
+  # Artifact-only runs (produce_release_assets=false) skip the check.
+  guard-unique-display:
+    name: Guard unique display version
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.package_sha || github.sha }}
+      - name: Fail if this display version is already released
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCE_RELEASE: ${{ github.event.inputs.produce_release_assets }}
+        run: |
+          set -euo pipefail
+          if [[ "${PRODUCE_RELEASE}" != "true" ]]; then
+            echo "produce_release_assets is not true — skipping display-version uniqueness check."
+            exit 0
+          fi
+          DISPLAY=$(sed -n 's:.*<ApplicationDisplayVersion>\([^<]*\)</ApplicationDisplayVersion>.*:\1:p' Version.props | head -n 1)
+          if [[ -z "${DISPLAY}" ]]; then
+            echo "::error::ApplicationDisplayVersion missing in Version.props"
+            exit 1
+          fi
+          EXISTING=$(gh release list --limit 100 --json tagName --jq \
+            "[.[].tagName | select(startswith(\"${DISPLAY}-b\"))] | .[0] // empty")
+          if [[ -n "${EXISTING}" ]]; then
+            echo "::error::Display version ${DISPLAY} already has GitHub Release '${EXISTING}'. Refusing to package/clobber. Run Actions → Bump Display Version, then let that workflow dispatch CD."
+            exit 1
+          fi
+          echo "Display version ${DISPLAY} has no existing release — OK to package."
+        shell: bash
+
   package-windows:
     name: Package Windows
     runs-on: windows-latest
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
@@ -329,6 +365,7 @@ jobs:
   package-android:
     name: Package Android
     runs-on: ubuntu-latest
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
@@ -536,6 +573,7 @@ jobs:
     # .NET 11 RC2 requires Xcode 27.0 exactly. The xcode-27 image default is
     # now 27.1; Xcode 27.0 remains at /Applications/Xcode_27.0.app.
     runs-on: xcode-27
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     steps:
@@ -667,6 +705,7 @@ jobs:
     name: Package macOS
     # Same Xcode 27.0 pin as Package iOS.
     runs-on: xcode-27
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v7
@@ -798,6 +837,7 @@ jobs:
     # core24 snap. Build on 24.04 so the self-contained binary's glibc
     # matches the snap base and Ubuntu 24 hosts.
     runs-on: ubuntu-24.04
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       HomeUiTargetFrameworks: net11.0
@@ -1042,6 +1082,7 @@ jobs:
     name: Package Linux ARM64 Snap
     # core24 snap, same glibc constraint as the x64 package job.
     runs-on: ubuntu-24.04-arm
+    needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       HomeUiTargetFrameworks: net11.0
