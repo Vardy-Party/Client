@@ -1178,11 +1178,9 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var kickCount = 0;
-        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        var prewarmer = _fixture.Freeze<Mock<IUpcomingStreamPrewarmer>>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>())).Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
-        // Optional ctor params are skipped by AutoFixture — inject the object explicitly.
-        _fixture.Inject<IUpcomingStreamPrewarmer>(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
@@ -1204,6 +1202,7 @@ public class StreamResolutionOrchestratorTests
         Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
         Assert.True(kickCount >= 1, $"Kick was never performed (count={kickCount})");
     }
+
     private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()
     {
         var game = _fixture.Build<Game>()

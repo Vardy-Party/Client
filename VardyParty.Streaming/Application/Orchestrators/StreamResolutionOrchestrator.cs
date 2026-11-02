@@ -16,12 +16,15 @@ public class StreamResolutionOrchestrator(
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
-    ILocalLanPlayService? localLanPlayService = null,
-    IRemoteComputeKeepAlive? keepAlive = null,
-    WarmPlaybackUrlCache? warmUrls = null,
-    IUpcomingStreamPrewarmer? prewarmer = null,
-    ResolverRaceThrottle? raceThrottle = null,
-    IRacePlaylistProbe? playlistProbe = null) : IStreamResolutionOrchestrator
+    // Nullable deps stay optional at the type level for hosts that omit them, but they
+    // must not use C# default-parameter sugar: AutoFixture skips those and leaves nulls,
+    // which silently disables the startup race and one-shot Kick path in unit tests.
+    ILocalLanPlayService? localLanPlayService,
+    IRemoteComputeKeepAlive? keepAlive,
+    WarmPlaybackUrlCache? warmUrls,
+    IUpcomingStreamPrewarmer? prewarmer,
+    ResolverRaceThrottle? raceThrottle,
+    IRacePlaylistProbe? playlistProbe) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
 
