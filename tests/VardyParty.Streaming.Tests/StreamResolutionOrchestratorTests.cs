@@ -1178,9 +1178,13 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var kickCount = 0;
-        var prewarmer = _fixture.Freeze<Mock<IUpcomingStreamPrewarmer>>();
-        prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>())).Returns(Mock.Of<IDisposable>());
+        var startCount = 0;
+        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>()))
+            .Callback(() => Interlocked.Increment(ref startCount))
+            .Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
+        _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
@@ -1190,6 +1194,7 @@ public class StreamResolutionOrchestratorTests
         for (var i = 0; i < 100 && onNext == null; i++)
             await Task.Delay(20);
         Assert.NotNull(onNext);
+        Assert.True(startCount >= 1, $"prewarmer was not wired (Start count={startCount})");
         second.ResolvedM3U8Url = null;
         await onNext!();
         await Task.Delay(100);
@@ -1200,7 +1205,7 @@ public class StreamResolutionOrchestratorTests
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
         Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
-        Assert.True(kickCount >= 1, $"Kick was never performed (count={kickCount})");
+        Assert.True(kickCount >= 1, $"Kick was never performed (count={kickCount}, starts={startCount})");
     }
 
     private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()
