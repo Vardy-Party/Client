@@ -520,28 +520,28 @@ public class StreamResolutionOrchestrator(
                 switch (rechecked.Status)
                 {
                     case StreamResolutionStatus.Healthy:
-                    {
-                        _ = ReportHealthAsync(game, rechecked.Stream, "working", null, rechecked.Health, cancellationToken);
-                        EnrichedStream? startOn = null;
-                        lock (playbackLock)
                         {
-                            if (playbackTask is { IsCompleted: true } && SelectInPool(poolRow))
+                            _ = ReportHealthAsync(game, rechecked.Stream, "working", null, rechecked.Health, cancellationToken);
+                            EnrichedStream? startOn = null;
+                            lock (playbackLock)
                             {
-                                awaitingPlayableRow = false;
-                                startOn = poolRow;
+                                if (playbackTask is { IsCompleted: true } && SelectInPool(poolRow))
+                                {
+                                    awaitingPlayableRow = false;
+                                    startOn = poolRow;
+                                }
                             }
-                        }
 
-                        if (startOn != null)
-                        {
-                            logger.LogInformation(
-                                "[StreamResolution] CDN reachable again for {Channel}: restarting playback on its pool row",
-                                startOn.Stream?.Channel);
-                            StartPlaybackChain(startOn);
-                        }
+                            if (startOn != null)
+                            {
+                                logger.LogInformation(
+                                    "[StreamResolution] CDN reachable again for {Channel}: restarting playback on its pool row",
+                                    startOn.Stream?.Channel);
+                                StartPlaybackChain(startOn);
+                            }
 
-                        break;
-                    }
+                            break;
+                        }
                     case StreamResolutionStatus.Failed:
                         // The recheck proved the stream itself dead (404, decoy, DNS).
                         _ = ReportHealthAsync(game, rechecked.Stream, "failed", rechecked.ErrorMessage,

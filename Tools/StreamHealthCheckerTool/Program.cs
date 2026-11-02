@@ -146,7 +146,8 @@ internal class Program
     private static async Task ProbeAsync(List<Row> rows, IServiceProvider sp, ILogger log)
     {
         using var http = new HttpClient(DualStackSocketsHttpHandler.Create(
-            hostNameResolver: sp.GetRequiredService<IHostNameResolver>())) { Timeout = TimeSpan.FromSeconds(15) };
+            hostNameResolver: sp.GetRequiredService<IHostNameResolver>()))
+        { Timeout = TimeSpan.FromSeconds(15) };
         var tcp = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in rows.Where(r => !string.IsNullOrEmpty(r.Enriched.ResolvedM3U8Url)))
         {
