@@ -55,8 +55,16 @@ public static class PlaybackUrlRacer
         var time = timeProvider ?? TimeProvider.System;
         var window = grace ?? PlaybackRacePolicy.RecommendedGrace;
 
-        var recommendedLeg = RunLegAsync(recommended, resolve, classify, onFinished, cancellationToken);
-        var partnerLeg = RunLegAsync(partner, resolve, classify, onFinished, cancellationToken);
+        // Both /play calls must be issued before Decide can return PlayReadyRow.
+        // Otherwise an empty recommended leg can win immediately while the partner
+        // is still queued after its Yield — the losing URL would never warm.
+        var recommendedIssued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var partnerIssued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recommendedLeg = RunLegAsync(
+            recommended, resolve, classify, onFinished, recommendedIssued, cancellationToken);
+        var partnerLeg = RunLegAsync(
+            partner, resolve, classify, onFinished, partnerIssued, cancellationToken);
+        await Task.WhenAll(recommendedIssued.Task, partnerIssued.Task).ConfigureAwait(false);
         Task? graceTask = null;
 
         while (true)
@@ -134,15 +142,27 @@ public static class PlaybackUrlRacer
         Func<EnrichedStream, CancellationToken, Task<T?>> resolve,
         Func<T, CancellationToken, Task<RaceLegState>> classify,
         Action<RaceLegResult<T>>? onFinished,
+        TaskCompletionSource issued,
         CancellationToken cancellationToken)
         where T : class
     {
-        // Yield first so both /play calls are issued before either is awaited.
+        // Yield first so both legs schedule before either resolve runs, then mark
+        // issued as soon as resolve has been invoked (before awaiting its result).
         await Task.Yield();
         RaceLegResult<T> result;
         try
         {
-            var value = await resolve(row, cancellationToken).ConfigureAwait(false);
+            Task<T?> pending;
+            try
+            {
+                pending = resolve(row, cancellationToken);
+            }
+            finally
+            {
+                issued.TrySetResult();
+            }
+
+            var value = await pending.ConfigureAwait(false);
             if (value is null)
             {
                 result = new RaceLegResult<T>(row, RaceLegState.Empty, null, null);
@@ -157,11 +177,13 @@ public static class PlaybackUrlRacer
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            issued.TrySetResult();
             throw;
         }
         catch (Exception ex)
         {
             // Infrastructure, or anything else that is not an answer about the stream.
+            issued.TrySetResult();
             result = new RaceLegResult<T>(row, RaceLegState.Infrastructure, null, ex.Message);
         }
 

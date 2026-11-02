@@ -137,22 +137,28 @@ public class PlaybackRaceBusinessRulesTests
         // Arrange
         var recommended = Row("north", url: null, oneShot: true);
         var partner = Row("south", url: null, oneShot: true);
+        var partnerResolveStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = DateTime.UtcNow;
 
         // Act
         var race = await PlaybackUrlRacer.RaceAsync(
             recommended,
             partner,
-            (row, _) => ReferenceEquals(row, partner)
-                ? Never()
-                : Task.FromResult<Payload?>(null),
+            (row, _) =>
+            {
+                if (!ReferenceEquals(row, partner))
+                    return Task.FromResult<Payload?>(null);
+                partnerResolveStarted.TrySetResult();
+                return Never();
+            },
             (_, _) => Task.FromResult(RaceLegState.Video),
             onFinished: null,
             otherRowCanPlayNow: () => true,
             CancellationToken.None,
             grace: TimeSpan.FromSeconds(30));
 
-        // Assert
+        // Assert — PlayReadyRow must not skip issuing the partner /play (warm rule).
+        Assert.True(partnerResolveStarted.Task.IsCompleted);
         Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
         Assert.True(race.PlayReadyRow);
         Assert.Null(race.Winner);
