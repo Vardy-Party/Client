@@ -148,6 +148,58 @@ public class StartupRaceBusinessRulesTests
         await start.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task Rule_ShortLivedWinnerToken_PlaysAppliedUrl_WithoutSecondPlay()
+    {
+        // Arrange — readable expiry under MinComfortableLife so LoserTakeBy(PutUntil)
+        // would no-op; winner must Apply WinnerValue and play once, not re-/play.
+        var first = Soak("north");
+        var partner = Soak("south");
+        Candidates(first, partner);
+        var expiry = DateTimeOffset.UtcNow.AddSeconds(50);
+        var winnerUrl =
+            $"https://cdn.example.com/live/north.m3u8?e={expiry.ToUnixTimeSeconds()}";
+        var partnerUrl =
+            $"https://cdn.example.com/live/south.m3u8?e={expiry.ToUnixTimeSeconds()}";
+        FreshPlay(first, () => Task.FromResult<M3U8Response?>(new M3U8Response
+        {
+            Url = winnerUrl,
+            RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl },
+        }));
+        FreshPlay(partner, () => Task.FromResult<M3U8Response?>(new M3U8Response
+        {
+            Url = partnerUrl,
+            RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl },
+        }));
+        _fixture.Inject<IRacePlaylistProbe>(new StubProbe(_ => PlaylistVideoVerdict.Video));
+        ResolverYields(_ => Yield(first, partner));
+        var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var player = Player((url, _) =>
+        {
+            played.TrySetResult(url);
+            return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        });
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+
+        // Act
+        var start = sut.StartAsync(_game, player.Object);
+        var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(winnerUrl, url);
+        Assert.Equal(winnerUrl, first.ResolvedM3U8Url);
+        _fixture.GetMock<IApiService>().Verify(
+            a => a.GetM3U8UrlAsync(
+                first.Stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private EnrichedStream Soak(string name)
     {
         var stream = _fixture.Build<StreamModel>()

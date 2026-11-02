@@ -56,6 +56,22 @@ public class StreamResolutionOrchestrator(
         new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
+    /// Race winner that must not be <see cref="WarmPlaybackUrlCache.PutUntil"/>'d — the
+    /// losing URL is kept warm (STREAM_PLAYBACK_RULES startup race rule 5). Set for the
+    /// duration of a race so a late-finishing loser still warms; cleared when the next
+    /// race starts.
+    /// </summary>
+    private EnrichedStream? _raceWarmExclude;
+
+    /// <summary>
+    /// Rows that just won a startup race with <see cref="EnrichedStreamM3U8Apply"/> —
+    /// <see cref="PlayStreamAsync"/> plays that URL once without a second <c>/play</c>,
+    /// even when remaining token life is under <see cref="PlaybackUrlReusePolicy.MinComfortableLife"/>.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _racePlayReady =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
     /// running and was not cancelled. When this runs out the outcome is
     /// StartRefused — surfaced to the user — never a silent empty outcome.
@@ -744,13 +760,22 @@ public class StreamResolutionOrchestrator(
         // with a single fresh retry on failure below.
         // One-shot rows whose token expiry is readable with comfortable life left (and
         // that are not known single-use) play the cached URL; a failed start re-/plays once.
+        // A startup-race winner already carries its just-fetched URL via Apply — play it
+        // without a second /play even when remaining life is under MinComfortableLife.
+        var racePlayReady = _racePlayReady.TryRemove(enrichedStream, out _)
+            && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
         var oneShot = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(enrichedStream)
             && !PlaybackUrlReusePolicy.CanReuseCached(enrichedStream, DateTimeOffset.UtcNow);
-        bool usedCachedUrl = !oneShot && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
+        bool usedCachedUrl = racePlayReady
+            || (!oneShot && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url));
         string? m3u8Url;
         if (usedCachedUrl)
         {
-            logger.LogInformation("[StreamResolution] Using cached M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+            logger.LogInformation(
+                racePlayReady
+                    ? "[StreamResolution] Using race-won M3U8 for playback: {Channel}"
+                    : "[StreamResolution] Using cached M3U8 for playback: {Channel}",
+                enrichedStream.Stream.Channel);
             m3u8Url = enrichedStream.ResolvedM3U8Url;
         }
         else
@@ -1318,6 +1343,7 @@ public class StreamResolutionOrchestrator(
         if (raceThrottle != null)
             await raceThrottle.DrainOthersAsync(cancellationToken).ConfigureAwait(false);
 
+        _raceWarmExclude = null;
         var race = await PlaybackUrlRacer.RaceAsync(
             stream,
             partner,
@@ -1326,6 +1352,14 @@ public class StreamResolutionOrchestrator(
             OnRaceLegFinished,
             () => OtherRowCanPlayNow(stream, partner, playbackLock),
             cancellationToken).ConfigureAwait(false);
+
+        // Warm only the losing URL (rule 5). Legs that finished before the decision
+        // skipped PutUntil; late-finishing losers still hit OnRaceLegFinished with
+        // _raceWarmExclude set so the winner is never stored via LoserTakeBy.
+        // PlayReadyRow: exclude the empty recommended row so a late partner still warms.
+        _raceWarmExclude = race.Winner ?? (race.PlayReadyRow ? stream : null);
+        WarmRaceLoserIfNeeded(race.Recommended, _raceWarmExclude);
+        WarmRaceLoserIfNeeded(race.Partner, _raceWarmExclude);
 
         foreach (var verdict in race.StreamVerdicts)
         {
@@ -1346,6 +1380,12 @@ public class StreamResolutionOrchestrator(
 
         if (race.Winner is { } winner)
         {
+            if (race.WinnerValue is { } winnerValue && !string.IsNullOrWhiteSpace(winnerValue.Url))
+            {
+                EnrichedStreamM3U8Apply.Apply(winner, winnerValue);
+                _racePlayReady[winner] = 0;
+            }
+
             lock (playbackLock)
                 SelectInPool(winner);
             logger.LogInformation(
@@ -1428,16 +1468,39 @@ public class StreamResolutionOrchestrator(
     {
         if (warmUrls == null)
             return;
-        if (leg.Value is { } response
-            && leg.State is RaceLegState.Video or RaceLegState.Unverified
-            && !string.IsNullOrWhiteSpace(response.Url))
+
+        // Before a winner is known, skip PutUntil — RaceStartAsync warms finished
+        // losers after Decide. After a winner is known, warm only a late non-winner.
+        if (_raceWarmExclude != null
+            && !ReferenceEquals(leg.Row, _raceWarmExclude))
         {
-            var now = DateTimeOffset.UtcNow;
-            warmUrls.PutUntil(leg.Row, response, PlaybackRacePolicy.LoserTakeBy(response.Url, now), now);
+            WarmRaceLoserLeg(leg);
         }
 
         if (_raceInFlight.TryRemove(leg.Row, out _))
             warmUrls.EndInFlight(leg.Row);
+    }
+
+    private void WarmRaceLoserIfNeeded(RaceLegResult<M3U8Response>? leg, EnrichedStream? winner)
+    {
+        if (leg is null || (winner != null && ReferenceEquals(leg.Row, winner)))
+            return;
+        WarmRaceLoserLeg(leg);
+    }
+
+    private void WarmRaceLoserLeg(RaceLegResult<M3U8Response> leg)
+    {
+        if (warmUrls == null)
+            return;
+        if (leg.Value is not { } response
+            || leg.State is not (RaceLegState.Video or RaceLegState.Unverified)
+            || string.IsNullOrWhiteSpace(response.Url))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        warmUrls.PutUntil(leg.Row, response, PlaybackRacePolicy.LoserTakeBy(response.Url, now), now);
     }
 
     private bool OtherRowCanPlayNow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)

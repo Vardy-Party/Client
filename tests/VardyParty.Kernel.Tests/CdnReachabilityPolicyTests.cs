@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -13,15 +14,15 @@ namespace VardyParty.Kernel.Tests;
 
 /// <summary>
 /// Unit rules for <see cref="CdnReachabilityPolicy"/>: "CDN unreachable" is
-/// never "dead". During the MSI IP block (19:02 to 19:44 UK time on 31 Oct
-/// 2026) connect failures marked 27 lshls rows plus durrfity, 643t8a, nothintd
-/// and instreams dead; all were Healthy again after 19:52.
+/// never "dead". During an ISP IP block (19:02 to 19:44 UK time on 31 Oct
+/// 2026) connect failures marked many live rows dead; all were Healthy again
+/// after 19:52.
 /// </summary>
 public class CdnReachabilityPolicyTests
 {
     public static TheoryData<Exception, StreamHealthStatus?> TransportFailures => new()
     {
-        { new HttpRequestException(HttpRequestError.ConnectionError, "Connection refused (hls.lshls.st:443)", new SocketException(10061)), StreamHealthStatus.CdnUnreachable },
+        { new HttpRequestException(HttpRequestError.ConnectionError, "Connection refused (hls.cdn-alpha.example:443)", new SocketException(10061)), StreamHealthStatus.CdnUnreachable },
         { new HttpRequestException("An error occurred", new SocketException((int)SocketError.ConnectionRefused)), StreamHealthStatus.CdnUnreachable },
         { new HttpRequestException("An error occurred", new SocketException((int)SocketError.TimedOut)), StreamHealthStatus.CdnUnreachable },
         { new HttpRequestException(HttpRequestError.SecureConnectionError, "The SSL connection could not be established", new AuthenticationException("handshake failed")), StreamHealthStatus.CdnUnreachable },
@@ -36,15 +37,28 @@ public class CdnReachabilityPolicyTests
     [Theory]
     [MemberData(nameof(TransportFailures))]
     public void ClassifyTransportFailure_ConnectIsCdnUnreachable_DnsIsDead_OtherIsNull(Exception ex, StreamHealthStatus? expected)
-        => Assert.Equal(expected, CdnReachabilityPolicy.ClassifyTransportFailure(ex));
+    {
+        // Arrange — inputs from MemberData
+
+        // Act
+        var status = CdnReachabilityPolicy.ClassifyTransportFailure(ex);
+
+        // Assert
+        Assert.Equal(expected, status);
+    }
 
     [Fact]
     public void ClassifyTransportFailure_CallerCancelled_IsNoVerdict()
     {
+        // Arrange
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        Assert.Null(CdnReachabilityPolicy.ClassifyTransportFailure(new OperationCanceledException(cts.Token), cts.Token));
+        // Act
+        var status = CdnReachabilityPolicy.ClassifyTransportFailure(new OperationCanceledException(cts.Token), cts.Token);
+
+        // Assert
+        Assert.Null(status);
     }
 
     [Theory]
@@ -55,7 +69,15 @@ public class CdnReachabilityPolicyTests
     [InlineData(500, StreamHealthStatus.ManifestUnreachable)]
     [InlineData(503, StreamHealthStatus.ManifestUnreachable)]
     public void ClassifyManifestHttpStatus_OnlyNotFoundIsDead(int code, StreamHealthStatus expected)
-        => Assert.Equal(expected, CdnReachabilityPolicy.ClassifyManifestHttpStatus(code));
+    {
+        // Arrange — code from InlineData
+
+        // Act
+        var status = CdnReachabilityPolicy.ClassifyManifestHttpStatus(code);
+
+        // Assert
+        Assert.Equal(expected, status);
+    }
 
     [Theory]
     [InlineData(StreamHealthStatus.CdnUnreachable, true)]
@@ -66,10 +88,18 @@ public class CdnReachabilityPolicyTests
     [InlineData(StreamHealthStatus.EmptyManifest, false)]
     [InlineData(StreamHealthStatus.Healthy, false)]
     public void IsCdnUnreachable_OnlyConnectClassStatuses(StreamHealthStatus status, bool expected)
-        => Assert.Equal(expected, CdnReachabilityPolicy.IsCdnUnreachable(status));
+    {
+        // Arrange — status from InlineData
+
+        // Act
+        var isUnreachable = CdnReachabilityPolicy.IsCdnUnreachable(status);
+
+        // Assert
+        Assert.Equal(expected, isUnreachable);
+    }
 
     [Theory]
-    [InlineData("page.goto: net::ERR_CONNECTION_TIMED_OUT at https://hls.lshls.st/x", true)]
+    [InlineData("page.goto: net::ERR_CONNECTION_TIMED_OUT at https://hls.cdn-alpha.example/x", true)]
     [InlineData("net::ERR_CONNECTION_REFUSED", true)]
     [InlineData("net::ERR_CONNECTION_RESET", true)]
     [InlineData("net::ERR_SSL_PROTOCOL_ERROR", true)]
@@ -78,7 +108,15 @@ public class CdnReachabilityPolicyTests
     [InlineData("M3U8 not Found", false)]
     [InlineData(null, false)]
     public void IsChromiumCdnUnreachable_ConnectErrorsOnly_NeverNameNotResolved(string? text, bool expected)
-        => Assert.Equal(expected, CdnReachabilityPolicy.IsChromiumCdnUnreachable(text));
+    {
+        // Arrange — text from InlineData
+
+        // Act
+        var isUnreachable = CdnReachabilityPolicy.IsChromiumCdnUnreachable(text);
+
+        // Assert
+        Assert.Equal(expected, isUnreachable);
+    }
 
     [Theory]
     [InlineData("ConnectException: Failed to connect to /1.2.3.4:443", false, true)]
@@ -88,33 +126,57 @@ public class CdnReachabilityPolicyTests
     [InlineData("Response code: 404", false, false)]
     public void Mentions_DnsAndConnectAreSeparate(string text, bool dns, bool connect)
     {
-        Assert.Equal(dns, CdnReachabilityPolicy.MentionsHostNotResolved(text));
-        Assert.Equal(connect, CdnReachabilityPolicy.MentionsConnectFailure(text));
+        // Arrange — text from InlineData
+
+        // Act
+        var mentionsDns = CdnReachabilityPolicy.MentionsHostNotResolved(text);
+        var mentionsConnect = CdnReachabilityPolicy.MentionsConnectFailure(text);
+
+        // Assert
+        Assert.Equal(dns, mentionsDns);
+        Assert.Equal(connect, mentionsConnect);
     }
 
     [Fact]
     public void RecheckDelay_TwoThenFiveThenEveryTen()
     {
-        Assert.Equal(TimeSpan.FromMinutes(2), CdnReachabilityPolicy.RecheckDelay(0));
-        Assert.Equal(TimeSpan.FromMinutes(5), CdnReachabilityPolicy.RecheckDelay(1));
-        Assert.Equal(TimeSpan.FromMinutes(10), CdnReachabilityPolicy.RecheckDelay(2));
-        Assert.Equal(TimeSpan.FromMinutes(10), CdnReachabilityPolicy.RecheckDelay(9));
-        Assert.Equal(TimeSpan.FromMinutes(2), CdnReachabilityPolicy.RecheckDelay(-1));
+        // Arrange
+        var attempts = new[] { 0, 1, 2, 9, -1 };
+
+        // Act
+        var delays = attempts.Select(CdnReachabilityPolicy.RecheckDelay).ToArray();
+
+        // Assert
+        Assert.Equal(TimeSpan.FromMinutes(2), delays[0]);
+        Assert.Equal(TimeSpan.FromMinutes(5), delays[1]);
+        Assert.Equal(TimeSpan.FromMinutes(10), delays[2]);
+        Assert.Equal(TimeSpan.FromMinutes(10), delays[3]);
+        Assert.Equal(TimeSpan.FromMinutes(2), delays[4]);
     }
 
     [Fact]
     public void ShouldKeepRechecking_WhileLiveOnly()
     {
+        // Arrange
         var kickOff = new DateTime(2026, 10, 31, 19, 0, 0, DateTimeKind.Utc);
         var live = new Game { Start = kickOff, IsFinished = false };
         var finished = new Game { Start = kickOff, IsFinished = true };
         var noStart = new Game { IsFinished = false };
 
-        Assert.True(CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff.AddMinutes(52)));
-        Assert.True(CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff + CdnReachabilityPolicy.MaxLiveWindow));
-        Assert.False(CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff + CdnReachabilityPolicy.MaxLiveWindow + TimeSpan.FromMinutes(1)));
-        Assert.False(CdnReachabilityPolicy.ShouldKeepRechecking(finished, kickOff.AddMinutes(30)));
-        Assert.True(CdnReachabilityPolicy.ShouldKeepRechecking(noStart, kickOff));
-        Assert.True(CdnReachabilityPolicy.ShouldKeepRechecking(null, kickOff));
+        // Act
+        var midMatch = CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff.AddMinutes(52));
+        var atWindow = CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff + CdnReachabilityPolicy.MaxLiveWindow);
+        var pastWindow = CdnReachabilityPolicy.ShouldKeepRechecking(live, kickOff + CdnReachabilityPolicy.MaxLiveWindow + TimeSpan.FromMinutes(1));
+        var finishedGame = CdnReachabilityPolicy.ShouldKeepRechecking(finished, kickOff.AddMinutes(30));
+        var withoutStart = CdnReachabilityPolicy.ShouldKeepRechecking(noStart, kickOff);
+        var nullGame = CdnReachabilityPolicy.ShouldKeepRechecking(null, kickOff);
+
+        // Assert
+        Assert.True(midMatch);
+        Assert.True(atWindow);
+        Assert.False(pastWindow);
+        Assert.False(finishedGame);
+        Assert.True(withoutStart);
+        Assert.True(nullGame);
     }
 }

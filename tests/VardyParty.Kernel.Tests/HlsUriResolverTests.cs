@@ -8,8 +8,8 @@ namespace VardyParty.Kernel.Tests;
 /// HLS playlist URI resolution must be identical on Android, Linux and Windows.
 /// On Unix-like runtimes <c>Uri.TryCreate("/seg.ts", UriKind.Absolute, ...)</c> succeeds
 /// as <c>file:///seg.ts</c>; that made Android health checks fetch an invalid request
-/// URI and report live root-relative streams (hls.lshls.st /hls-segments/...) as
-/// SegmentUnreachable. These tests pin the resolver independent of the host OS.
+/// URI and report live root-relative streams as SegmentUnreachable. These tests pin
+/// the resolver independent of the host OS.
 /// </summary>
 public class HlsUriResolverTests
 {
@@ -25,6 +25,8 @@ public class HlsUriResolverTests
     [InlineData("  /seg.ts  ", "https://host/seg.ts")]
     public void TryResolve_CombinesReferencesWithThePlaylistUrl(string reference, string expected)
     {
+        // Arrange — reference / expected from InlineData
+
         // Act
         var ok = HlsUriResolver.TryResolve(Playlist, reference, out string? resolved);
 
@@ -38,6 +40,8 @@ public class HlsUriResolverTests
     [InlineData("http://other.example/seg.ts")]
     public void TryResolve_AbsoluteHttpUrl_IsReturnedUnchanged(string reference)
     {
+        // Arrange — reference from InlineData
+
         // Act
         var ok = HlsUriResolver.TryResolve(Playlist, reference, out string? resolved);
 
@@ -49,8 +53,12 @@ public class HlsUriResolverTests
     [Fact]
     public void TryResolve_ProtocolRelative_KeepsThePlaylistScheme()
     {
+        // Arrange
+        const string httpPlaylist = "http://host/a/index.m3u8";
+        const string reference = "//cdn.example/x.ts";
+
         // Act
-        var ok = HlsUriResolver.TryResolve("http://host/a/index.m3u8", "//cdn.example/x.ts", out string? resolved);
+        var ok = HlsUriResolver.TryResolve(httpPlaylist, reference, out string? resolved);
 
         // Assert
         Assert.True(ok);
@@ -65,6 +73,8 @@ public class HlsUriResolverTests
     [InlineData("   ")]
     public void TryResolve_NonHttpReference_IsNotAFetchableUrl(string reference)
     {
+        // Arrange — reference from InlineData
+
         // Act
         var ok = HlsUriResolver.TryResolve(Playlist, reference, out string? resolved);
 
@@ -76,8 +86,11 @@ public class HlsUriResolverTests
     [Fact]
     public void TryResolve_NonHttpPlaylistBase_CannotResolveRelativeReferences()
     {
+        // Arrange
+        var baseUri = new Uri("file:///a/b/index.m3u8");
+
         // Act
-        var ok = HlsUriResolver.TryResolve(new Uri("file:///a/b/index.m3u8"), "/seg.ts", out Uri? resolved);
+        var ok = HlsUriResolver.TryResolve(baseUri, "/seg.ts", out Uri? resolved);
 
         // Assert
         Assert.False(ok);
@@ -87,14 +100,20 @@ public class HlsUriResolverTests
     [Fact]
     public void IsHttpUrl_RejectsAFileUri_AsUnixParsesARootRelativePath()
     {
-        // Arrange: what Uri.TryCreate("/seg.ts", UriKind.Absolute) yields on Android/Linux.
+        // Arrange — what Uri.TryCreate("/seg.ts", UriKind.Absolute) yields on Android/Linux.
         var unixParse = new Uri("file:///seg.ts");
 
-        // Act / Assert
-        Assert.True(unixParse.IsAbsoluteUri);
-        Assert.False(HlsUriResolver.IsHttpUrl(unixParse));
-        Assert.False(HlsUriResolver.IsHttpUrl("file:///seg.ts"));
-        Assert.False(HlsUriResolver.TryGetHttpUrl("/seg.ts", out _));
+        // Act
+        var absolute = unixParse.IsAbsoluteUri;
+        var httpFromUri = HlsUriResolver.IsHttpUrl(unixParse);
+        var httpFromString = HlsUriResolver.IsHttpUrl("file:///seg.ts");
+        var tryGet = HlsUriResolver.TryGetHttpUrl("/seg.ts", out _);
+
+        // Assert
+        Assert.True(absolute);
+        Assert.False(httpFromUri);
+        Assert.False(httpFromString);
+        Assert.False(tryGet);
     }
 
     [Theory]
@@ -103,8 +122,13 @@ public class HlsUriResolverTests
     [InlineData("seg.ts")]
     public void TryCreateExplicitAbsolute_PathsAreNeverAbsoluteOnAnyPlatform(string value)
     {
-        // Act / Assert
-        Assert.False(HlsUriResolver.TryCreateExplicitAbsolute(value, out _));
+        // Arrange — value from InlineData
+
+        // Act
+        var ok = HlsUriResolver.TryCreateExplicitAbsolute(value, out _);
+
+        // Assert
+        Assert.False(ok);
     }
 
     [Theory]
@@ -113,9 +137,15 @@ public class HlsUriResolverTests
     [InlineData("file:///seg.ts")]
     public void TryCreateExplicitAbsolute_AcceptsStringsWithTheirOwnScheme(string value)
     {
-        // Act / Assert
-        Assert.True(HlsUriResolver.TryCreateExplicitAbsolute(value, out var uri));
-        Assert.True(uri.IsAbsoluteUri);
+        // Arrange — value from InlineData
+
+        // Act
+        var ok = HlsUriResolver.TryCreateExplicitAbsolute(value, out var uri);
+
+        // Assert
+        Assert.True(ok);
+        Assert.NotNull(uri);
+        Assert.True(uri!.IsAbsoluteUri);
     }
 
     [Theory]
@@ -127,22 +157,41 @@ public class HlsUriResolverTests
     [InlineData(null, false)]
     public void IsHttpUrl_OnlyExplicitHttpOrHttps(string? value, bool expected)
     {
-        // Act / Assert
-        Assert.Equal(expected, HlsUriResolver.IsHttpUrl(value));
+        // Arrange — value from InlineData
+
+        // Act
+        var isHttp = HlsUriResolver.IsHttpUrl(value);
+
+        // Assert
+        Assert.Equal(expected, isHttp);
     }
 
     [Fact]
     public void Resolve_FallsBackToTheTrimmedReference_WhenUnresolvable()
     {
-        // Act / Assert
-        Assert.Equal("skd://key-id", HlsUriResolver.Resolve(Playlist, " skd://key-id "));
-        Assert.Equal("https://host/seg.ts", HlsUriResolver.Resolve(Playlist, "/seg.ts"));
+        // Arrange
+        const string skd = " skd://key-id ";
+        const string rootRelative = "/seg.ts";
+
+        // Act
+        var skdResolved = HlsUriResolver.Resolve(Playlist, skd);
+        var rootResolved = HlsUriResolver.Resolve(Playlist, rootRelative);
+
+        // Assert
+        Assert.Equal("skd://key-id", skdResolved);
+        Assert.Equal("https://host/seg.ts", rootResolved);
     }
 
     [Fact]
     public void NormalizeForDedup_RootRelativePath_IsSameOnEveryPlatform()
     {
-        // Act / Assert: never "file:///live/x.m3u8" on Unix.
-        Assert.Equal("/live/x.m3u8", StreamUrlNormalizer.NormalizeForDedup("/live/x.m3u8?t=1"));
+        // Arrange
+        const string path = "/live/x.m3u8?t=1";
+
+        // Act
+        var normalized = StreamUrlNormalizer.NormalizeForDedup(path);
+
+        // Assert — never "file:///live/x.m3u8" on Unix.
+        Assert.Equal("/live/x.m3u8", normalized);
     }
 }
