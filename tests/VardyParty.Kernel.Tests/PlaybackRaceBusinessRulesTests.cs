@@ -160,6 +160,37 @@ public class PlaybackRaceBusinessRulesTests
     }
 
     [Fact]
+    public async Task Race_EmptyRecommended_RepollsWhenCachedRowBecomesReadyAfterEmpty()
+    {
+        // Arrange — otherRowCanPlayNow is false on the first Decide after Empty, then
+        // flips true (cached pool row joined late). Without a poll tick the racer would
+        // park only on the hanging partner /play.
+        var recommended = Row("north", url: null, oneShot: true);
+        var partner = Row("south", url: null, oneShot: true);
+        var ready = 0;
+        var started = DateTime.UtcNow;
+
+        // Act
+        var race = await PlaybackUrlRacer.RaceAsync(
+            recommended,
+            partner,
+            (row, _) => ReferenceEquals(row, partner)
+                ? Never()
+                : Task.FromResult<Payload?>(null),
+            (_, _) => Task.FromResult(RaceLegState.Video),
+            onFinished: null,
+            otherRowCanPlayNow: () => Interlocked.Increment(ref ready) >= 2,
+            CancellationToken.None,
+            grace: TimeSpan.FromSeconds(30));
+
+        // Assert
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(2));
+        Assert.True(race.PlayReadyRow);
+        Assert.Null(race.Winner);
+        Assert.Equal(RaceLegState.Empty, race.Recommended?.State);
+    }
+
+    [Fact]
     public async Task Race_AudioOnlyRecommended_LosesToPartnerVideo()
     {
         // Arrange

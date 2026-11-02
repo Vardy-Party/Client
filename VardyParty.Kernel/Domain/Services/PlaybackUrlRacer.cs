@@ -89,13 +89,22 @@ public static class PlaybackUrlRacer
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var waits = new List<Task>(3);
+            var waits = new List<Task>(4);
             if (!recommendedLeg.IsCompleted)
                 waits.Add(recommendedLeg);
             if (!partnerLeg.IsCompleted)
                 waits.Add(partnerLeg);
             if (graceTask is { IsCompleted: false })
                 waits.Add(graceTask);
+            // Recommended already failed while the partner /play is still out: a cached
+            // pool row may join after this Decide. Re-poll otherRowCanPlayNow on a short
+            // tick instead of parking only on the partner (which can hang the finding dialog).
+            if (partnerLeg.IsCompleted == false
+                && r is RaceLegState.Empty or RaceLegState.AudioOnly or RaceLegState.Infrastructure)
+            {
+                waits.Add(Task.Delay(TimeSpan.FromMilliseconds(25), time, cancellationToken));
+            }
+
             if (waits.Count == 0)
             {
                 return new PlaybackRaceResult<T>(
