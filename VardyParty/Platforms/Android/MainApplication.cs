@@ -7,11 +7,11 @@ using Android.Widget;
 namespace VardyParty
 {
     /// <summary>
-    /// <see cref="MauiApplication.OnCreate"/> always builds the MAUI host
-    /// before any activity can paint. Phones skip that until
-    /// <see cref="SplashActivity"/> has drawn the splash; TV still starts
-    /// MAUI here because Leanback launches <see cref="MainActivity"/>
-    /// directly.
+    /// <see cref="MauiApplication.OnCreate"/> builds the MAUI host and must
+    /// not run until an activity window can take focus. Phones defer via
+    /// <see cref="SplashActivity"/> after the first splash frame; TV Leanback
+    /// opens <see cref="MainActivity"/> directly, which calls
+    /// <see cref="EnsureMauiApp"/> in its <c>OnCreate</c>.
     /// </summary>
     [Application]
     public class MainApplication : MauiApplication
@@ -49,16 +49,12 @@ namespace VardyParty
             DetectTv();
             ApplyLauncherComponents();
 
-            if (MauiProgram.IsTv)
-            {
-                EnsureMauiApp();
-            }
-
-            // Phones: do not call Application.onCreate here. MauiApplication.OnCreate
-            // builds the host (seconds) before any frame. SplashActivity paints,
-            // then EnsureMauiApp runs the single super.OnCreate. AOSP Application
-            // onCreate is empty; skipping the JNI hop avoids CheckJNI DeleteLocalRef
-            // and a second onCreate.
+            // Never build the MAUI host here — on TV or phone. Application.OnCreate
+            // runs before any activity window exists; a multi-second EnsureMauiApp
+            // here is an ANR ("no focused window"). Phones paint SplashActivity
+            // first; TV Leanback opens MainActivity, which calls EnsureMauiApp
+            // after the activity theme window is up. AOSP Application onCreate is
+            // empty; skipping the JNI hop also avoids CheckJNI DeleteLocalRef.
         }
 
         /// <summary>
