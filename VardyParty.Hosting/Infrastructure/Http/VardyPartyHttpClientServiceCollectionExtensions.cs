@@ -70,11 +70,17 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<IApiService>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<IGamesCatalogApi>(sp => sp.GetRequiredService<ApiService>());
         services.AddTransient<ResolveFreshPlaybackUrlAsync>(sp =>
-            PlaybackUrlResolver.Bind(sp.GetRequiredService<IApiService>()));
+            PlaybackUrlResolver.Bind(
+                sp.GetRequiredService<IApiService>(),
+                sp.GetService<WarmPlaybackUrlCache>()));
         services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp));
+
+        services.AddHttpClient<IRacePlaylistProbe, RacePlaylistProbe>()
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
+            .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(5));
 
         // Named client for Android ExoPlayer / managed media fetches (DoH-aware).
         // Timeout is infinite so Media3 Open/Close own stall detection.

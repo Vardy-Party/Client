@@ -10,8 +10,18 @@ public class StreamResolver(
     IStreamHealthChecker healthChecker,
     ILocalLanPlayService localLanPlayService,
     IDiscoveredChipNormalizer chipNormalizer,
-    ILogger<StreamResolver> logger) : IStreamResolver
+    ILogger<StreamResolver> logger,
+    ResolverRaceThrottle? raceThrottle = null) : IStreamResolver
 {
+    /// <summary>
+    /// Waits before re-asking an unavailable local service about the same row.
+    /// After these the row is <see cref="StreamResolutionStatus.Deferred"/>, never Failed.
+    /// </summary>
+    internal static readonly TimeSpan[] InfrastructureRetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5)];
+
+    /// <summary>Test seam for the infrastructure retry waits.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
+
     public async IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
         List<Stream> streams,
         int batchSize = 3,
@@ -70,8 +80,24 @@ public class StreamResolver(
             }
         }
 
+        bool HasUnstarted()
+        {
+            for (var i = 0; i < pending.Count; i++)
+            {
+                if (!started.Contains(i))
+                    return true;
+            }
+
+            return false;
+        }
+
         void FillWindow()
         {
+            // A startup race already holds the LocalService cap. Finish what is in
+            // flight, but do not start another Chromium /play on top of it.
+            if (raceThrottle?.RaceInFlight == true)
+                return;
+
             while (inFlight.Count < concurrency)
             {
                 int? pick = null;
@@ -108,9 +134,22 @@ public class StreamResolver(
 
         FillWindow();
 
-        while (inFlight.Count > 0)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (inFlight.Count == 0)
+            {
+                if (raceThrottle?.RaceInFlight == true && HasUnstarted())
+                {
+                    logger.LogInformation(
+                        "[StreamResolver] Pausing candidate testing while a playback race holds the local-service cap");
+                    await raceThrottle.WaitUntilRaceEndsAsync(cancellationToken).ConfigureAwait(false);
+                    FillWindow();
+                    continue;
+                }
+
+                break;
+            }
 
             var completedTask = await Task.WhenAny(inFlight.Select(x => x.Task)).ConfigureAwait(false);
             var index = inFlight.FindIndex(x => ReferenceEquals(x.Task, completedTask));
@@ -122,13 +161,8 @@ public class StreamResolver(
             var outcome = await entry.Task.ConfigureAwait(false);
             seen.Add(CandidateKey(outcome.Enriched.Stream));
 
-            foreach (var sibling in outcome.Siblings)
-            {
-                if (!seen.Add(CandidateKey(sibling)))
-                    continue;
-
-                pending.Add(sibling);
-            }
+            if (outcome.Siblings.Count > 0)
+                EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings);
 
             // Publish total once MP chip inventory is known (siblings and/or sole chip).
             if (entry.IsMp || outcome.Siblings.Count > 0)
@@ -218,7 +252,32 @@ public class StreamResolver(
         {
             // Step 1: Resolve m3u8 URL
             logger.LogInformation("[StreamResolver] Resolving m3u8 for {Channel}", stream.Channel);
-            var m3u8Response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
+            M3U8Response? m3u8Response;
+            try
+            {
+                m3u8Response = await ResolveWithInfrastructureRetryAsync(stream, cancellationToken);
+            }
+            catch (LocalServiceUnavailableException ex) when (ex.Reason == LocalServiceUnavailableReason.CdnUnreachable)
+            {
+                // The service ran but could not reach the CDN. Not dead: the
+                // orchestrator rechecks it after a back-off (2 min, 5 min, 10 min).
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.CdnUnreachable;
+                enriched.ErrorMessage = ex.Message;
+                logger.LogWarning("[StreamResolver] Deferring {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+                return new ResolveOutcome(enriched, []);
+            }
+            catch (LocalServiceUnavailableException ex)
+            {
+                // The service didn't answer, so we know nothing about this
+                // stream. Never Failed, never reported; the orchestrator re-queues it.
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.LocalService;
+                enriched.ErrorMessage = $"Local service unavailable ({ex.Reason}): {ex.Message}";
+                logger.LogWarning("[StreamResolver] Deferring {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+                return new ResolveOutcome(enriched, []);
+            }
+
             var m3u8Url = m3u8Response?.Url;
 
             if (string.IsNullOrEmpty(m3u8Url))
@@ -243,14 +302,29 @@ public class StreamResolver(
             enriched.Referer = ResolveReferer(m3u8Response, stream.Url);
             logger.LogInformation("[StreamResolver] Resolved m3u8 for {Channel}: {Url}", stream.Channel, m3u8Url);
 
-            // Step 2: Test health and extract metadata
+            // Step 2: Health — when LocalService left soak headers, probe WITH those
+            // headers (never bare CDN). That still rejects TikTok/.image/image/*
+            // decoy segments. Blind soak-trust used to mark those Healthy.
+            // One-shot burn on this GET is OK: RequiresFreshM3u8ForPlayback re-/plays
+            // on attach.
             logger.LogInformation("[StreamResolver] Testing health and extracting metadata for {Channel}",
                 stream.Channel);
             logger.LogInformation("[StreamResolver] Using referer for health check: {Referer}", enriched.Referer);
-            var probe = TryMpHealthProbe(m3u8Response);
-            var health = probe is null
+            var probe = TryLocalServiceHealthProbe(m3u8Response);
+            if (LocalServiceSoakTrust.ShouldSkipClientCdnProbe(m3u8Response) && probe is null)
+            {
+                // Soak evidence without filterable headers — still build a probe from
+                // raw RequestHeaders so we never fall through to a bare CDN GET.
+                probe = new StreamHealthProbe
+                {
+                    RequestHeaders = FilterPlaybackHeaders(m3u8Response?.RequestHeaders)
+                };
+            }
+
+            StreamHealth health = probe is null
                 ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
                 : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
+
             enriched.Health = health;
             if (health.Status == StreamHealthStatus.Healthy)
             {
@@ -258,10 +332,20 @@ public class StreamResolver(
                 logger.LogInformation("[StreamResolver] Stream {Channel} is healthy: {Quality}",
                     stream.Channel, health.GetQualityLabel());
             }
+            else if (CdnReachabilityPolicy.IsCdnUnreachable(health.Status))
+            {
+                // Could not reach the CDN (connect timeout / refused / reset / TLS,
+                // or a manifest 403/5xx). Never dead: deferred, never reported,
+                // rechecked after a back-off while the game is live.
+                enriched.Status = StreamResolutionStatus.Deferred;
+                enriched.DeferReason = StreamDeferReason.CdnUnreachable;
+                enriched.ErrorMessage = $"{CdnReachabilityPolicy.RecheckingMessage} ({health.Status})";
+                logger.LogWarning("[StreamResolver] Stream {Channel}: {Error}", stream.Channel, enriched.ErrorMessage);
+            }
             else
             {
-                // ManifestUnreachable / SegmentUnreachable both mean the CDN refused the probe connection —
-                // the same URL will fail in ExoPlayer. Do not trust it for playback.
+                // Dead: manifest 404/410, host not resolved, empty/invalid
+                // manifest, or a segment HTTP error / decoy bytes.
                 enriched.Status = StreamResolutionStatus.Failed;
                 enriched.ErrorMessage = $"Health check failed: {health.Status}";
                 logger.LogWarning("[StreamResolver] Stream {Channel} failed health check: {Status}",
@@ -284,21 +368,99 @@ public class StreamResolver(
         }
     }
 
-    private static StreamHealthProbe? TryMpHealthProbe(M3U8Response? response)
+    private static readonly HashSet<string> LocalServicePlaybackHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        var rewritten = response?.RewrittenSegments?
+        "user-agent",
+        "referer",
+        "origin",
+        "cookie",
+        "authorization"
+    };
+
+    /// <summary>
+    /// Build a health probe from LocalService soak data: rewritten MP segments
+    /// and/or captured request headers (Cookie) from V1/FB <c>/play</c>.
+    /// </summary>
+    private static StreamHealthProbe? TryLocalServiceHealthProbe(M3U8Response? response)
+    {
+        if (response is null)
+            return null;
+
+        var rewritten = response.RewrittenSegments?
             .Where(MpRewrittenSegment.LooksLike)
             .ToList();
-        if (rewritten is not { Count: > 0 })
-        {
+        var headers = FilterPlaybackHeaders(response.RequestHeaders);
+        var hasRewritten = rewritten is { Count: > 0 };
+        var hasHeaders = headers is { Count: > 0 };
+        if (!hasRewritten && !hasHeaders)
             return null;
-        }
 
         return new StreamHealthProbe
         {
-            RewrittenSegmentUrls = rewritten,
-            RequestHeaders = response!.RequestHeaders
+            RewrittenSegmentUrls = hasRewritten ? rewritten : null,
+            RequestHeaders = hasHeaders ? headers : null
         };
+    }
+
+    private static Dictionary<string, string>? FilterPlaybackHeaders(
+        IReadOnlyDictionary<string, string>? headers)
+    {
+        if (headers is null || headers.Count == 0)
+            return null;
+
+        Dictionary<string, string>? filtered = null;
+        foreach (var pair in headers)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value)
+                || !LocalServicePlaybackHeaderNames.Contains(pair.Key))
+            {
+                continue;
+            }
+
+            filtered ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            filtered[pair.Key] = pair.Value;
+        }
+
+        return filtered;
+    }
+
+    /// <summary>
+    /// Insert newly discovered MP chip siblings ahead of remaining catalog work
+    /// so harvested labels resolve before later FB rows.
+    /// </summary>
+    private static void EnqueueMpSiblingsNext(
+        List<Stream> pending,
+        HashSet<int> started,
+        ref int nextIndex,
+        HashSet<string> seen,
+        IReadOnlyList<Stream> siblings)
+    {
+        var insertAt = 0;
+        while (insertAt < pending.Count && started.Contains(insertAt))
+            insertAt++;
+
+        var firstInserted = -1;
+        foreach (var sibling in siblings)
+        {
+            if (!seen.Add(CandidateKey(sibling)))
+                continue;
+
+            pending.Insert(insertAt, sibling);
+            if (firstInserted < 0)
+                firstInserted = insertAt;
+
+            var shifted = new HashSet<int>();
+            foreach (var index in started)
+                shifted.Add(index >= insertAt ? index + 1 : index);
+            started.Clear();
+            foreach (var index in shifted)
+                started.Add(index);
+
+            insertAt++;
+        }
+
+        if (firstInserted >= 0)
+            nextIndex = firstInserted;
     }
 
     private static bool HasUnknownMpChipFanOut(Stream stream) =>
@@ -352,6 +514,30 @@ public class StreamResolver(
         return null;
     }
 
+    /// <summary>
+    /// Asks the local service again (with backoff) while it is unavailable. A
+    /// <c>null</c> answer is the stream's verdict and is returned at once.
+    /// </summary>
+    private async Task<M3U8Response?> ResolveWithInfrastructureRetryAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await ResolveM3U8ResponseInternalAsync(stream, cancellationToken).ConfigureAwait(false);
+            }
+            // MP disabled / auth rejected won't clear in seconds: defer at once.
+            catch (LocalServiceUnavailableException ex) when (attempt < InfrastructureRetryDelays.Length && ex.IsRetryable)
+            {
+                logger.LogInformation(
+                    "[StreamResolver] Local service unavailable for {Channel} ({Reason}); retry {Attempt}/{Max} in {Delay}s",
+                    stream.Channel, ex.Reason, attempt + 1, InfrastructureRetryDelays.Length,
+                    InfrastructureRetryDelays[attempt].TotalSeconds);
+                await DelayAsync(InfrastructureRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     private async Task<string?> GetM3U8UrlInternalAsync(Stream stream, CancellationToken cancellationToken)
     {
         var response = await ResolveM3U8ResponseInternalAsync(stream, cancellationToken);
@@ -378,6 +564,11 @@ public class StreamResolver(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (LocalServiceUnavailableException)
+        {
+            // Infrastructure, not the stream: the caller decides (retry / defer).
             throw;
         }
         catch (Exception ex)

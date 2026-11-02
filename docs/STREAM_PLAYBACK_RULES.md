@@ -93,7 +93,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 | **Soft live-HLS recover** | `PlaybackPolicy.MaxLiveHlsRecoveries` (+ BLWE / network gates) | Android: seek-to-live on BLWE; Windows: AdaptiveMediaSource reattach on **NetworkError only**; Linux: `--http-reconnect` (no budget) | Host-local; no session Error until budget exhausted |
 | **Soft decline (buffer/bitrate)** | `StreamMetricsWindow` via session Metrics/Buffering | Android 30s metrics; Windows throttled PositionChanged; Linux 30s timer | Shared window |
 | **Brief rebuffer tolerance** | `DesiredLiveOffsetSeconds` + Android LoadControl ms constants | Windows DesiredLiveOffset; Android DefaultLoadControl; Linux `--network-caching` | Named in `PlaybackPolicy` |
-| **Failed switch** | Restore last-good once | Hosts execute `PlaybackCommand` | Locked by `PlaybackUnificationRulesTests` |
+| **Failed switch** | Retry the target within the same-stream budget, then restore last-good; only a confirmed-dead target is reported and removed | Hosts execute `PlaybackCommand` (revert also puts the pool index back on last-good) | Locked by `PlaybackUnificationRulesTests`, `FailedSwitchRecoveryBusinessRulesTests` |
 | **Failed start (never established)** | Remove + advance if pool remains | Hosts execute `PlaybackCommand` | Shared |
 | **Stale failure during switch** | Ignore if `generation != AttachGeneration` | Hosts compare session generation | Shared |
 | **Buffering → Core** | Session Buffering effect | All three raise `MediaEngineEvent.Buffering` | Always raise |
@@ -165,22 +165,24 @@ flowchart TD
 - ≥ 10 bitrate samples and last 3 all &lt; 500 kbps → declined  
 - ≥ 3 errors in 300s → declined  
 
-`AndroidVideoPlayerService.ReportBufferingState` now forwards to `BufferingStateChanged`. Soft decline is a session effect (remove + advance). Orchestrator `HandlePlaybackFailureAsync` still runs when `PlayVideoAsync` returns failure — native auto-switch may already have drained the pool (session then resumes testing).
+`AndroidVideoPlayerService.ReportBufferingState` now forwards to `BufferingStateChanged`. Soft decline is a session effect (remove + advance). The orchestrator's playback chain (`RunPlaybackChainAsync`, section 6) handles a `PlayVideoAsync` that returns failure - native auto-switch may already have drained the pool (the chain then waits for the next healthy row).
 
-### 6. Orchestrator post-session failure (Core)
+### 6. Orchestrator start failure: the playback chain (Streaming)
 
-Only runs when `PlayVideoAsync` **returns** with `Success == false` (and not “User closed”):
+The first healthy row to clear the catalog frontier starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
 
-1. Report health `failed`
-2. `RemoveCurrentStream`
-3. `TryNextHealthyStreamAsync` → `PlayStreamAsync` on next healthy
-4. If none left → resume selection testing
+1. Local service unavailable (no verdict): no report, nothing removed; the chain parks and the next row to join the pool starts playback.
+2. Otherwise report health `failed` once for the row that failed (the row tried if the player never opened, else the pool's current row) and remove it.
+3. Play the row now under the pool index (the merged fallback or the following row). The old `TryNextHealthyStreamAsync` called `GetNextHealthyStream` here, skipped a row, left the index on a row that was not playing, and dropped the next play's result.
+4. Pool empty: status "All available streams failed - testing others..."; the next healthy row added by enumeration starts the chain again. After the sweep a failed chain resumes selection testing.
 
-**Problem:** Android/Windows often already auto-switched inside the native player, so this path is late, incomplete, or fighting platform logic.
+**Why (31 Oct 2026):** a first `/play` that came back empty ("Failed to resolve m3u8") used to be handled only after the whole sweep and the deferred re-queues (5s + 15s) finished, so the "Finding streams... 2 healthy" dialog sat with healthy rows unplayed. Rules: `StalledFirstPlayBusinessRulesTests`.
 
 ### 7. Health reporting identity
 
 Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL.md)). `StreamHealthIdentity.ResolveReportUrl` prefers the catalog/page URL (referer) when the first argument is an ephemeral M3U8/DASH URL. Android still passes M3U8 + referer; the reporter stores the page URL.
+
+Native players report through `StreamHealthIdentity.ResolvePlaybackReportIdentity(current, playbackUrl, referer)`: the current pool entry's catalog URL and stream name win over the m3u8 and the embed referer, so the orchestrator and the player use one key. `StreamHealthReporter` drops a duplicate of the same status for the same key inside 20s (`working`, `buffering`, and the `started` report under its own key) and a duplicate `failed` inside 60s. `user-report` is never suppressed. The orchestrator's 30s health tick reports `streamSwitchingService.GetCurrentStream()`, not the stream playback started on.
 
 ---
 
@@ -202,12 +204,15 @@ Protocol keys on `streamUrl` ([STREAM_HEALTH_PROTOCOL.md](STREAM_HEALTH_PROTOCOL
    - If another healthy exists → switch to next (resolve/prefetch)  
    - Else → resume probing / fail session  
    - Do **not** silently revert unless switch itself failed after leaving last-good (see 4).
-4. **Failed switch** (new URL never established): restore `lastGoodUrl` **once**, keep failed candidate removed; then user/next can try again.
+4. **Failed switch** (new URL never established): retry the target with the same-stream budget, then restore `lastGoodUrl`. The target is kept and not reported unless the error is `ConfirmedDead` (see "Failed switch: retry the target, keep it").
 5. **Soft decline** (shared `StreamMetricsWindow` thresholds on all platforms): same as hard fail for pool removal + advance (tunable; start by matching Android numbers).
 6. **Cache retry**: one fresh resolve if first attach used cache and failed before established.
 7. **Stale events**: ignore errors whose `generation != currentAttachGeneration`.
 8. **Single health reporter**: platforms push metrics/errors into Core; Core posts to API with one identity key.
 9. **Buffering always raises** `BufferingStateChanged` into Core on every OS.
+10. **Retry the same stream before switching** (supersedes the "remove + advance" in rules 3 and 5 for a stream that has played). See [Same-stream recovery](#same-stream-recovery-and-infrastructure-failures-31-oct-2026).
+11. **An infrastructure failure is never a stream failure.** No endpoint, our own `/play` timeout, or a refused connection never marks a row Failed and never reports it. The row is `Deferred` and re-queued.
+12. **Report once.** `ReportFailed` / `ReportDeclined` run before the pool is cleared, so the report carries the stream that failed; the reporter drops duplicates.
 
 ### Slim OS adapter surface (target)
 
@@ -288,6 +293,335 @@ Until that exists, agents should reconstruct the timeline from the markers above
 
 ---
 
+## Segment payloads (image-wrapped MPEG-TS)
+
+Some providers (cowedd `premium1`, castppv/uzhi.ru) serve HLS media segments from
+TikTok image CDNs (`*.tiktokcdn*.com/...~tplv-...image`, `Content-Type: image/png`).
+Many of these are **not** decoys: the PNG (8-bit RGB, IHDR/IDAT/IEND only) carries
+pixels `TIKTIKPX` + uint32 BE length + a gzip member whose output is MPEG-TS.
+A second wrapper (castppv / uzhi.ru `tntsports1-uk`, `Content-Type: image/webp`) is a
+RIFF/WebP with a 1x1 `VP8L` image chunk followed by an `EXIF` chunk whose payload is
+raw MPEG-TS (`WebpWrappedTs.cs`).
+
+Rules (normative; tests in `SegmentPlayabilityBusinessRulesTests`):
+
+1. **Bytes decide, not URL or Content-Type.** `SegmentPayload.Classify` (first 64 KB)
+   returns `MpegTs`, `Fmp4`, `WrappedTs`, `Image`, `Text` or `Unknown`; only
+   `MpegTs`/`Fmp4`/`WrappedTs` are playable.
+2. **Wrapped TS is playable on every platform.** One shared decoder
+   (`VardyParty.Streaming/Domain/Media/PngWrappedTs.cs` + `WebpWrappedTs.cs`, via `SegmentPayload.TryUnwrap`; never throws, size-capped)
+   is used by every player path:
+   - Android: `UnwrappingDataSource` wraps the ExoPlayer/Media3 HLS DataSource
+     (non-ranged opens; serves the unwrapped TS as `video/mp2t`).
+   - Windows: `AdaptiveMediaSource.DownloadRequested` body for `MediaSegment`.
+   - Linux: `LinuxHlsLocalProxy` segment branch before LibVLC.
+   - iOS / Mac Catalyst: **not hooked** — AVPlayer fetches segments natively;
+     needs a loopback proxy (as Linux) to unwrap.
+3. **Plain images stay rejected.** PNG without the marker, WebP without a TS-carrying chunk, JPEG/GIF, marker
+   without a TS payload, and HTML/JSON are never converted to video.
+4. **Never trust soak without classification.** `StreamHealthChecker` falls back to
+   a ranged (0-65535) byte probe *with* soak headers for image-looking segments;
+   `ShouldSkipClientCdnProbe` alone never marks a stream Healthy.
+5. LocalService `/play` (Strategies `HlsVideoDataProbe` / `PlayEngine`) applies the same
+   byte rule via a copy of the decoder, so it keeps wrapped-TS playlists and still
+   rejects plain-image ones.
+
+## Healthy pool dedup (same m3u8 from several sites)
+
+Many catalog sites embed the same upstream channel. The 27 Oct 2026 session showed
+Liveverse, 1ststreams and Pitchstream all resolving to cowedd `premium38/index.m3u8?t=...`,
+and soccermlbstream, All-Sports-HD and Vivoentv all resolving to uzhi.ru
+`/main/secure/<64-hex>/<expiry>/skysportsfootball-uk.m3u8` - six "streams", two channels.
+
+Rules (normative; tests in `HealthyPoolDedupBusinessRulesTests` and `StreamUrlNormalizerTests`):
+
+1. **One visible entry per m3u8 identity.** `StreamSwitchingService.AddHealthyStream`
+   keys on `StreamUrlNormalizer.M3u8IdentityKey(ResolvedM3U8Url)`: query/fragment stripped,
+   scheme+host lowercased, and token-like *directory* segments dropped - pure digits (9+,
+   expiry), hex (32+), mixed-case base64url (32+). Host and every other segment are kept and
+   the final filename is never dropped, so `premium38` vs `premium35`, different channel
+   filenames, and different hosts stay separate. The pool is what Android, Windows, Linux and
+   Apple all render, so this is the single dedup point for every platform.
+2. **Who stays visible.** First healthy (the flush is already catalog/ranked order) wins.
+   A later duplicate replaces it only with a strictly higher `Reputation` *and* when the
+   visible one is not the stream playing - never swap under the viewer.
+3. **Merged duplicates are fallbacks.** Losers are kept hidden per key. When the visible
+   entry fails (`RemoveCurrentStream`), the best-reputation fallback is promoted *at the same
+   index* (index re-published, so hosts re-attach with a fresh `/play` for that source);
+   only when a key has no fallbacks does the pool shrink.
+4. **Identity is captured on add.** `ResolvedM3U8Url` is mutated later (fresh one-shot
+   `/play`, cleared to null on failure); the key is stored when the stream enters the pool.
+5. **No URL, no merge.** An empty key never matches, so unresolved entries are not collapsed.
+6. Chip selection (`SwitchToMatchingStream`) naming a merged source selects its visible
+   entry. It never reorders the pool (see "Stable channel numbering").
+
+The old page-URL `StreamDeduplicator` (catalog `stream.Url` + V2 label) was never called in
+production (only DI-registered) and was removed; dedup of catalog rows by page URL is not
+done - distinct pages are resolved and merged here by what they actually play.
+
+## Proven mirrors (31 Oct 2026)
+
+Some providers serve one encoder output from several hosts, e.g. `edgestream2.pro/hls/syaLqucEne4k.m3u8`
+and `edgestream5.pro/hls/syaLqucEne4k.m3u8`. Their identity keys differ (host is kept), so the rule
+above shows both. They are merged only when the media proves it. Rules (normative; tests in
+`MirrorProofPolicyTests`, `ProvenMirrorDedupBusinessRulesTests`, `StreamHealthCheckerMirrorEvidenceTests`):
+
+1. **Evidence comes from the health check.** When a media (variant) playlist passes,
+   `StreamHealthChecker` stores `StreamHealth.MirrorEvidence`: segment URIs, the segment name stem
+   (trailing number replaced by `{n}`, e.g. `syaLqucEne4k-{n}.ts`), the live-edge segment number,
+   whether those numbers are a 90 kHz PTS clock (consecutive numbers advance by EXTINF x 90000;
+   needs 2+ segments, a plain counter is not a clock), `EXT-X-MEDIA-SEQUENCE`, live-edge
+   `EXT-X-PROGRAM-DATE-TIME`, target duration and when it was read. A failed check stores none.
+   It reaches the pool on `EnrichedStream.Health` (`StreamResolver` -> `StreamResolutionOrchestrator`
+   -> `AddHealthyStream`).
+2. **Proof** (`MirrorProofPolicy.Evaluate`, pure). Either
+   (a) both names are a PTS clock with the same stem, and the live-edge numbers differ by the time
+   between the two reads (33-bit wrap aware) within **+/-5 s**; or
+   (b) both sides have the **same segment-name stem** (ordinal, non-empty; different stems are
+   "different segment-name stems", not proven) and live-edge PROGRAM-DATE-TIME agrees within **~2 s**
+   after the same elapsed-time correction, with the same target duration and the same naming pattern
+   (letter runs `a`, digit runs `9`). Two channels from one packager share a clock and a naming
+   pattern, so PDT alone never proves a mirror (31 Oct 2026, v224).
+   If (a) applies and is out of tolerance it is not proven; (b) is not tried.
+3. **Never a reason:** host-name similarity, URL shape, or catalog labels. Missing or ambiguous
+   evidence (no playlist evidence, single segment, counter names without PROGRAM-DATE-TIME) never merges.
+4. **Different `premiumNNN` ids never merge** (any `premium<digits>` in the source, playlist or
+   segment paths; present on one side only also counts as different), even when clocks agree:
+   wedd48c premium109/155/261 stay three channels.
+5. **Where:** `StreamSwitchingService.AddHealthyStream`, after the identity-key check (unchanged).
+   A proven mirror merges into the visible entry exactly like a same-key duplicate: hidden fallback,
+   no channel number, promoted in place when the visible entry fails, never swapped in under the
+   viewer. Its own key is aliased to that entry, so later rows on the mirror URL merge without new
+   evidence. Stable numbering rules are unchanged.
+6. **Log:** `[Dedup] proven mirror: <incoming channel url> == <visible channel url> (pts delta -0.90s)`
+   (or `pdt delta`). Rejections with evidence on both sides log at Debug as `[Dedup] not a proven mirror`.
+7. The lshls `secure_hls.php?path=` identity handling is untouched.
+
+Observed (v223, UTC): edgestream2 `-944307180.ts` at 20:21:45.362 and `-953640450.ts` at 20:23:31.002
+(103.70 s of media in 105.64 s, -1.94 s); edgestream5 `-957960270.ts` at 20:24:17.960 (151.70 s in
+152.60 s from the first read, -0.90 s).
+## Stable channel numbering (31 Oct 2026)
+
+A channel number is the row's position in `StreamSwitchingService.GetHealthyStreams()` plus one. Every platform renders that list, so the numbers are the same on Android, Windows, Linux and Apple. Rules (tests in `StableChannelNumberingBusinessRulesTests`):
+
+1. **Numbers do not move while cycling.** Next, Previous, wraparound, chip selection and recommendations change only the current index, never the order. `ReorderHealthyStreams` was removed.
+2. **New healthy streams are appended** and take the next number.
+3. **A drop closes the gap.** Rows after it move up one and keep their relative order. A merged fallback promoted in place keeps the number.
+4. **Merged duplicates never take a number** (hidden fallbacks, see "Healthy pool dedup").
+5. **Wraparound:** Next on the last channel goes to channel 1; Previous on channel 1 goes to the last. Wraparound force-refreshes recommendations (chips and first pick) but does not jump to a "preferred recommended" stream and does not reorder. The old "switch to the preferred recommended stream on wraparound" behaviour was removed: it made Next land on an unexpected number.
+6. **Recommendations may jump** (chip selection selects the matching row) but never reorder.
+7. A switch that fails and reverts keeps the target in place (see "Failed switch: retry the target, keep it").
+
+## Switch speed: reuse, pre-resolve, make-before-break
+
+V1/FB rows carry soak evidence (Referer/Origin/Cookie headers or MP rewritten segments), so
+`PlaybackUrlReusePolicy.RequiresFreshM3u8ForPlayback` is true and historically every attach
+re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8TokenExpiry`):
+
+1. **Token expiry is read from the URL** - cowedd `t=<unix>.<sig>`, generic `e`/`exp`/`expires`/`expiry`/`x-expires`
+   (s or ms), a JWT `exp` in any query value (sporty-aoura `token=`), and the last 10-digit path segment
+   before the file name (uzhi `/main/secure/<hex>/<unix>/x.m3u8`). Sources can add a parser with
+   `M3u8TokenExpiry.Register` (runs first, exceptions ignored).
+2. **Reuse** - a one-shot row whose cached URL has a readable expiry with **> 60 s** left
+   (`MinComfortableLife`) and is not **known single-use** plays the cached URL straight away
+   (`usedCachedUrl: true`, so a failed start still gets the session's one fresh `/play` retry).
+3. **Known single-use** stays on the fresh path: Cookie-bound rows (FB), MP rewritten-segment rows,
+   hosts registered with `PlaybackUrlReusePolicy.RegisterSingleUseHost`, and any URL with **no readable
+   expiry** (unknown = single-use; keeps 5604455's tests).
+4. **Pre-resolve** - `UpcomingStreamPrewarmer` runs for the whole playback session and keeps the next
+   `PrewarmDepth` = 2 rows in switch order warm in `WarmPlaybackUrlCache`. It also refreshes the
+   **current** row when the playing URL's readable expiry has 90 s or less left
+   (`PlaybackUrlReusePolicy.PlayingLinkRefreshLead`) and raises `PlayingTokenReady` with the new URL.
+   Single flight: at most one `/play` in flight from it; 15 s tick; upcoming rows refresh 30 s before
+   the comfort margin. Short-lived tokens (lifetime < 5 min, cowedd ~2 min) are kept warm only for the
+   immediate next row. A URL with no readable expiry marks the row unwarmable (no retry loop) and is
+   not refreshed on a timer.
+5. **Switch uses the warm URL** - `PlaybackUrlResolver` (the platforms' fresh-resolve delegate) waits
+   for an in-flight pre-resolve of the same row, then consumes the warm entry once (> 60 s left) instead
+   of calling `/play`; otherwise `/play` as before.
+6. **No redundant re-scrape (d)** - the orchestrator no longer fires a bare
+   `ResolveM3U8ForPlaybackAsync` prefetch for one-shot rows on Next (Android ignored it, so every switch
+   cost two `/play`s, the second for the following row) and no longer resolves an empty one-shot row
+   before switching; it kicks the pre-resolver instead. A failed Android switch no longer calls
+   `SwitchToPreviousStream` + re-attach (which re-`/play`ed the stream being left).
+7. **Make-before-break** - `PlaybackPoolCommandActions.SwitchToCurrentAsync`: the playing stream keeps
+   playing while the target resolves, with "Switching to X..." shown; on failure the pool index is put
+   back on the playing row **without re-attaching it** and "Couldn't switch to X - staying on the current
+   stream" is shown. A newer switch supersedes an older pending one.
+
+Platform limits: a channel switch still cuts over once the new URL is resolved, because replacing the
+media source clears the picture. A playing-token refresh does not. Android keeps the same ExoPlayer and,
+on that player's next playlist reload, fetches the new token URL (`PlaylistReloadRedirect`). The decoder
+and the buffered segments stay. That reload drops a leading run of segment URLs already fetched
+for this playlist path (query ignored) and advances `#EXT-X-MEDIA-SEQUENCE` by that many, so a
+prepare does not play them again. The last segment stays when the whole window was already fetched.
+Giving the same player a new media source is what blanks the screen.
+Status text: Android toast, Windows stream-count line, Linux log only (no overlay).
+
+Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuseBusinessRulesTests`
+(Kernel); `WarmPlaybackUrlCacheTests`, `UpcomingStreamPrewarmerTests`, `SwitchPrewarmBusinessRulesTests`,
+`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
+`PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
+`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
+
+## Startup race (two fresh /play calls)
+
+When nothing is playing yet and the row we would start needs a fresh `/play`, and the next
+pooled row needs one too, both resolve together (`PlaybackRacePolicy`, `PlaybackUrlRacer`).
+Rules (tests in `PlaybackRaceBusinessRulesTests`, `PlaylistVideoEvidenceTests`,
+`StartupRaceBusinessRulesTests`, `ResolverRaceThrottleTests`):
+
+1. **A non-empty URL is not a win by itself.** The playlist is read (`RacePlaylistProbe` /
+   `PlaylistVideoEvidence`). Proven video on the recommended row wins. Proven video on the
+   partner beats a recommended URL whose playlist could not be checked. A playlist that is
+   audio-only (0x0, audio codecs, or only `.aac` / `.m4a` segments) never wins: it is reported
+   failed as `No video (audio only)` and removed, the same stream failure as the player rule.
+   A fetch that fails or is blocked stays unverified and can still be played; the Android
+   8s video confirmation is unchanged.
+2. **Recommended grace** is 1.5s. A partner URL does not replace a recommended row that is
+   still resolving until that window has elapsed. After it, an unverified partner can win
+   only while the recommended row is still pending.
+3. **The finding-streams dialog does not wait.** If the recommended `/play` is already empty
+   or audio-only and another pooled row can play from cache, that row plays at once. The
+   partner `/play` is left to finish into the warm cache; it is not a second wait and it is
+   not reported.
+4. **Chromium stays capped at 2.** `ResolverRaceThrottle` allows two LocalService `/play` or
+   `/mp` calls at a time. The race marks its legs and drains plays that already started, and
+   candidate testing starts nothing new until the winner is known. The two race calls use the
+   cap; they do not add a second pair on top of the find phase.
+5. **A losing URL is kept warm** until its token expiry minus the comfort margin (or 60s when
+   the expiry is not readable) and is taken once, like any other warm entry. It is not reported.
+6. **Infrastructure is still not a verdict.** A leg the service could not answer is not
+   reported and not removed. If neither leg can be played, the chain parks the same way a
+   local-service failure does.
+
+The first same-stream retry raises `PlaybackRecoverySignals.SameStreamRetryStarted` so the
+prewarmer can refresh the next rows. That refresh takes a slot from the same cap.
+
+---
+
+## Same-stream recovery and infrastructure failures (31 Oct 2026)
+
+Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57 cascade that dropped and reported reachable streams; a techydeals row whose `/play` was sent twice (16:49:54 and 16:50:14) because our 20s timeout fired while the service was still resolving, then failed at 16:50:34; re-discovery from 16:51:43 to 16:53:03 after the endpoint was thrown away; and the same `working` sample sent twice (16:49:27 and 16:49:29).
+
+### Error classes (`PlaybackPolicy.ClassifyPlaybackError`)
+
+| Class | Examples | First step |
+|---|---|---|
+| `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
+| `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout", HTTP 500/502/503/504 | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
+| `TokenOrPlaylistInvalid` | 401/403 | Fresh `/play` for the same row |
+| `Transient` | A playlist body that is not HLS (`#EXTM3U` missing, manifest parse error), a bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
+
+Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.
+
+### Same-stream retry budget (`PlaybackSessionController`)
+
+- Up to `MaxSameStreamRetries` (3) attempts per stream: attempt 1 of a transient error reloads the same URL; later attempts, and any token/playlist error, request a fresh `/play` (`RetryFreshResolve`) with backoff 0s / 1s / 3s.
+- No `ReportFailed`, no pool removal and no advance while attempts remain. The snapshot shows `IsRecovering` and `SameStreamRetries`.
+- The budget refills when the last retry was at least 90s ago (`SameStreamRetryWindow`). A recovered stream that flaps inside 90s keeps using the same budget.
+- A health decline (buffering or bitrate window) gets one reload (`MaxHealthDeclineRetries`), then `ReportDeclined` and a switch.
+- A burst of download failures uses one attempt, not the whole budget: the failure counter resets when a retry starts.
+- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects).
+- When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
+- A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
+- A failed switch gets the same budget for its target before reverting to last-good (next section).
+- User Next/Prev cancels recovery; the new stream starts with a full budget.
+
+### Failed switch: retry the target, keep it (31 Oct 2026)
+
+At 20:26:04 and 20:26:20 UK on 31 Oct 2026, techydeals and 4Kstream were reported failed and dropped after one `#EXTM3U` blip during a switch. `FailSwitchAndRevert` used to report, clear and remove the target on any switch error. Rules (`PlaybackSessionController`; tests in `FailedSwitchRecoveryBusinessRulesTests`):
+
+1. A switch error is classified like an established-stream error (`ClassifyPlaybackError`).
+2. `Transient` or `TokenOrPlaylistInvalid`: the target gets the same-stream budget (attempt 1 of a transient reloads, others fresh `/play`). No report and no removal while attempts remain. The snapshot shows `IsRecoveringSwitch`.
+3. Budget spent (including empty fresh `/play` results): revert to last-good with "Switch did not start - back to last good, stream kept." The target stays in the pool, unreported, and keeps its channel number. Its cached URL is cleared so the next visit runs a fresh `/play`.
+4. `ConfirmedDead` at any point (first error or during a retry): report, clear, remove the target, and revert to last-good.
+5. `LocalServiceUnavailable` during a retry: revert to last-good, no report, no removal, no Stop/Close.
+6. Every revert also puts the pool index back on the last-good row (`IPlaybackCommandHost.RevertPoolIndexTo`, under index-switch suppression), so the channel shown matches what plays on every platform.
+7. A first start (no last-good) is unchanged: fresh `/play` once, then drop and advance.
+
+### Audio-only streams (31 Oct 2026, v224)
+
+On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture (0x0, a looping AAC segment). ExoPlayer raised READY, so the session reported it working and made it last good; every failure then reverted to it and Next kept landing on it. Rules (`PlaybackSessionController`, `PlaybackPolicy`; tests in `AudioOnlyLoopGuardBusinessRulesTests`):
+
+1. **Video confirmation (Android only).** `EnableVideoConfirmation()` makes Ready alone "established, not working". The host raises `MediaEngineEvent.VideoProbe(generation, hasVideo)` on READY, on the first rendered frame or a non-zero video size, and on every status-watchdog tick (500 ms) until confirmed. The first probe with video after Ready sends `ReportWorking` once and sets last good.
+2. **No picture = stream failure.** `NoVideoTimeout` (default 8 s, configurable) after Ready with no video fails the stream with `"No video (audio only)"`: reported failed (never working), its feed is marked failed, no same-stream retry. It reverts to an eligible last good on another feed, otherwise advances to an untried stream, otherwise stops.
+3. **Windows, Linux and Apple keep confirmation off**: Ready still reports working and sets last good there. Their hosts do not raise `VideoProbe` yet.
+
+### No loops (31 Oct 2026, v224)
+
+1. **Revert eligibility.** Last good is only ever a stream that showed video (rule 1 above) and whose feed has not failed this cycle. A stream that fails clears last good when it is the last good stream or the same feed.
+2. **Tried this cycle.** A stream that fails for a stream reason is marked in the pool (`IStreamSwitchingService.MarkTriedInCycle`) for `FailedInCycleTtl` (2 min). A failure that is not a token/playlist error also marks its **feed** (m3u8 identity key, including proven-mirror aliases), so every row resolving to it is skipped. Token failures mark the row only, so a promoted fallback with its own token still plays. Video confirmation clears the marks. Marks never remove a row or change a number.
+3. **Resolved-URL identity (Rule 3).** After `/play` (or with a reusable cached URL), a target whose `M3u8IdentityKey` is a feed that failed this cycle is a duplicate: on auto-advance it is skipped and dropped inheriting the failure (`NotifyDuplicateOfFailed`, no extra report); on Next/Prev/chip it is marked, the index goes back to the playing row and the session moves on. A target resolving to the feed already playing on another row is skipped the same way (unless forced).
+4. **Next only goes to untried streams.** `SwitchToNextStream`/`SwitchToPreviousStream`/`GetNextHealthyStream`/`WouldWrapOnNext` skip marked rows; with no marks the index arithmetic (and wraparound) is unchanged. "Untried" means not failed or skipped this cycle; streams that played fine earlier stay eligible.
+5. **Nothing untried.** User Next/Prev stays on the current stream with the toast "No other working stream right now". An automatic advance with nothing untried goes back to an eligible last good, otherwise closes with `"No working stream right now — retrying in background"` (testing resumes). Back always closes the player.
+6. **Infrastructure failures never mark or drop** a stream (unchanged).
+7. Logs: `[Cycle] tried+failed: <channel url> feed=<bool> (<reason>)`, `[Cycle] Next: no untried stream`, `[NativeVideoActivity] Video confirmed (first frame|size WxH)`, `Skipping <channel>: Same feed as ...`.
+### Local service (`LocalLanPlayService`, `LocalServiceEndpointCache`)
+
+- `ResolveM3U8UrlAsync` returns `null` only when the service answered with no playlist (a stream failure). Infrastructure failures throw `LocalServiceUnavailableException` with `EndpointUnknown`, `CallTimeout` or `ConnectionFailed`.
+- Exactly one `/play` (or `/mp`) per resolve. The old "invalidate and call `/play` again" path is gone.
+- Single-flight per stream (url, stream name, strategy, source): concurrent callers share one call. One caller cancelling does not cancel the others; a caller arriving after the last waiter cancelled starts its own call.
+- The endpoint is kept. After the 120s TTL the cache returns `Stale(lastGood)` and probes in the background; a failed probe keeps last-good. Only `Invalidate()` forgets it, after 3 consecutive connection failures. Any HTTP answer resets the count. `IsAvailableAsync` no longer invalidates; it probes for a moved service.
+- Discovery misses are cached for 1s (was 5s) and discovery retries after 1s and 2.5s.
+- A stream whose `/play` timed out is marked slow for 10 minutes and gets double the timeout (capped at 120s) next time. The base timeout is never below 65s (see "`/play` timeout budget").
+
+### Resolver and orchestrator
+
+- `StreamResolver` retries `LocalServiceUnavailableException` after 2s and 5s; then the row is `StreamResolutionStatus.Deferred` ("Waiting for local service...") with no siblings.
+- `StreamResolutionOrchestrator` never reports a Deferred row. It counts as done for the first-play frontier, and is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
+- Healthy rows are reported `working` (was `unknown`).
+
+### `/mp` harvest (`LocalLanPlayService`, `MpHarvestSession`)
+
+- Only "the service answered and found no playlist" is a verdict (`null`): a 2xx with no URL, NDJSON `error` with a 4xx (e.g. 404 "M3U8 not captured from MP page."), or a plain 4xx other than 401/403.
+- Infrastructure fails the harvest with `MpHarvestSession.Fail`, and waiters with no playlist throw `LocalServiceUnavailableException`. Labels that already have a playlist still get it. A failed harvest is never reused.
+  - HTTP 5xx or NDJSON `error` with a 5xx (e.g. 500 "mp play execution failed") → `ServiceError`.
+  - Our 330s harvest timeout → `CallTimeout` (or `ConnectionFailed` if `/health` is also down).
+  - Connection failure → `ConnectionFailed`.
+  - 401/403 → `Unauthorized` (also on `/play`).
+  - 503 "V2/MP scrape disabled on this local service" → `MpDisabled`. The client remembers it per endpoint for 60s (`MpDisabledMemory`), so other MP rows in the sweep are answered locally without a POST. The row is "unavailable here", not dead. The client never turns V2/MP on.
+- `MpDisabled` and `Unauthorized` are not retryable (`IsRetryable` false): the resolver defers them at once, without the 2s/5s retries.
+
+### First start and in-player fresh `/play` (`ApiService`, `InfrastructureRetryPolicy`)
+
+- `ApiService.GetM3U8UrlAsync` and `ResolveM3U8ForPlaybackAsync` rethrow `LocalServiceUnavailableException`. Other exceptions still return `null`.
+- One rule for every host, `InfrastructureRetryPolicy` (Kernel): a retryable infrastructure failure on a fresh `/play` is asked again after 2s, 5s and 15s. Non-retryable failures skip the waits.
+- First start (`StreamResolutionOrchestrator.PlayStreamAsync`): when the retries run out, on the fresh resolve or on the fresh retry after a failed cached URL, playback returns `PlaybackCloseReasons.LocalServiceUnavailable`. The orchestrator then sends no `failed` report, does not call `RemoveCurrentStream`, does not try the next row, and sets `StreamResolutionOutcome.LocalServiceUnavailable`.
+- In the player (`PlaybackPoolCommandActions.RetryFreshResolveAsync`, used by the failed-start retry and same-stream recovery on Android, Windows, Linux, iOS and MacCatalyst): the same waits apply, and the retry is dropped if the viewer moves on. When the retries run out it calls `PlaybackSessionController.NotifyFreshResolveInfrastructureUnavailable`.
+  - That method stops and closes the session with "Local service unavailable: ...".
+  - It sends no `ReportFailed`, does no removal, does not advance, and resets the same-stream budget.
+  - It does not advance because the next row needs the same service, and a no-remove advance could bounce between rows.
+- A Next-button resolve (`HandleNextStreamRequestedAsync`) that hits infrastructure shows "Switch failed - local service unavailable" and keeps the current stream. The Android one-shot switch treats it like "no URL": it stays on the playing row and puts the index back.
+- Prefetch and the prewarmer already swallow failures. They never report or drop a row.
+
+### Known limitations
+
+- `/play` 5xx is still a stream verdict (`null`), unless the body shows the CDN could not be reached (`LocalServicePlayFailure`: 504, a Chromium connect/TLS error, or media requests that failed to connect or never answered). LocalService passes the scrape plugin's status through, and also returns 500 for its own exceptions, so the client cannot otherwise tell the two apart. This needs a distinct LS status or an error code.
+- Errors from remote compute (the paired relay) are not classified. They surface through `LastRemoteComputeError`.
+- `/mp` 400s (bad pop/DoH headers) still count as a miss.
+
+## CDN unreachable is never dead (31 Oct 2026)
+
+From 19:02 to 19:44 UK time on 31 Oct 2026 the MSI's IP was blocked by the CDN. 27 lshls rows plus durrfity, 643t8a, nothintd and instreams were marked dead and reported; every one was Healthy again after 19:52. A host we cannot connect to says nothing about the stream. Rules (`CdnReachabilityPolicy` in Kernel; tests in `CdnReachabilityPolicyTests`, `CdnUnreachableBusinessRulesTests`, `CdnUnreachablePlaybackBusinessRulesTests`):
+
+1. **CDN unreachable** = connect timeout, connection refused or reset, TLS failure, on the manifest or on a segment; a manifest HTTP status other than 2xx/404/410 (403, 5xx); or a LocalService `/play` that could not reach the CDN (`LocalServicePlayFailure`: HTTP 504, a `net::ERR_CONNECTION_*` / `ERR_TIMED_OUT` / `ERR_SSL_*` / `ERR_CERT_*` error, or a media-like `diagnostics.failedRequestHosts` entry with such an error or with requests still pending).
+2. **Still dead** (Failed, reported, dropped): manifest 404/410 (`StreamHealthStatus.ManifestNotFound`), "M3U8 not Found" with no connect evidence, decoy or non-video segments and segment HTTP errors (`SegmentUnreachable`), empty or invalid manifests, and DNS `NAME_NOT_RESOLVED` / `UnknownHostException` (`HostNotResolved`). DNS stays dead by choice: a name that does not resolve is almost always a retired or fake host, and keeping it would recheck it all game.
+3. Health check (`StreamHealthChecker`): transport exceptions go through `CdnReachabilityPolicy.ClassifyTransportFailure` (DNS → `HostNotResolved`, connect/TLS/timeout → `CdnUnreachable`); anything else keeps the old status. The caller cancelling is no verdict.
+4. Resolver (`StreamResolver`): `CdnUnreachable` or `ManifestUnreachable` health, or `LocalServiceUnavailableException(CdnUnreachable)` from `/play`, makes the row `Deferred` with `DeferReason = CdnUnreachable` and the message "CDN unreachable, rechecking". No 2s/5s infrastructure retries (`IsRetryable` false).
+5. Orchestrator (`StreamResolutionOrchestrator`, `CdnUnreachableRecheckLoop`): a CDN-deferred row is never reported and never dropped. It is rechecked after **2 min, then 5 min, then every 10 min** (`CdnReachabilityPolicy.RecheckDelays`) while the game is live (`ShouldKeepRechecking`: not finished, and within 4h of kick-off). Rechecks run alongside playback. A row that comes back Healthy goes through the normal accept path: reported `working`, appended to the pool, stable channel number; if nothing is playing it starts playback. A recheck that now proves the row dead reports it as usual. With no healthy row at the end the status is "CDN unreachable, rechecking" (`StreamResolutionOutcome.CdnUnreachableStreamCount`).
+6. Player (`PlaybackPolicy.ClassifyPlaybackError` → `PlaybackErrorKind.CdnUnreachable`): retried like `Transient` (reload first, then fresh `/play`). When the budget is spent, on an established stream or a first start, `PlaybackSessionController` keeps the row: no `ReportFailed`, no `RemoveCurrentFromPool`, its resolved URL is cleared, and the session advances to the next row. With one row, or after a full lap of the pool with nothing reaching Ready, it closes with `PlaybackCloseReasons.CdnUnreachable`. `PlaybackResult.IsLocalServiceUnavailable` is true for that reason, so every orchestrator and host path treats it as no verdict.
+7. When the player gives up on its last row(s) as CDN unreachable (`PlaybackCloseReasons.CdnUnreachable`), the orchestrator puts every row still in the pool on the same background recheck (2 min, 5 min, then every 10 min while the game is live). A row that comes back healthy is reported `working` and playback restarts on that same pool row (same channel number, fresh `/play`); a recheck that proves the row dead (404/410, decoy, DNS) reports and drops it; a row still unreachable waits for the next round. Nothing is reported or dropped for being unreachable. Tests: `CdnUnreachablePoolRecheckTests`.
+
+## `/play` timeout budget (31 Oct 2026)
+
+The client `/play` timeout must outlast LocalService's own final wait, or the client gives up (and asks again) while the service is still finishing. `LocalServicePlayBudget` (tests in `LocalServicePlayBudgetTests`):
+
+- LocalService final wait = page.goto timeout 30s + settled-playlist wait 5s = **35s**.
+- Margin 30s, so the base client timeout is **65s** (`MinimumPlayCallTimeout`). A configured `M3U8CallTimeoutSeconds` below that is raised to it; a larger one is kept.
+- A stream that hit our timeout in the last 10 minutes gets double the base, capped at **120s** (`MaxPlayCallTimeout`). The slowest V1 path observed is about 70s, which the doubled timeout covers.
+- `/mp` harvests keep their own 330s timeout.
+
 ## Known remaining work
 
 | Item | Status |
@@ -331,3 +665,17 @@ Until that exists, agents should reconstruct the timeline from the markers above
 | Android bridge | `VardyParty/Platforms/Android/AndroidVideoPlayerService.cs` |
 | Windows player | `VardyParty/Platforms/Windows/WindowsVideoPlayerService.cs` |
 | Crowd protocol | `docs/STREAM_HEALTH_PROTOCOL.md` |
+
+## Finding: "Totalsportek row played the wrong stream" (27 Oct 2026)
+
+Investigated from the 21:38:46 switch in the LocalService console log and the client log.
+
+- The client applied the URL it was given for the row it switched to. The switch target at 21:38:46 was the **Vivoentv** row; the `uzhi` m3u8 came from the `/play` for `cabgrass.cfd/vivoentv-013/30.php`.
+- The Totalsportek `/play` seen right before it was the **upcoming-row prefetch**, not the active switch. LocalService log lines have no timestamp or request id, so concurrent `/play` lines interleave and read as if Totalsportek returned the Vivoentv URL.
+- Mirrors of the same match legitimately expose different players (premium35 cowedd, edgestream7, sporty-aoura), so "a different stream than last time" on a mirror is not by itself a bug.
+
+Recommendations (not implemented; need a decision):
+
+1. `/play?prefer=<identity>` hint so LocalService prefers the player/identity the row last played.
+2. Client logs (or rejects) a fresh `/play` URL whose m3u8 identity differs from the row's known identity.
+3. LocalService log lines carry a timestamp and a per-request id.

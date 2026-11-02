@@ -14,28 +14,12 @@ public class PlaybackPoolCommandActionsTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public async Task AttachCurrentFromPoolAsync_WhenResolvedUrlPresent_AttachesWithoutResolve()
+    public async Task AttachCurrentFromPoolAsync_WhenResolvedUrlPresent_StillResolvesFresh()
     {
-        // Arrange
-        var oakLane = CreateOakLane("http://oak-lane.m3u8");
-        var (_, actions, attaches, applies, resolved) = CreateSut(oakLane);
-
-        // Act
-        await actions.AttachCurrentFromPoolAsync();
-
-        // Assert
-        Assert.Equal(new[] { "http://oak-lane.m3u8" }, attaches);
-        Assert.Empty(applies);
-        Assert.Empty(resolved);
-    }
-
-    [Fact]
-    public async Task AttachCurrentFromPoolAsync_WhenResolvedUrlMissing_ResolvesThenAttaches()
-    {
-        // Arrange
-        var oakLane = CreateOakLane(resolvedUrl: null);
+        // Arrange — find-phase URL must not be handed to ExoPlayer (one-shot soak).
+        var oakLane = CreateOakLane("http://oak-lane-burned.m3u8");
         oakLane.Referer = "http://northgate.test/oak-lane";
-        var (pool, actions, attaches, applies, resolved) = CreateSut(
+        var (_, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
             oakLane,
             freshUrl: "http://oak-lane-fresh.m3u8");
 
@@ -46,6 +30,48 @@ public class PlaybackPoolCommandActionsTests
         Assert.Equal(new[] { "http://northgate.test/oak-lane" }, resolved);
         Assert.Equal("http://oak-lane-fresh.m3u8", oakLane.ResolvedM3U8Url);
         Assert.Equal(new[] { "http://oak-lane-fresh.m3u8" }, attaches);
+        Assert.Equal(new[] { false }, cachedFlags);
+        Assert.Empty(applies);
+    }
+
+    [Fact]
+    public async Task AttachCurrentFromPoolAsync_WhenFreshResolveFails_FallsBackToCachedAsUsedCached()
+    {
+        // Arrange
+        var oakLane = CreateOakLane("http://oak-lane.m3u8");
+        oakLane.Referer = "http://northgate.test/oak-lane";
+        var (_, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
+            oakLane,
+            freshUrl: null);
+
+        // Act
+        await actions.AttachCurrentFromPoolAsync();
+
+        // Assert
+        Assert.Equal(new[] { "http://northgate.test/oak-lane" }, resolved);
+        Assert.Equal(new[] { "http://oak-lane.m3u8" }, attaches);
+        Assert.Equal(new[] { true }, cachedFlags);
+        Assert.Empty(applies);
+    }
+
+    [Fact]
+    public async Task AttachCurrentFromPoolAsync_WhenResolvedUrlMissing_ResolvesThenAttaches()
+    {
+        // Arrange
+        var oakLane = CreateOakLane(resolvedUrl: null);
+        oakLane.Referer = "http://northgate.test/oak-lane";
+        var (pool, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
+            oakLane,
+            freshUrl: "http://oak-lane-fresh.m3u8");
+
+        // Act
+        await actions.AttachCurrentFromPoolAsync();
+
+        // Assert
+        Assert.Equal(new[] { "http://northgate.test/oak-lane" }, resolved);
+        Assert.Equal("http://oak-lane-fresh.m3u8", oakLane.ResolvedM3U8Url);
+        Assert.Equal(new[] { "http://oak-lane-fresh.m3u8" }, attaches);
+        Assert.Equal(new[] { false }, cachedFlags);
         Assert.Empty(applies);
         Assert.Same(oakLane, pool.GetCurrentStream());
     }
@@ -57,7 +83,7 @@ public class PlaybackPoolCommandActionsTests
         var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
         var session = new PlaybackSessionController();
         session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
-        var (_, actions, attaches, applies, _) = CreateSut(
+        var (_, actions, attaches, applies, _, _) = CreateSut(
             oakLane,
             freshUrl: "http://oak-lane-fresh.m3u8",
             session: session);
@@ -78,7 +104,7 @@ public class PlaybackPoolCommandActionsTests
         var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
         var session = new PlaybackSessionController();
         session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
-        var (_, actions, attaches, applies, _) = CreateSut(
+        var (_, actions, attaches, applies, _, _) = CreateSut(
             oakLane,
             freshUrl: "http://oak-lane-cached.m3u8",
             session: session);
@@ -99,7 +125,7 @@ public class PlaybackPoolCommandActionsTests
         var oakLane = CreateOakLane("http://oak-lane.m3u8");
         var northgate = CreateOakLane("http://northgate.m3u8");
         northgate.Stream.Channel = "northgate-channel";
-        var (pool, actions, _, _, _) = CreateSut(oakLane, extra: northgate);
+        var (pool, actions, _, _, _, _) = CreateSut(oakLane, extra: northgate);
 
         // Act
         actions.ClearCurrentResolvedUrl();
@@ -119,7 +145,7 @@ public class PlaybackPoolCommandActionsTests
         var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
         var session = new PlaybackSessionController();
         session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
-        var (_, actions, attaches, applies, _) = CreateSut(
+        var (_, actions, attaches, applies, _, _) = CreateSut(
             oakLane,
             session: session,
             resolveException: new InvalidOperationException("northgate resolve failed"));
@@ -138,7 +164,7 @@ public class PlaybackPoolCommandActionsTests
     {
         // Arrange
         var oakLane = CreateOakLane("http://oak-lane.m3u8");
-        var (pool, actions, attaches, applies, _) = CreateSut(oakLane);
+        var (pool, actions, attaches, applies, _, _) = CreateSut(oakLane);
         pool.RemoveCurrentStream();
 
         // Act
@@ -170,7 +196,7 @@ public class PlaybackPoolCommandActionsTests
         var oakLane = CreateOakLane("http://oak-lane.m3u8");
         var northgate = CreateOakLane("http://northgate.m3u8");
         northgate.Stream.Channel = "northgate-channel";
-        var (pool, actions, _, _, _) = CreateSut(oakLane, extra: northgate);
+        var (pool, actions, _, _, _, _) = CreateSut(oakLane, extra: northgate);
         pool.SwitchToNextStream();
 
         // Act
@@ -185,7 +211,7 @@ public class PlaybackPoolCommandActionsTests
     {
         // Arrange
         var oakLane = CreateOakLane(resolvedUrl: null);
-        var (_, actions, attaches, applies, resolved) = CreateSut(oakLane, freshUrl: null);
+        var (_, actions, attaches, applies, resolved, _) = CreateSut(oakLane, freshUrl: null);
 
         // Act
         await actions.AttachCurrentFromPoolAsync();
@@ -202,7 +228,7 @@ public class PlaybackPoolCommandActionsTests
     {
         // Arrange
         var oakLane = CreateOakLane("http://oak-lane.m3u8");
-        var (pool, actions, _, _, _) = CreateSut(oakLane);
+        var (pool, actions, _, _, _, _) = CreateSut(oakLane);
         pool.RemoveCurrentStream();
 
         // Act
@@ -218,7 +244,7 @@ public class PlaybackPoolCommandActionsTests
     {
         // Arrange
         var oakLane = CreateOakLane(resolvedUrl: null);
-        var (_, actions, attaches, applies, resolved) = CreateSut(oakLane, omitResolver: true);
+        var (_, actions, attaches, applies, resolved, _) = CreateSut(oakLane, omitResolver: true);
 
         // Act
         await actions.AttachCurrentFromPoolAsync();
@@ -230,13 +256,32 @@ public class PlaybackPoolCommandActionsTests
     }
 
     [Fact]
+    public async Task AttachCurrentFromPoolAsync_WhenResolverNull_UsesCachedUrlAsUsedCached()
+    {
+        // Arrange
+        var oakLane = CreateOakLane("http://oak-lane.m3u8");
+        var (_, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
+            oakLane,
+            omitResolver: true);
+
+        // Act
+        await actions.AttachCurrentFromPoolAsync();
+
+        // Assert
+        Assert.Empty(resolved);
+        Assert.Equal(new[] { "http://oak-lane.m3u8" }, attaches);
+        Assert.Equal(new[] { true }, cachedFlags);
+        Assert.Empty(applies);
+    }
+
+    [Fact]
     public async Task RetryFreshResolveAsync_WhenResolverNull_NotifiesUnavailable()
     {
         // Arrange
         var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
         var session = new PlaybackSessionController();
         session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
-        var (_, actions, attaches, applies, _) = CreateSut(oakLane, session: session, omitResolver: true);
+        var (_, actions, attaches, applies, _, _) = CreateSut(oakLane, session: session, omitResolver: true);
 
         // Act
         await actions.RetryFreshResolveAsync();
@@ -264,7 +309,8 @@ public class PlaybackPoolCommandActionsTests
         PlaybackPoolCommandActions Actions,
         List<string> Attaches,
         List<PlaybackCommand> Applies,
-        List<string> ResolvedReferers)
+        List<string> ResolvedReferers,
+        List<bool> UsedCachedFlags)
         CreateSut(
             EnrichedStream current,
             EnrichedStream? extra = null,
@@ -285,6 +331,7 @@ public class PlaybackPoolCommandActionsTests
         var attaches = new List<string>();
         var applies = new List<PlaybackCommand>();
         var resolved = new List<string>();
+        var cachedFlags = new List<bool>();
 
         ResolveFreshPlaybackUrlAsync? resolve = omitResolver
             ? null
@@ -300,9 +347,13 @@ public class PlaybackPoolCommandActionsTests
             session,
             pool,
             resolve,
-            attachViaSession: (url, _, _) => attaches.Add(url),
+            attachViaSession: (url, usedCached, _) =>
+            {
+                attaches.Add(url);
+                cachedFlags.Add(usedCached);
+            },
             applyCommand: applies.Add);
 
-        return (pool, actions, attaches, applies, resolved);
+        return (pool, actions, attaches, applies, resolved, cachedFlags);
     }
 }

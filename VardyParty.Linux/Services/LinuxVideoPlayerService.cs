@@ -133,7 +133,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _session,
             _switching,
             resolveFresh,
-            AttachViaSession,
+            AttachPoolUrl,
             ApplyPlaybackCommand);
         _engine.EngineEvent += (_, engineEvent) => DispatchEngine(engineEvent);
         _engine.MetricsHandler = GetCurrentMetrics;
@@ -357,6 +357,28 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             var url = current?.ResolvedM3U8Url;
             if (string.IsNullOrWhiteSpace(url))
             {
+                return;
+            }
+
+            var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
+            if (plan.Kind == PlaybackSwitchKind.ResolveFresh)
+            {
+                // Make-before-break: LibVLC keeps the current stream while the one-shot
+                // row re-/plays (or takes its warm URL); failure puts the index back.
+                // No in-player overlay on Linux - status goes to the log.
+                _logger.LogInformation(
+                    "[LinuxVideoPlayerService] One-shot switch to {Channel} ({Reason})",
+                    current?.Stream?.Channel ?? "(unknown)",
+                    plan.Reason);
+                _ = _pool.SwitchToCurrentAsync(
+                    force: false,
+                    status => _logger.LogInformation("[LinuxVideoPlayerService] {Status}", status),
+                    revert =>
+                    {
+                        _suppressIndexDrivenSwitch = true;
+                        try { revert(); }
+                        finally { _suppressIndexDrivenSwitch = false; }
+                    });
                 return;
             }
 
@@ -802,12 +824,29 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
+            _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[LinuxVideoPlayerService] DispatchEngine failed ({Kind})", engineEvent.Kind);
         }
+    }
+
+    /// <summary>
+    /// Pool attaches (fresh /play, warm URL, retry) carry the row's new Referer/headers.
+    /// </summary>
+    private void AttachPoolUrl(string url, bool usedCachedUrl, bool force)
+    {
+        var current = _switching.GetCurrentStream();
+        if (current != null && string.Equals(current.ResolvedM3U8Url, url, StringComparison.OrdinalIgnoreCase))
+        {
+            _requestHeaders = current.RequestHeaders ?? _requestHeaders;
+            if (!string.IsNullOrWhiteSpace(current.Referer))
+                _refererUrl = current.Referer;
+        }
+
+        AttachViaSession(url, usedCachedUrl, force);
     }
 
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
@@ -847,7 +886,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream failed: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 error: reason);
@@ -857,7 +896,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogWarning("[LinuxVideoPlayerService] Stream declined: {Reason}", reason);
             _ = player._healthReporter.ReportPlaybackErrorAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 error: reason);
@@ -867,7 +906,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             player._logger.LogInformation("[LinuxVideoPlayerService] Stream established");
             _ = player._healthReporter.ReportPlaybackStartedAsync(
-                player._session.Snapshot.CurrentUrl,
+                player.CurrentHealthReportUrl(),
                 player._refererUrl,
                 player.CurrentHealthStreamName(),
                 metrics: player.GetCurrentMetrics());
@@ -884,7 +923,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             if (isBuffering)
             {
                 _ = player._healthReporter.ReportBufferingAsync(
-                    player._session.Snapshot.CurrentUrl,
+                    player.CurrentHealthReportUrl(),
                     player._refererUrl,
                     player.CurrentHealthStreamName(),
                     metrics: player.GetCurrentMetrics());
@@ -897,6 +936,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 player._logger.LogWarning("[LinuxVideoPlayerService] Reverting to last good stream: {Url}", url);
             _ = player._engine.AttachAsync(url, player._requestHeaders);
         }
+
+        public void RevertPoolIndexTo(string url) => player._pool.RevertIndexToPlayingUrl(url);
 
         public void AttachCurrentAfterRemove() => _ = player._pool.AttachCurrentFromPoolAsync();
 
@@ -1206,6 +1247,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             BufferingStateChanged?.Invoke(this, isBuffering);
         }
     }
+
+    /// <summary>Crowd-health key: the pool row's catalog URL, not the CDN embed referer.</summary>
+    private string? CurrentHealthReportUrl()
+        => StreamHealthIdentity.ResolvePlaybackReportIdentity(
+            _switching.GetCurrentStream(), _session.Snapshot.CurrentUrl, _refererUrl).StreamUrl;
 
     private string? CurrentHealthStreamName()
     {

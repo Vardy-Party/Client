@@ -1,19 +1,59 @@
 using System.Reactive.Subjects;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using VardyParty.Kernel;
 using VardyParty.Ports;
 
 namespace VardyParty.Playback;
 
-public class StreamSwitchingService : IStreamSwitchingService, IDisposable
+/// <summary>
+/// The healthy pool every platform player shows. Its order is the channel numbering
+/// (docs/STREAM_PLAYBACK_RULES.md "Stable channel numbering"): a stream gets the next
+/// number when it first becomes healthy (append), keeps it while the user cycles
+/// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
+/// later numbers down to close the gap. Merged duplicates never take a number; a
+/// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
+/// </summary>
+public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = null)
+    : IStreamSwitchingService, IDisposable
 {
+    private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
+
     private readonly List<EnrichedStream> _healthyStreams = new();
     private int _currentStreamIndex = -1;
     private string _league = string.Empty;
     private string _homeTeam = string.Empty;
     private string _awayTeam = string.Empty;
 
+    // Healthy-pool dedup (docs/STREAM_PLAYBACK_RULES.md "Healthy pool dedup"): one visible
+    // entry per m3u8 identity. The key is captured when a stream enters the pool because
+    // ResolvedM3U8Url is mutated afterwards (fresh one-shot /play, cleared on failure).
+    private readonly Dictionary<EnrichedStream, string> _identityKeys = new(ReferenceEqualityComparer.Instance);
+
+    // Merged duplicates per identity key. Never shown; promoted in place when the visible
+    // entry for that key fails (RemoveCurrentStream).
+    private readonly Dictionary<string, List<EnrichedStream>> _fallbacks = new(StringComparer.OrdinalIgnoreCase);
+
+    // Proven mirrors (docs "Proven mirrors"): a merged mirror's own identity key points at
+    // the visible entry's key, so later rows resolving to that mirror URL merge directly.
+    private readonly Dictionary<string, string> _mirrorKeyAliases = new(StringComparer.OrdinalIgnoreCase);
+
+    // Tried-this-cycle marks (docs "No loops"). A row that failed for a stream reason is
+    // skipped by Next/Previous/auto-advance until the TTL passes; a feed (m3u8 identity)
+    // that failed makes every row resolving to it skipped too. Marks never drop a row or
+    // change a number. With no active marks the original index arithmetic is unchanged.
+    private readonly Dictionary<EnrichedStream, (DateTimeOffset At, string Reason)> _triedRows = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, (DateTimeOffset At, string Reason)> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+    private Func<DateTimeOffset> _clock = static () => DateTimeOffset.UtcNow;
+
+    /// <summary>Test seam: the clock the tried-this-cycle TTL reads (a method so property-filling fixtures leave it alone).</summary>
+    public void SetClock(Func<DateTimeOffset> clock) => _clock = clock ?? (static () => DateTimeOffset.UtcNow);
+
     private static string BuildDedupKey(EnrichedStream stream) =>
-        StreamUrlNormalizer.NormalizeForDedup(stream.ResolvedM3U8Url);
+        StreamUrlNormalizer.M3u8IdentityKey(stream.ResolvedM3U8Url);
+
+    private static StreamReputation RankOf(EnrichedStream stream) =>
+        stream.Stream?.Reputation ?? StreamReputation.None;
 
     private readonly BehaviorSubject<IReadOnlyList<EnrichedStream>> _healthyStreamsSubject =
         new(new List<EnrichedStream>().AsReadOnly());
@@ -34,6 +74,11 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         _homeTeam = homeTeam;
         _awayTeam = awayTeam;
         _healthyStreams.Clear();
+        _identityKeys.Clear();
+        _fallbacks.Clear();
+        _mirrorKeyAliases.Clear();
+        _triedRows.Clear();
+        _failedFeeds.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -45,13 +90,49 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
     {
         lock (_healthyStreams)
         {
-            var incomingKey = BuildDedupKey(stream);
-            var duplicate = _healthyStreams.Any(existing =>
-                string.Equals(BuildDedupKey(existing), incomingKey, StringComparison.OrdinalIgnoreCase));
-
-            if (duplicate)
+            if (_healthyStreams.Any(existing => ReferenceEquals(existing, stream)))
             {
                 return;
+            }
+
+            // Empty key (no resolved URL) is never a dedup match - collapsing every
+            // keyless stream into one would hide distinct sources.
+            var incomingKey = BuildDedupKey(stream);
+            if (incomingKey.Length > 0)
+            {
+                var existingIndex = IndexOfKey(incomingKey);
+                if (existingIndex >= 0)
+                {
+                    MergeDuplicate(existingIndex, incomingKey, stream);
+                    return;
+                }
+
+                // Same URL as an already-proven mirror: merge into the entry it mirrors.
+                if (_mirrorKeyAliases.TryGetValue(incomingKey, out var aliasedKey))
+                {
+                    var aliasedIndex = IndexOfKey(aliasedKey);
+                    if (aliasedIndex >= 0)
+                    {
+                        MergeDuplicate(aliasedIndex, aliasedKey, stream);
+                        return;
+                    }
+
+                    _mirrorKeyAliases.Remove(incomingKey);
+                }
+
+                // Different URL, same media: only when the health check's segment clocks
+                // prove it (MirrorProofPolicy). Host-name similarity is never a reason.
+                if (TryFindProvenMirror(stream, out var mirrorIndex, out var mirrorKey, out var proof))
+                {
+                    _logger.LogInformation(
+                        "[Dedup] proven mirror: {Incoming} == {Existing} ({Proof})",
+                        Describe(stream), Describe(_healthyStreams[mirrorIndex]), proof.Reason);
+                    _mirrorKeyAliases[incomingKey] = mirrorKey;
+                    MergeDuplicate(mirrorIndex, mirrorKey, stream);
+                    return;
+                }
+
+                _identityKeys[stream] = incomingKey;
             }
 
             _healthyStreams.Add(stream);
@@ -75,11 +156,171 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         }
     }
 
+    private bool TryFindProvenMirror(
+        EnrichedStream incoming,
+        out int index,
+        out string key,
+        out MirrorProof proof)
+    {
+        index = -1;
+        key = string.Empty;
+        proof = MirrorProof.No("missing evidence");
+        var incomingEvidence = incoming.Health?.MirrorEvidence;
+        if (incomingEvidence is null)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < _healthyStreams.Count; i++)
+        {
+            var existing = _healthyStreams[i];
+            if (!_identityKeys.TryGetValue(existing, out var existingKey)
+                || existing.Health?.MirrorEvidence is not { } existingEvidence)
+            {
+                continue;
+            }
+
+            var candidate = MirrorProofPolicy.Evaluate(existingEvidence, incomingEvidence);
+            if (candidate.IsProven)
+            {
+                index = i;
+                key = existingKey;
+                proof = candidate;
+                return true;
+            }
+
+            _logger.LogDebug("[Dedup] not a proven mirror: {Incoming} vs {Existing} ({Reason})",
+                Describe(incoming), Describe(existing), candidate.Reason);
+        }
+
+        return false;
+    }
+
+    private static string Describe(EnrichedStream stream)
+    {
+        var label = stream.Stream?.Channel ?? "?";
+        var url = stream.ResolvedM3U8Url ?? string.Empty;
+        var cut = url.IndexOfAny(new[] { '?', '#' });
+        return $"{label} {(cut >= 0 ? url[..cut] : url)}";
+    }
+
+    private int IndexOfKey(string key)
+    {
+        for (var i = 0; i < _healthyStreams.Count; i++)
+        {
+            if (_identityKeys.TryGetValue(_healthyStreams[i], out var existingKey)
+                && string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Same media as a visible entry: keep the visible one (first healthy, catalog order)
+    /// unless the incoming one has a strictly higher reputation and the visible one is not
+    /// playing. The loser is kept as a hidden fallback for that key.
+    /// </summary>
+    private void MergeDuplicate(int existingIndex, string key, EnrichedStream incoming)
+    {
+        if (!_fallbacks.TryGetValue(key, out var alternates))
+        {
+            alternates = new List<EnrichedStream>();
+            _fallbacks[key] = alternates;
+        }
+
+        if (alternates.Any(a => ReferenceEquals(a, incoming)))
+        {
+            return;
+        }
+
+        var existing = _healthyStreams[existingIndex];
+        var outranks = existingIndex != _currentStreamIndex && RankOf(incoming) > RankOf(existing);
+        if (!outranks)
+        {
+            alternates.Add(incoming);
+            return;
+        }
+
+        _identityKeys.Remove(existing);
+        _identityKeys[incoming] = key;
+        _healthyStreams[existingIndex] = incoming;
+        alternates.Insert(0, existing);
+
+        _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+        _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+            GetCurrentStream(),
+            GetCurrentStreamIndex(),
+            _healthyStreams.Count));
+    }
+
+    /// <summary>Pops the best merged duplicate for <paramref name="failed"/>'s key, if any.</summary>
+    private bool TryTakeFallback(EnrichedStream failed, out EnrichedStream promoted)
+    {
+        promoted = null!;
+        if (!_identityKeys.TryGetValue(failed, out var key))
+        {
+            return false;
+        }
+
+        _identityKeys.Remove(failed);
+        if (!_fallbacks.TryGetValue(key, out var alternates) || alternates.Count == 0)
+        {
+            _fallbacks.Remove(key);
+            return false;
+        }
+
+        var best = 0;
+        for (var i = 1; i < alternates.Count; i++)
+        {
+            if (RankOf(alternates[i]) > RankOf(alternates[best]))
+            {
+                best = i;
+            }
+        }
+
+        promoted = alternates[best];
+        alternates.RemoveAt(best);
+        if (alternates.Count == 0)
+        {
+            _fallbacks.Remove(key);
+        }
+
+        _identityKeys[promoted] = key;
+        return true;
+    }
+
+    /// <summary>Hidden fallbacks merged into the visible entry (test/diagnostic seam).</summary>
+    public IReadOnlyList<EnrichedStream> GetMergedFallbacks(EnrichedStream visible)
+    {
+        lock (_healthyStreams)
+        {
+            return _identityKeys.TryGetValue(visible, out var key)
+                   && _fallbacks.TryGetValue(key, out var alternates)
+                ? alternates.ToList().AsReadOnly()
+                : Array.Empty<EnrichedStream>();
+        }
+    }
+
     public bool SwitchToNextStream()
     {
         lock (_healthyStreams)
         {
             if (_healthyStreams.Count == 0) return false;
+
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                if (untried < 0)
+                {
+                    _logger.LogInformation("[Cycle] Next: no untried stream (all others failed this cycle)");
+                    return false;
+                }
+
+                return SwitchToStream(untried);
+            }
 
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return SwitchToStream(nextIndex);
@@ -91,6 +332,18 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             if (_healthyStreams.Count == 0) return false;
+
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(-1);
+                if (untried < 0)
+                {
+                    _logger.LogInformation("[Cycle] Previous: no untried stream (all others failed this cycle)");
+                    return false;
+                }
+
+                return SwitchToStream(untried);
+            }
 
             int prevIndex = (_currentStreamIndex - 1 + _healthyStreams.Count) % _healthyStreams.Count;
             return SwitchToStream(prevIndex);
@@ -140,6 +393,12 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
             if (_healthyStreams.Count == 0)
                 return null;
 
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                return untried >= 0 ? _healthyStreams[untried] : null;
+            }
+
             // Get the next stream without switching to it
             int nextIndex = (_currentStreamIndex + 1) % _healthyStreams.Count;
             return nextIndex < _healthyStreams.Count ? _healthyStreams[nextIndex] : null;
@@ -155,53 +414,13 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 return false;
             }
 
+            if (AnySkippedRow())
+            {
+                var untried = FindUntried(+1);
+                return untried >= 0 && untried <= _currentStreamIndex;
+            }
+
             return ((_currentStreamIndex + 1) % _healthyStreams.Count) == 0;
-        }
-    }
-
-    public void ReorderHealthyStreams(IReadOnlyList<EnrichedStream> preferredFirst)
-    {
-        lock (_healthyStreams)
-        {
-            if (_healthyStreams.Count <= 1 || preferredFirst.Count == 0)
-            {
-                return;
-            }
-
-            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
-                ? _healthyStreams[_currentStreamIndex]
-                : null;
-
-            var seen = new HashSet<EnrichedStream>();
-            var reordered = new List<EnrichedStream>(_healthyStreams.Count);
-            foreach (var preferred in preferredFirst)
-            {
-                if (_healthyStreams.Contains(preferred) && seen.Add(preferred))
-                {
-                    reordered.Add(preferred);
-                }
-            }
-
-            foreach (var existing in _healthyStreams)
-            {
-                if (seen.Add(existing))
-                {
-                    reordered.Add(existing);
-                }
-            }
-
-            _healthyStreams.Clear();
-            _healthyStreams.AddRange(reordered);
-            if (current != null)
-            {
-                _currentStreamIndex = _healthyStreams.IndexOf(current);
-            }
-
-            _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
-            _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
-                GetCurrentStream(),
-                GetCurrentStreamIndex(),
-                _healthyStreams.Count));
         }
     }
 
@@ -214,6 +433,16 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
                 if (MatchesCatalogIdentity(_healthyStreams[i].Stream, streamUrl, streamName))
                 {
                     return SwitchToStream(i);
+                }
+            }
+
+            // The chip may name a source merged into another entry (same m3u8).
+            foreach (var (key, alternates) in _fallbacks)
+            {
+                if (alternates.Any(a => MatchesCatalogIdentity(a.Stream, streamUrl, streamName)))
+                {
+                    var index = IndexOfKey(key);
+                    return index >= 0 && SwitchToStream(index);
                 }
             }
 
@@ -262,6 +491,11 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             _healthyStreams.Clear();
+            _identityKeys.Clear();
+            _fallbacks.Clear();
+            _mirrorKeyAliases.Clear();
+            _triedRows.Clear();
+            _failedFeeds.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
@@ -276,6 +510,21 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
         lock (_healthyStreams)
         {
             if (_currentStreamIndex < 0 || _currentStreamIndex >= _healthyStreams.Count) return false;
+
+            // Same media from another source page: swap it in at the same index rather
+            // than shrinking the pool (each source gets its own fresh /play token).
+            if (TryTakeFallback(_healthyStreams[_currentStreamIndex], out var promoted))
+            {
+                _healthyStreams[_currentStreamIndex] = promoted;
+                _currentIndexSubject.OnNext(_currentStreamIndex);
+                _currentStreamSubject.OnNext(promoted);
+                _healthyStreamsSubject.OnNext(_healthyStreams.AsReadOnly());
+                _overlayInfoSubject.OnNext(PlayerOverlayFormatter.BuildOverlayInfo(
+                    promoted,
+                    GetCurrentStreamIndex(),
+                    _healthyStreams.Count));
+                return true;
+            }
 
             _healthyStreams.RemoveAt(_currentStreamIndex);
 
@@ -304,6 +553,210 @@ public class StreamSwitchingService : IStreamSwitchingService, IDisposable
 
             return true;
         }
+    }
+
+    // ---- Tried-this-cycle (docs/STREAM_PLAYBACK_RULES.md "No loops") ----
+
+    public void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason)
+    {
+        lock (_healthyStreams)
+        {
+            var now = _clock();
+            if (row is not null)
+            {
+                _triedRows[row] = (now, reason);
+            }
+
+            var feedKey = StreamUrlNormalizer.M3u8IdentityKey(feedUrl);
+            if (feedKey.Length > 0)
+            {
+                _failedFeeds[feedKey] = (now, reason);
+                if (row is not null && _identityKeys.TryGetValue(row, out var rowKey) && rowKey.Length > 0)
+                {
+                    _failedFeeds[rowKey] = (now, reason);
+                }
+            }
+
+            _logger.LogInformation("[Cycle] tried+failed: {Row} feed={Feed} ({Reason})",
+                row is null ? "?" : Describe(row), feedKey.Length > 0, reason);
+        }
+    }
+
+    public void ClearTriedInCycle(EnrichedStream? row, string? feedUrl)
+    {
+        lock (_healthyStreams)
+        {
+            if (row is not null)
+            {
+                _triedRows.Remove(row);
+                if (_identityKeys.TryGetValue(row, out var rowKey))
+                {
+                    _failedFeeds.Remove(rowKey);
+                }
+            }
+
+            var feedKey = StreamUrlNormalizer.M3u8IdentityKey(feedUrl);
+            if (feedKey.Length > 0)
+            {
+                _failedFeeds.Remove(feedKey);
+            }
+        }
+    }
+
+    public bool IsSkippedInCycle(EnrichedStream? row)
+    {
+        lock (_healthyStreams)
+        {
+            return row is not null && IsRowSkipped(row);
+        }
+    }
+
+    public string? FailedFeedReason(string? feedUrl)
+    {
+        lock (_healthyStreams)
+        {
+            return TryGetFailedFeed(StreamUrlNormalizer.M3u8IdentityKey(feedUrl), out var reason) ? reason : null;
+        }
+    }
+
+    public bool HasUntriedOther()
+    {
+        lock (_healthyStreams)
+        {
+            for (var i = 0; i < _healthyStreams.Count; i++)
+            {
+                if (i != _currentStreamIndex && !IsRowSkipped(_healthyStreams[i]))
+                {
+                    return true;
+                }
+            }
+
+            // Hidden fallbacks for the current entry (promoted in place on removal) are
+            // untried only while that feed has not failed.
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+            return current is not null
+                   && _identityKeys.TryGetValue(current, out var key)
+                   && _fallbacks.TryGetValue(key, out var alternates)
+                   && alternates.Count > 0
+                   && !TryGetFailedFeed(key, out _);
+        }
+    }
+
+    private bool AnySkippedRow()
+    {
+        if (_triedRows.Count == 0 && _failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var row in _healthyStreams)
+        {
+            if (IsRowSkipped(row))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>First unskipped index walking <paramref name="step"/> from current, never current itself; -1 when none.</summary>
+    private int FindUntried(int step)
+    {
+        var count = _healthyStreams.Count;
+        var start = _currentStreamIndex < 0 ? (step > 0 ? -1 : count) : _currentStreamIndex;
+        for (var k = 1; k <= count; k++)
+        {
+            var i = ((start + (step * k)) % count + count) % count;
+            if (i == _currentStreamIndex)
+            {
+                continue;
+            }
+
+            if (!IsRowSkipped(_healthyStreams[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private bool IsRowSkipped(EnrichedStream row)
+    {
+        if (_triedRows.TryGetValue(row, out var mark))
+        {
+            if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)
+            {
+                return true;
+            }
+
+            _triedRows.Remove(row);
+        }
+
+        if (_failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        if (_identityKeys.TryGetValue(row, out var key) && TryGetFailedFeed(key, out _))
+        {
+            return true;
+        }
+
+        var resolvedKey = BuildDedupKey(row);
+        return resolvedKey.Length > 0 && TryGetFailedFeed(resolvedKey, out _);
+    }
+
+    /// <summary>The feed <paramref name="key"/> failed this cycle, directly or through a proven-mirror alias.</summary>
+    private bool TryGetFailedFeed(string key, out string reason)
+    {
+        reason = string.Empty;
+        if (key.Length == 0 || _failedFeeds.Count == 0)
+        {
+            return false;
+        }
+
+        if (IsLiveFailedFeed(key, out reason))
+        {
+            return true;
+        }
+
+        if (_mirrorKeyAliases.TryGetValue(key, out var target) && IsLiveFailedFeed(target, out reason))
+        {
+            return true;
+        }
+
+        foreach (var (alias, aliasTarget) in _mirrorKeyAliases)
+        {
+            if (string.Equals(aliasTarget, key, StringComparison.OrdinalIgnoreCase)
+                && IsLiveFailedFeed(alias, out reason))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsLiveFailedFeed(string key, out string reason)
+    {
+        reason = string.Empty;
+        if (!_failedFeeds.TryGetValue(key, out var mark))
+        {
+            return false;
+        }
+
+        if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)
+        {
+            reason = mark.Reason;
+            return true;
+        }
+
+        _failedFeeds.Remove(key);
+        return false;
     }
 
     public void Dispose()

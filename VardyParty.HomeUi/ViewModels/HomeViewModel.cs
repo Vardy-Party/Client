@@ -346,8 +346,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Settings: DNS over HTTPS fallback (default ON). When system DNS cannot
-    /// resolve a host, Cloudflare 1.1.1.1 is tried.
+    /// Settings: DNS over HTTPS (default ON). Prefer Cloudflare 1.1.1.1 for
+    /// internet lookups; fall back to system DNS if DoH misses.
     /// </summary>
     public bool DnsOverHttpsFallbackEnabled
     {

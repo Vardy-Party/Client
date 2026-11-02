@@ -4,4 +4,7 @@
     <ProjectReference Include="..\..\VardyParty.Ports\VardyParty.Ports.csproj" />
     <ProjectReference Include="..\..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Fixtures\*.bin" />
+  </ItemGroup>
 </Project>

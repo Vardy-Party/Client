@@ -41,8 +41,10 @@ namespace VardyParty.Platforms.Android
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
                     Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
-                    BitrateKbps = current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                    Resolution = current.Stream?.Resolution ?? current.Health?.Resolution,
+                    BitrateKbps = _transferMeter.BitrateKbps ?? current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
+                    Resolution = _videoWidth is > 0 && _videoHeight is > 0
+                        ? $"{_videoWidth}x{_videoHeight}"
+                        : current.Stream?.Resolution ?? current.Health?.Resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
                     BufferPercent = _player?.BufferedPercentage,
@@ -108,30 +110,20 @@ namespace VardyParty.Platforms.Android
                 var current = _switching?.GetCurrentStream();
                 if (current != null)
                 {
-                    qualityLabel = current.GetQualityDisplay();
+                    qualityLabel = PlayerChromeText.FormatMeasuredQuality(
+                        info.Resolution,
+                        info.BitrateKbps,
+                        current.GetQualityDisplay());
                 }
             }
             catch (Exception ex) { LogIgnored("GetQualityDisplay", ex); }
 
-            var resolution = info.Resolution ?? string.Empty;
             var aspectRatio = info.AspectRatio ?? string.Empty;
-            var br = info.BitrateKbps.HasValue ? $"{info.BitrateKbps} kbps" : string.Empty;
-            var fr = info.FrameRate.HasValue ? $"{info.FrameRate:0.##} fps" : string.Empty;
             var buf = info.BufferPercent.HasValue ? $"Buffer {info.BufferPercent}%" : string.Empty;
             var m3u8 = info.M3u8Url ?? string.Empty;
             var referer = info.RefererUrl ?? string.Empty;
             if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {PlayerOverlayFormatter.StripQuery(m3u8)}";
             if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {PlayerOverlayFormatter.RefererHost(referer)}";
-            // If video surface size is available, include resolution/framerate placeholder
-            var resDetails = string.Empty;
-            try
-            {
-                if (_videoWidth.HasValue && _videoHeight.HasValue)
-                {
-                    resDetails = $"{_videoWidth}x{_videoHeight}";
-                }
-            }
-            catch (Exception ex) { LogIgnored("ReadVideoSize", ex); }
 
             if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channelFallback);
             if (_statusView != null) _statusView.Text = statusLine;
@@ -142,20 +134,7 @@ namespace VardyParty.Platforms.Android
             var lines = new List<string>();
             if (!string.IsNullOrWhiteSpace(chip))
                 lines.Add($"Channel: {chip}");
-            var resLine = string.Empty;
-            if (!string.IsNullOrEmpty(resDetails) || !string.IsNullOrEmpty(resolution))
-            {
-                // Frame rate appears after an @ symbol following resolution
-                if (!string.IsNullOrEmpty(fr) && !string.IsNullOrEmpty(resolution))
-                    resLine = $"{resolution} @ {info.FrameRate:0.##} fps";
-                else if (!string.IsNullOrEmpty(resolution))
-                    resLine = resolution;
-                else if (!string.IsNullOrEmpty(resDetails))
-                    resLine = resDetails;
-            }
-            if (!string.IsNullOrEmpty(resLine)) lines.Add(resLine);
             if (!string.IsNullOrEmpty(aspectRatio)) lines.Add($"Aspect ratio: {aspectRatio}");
-            if (!string.IsNullOrEmpty(br)) lines.Add(br);
             if (!string.IsNullOrEmpty(buf)) lines.Add(buf);
 
             // Codec line
@@ -201,6 +180,8 @@ namespace VardyParty.Platforms.Android
             {
                 var indicator = _bufferingIndicator;
                 if (indicator == null) return;
+                if (_anticipatingToken)
+                    show = false;
                 var visibility = show ? global::Android.Views.ViewStates.Visible : global::Android.Views.ViewStates.Gone;
                 RunOnUiThread(() => indicator.Visibility = visibility);
             }

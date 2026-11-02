@@ -154,7 +154,7 @@ public class LocalServiceEndpointCacheTests
     }
 
     [Fact]
-    public void SuccessTtl_ExpiresAt120Seconds()
+    public async Task SuccessTtl_ExpiresAt120Seconds_ThenServesLastGoodWhileReprobing()
     {
         var cache = new LocalServiceEndpointCache(SuccessTtl, FailureBackoff);
         var now = DateTimeOffset.UtcNow;
@@ -164,7 +164,62 @@ public class LocalServiceEndpointCacheTests
         Assert.Equal(EndpointLookupKind.Cached, fresh.Kind);
         Assert.Equal("http://10.0.0.2:5070", fresh.Url);
 
-        var expired = cache.LookupOrJoin(now.AddSeconds(121), () => Task.FromResult<string?>("http://10.1.1.1:1"));
-        Assert.Equal(EndpointLookupKind.InFlight, expired.Kind);
+        var probed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expired = cache.LookupOrJoin(now.AddSeconds(121), () =>
+        {
+            probed.TrySetResult();
+            return release.Task.ContinueWith(_ => (string?)"http://10.1.1.1:1");
+        });
+
+        // Stale-while-revalidate: the caller keeps the known-good endpoint and a
+        // background probe runs.
+        Assert.Equal(EndpointLookupKind.Stale, expired.Kind);
+        Assert.Equal("http://10.0.0.2:5070", expired.Url);
+        await probed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // When the probe finds the service moved, the new endpoint wins.
+        release.TrySetResult();
+        for (var i = 0; i < 50 && cache.LastGood != "http://10.1.1.1:1"; i++)
+            await Task.Delay(10);
+        Assert.Equal("http://10.1.1.1:1", cache.LastGood);
+    }
+
+    [Fact]
+    public async Task FailedReprobe_KeepsLastGood_InsteadOfForgettingTheService()
+    {
+        var cache = new LocalServiceEndpointCache(SuccessTtl, FailureBackoff);
+        var now = DateTimeOffset.UtcNow;
+        cache.Remember("http://10.0.0.2:5070", now);
+        var probed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var stale = cache.LookupOrJoin(now.AddSeconds(121), () =>
+        {
+            probed.TrySetResult();
+            return Task.FromResult<string?>(null);
+        });
+        await probed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(50);
+
+        Assert.Equal(EndpointLookupKind.Stale, stale.Kind);
+        Assert.Equal("http://10.0.0.2:5070", cache.LastGood);
+        var again = cache.LookupOrJoin(now.AddSeconds(122), () => throw new InvalidOperationException("backoff must hold"));
+        Assert.Equal(EndpointLookupKind.Stale, again.Kind);
+        Assert.Equal("http://10.0.0.2:5070", again.Url);
+    }
+
+    [Fact]
+    public void Invalidate_ForgetsLastGood()
+    {
+        var cache = new LocalServiceEndpointCache(SuccessTtl, FailureBackoff);
+        var now = DateTimeOffset.UtcNow;
+        cache.Remember("http://10.0.0.2:5070", now);
+
+        cache.Invalidate();
+
+        Assert.Null(cache.LastGood);
+        Assert.False(cache.HasFresh(now));
+        var lookup = cache.LookupOrJoin(now, () => Task.FromResult<string?>(null));
+        Assert.Equal(EndpointLookupKind.InFlight, lookup.Kind);
     }
 }

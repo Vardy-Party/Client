@@ -48,7 +48,19 @@ namespace VardyParty.Platforms.Android
             _engine.AttachHandler = (url, requestHeaders, _) =>
             {
                 if (requestHeaders is { Count: > 0 })
+                {
                     _requestHeaders = requestHeaders;
+                    foreach (var pair in requestHeaders)
+                    {
+                        if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(pair.Value))
+                        {
+                            _refererUrl = pair.Value;
+                            break;
+                        }
+                    }
+                }
+
                 AttachEngine(url);
                 return Task.CompletedTask;
             };
@@ -239,6 +251,8 @@ namespace VardyParty.Platforms.Android
         private string? _gameTitle;
         private bool _suppressOverlayShow;
         private int? _videoWidth;
+        private readonly PlaybackTransferMeter _transferMeter = new();
+        private bool _anticipatingToken;
         private int? _videoHeight;
         private string _m3u8Url = string.Empty;
         private string? _refererUrl;
@@ -341,6 +355,7 @@ namespace VardyParty.Platforms.Android
             _player = new ExoPlayerBuilder(this)
                 .SetLoadControl(loadControl)!
                 .Build()!;
+            PlaybackRecoverySignals.PlayingTokenReady += OnPlayingTokenReady;
             _playerView = new PlayerView(this) { Player = _player };
             _playerListener = new InternalPlayerListener(this);
             // disable built-in controller (remove play/prev/next/seek UI)
@@ -818,34 +833,206 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private int _switchAttachGeneration;
+        private CancellationTokenSource? _attachLifetimeCts;
+
         private void TrySwitchToCurrentStream()
         {
+            if (_suppressIndexDrivenSwitch)
+                return;
+
+            var current = _switching?.GetCurrentStream();
+            if (current is null)
+                return;
+
+            // FB soak tokens are one-shot — never hand ExoPlayer the find-phase URL.
+            // Row already on screen (e.g. index put back after a failed switch):
+            // never re-/play the stream being left.
+            if (!string.IsNullOrWhiteSpace(current.ResolvedM3U8Url)
+                && string.Equals(_m3u8Url, current.ResolvedM3U8Url, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
+            _logger?.LogInformation(
+                "[NativeVideoActivity] Switch plan for {Channel}: {Plan} ({Reason})",
+                current.Stream?.Channel ?? "(null)",
+                plan.Kind,
+                plan.Reason);
+            if (plan.Kind == PlaybackSwitchKind.ResolveFresh)
+            {
+                var gen = Interlocked.Increment(ref _switchAttachGeneration);
+                var token = ReplaceAttachLifetimeToken();
+                _ = AttachOneShotFreshAsync(current, gen, token);
+                return;
+            }
+
             try
             {
-                if (_suppressIndexDrivenSwitch)
-                {
-                    return;
-                }
-
-                var current = _switching?.GetCurrentStream();
-                var url = current?.ResolvedM3U8Url;
+                var url = current.ResolvedM3U8Url;
                 if (string.IsNullOrWhiteSpace(url))
                 {
+                    // Index already advanced in the overlay; without a URL the
+                    // ExoPlayer keeps the previous stream (often V2) — revert so
+                    // the badge matches what is actually playing.
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Current stream has no ResolvedM3U8Url — reverting index (was showing {Channel})",
+                        current.Stream?.Channel ?? "(null)");
+                    RevertIndexToPlaying();
                     return;
                 }
 
                 if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                // Rule 3 (docs "No loops"): same feed as a failed or the playing stream - skip it.
+                if (_pool?.DuplicateFeedReason(current, url, _m3u8Url) is { } dupCached)
                 {
+                    _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupCached);
+                    _pool.SkipDuplicateTarget(current, dupCached, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
                     return;
                 }
 
-                _logger?.LogInformation("[NativeVideoActivity] Switching player to current stream URL {Url}", url);
+                ApplySoakHeadersFromStream(current);
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Switching player to current stream URL {Url} Referer={Referer}",
+                    url,
+                    _refererUrl ?? "(none)");
                 AttachViaSession(url, usedCachedUrl: true);
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed switching to current stream URL");
             }
+        }
+
+        private async Task AttachOneShotFreshAsync(
+            EnrichedStream current,
+            int generation,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (_resolveFresh is null)
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] One-shot stream {Channel} needs fresh /play but resolveFresh is null",
+                        current.Stream?.Channel ?? "(null)");
+                    return;
+                }
+
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
+                    current.Stream?.Channel ?? "(null)");
+                // Make-before-break: ExoPlayer keeps playing the current stream while
+                // /play (or the warm pre-resolve) runs; only the overlay changes.
+                var playingUrl = _m3u8Url;
+                var playing = _pool?.FindPlayingRow(playingUrl, current);
+                ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchPendingText(current.Stream?.Channel));
+                string? url;
+                try
+                {
+                    url = await _resolveFresh(current, cancellationToken).ConfigureAwait(false);
+                }
+                catch (VardyParty.Kernel.InfrastructureUnavailableException ex)
+                {
+                    // The local service gave no verdict: same as "no URL" below - stay on
+                    // the playing row, put the index back. Nothing is reported or removed.
+                    _logger?.LogWarning("[NativeVideoActivity] Fresh /play for {Channel} deferred - local service unavailable: {Message}",
+                        current.Stream?.Channel ?? "(null)", ex.Message);
+                    url = null;
+                }
+                if (cancellationToken.IsCancellationRequested
+                    || generation != Volatile.Read(ref _switchAttachGeneration))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(url) && playing != null)
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} - staying on {Playing}",
+                        current.Stream?.Channel ?? "(null)",
+                        playing.Stream?.Channel ?? "(null)");
+                    ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
+                    RunOnUiThread(() =>
+                    {
+                        // TrySwitchToCurrentStream ignores the row that is already playing,
+                        // so moving the index back does not re-/play it.
+                        var healthy = _switching?.GetHealthyStreams();
+                        if (healthy == null || !ReferenceEquals(_switching?.GetCurrentStream(), current))
+                            return;
+                        for (var i = 0; i < healthy.Count; i++)
+                        {
+                            if (ReferenceEquals(healthy[i], playing))
+                            {
+                                _switching?.SwitchToStream(i);
+                                return;
+                            }
+                        }
+                    });
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} — reverting index",
+                        current.Stream?.Channel ?? "(null)");
+                    RunOnUiThread(RevertIndexToPlaying);
+                    return;
+                }
+
+                if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                RunOnUiThread(() =>
+                {
+                    if (cancellationToken.IsCancellationRequested
+                        || generation != Volatile.Read(ref _switchAttachGeneration))
+                        return;
+                    if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
+                        return;
+
+                    // Rule 3 (docs "No loops"): the fresh URL is a feed that failed this
+                    // cycle, or the one already playing - skip it, inherit its status.
+                    if (_pool?.DuplicateFeedReason(current, url, _m3u8Url) is { } dupFresh)
+                    {
+                        _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupFresh);
+                        _pool.SkipDuplicateTarget(current, dupFresh, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                        return;
+                    }
+
+                    ApplySoakHeadersFromStream(current);
+                    _logger?.LogInformation(
+                        "[NativeVideoActivity] Switching player to fresh one-shot URL {Url} Referer={Referer}",
+                        url,
+                        _refererUrl ?? "(none)");
+                    AttachViaSession(url, usedCachedUrl: false);
+                });
+            }
+            catch (System.OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[NativeVideoActivity] Fresh one-shot /play failed for {Channel}",
+                    current.Stream?.Channel ?? "(null)");
+            }
+        }
+
+        private CancellationToken ReplaceAttachLifetimeToken()
+        {
+            CancelAttachLifetime();
+            var cts = new CancellationTokenSource();
+            _attachLifetimeCts = cts;
+            return cts.Token;
+        }
+
+        private void CancelAttachLifetime()
+        {
+            var cts = Interlocked.Exchange(ref _attachLifetimeCts, null);
+            if (cts is null)
+                return;
+            try { cts.Cancel(); } catch { }
+            try { cts.Dispose(); } catch { }
         }
 
         public void SwitchToStreamUrl(string m3u8Url) => AttachViaSession(m3u8Url, usedCachedUrl: true);
@@ -926,7 +1113,10 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
+                PlaybackRecoverySignals.PlayingTokenReady -= OnPlayingTokenReady;
+                PlayingPlaylistRedirect.Clear();
                 BeginClosing();
+                CancelAttachLifetime();
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
@@ -1301,8 +1491,9 @@ namespace VardyParty.Platforms.Android
                         metrics.IsBuffering = true;
                     }
 
+                    var (reportUrl, reportName) = CurrentHealthIdentity();
                     await _healthReporter.ReportPlaybackMetricsAsync(
-                        _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                        reportUrl, _refererUrl, reportName, metrics: metrics);
 
                     var generation = CurrentAttachGeneration;
                     var bitrate = metrics.BitrateKbps;
@@ -1323,8 +1514,9 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics();
+                var (reportUrl, reportName) = CurrentHealthIdentity();
                 _ = _healthReporter.ReportPlaybackStartedAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                    reportUrl, _refererUrl, reportName, metrics: metrics);
             }
             catch (Exception ex)
             {
@@ -1408,8 +1600,11 @@ namespace VardyParty.Platforms.Android
                     // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
                     if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
                         _activity._behindLiveWindowRecoveries = 0;
+                    _activity._anticipatingToken = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
+                    // Ready is not "working" on Android until a picture shows (audio-only HLS is READY too).
+                    _activity.ProbeVideo();
                     // Don't report yet - wait for OnTracksChanged to extract real metadata
                     _activity.StartHealthReporting();
                     // Update overlay UI now that player is ready
@@ -1468,7 +1663,21 @@ namespace VardyParty.Platforms.Android
                 }
             }
 
-            public void OnVideoSizeChanged(VideoSize? videoSize) { }
+            public void OnVideoSizeChanged(VideoSize? videoSize)
+            {
+                // A real picture size means the stream has video (docs "Audio-only streams").
+                try
+                {
+                    if (videoSize is { Width: > 0, Height: > 0 })
+                    {
+                        _activity._videoWidth = videoSize.Width;
+                        _activity._videoHeight = videoSize.Height;
+                        _activity.NoteVideoSeen("size " + videoSize.Width + "x" + videoSize.Height);
+                        _activity.RunOnUiThread(_activity.UpdateOverlayFromCurrentStream);
+                    }
+                }
+                catch (Exception ex) { _activity.LogIgnored("OnVideoSizeChanged", ex); }
+            }
             public void OnIsLoadingChanged(bool isLoading)
             {
                 // isLoading only means "fetching more media" (true for much of a healthy HLS stream, including
@@ -1499,7 +1708,9 @@ namespace VardyParty.Platforms.Android
                     if (_activity.TryRecoverBehindLiveWindow(error))
                         return;
 
-                    var message = error.Message ?? "Playback error";
+                    var message = BuildEngineErrorMessage(error);
+                    _activity._logger?.LogWarning("[NativeVideoActivity] Player error: {Message}", message);
+                    _activity._anticipatingToken = false;
                     _activity._playerFaulted = true;
                     _activity._isPreparing = false;
                     _activity.RefreshPlaybackStatus();
@@ -1515,7 +1726,11 @@ namespace VardyParty.Platforms.Android
                 _activity._statusTracker.Reset();
                 _activity.RefreshPlaybackStatus();
             }
-            public void OnRenderedFirstFrame() { }
+            public void OnRenderedFirstFrame()
+            {
+                try { _activity.NoteVideoSeen("first frame"); }
+                catch (Exception ex) { _activity.LogIgnored("OnRenderedFirstFrame", ex); }
+            }
             public void OnRepeatModeChanged(int repeatMode) { }
             public void OnSeekBackIncrementChanged(long seekBackIncrementMs) { }
             public void OnSeekForwardIncrementChanged(long seekForwardIncrementMs) { }

@@ -2,9 +2,16 @@
 
 ## GitHub identity for this repo
 
-Use **`GH_TOKEN`** as the `gh` identity for pull requests and other GitHub API
-work on this repository. Do not use the default Cursor `gh` account; it is not
-a collaborator here.
+**Before any `git` push/fetch/pull or `gh` against this repo**, Read and follow
+the personal skill `github-noninteractive-auth`
+(`C:\Users\jonbr\.cursor\skills\github-noninteractive-auth\SKILL.md`). Never
+trigger Git Credential Manager (popups do not name the repo/agent). Never
+`gh auth switch`. Resolve the Vardy-Party token in-process only; clear it after.
+
+Use **`GH_TOKEN`** (Vardy-Party PAT / `gh auth token --user Vardy-Party`) as the
+`gh` identity for pull requests and other GitHub API work on this repository.
+Do not use the default Cursor `gh` account or another owner’s leftover
+`$env:GH_TOKEN`; those are not collaborators here.
 
 | Secret | Purpose | Scopes |
 | --- | --- | --- |

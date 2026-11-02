@@ -16,10 +16,60 @@ public class StreamResolutionOrchestrator(
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
-    ILocalLanPlayService? localLanPlayService = null,
-    IRemoteComputeKeepAlive? keepAlive = null) : IStreamResolutionOrchestrator
+    // Nullable deps stay optional at the type level for hosts that omit them, but they
+    // must not use C# default-parameter sugar: AutoFixture skips those and leaves nulls,
+    // which silently disables the startup race and one-shot Kick path in unit tests.
+    ILocalLanPlayService? localLanPlayService,
+    IRemoteComputeKeepAlive? keepAlive,
+    WarmPlaybackUrlCache? warmUrls,
+    IUpcomingStreamPrewarmer? prewarmer,
+    ResolverRaceThrottle? raceThrottle,
+    IRacePlaylistProbe? playlistProbe) : IStreamResolutionOrchestrator
 {
     private static readonly TimeSpan PlaybackHealthInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Waits before each re-queue pass over rows the resolver deferred because
+    /// the local service was unavailable. Deferred rows are never reported or
+    /// dropped; they get these extra passes after the main sweep.
+    /// </summary>
+    internal static readonly TimeSpan[] DeferredRequeueDelays = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)];
+
+    /// <summary>Test seam for the re-queue waits.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>Test seam for the CDN-unreachable recheck waits (2 min, 5 min, then 10 min).</summary>
+    internal Func<TimeSpan, CancellationToken, Task> CdnRecheckDelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>
+    /// How long a fresh start looks for a second row already in the pool before
+    /// racing alone. Tests stretch it; production stays at a millisecond.
+    /// </summary>
+    internal Func<CancellationToken, Task> PartnerLookoutAsync { get; set; }
+        = static ct => Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+
+    /// <summary>Test seam for the clock that decides whether the game is still live for rechecks.</summary>
+    internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+
+    /// <summary>Rows whose race <c>/play</c> this orchestrator marked in-flight, so a late leg is ended once.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _raceInFlight =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Race winner that must not be <see cref="WarmPlaybackUrlCache.PutUntil"/>'d — the
+    /// losing URL is kept warm (STREAM_PLAYBACK_RULES startup race rule 5). Set for the
+    /// duration of a race so a late-finishing loser still warms; cleared when the next
+    /// race starts.
+    /// </summary>
+    private EnrichedStream? _raceWarmExclude;
+
+    /// <summary>
+    /// Rows that just won a startup race with <see cref="EnrichedStreamM3U8Apply"/> —
+    /// <see cref="PlayStreamAsync"/> plays that URL once without a second <c>/play</c>,
+    /// even when remaining token life is under <see cref="PlaybackUrlReusePolicy.MinComfortableLife"/>.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _racePlayReady =
+        new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
@@ -173,30 +223,73 @@ public class StreamResolutionOrchestrator(
         // showing the "Finding streams" modal for as long as the remaining candidates took to test.
         using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        // A first play that fails (an empty /play, a start that never established)
+        // moves straight on to the next pool row inside RunPlaybackChainAsync. When
+        // the pool is empty it sets this flag, and the next healthy row to join the
+        // pool starts playback at once - the "Finding streams... N healthy" dialog
+        // no longer waits for the whole sweep to finish. The lock pairs the pool add
+        // with the flag check so a row is never added between "pool empty" and
+        // "flag set" without starting playback.
+        var playbackLock = new object();
+        var awaitingPlayableRow = false;
+
+        void StartPlaybackChain(EnrichedStream first)
+        {
+            playbackTask = RunPlaybackChainAsync(
+                game,
+                first,
+                launcher,
+                () => awaitingPlayableRow = true,
+                playbackLock,
+                cancellationToken);
+            _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
+        }
+
         void FlushReadyForPlayback()
         {
             var frontier = 0;
             while (frontier < orderedStreams.Count && resolvedCatalog.Contains(frontier))
                 frontier++;
 
+            // Catalog rows stay held until the frontier passes (first play follows
+            // catalog order). MP chip siblings use nextExtraIndex (>= catalog
+            // count); holding them until every catalog row finishes left the UI
+            // on one V2 stream while /mp had already harvested the rest.
             var ready = heldHealthy
-                .Where(pair => pair.Key < frontier || frontier >= orderedStreams.Count)
+                .Where(pair =>
+                    pair.Key < frontier
+                    || frontier >= orderedStreams.Count
+                    || (pair.Key >= orderedStreams.Count && hasPlayedFirstStream))
                 .Select(pair => pair.Key)
                 .ToList();
             foreach (var index in ready)
             {
                 var readyStream = heldHealthy[index];
                 heldHealthy.Remove(index);
-                streamSwitchingService.AddHealthyStream(readyStream);
+                EnrichedStream? startOn = null;
+                lock (playbackLock)
+                {
+                    streamSwitchingService.AddHealthyStream(readyStream);
+                    if (!hasPlayedFirstStream)
+                    {
+                        hasPlayedFirstStream = true;
+                        startOn = readyStream;
+                    }
+                    else if (awaitingPlayableRow)
+                    {
+                        // Every earlier row failed and the pool ran dry: play the row
+                        // that now holds the pool index (the one just added, unless it
+                        // merged into an existing entry as a fallback).
+                        awaitingPlayableRow = false;
+                        startOn = streamSwitchingService.GetCurrentStream() ?? readyStream;
+                    }
+                }
+
                 _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
                 PublishProgress();
 
-                if (!hasPlayedFirstStream)
-                {
-                    hasPlayedFirstStream = true;
-                    playbackTask = PlayStreamAsync(game, readyStream, launcher, cancellationToken);
-                    _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
-                }
+                if (startOn != null)
+                    StartPlaybackChain(startOn);
             }
         }
 
@@ -218,6 +311,77 @@ public class StreamResolutionOrchestrator(
 
         try
         {
+            var deferred = new List<StreamModel>();
+            var cdnDeferred = new List<StreamModel>();
+            var deferredIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
+
+            // Returns true when the viewer has left and the outcome is final.
+            async Task<bool> ViewerLeftAsync()
+            {
+                if (playbackTask == null || !playbackTask.IsCompleted)
+                    return false;
+
+                var playbackResult = await playbackTask;
+                if (playbackResult?.ViewerLeft != true)
+                    return false;
+
+                outcome.UserClosed = true;
+                outcome.PlaybackResult = playbackResult;
+                return true;
+            }
+
+            void Accept(EnrichedStream enrichedStream, bool requeued)
+            {
+                if (!requeued)
+                {
+                    streamCount++;
+                    _streamsTested++;
+                    PublishProgress();
+                }
+
+                int index;
+                if (deferredIndex.Remove(enrichedStream.Stream, out var earlier))
+                    index = earlier;
+                else if (catalogIndex.TryGetValue(enrichedStream.Stream, out var known))
+                    index = known;
+                else
+                    index = nextExtraIndex++;
+
+                // A deferred row still counts as "done" for the first-play
+                // frontier, so one unreachable /play can't hold back a healthy
+                // later row.
+                resolvedCatalog.Add(index);
+
+                switch (enrichedStream.Status)
+                {
+                    case StreamResolutionStatus.Failed:
+                        _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
+                            enrichedStream.Health, cancellationToken);
+                        break;
+                    case StreamResolutionStatus.Healthy:
+                        // The client's own probe passed: report "working". It used to
+                        // send "unknown", which looked like no verdict.
+                        _ = ReportHealthAsync(game, enrichedStream.Stream, "working", null, enrichedStream.Health,
+                            cancellationToken);
+                        heldHealthy[index] = enrichedStream;
+                        break;
+                    case StreamResolutionStatus.Deferred:
+                        // An infrastructure failure: nothing about the stream is
+                        // known. Don't report it and don't drop it; re-queue it.
+                        // A CDN-unreachable row waits minutes, not seconds: it goes to
+                        // the CDN recheck (CdnReachabilityPolicy), not the 5s/15s passes.
+                        deferredIndex[enrichedStream.Stream] = index;
+                        if (enrichedStream.DeferReason == StreamDeferReason.CdnUnreachable)
+                            cdnDeferred.Add(enrichedStream.Stream);
+                        else
+                            deferred.Add(enrichedStream.Stream);
+                        break;
+                }
+
+                // Start playback without awaiting so stream testing can continue.
+                FlushReadyForPlayback();
+            }
+
             await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
                                orderedStreams,
                                2,
@@ -229,45 +393,186 @@ public class StreamResolutionOrchestrator(
                                }).WithCancellation(enumerationCts.Token))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (await ViewerLeftAsync())
+                    return outcome;
 
-                // Check if playback was closed by user
-                if (playbackTask != null && playbackTask.IsCompleted)
-                {
-                    var playbackResult = await playbackTask;
-                    if (playbackResult?.ViewerLeft == true)
-                    {
-                        outcome.UserClosed = true;
-                        outcome.PlaybackResult = playbackResult;
-                        return outcome;
-                    }
-                }
-
-                streamCount++;
-                _streamsTested++;
-                PublishProgress();
-
-                var index = catalogIndex.TryGetValue(enrichedStream.Stream, out var known)
-                    ? known
-                    : nextExtraIndex++;
-                resolvedCatalog.Add(index);
-
-                if (enrichedStream.Status == StreamResolutionStatus.Failed)
-                {
-                    _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", enrichedStream.ErrorMessage,
-                        enrichedStream.Health, cancellationToken);
-                }
-                else if (enrichedStream.Status == StreamResolutionStatus.Healthy)
-                {
-                    _ = ReportHealthAsync(game, enrichedStream.Stream, "unknown", null, enrichedStream.Health,
-                        cancellationToken);
-                    heldHealthy[index] = enrichedStream;
-                }
-
-                // Start playback without awaiting so stream testing can continue.
-                FlushReadyForPlayback();
+                Accept(enrichedStream, requeued: false);
             }
 
             FlushReadyForPlayback();
+
+            for (var pass = 0; pass < DeferredRequeueDelays.Length && deferred.Count > 0; pass++)
+            {
+                var retry = deferred.ToList();
+                deferred.Clear();
+                logger.LogInformation(
+                    "[StreamResolution] Re-queueing {Count} stream(s) deferred by local-service unavailability (pass {Pass}/{Max}) in {Delay}s",
+                    retry.Count, pass + 1, DeferredRequeueDelays.Length, DeferredRequeueDelays[pass].TotalSeconds);
+                await DelayAsync(DeferredRequeueDelays[pass], enumerationCts.Token).ConfigureAwait(false);
+                if (await ViewerLeftAsync())
+                    return outcome;
+
+                await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
+                                   retry, 2, enumerationCts.Token).WithCancellation(enumerationCts.Token))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (await ViewerLeftAsync())
+                        return outcome;
+
+                    Accept(enrichedStream, requeued: true);
+                }
+
+                FlushReadyForPlayback();
+            }
+
+            outcome.DeferredStreamCount = deferred.Count;
+            if (deferred.Count > 0)
+            {
+                logger.LogWarning(
+                    "[StreamResolution] {Count} stream(s) still deferred after re-queue passes; local service unavailable (not reported, not dropped)",
+                    deferred.Count);
+            }
+
+            // CDN unreachable is never dead: recheck those rows after 2 min, 5 min,
+            // then every 10 min while the game is live. A row that comes back Healthy
+            // joins the pool through Accept (appended, stable numbering). Playback
+            // that is already running carries on meanwhile.
+            if (cdnDeferred.Count > 0)
+            {
+                var viewerLeft = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
+                    cdnDeferred,
+                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    row => Accept(row, requeued: true),
+                    () => playbackTask,
+                    ViewerLeftAsync,
+                    () => CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()),
+                    CdnRecheckDelayAsync,
+                    OnCdnRecheckWaiting,
+                    logger,
+                    enumerationCts.Token).ConfigureAwait(false);
+                if (viewerLeft)
+                    return outcome;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                outcome.CdnUnreachableStreamCount = cdnDeferred.Count;
+            }
+
+            // The player gave up on its last row(s) as CDN unreachable
+            // (PlaybackCloseReasons.CdnUnreachable). Those rows stay in the pool,
+            // unreported, and are rechecked in the background on the same back-off.
+            // A row that comes back healthy starts playback again on its own pool
+            // row (same channel number); one now proven dead is reported and dropped;
+            // one still unreachable waits for the next round.
+            while (playbackTask != null && CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()))
+            {
+                var ended = playbackTask;
+                var endedResult = await ended.ConfigureAwait(false);
+                if (endedResult is not { Success: false, ViewerLeft: false, IsCdnUnreachable: true }
+                    || cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                var poolRows = new Dictionary<StreamModel, EnrichedStream>(ReferenceEqualityComparer.Instance);
+                lock (playbackLock)
+                {
+                    foreach (var row in streamSwitchingService.GetHealthyStreams())
+                    {
+                        if (row.Stream != null)
+                            poolRows.TryAdd(row.Stream, row);
+                    }
+                }
+
+                if (poolRows.Count == 0)
+                    break;
+
+                var pending = poolRows.Keys.ToList();
+                logger.LogInformation(
+                    "[StreamResolution] Player gave up on {Count} pool row(s) as CDN unreachable; rechecking in the background (not reported, not dropped)",
+                    pending.Count);
+                _status = CdnReachabilityPolicy.RecheckingMessage;
+                PublishProgress();
+
+                var viewerLeftDuringRecheck = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
+                    pending,
+                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    row => AcceptPoolRecheck(row, poolRows, pending),
+                    () => playbackTask,
+                    ViewerLeftAsync,
+                    () => CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow()),
+                    CdnRecheckDelayAsync,
+                    OnCdnRecheckWaiting,
+                    logger,
+                    enumerationCts.Token).ConfigureAwait(false);
+                if (viewerLeftDuringRecheck)
+                    return outcome;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                lock (pending)
+                    outcome.CdnUnreachableStreamCount = pending.Count;
+
+                // Nothing restarted (still unreachable, or the game ended): stop here.
+                if (ReferenceEquals(playbackTask, ended))
+                    break;
+            }
+
+            void OnCdnRecheckWaiting(int count, TimeSpan wait)
+            {
+                if (playbackTask is { IsCompleted: false })
+                    return;
+                _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {wait.TotalMinutes:F0} min";
+                PublishProgress();
+            }
+
+            // A recheck of a row the player gave up on as CDN unreachable.
+            void AcceptPoolRecheck(
+                EnrichedStream rechecked,
+                Dictionary<StreamModel, EnrichedStream> poolRows,
+                List<StreamModel> pending)
+            {
+                if (rechecked.Stream == null || !poolRows.TryGetValue(rechecked.Stream, out var poolRow))
+                    return;
+
+                switch (rechecked.Status)
+                {
+                    case StreamResolutionStatus.Healthy:
+                        {
+                            _ = ReportHealthAsync(game, rechecked.Stream, "working", null, rechecked.Health, cancellationToken);
+                            EnrichedStream? startOn = null;
+                            lock (playbackLock)
+                            {
+                                if (playbackTask is { IsCompleted: true } && SelectInPool(poolRow))
+                                {
+                                    awaitingPlayableRow = false;
+                                    startOn = poolRow;
+                                }
+                            }
+
+                            if (startOn != null)
+                            {
+                                logger.LogInformation(
+                                    "[StreamResolution] CDN reachable again for {Channel}: restarting playback on its pool row",
+                                    startOn.Stream?.Channel);
+                                StartPlaybackChain(startOn);
+                            }
+
+                            break;
+                        }
+                    case StreamResolutionStatus.Failed:
+                        // The recheck proved the stream itself dead (404, decoy, DNS).
+                        _ = ReportHealthAsync(game, rechecked.Stream, "failed", rechecked.ErrorMessage,
+                            rechecked.Health, cancellationToken);
+                        lock (playbackLock)
+                            RemoveFromPool(poolRow);
+                        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                        PublishProgress();
+                        break;
+                    case StreamResolutionStatus.Deferred:
+                        lock (pending)
+                            pending.Add(rechecked.Stream);
+                        break;
+                }
+            }
         }
         catch (OperationCanceledException) when (playbackTask is { IsCompleted: true })
         {
@@ -301,20 +606,26 @@ public class StreamResolutionOrchestrator(
             {
                 outcome.UserClosed = true;
             }
+            else if (playbackResult is { Success: false, IsLocalServiceUnavailable: true })
+            {
+                // The local service gave no verdict on the fresh /play even after
+                // the infrastructure retries. That says nothing about the stream:
+                // no "failed" report, the row stays in the pool, and the outcome
+                // says "local service unavailable" (same as deferred rows).
+                logger.LogWarning("[StreamResolution] Playback deferred - {Message}", playbackResult.Message);
+                _status = playbackResult.IsCdnUnreachable
+                    ? PlaybackCloseReasons.CdnUnreachable
+                    : PlaybackCloseReasons.LocalServiceUnavailable;
+                outcome.LocalServiceUnavailable = !playbackResult.IsCdnUnreachable;
+                PublishProgress();
+            }
             else if (playbackResult != null && !playbackResult.Success)
             {
-                var current = streamSwitchingService.GetCurrentStream();
-                if (current == null)
-                {
-                    // Native session already drained the pool; resume candidate testing.
-                    selectionCoordinator.ResumeTesting();
-                    _status = "Testing resumed";
-                    PublishProgress();
-                }
-                else
-                {
-                    await HandlePlaybackFailureAsync(game, current, playbackResult, launcher, cancellationToken);
-                }
+                // RunPlaybackChainAsync already reported the failed row, removed it and
+                // played the next one; it only ends on a failure when the pool is empty.
+                selectionCoordinator.ResumeTesting();
+                _status = "Testing resumed";
+                PublishProgress();
             }
         }
 
@@ -325,6 +636,19 @@ public class StreamResolutionOrchestrator(
             {
                 _status = remoteError;
                 outcome.RemoteComputeError = remoteError;
+            }
+            else if (outcome.CdnUnreachableStreamCount > 0 && outcome.DeferredStreamCount == 0)
+            {
+                // The CDN could not be reached (IP block, CDN down). The rows were
+                // not reported or dropped; the local service itself was fine.
+                _status = CdnReachabilityPolicy.RecheckingMessage;
+                outcome.NoWorkingStreams = true;
+            }
+            else if (outcome.DeferredStreamCount > 0)
+            {
+                // Rows were never answered: the local service, not the streams.
+                _status = "Local service unavailable";
+                outcome.LocalServiceUnavailable = true;
             }
             else if (localLanPlayService?.UsesRemoteCompute == true)
             {
@@ -428,25 +752,47 @@ public class StreamResolutionOrchestrator(
         Game game,
         EnrichedStream enrichedStream,
         IPlaybackLauncher launcher,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        PlayAttempt? attempt = null)
     {
-        var gamePath = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
-
-        // Use the cached URL from health-check / prefetch if available (fast path).
-        // If absent, resolve fresh now. Either way, if the first attempt fails we
-        // resolve a brand-new URL and retry once — CDN tokens can be connection-bound
-        // and the cached URL may have been invalidated since it was fetched.
-        bool usedCachedUrl = !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
+        // FB /play tokens are one-shot: find-phase URLs must not be reused for
+        // ExoPlayer. Soak rows always re-/play; others keep the cached fast path
+        // with a single fresh retry on failure below.
+        // One-shot rows whose token expiry is readable with comfortable life left (and
+        // that are not known single-use) play the cached URL; a failed start re-/plays once.
+        // A startup-race winner already carries its just-fetched URL via Apply — play it
+        // without a second /play even when remaining life is under MinComfortableLife.
+        var racePlayReady = _racePlayReady.TryRemove(enrichedStream, out _)
+            && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url);
+        var oneShot = LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(enrichedStream)
+            && !PlaybackUrlReusePolicy.CanReuseCached(enrichedStream, DateTimeOffset.UtcNow);
+        bool usedCachedUrl = racePlayReady
+            || (!oneShot && !string.IsNullOrEmpty(enrichedStream.ResolvedM3U8Url));
         string? m3u8Url;
         if (usedCachedUrl)
         {
-            logger.LogInformation("[StreamResolution] Using cached M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
+            logger.LogInformation(
+                racePlayReady
+                    ? "[StreamResolution] Using race-won M3U8 for playback: {Channel}"
+                    : "[StreamResolution] Using cached M3U8 for playback: {Channel}",
+                enrichedStream.Stream.Channel);
             m3u8Url = enrichedStream.ResolvedM3U8Url;
         }
         else
         {
-            logger.LogInformation("[StreamResolution] Resolving fresh M3U8 for playback: {Channel}", enrichedStream.Stream.Channel);
-            m3u8Url = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+            logger.LogInformation(
+                oneShot
+                    ? "[StreamResolution] Resolving fresh one-shot M3U8 for playback: {Channel}"
+                    : "[StreamResolution] Resolving fresh M3U8 for playback: {Channel}",
+                enrichedStream.Stream.Channel);
+            try
+            {
+                m3u8Url = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                return LocalServiceUnavailableResult(enrichedStream, ex);
+            }
         }
 
         if (string.IsNullOrEmpty(m3u8Url))
@@ -473,11 +819,15 @@ public class StreamResolutionOrchestrator(
 
         var reportingTask = StartPlaybackHealthReportingAsync(game, enrichedStream.Stream, launcher, playbackCts.Token);
         PlaybackResult? result;
+        // One-shot V1 rows: keep the next 1-2 warm (single-flight) for the whole session.
+        using var prewarmLoop = prewarmer?.Start(playbackCts.Token);
         try
         {
             // Warm the next candidate while this one plays so the first Next click is instant.
             PrefetchUpcomingStreamUrl(game, cancellationToken);
 
+            if (attempt != null)
+                attempt.PlayerOpened = true;
             result = await launcher.PlayVideoAsync(
                 m3u8Url,
                 string.IsNullOrWhiteSpace(enrichedStream.Referer) ? enrichedStream.Stream.Url : enrichedStream.Referer,
@@ -504,20 +854,85 @@ public class StreamResolutionOrchestrator(
         // If we used a cached URL and it failed immediately, the token may have been
         // invalidated. Re-resolve fresh and retry this same stream once.
         if (usedCachedUrl && result != null && !result.Success &&
-            !result.ViewerLeft)
+            !result.ViewerLeft && !result.IsLocalServiceUnavailable)
         {
             logger.LogInformation("[StreamResolution] Cached URL failed for {Channel} — retrying with fresh M3U8", enrichedStream.Stream.Channel);
-            var freshUrl = await apiService.ResolveM3U8ForPlaybackAsync(enrichedStream.Stream, gamePath, cancellationToken);
+            string? freshUrl;
+            try
+            {
+                freshUrl = await ResolveFreshPlaybackOntoAsync(enrichedStream, cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                // The cached token failed and the service could not mint a new one.
+                // Without a fresh verdict the stream is not proven dead: defer.
+                return LocalServiceUnavailableResult(enrichedStream, ex);
+            }
             if (StreamCandidateRules.ShouldAcceptFreshM3U8(m3u8Url, freshUrl))
             {
-                enrichedStream.ResolvedM3U8Url = freshUrl;
                 // Retry playback with the fresh URL — usedCachedUrl=false so no further retry loop.
-                return await PlayStreamAsync(game, enrichedStream, launcher, cancellationToken);
+                return await PlayStreamAsync(game, enrichedStream, launcher, cancellationToken, attempt);
             }
             logger.LogWarning("[StreamResolution] Fresh M3U8 unavailable or identical for {Channel} — treating as failed", enrichedStream.Stream.Channel);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Full <c>/play</c> resolve onto the pool row — URL plus Referer/headers/segments —
+    /// so first attach matches chip-switch fresh-resolve behavior.
+    /// </summary>
+    private async Task<string?> ResolveFreshPlaybackOntoAsync(
+        EnrichedStream enrichedStream,
+        CancellationToken cancellationToken)
+    {
+        var stream = enrichedStream.Stream;
+        if (stream is null)
+            return null;
+
+        if (warmUrls != null)
+        {
+            await warmUrls.WaitForInFlightAsync(enrichedStream, cancellationToken);
+            if (warmUrls.TryTake(enrichedStream, DateTimeOffset.UtcNow, out var warm))
+            {
+                logger.LogInformation("[StreamResolution] Using warm pre-resolved M3U8 for {Channel}", stream.Channel);
+                EnrichedStreamM3U8Apply.Apply(enrichedStream, warm);
+                return warm.Url;
+            }
+        }
+
+        M3U8Response? response;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                response = await apiService.GetM3U8UrlAsync(
+                    stream.Url,
+                    EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
+                    stream.ResolutionStrategy,
+                    stream.Source,
+                    cancellationToken);
+                break;
+            }
+            catch (InfrastructureUnavailableException ex)
+                when (InfrastructureRetryPolicy.ShouldRetryFreshResolve(ex, attempt))
+            {
+                // A blip (unreachable, our timeout, LS 5xx): ask again, same as
+                // the find phase. MP disabled / auth skip straight to the caller.
+                var delay = InfrastructureRetryPolicy.FreshResolveDelays[attempt];
+                logger.LogWarning(
+                    "[StreamResolution] Fresh resolve for {Channel} hit local service unavailable ({Message}) - retry {Attempt} in {Delay}s",
+                    stream.Channel, ex.Message, attempt + 1, delay.TotalSeconds);
+                await DelayAsync(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (response is null || string.IsNullOrWhiteSpace(response.Url))
+            return null;
+
+        EnrichedStreamM3U8Apply.Apply(enrichedStream, response);
+        return response.Url;
     }
 
     private async Task StartPlaybackHealthReportingAsync(
@@ -528,7 +943,10 @@ public class StreamResolutionOrchestrator(
     {
         try
         {
-            var streamName = StreamHealthIdentity.GetStreamName(stream);
+            // Report the row that is playing NOW. The native session can
+            // make-before-break onto another pool row, and this loop used to keep
+            // reporting the first stream's URL long after it had been switched away.
+            StreamModel Playing() => streamSwitchingService.GetCurrentStream()?.Stream ?? stream;
             var softRefreshTicks = 0;
 
             // Wait for player to initialize and extract metadata
@@ -537,8 +955,9 @@ public class StreamResolutionOrchestrator(
 
             // Get real metrics from the player service after playback has started
             var initialMetrics = launcher.GetCurrentMetrics();
-            _ = streamHealthReporter.ReportPlaybackStartedAsync(stream.Url, null, streamName, initialMetrics,
-                cancellationToken);
+            var started = Playing();
+            _ = streamHealthReporter.ReportPlaybackStartedAsync(started.Url, null,
+                StreamHealthIdentity.GetStreamName(started), initialMetrics, cancellationToken);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -552,8 +971,9 @@ public class StreamResolutionOrchestrator(
                 }
 
                 // Report periodic metrics without duplicating metadata
-                _ = streamHealthReporter.ReportPlaybackMetricsAsync(stream.Url, null, streamName, metrics,
-                    cancellationToken);
+                var playing = Playing();
+                _ = streamHealthReporter.ReportPlaybackMetricsAsync(playing.Url, null,
+                    StreamHealthIdentity.GetStreamName(playing), metrics, cancellationToken);
 
                 // Soft-refresh recommendations about every 60s (every other 30s tick).
                 softRefreshTicks++;
@@ -570,40 +990,13 @@ public class StreamResolutionOrchestrator(
 
     private async Task HandleNextStreamRequestedAsync(Game game, CancellationToken cancellationToken)
     {
-        var wouldWrap = streamSwitchingService.WouldWrapOnNext();
-        var recommendations = await EnsureFreshRecommendationsAsync(
-            game,
-            force: wouldWrap,
-            cancellationToken);
-
-        if (wouldWrap && recommendations != null)
+        // Stable channel numbering (docs/STREAM_PLAYBACK_RULES.md): Next walks the
+        // numbered pool in order and Next on the last channel goes to channel 1.
+        // Recommendations never re-sort the pool or hijack Next; on wraparound they
+        // are only refreshed (chips and the first pick use them).
+        if (streamSwitchingService.WouldWrapOnNext())
         {
-            ApplyWraparoundReorder(recommendations);
-        }
-
-        var current = streamSwitchingService.GetCurrentStream();
-        var healthy = streamSwitchingService.GetHealthyStreams();
-
-        // Only on wraparound: jump to a high-confidence recommended peer.
-        // Mid-cycle Next must walk every healthy stream (UI total), otherwise
-        // users bounce between the 2–3 recommended chips forever.
-        if (StreamRecommendationPolicy.ShouldPreferRecommendedPeerOnNext(wouldWrap)
-            && recommendations != null)
-        {
-            var preferred = StreamRecommendationPolicy.PickPreferredNext(recommendations, healthy, current);
-            if (preferred != null
-                && streamSwitchingService.SwitchToMatchingStream(
-                    preferred.Stream.Url,
-                    StreamHealthIdentity.GetStreamName(preferred.Stream)))
-            {
-                logger.LogInformation(
-                    "[StreamResolution] Wraparound switched to preferred recommended stream {Channel}",
-                    preferred.Stream.Channel);
-                _status = "Switched to recommended stream";
-                PublishProgress();
-                PrefetchUpcomingStreamUrl(game, cancellationToken);
-                return;
-            }
+            _ = await EnsureFreshRecommendationsAsync(game, force: true, cancellationToken);
         }
 
         var nextStream = streamSwitchingService.GetNextHealthyStream();
@@ -617,15 +1010,39 @@ public class StreamResolutionOrchestrator(
 
         // Use the prefetched URL if available (instant). If not, resolve fresh now.
         // The caller (PlayStreamAsync) will retry with a fresh URL if the cached one 403s.
-        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
+        if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url)
+            && LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(nextStream))
+        {
+            // One-shot row: the player's make-before-break switch resolves (or takes the
+            // warm URL) on attach - resolving here too would be a second /play.
+            // Kick the single-flight prewarmer so attach can take a warm URL (and the
+            // following rows stay warm) instead of a bare Resolve write-back.
+            logger.LogInformation("[StreamResolution] Next onto one-shot {Channel} - player resolves on attach",
+                nextStream.Stream.Channel);
+            prewarmer?.Kick();
+        }
+        else if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
             _status = "Switch requested - resolving stream URL...";
             PublishProgress();
 
-            var resolved = await apiService.ResolveM3U8ForPlaybackAsync(
-                nextStream.Stream,
-                $"/{game.ApiLeague}/{game.Home}/{game.Away}",
-                cancellationToken);
+            string? resolved;
+            try
+            {
+                resolved = await apiService.ResolveM3U8ForPlaybackAsync(
+                    nextStream.Stream,
+                    $"/{game.ApiLeague}/{game.Home}/{game.Away}",
+                    cancellationToken);
+            }
+            catch (InfrastructureUnavailableException ex)
+            {
+                // Keep the current stream and the next row: nothing was proven dead.
+                logger.LogWarning("[StreamResolution] Next stream {Channel} deferred - local service unavailable: {Message}",
+                    nextStream.Stream.Channel, ex.Message);
+                _status = "Switch failed - local service unavailable";
+                PublishProgress();
+                return;
+            }
 
             if (string.IsNullOrEmpty(resolved))
             {
@@ -696,35 +1113,6 @@ public class StreamResolutionOrchestrator(
         }
     }
 
-    private void ApplyWraparoundReorder(RecommendationResponse recommendations)
-    {
-        var healthy = streamSwitchingService.GetHealthyStreams();
-        if (healthy.Count <= 1 || recommendations.Recommended is not { Count: > 0 })
-        {
-            return;
-        }
-
-        var preferred = new List<EnrichedStream>();
-        foreach (var item in recommendations.Recommended
-                     .OrderByDescending(r => StreamTestOrderPolicy.RankConfidence(r.Confidence)))
-        {
-            var match = healthy.FirstOrDefault(candidate =>
-                StreamHealthIdentity.MatchesRecommendation(candidate.Stream, item.Url, item.StreamName));
-            if (match != null && !preferred.Contains(match))
-            {
-                preferred.Add(match);
-            }
-        }
-
-        if (preferred.Count > 0)
-        {
-            streamSwitchingService.ReorderHealthyStreams(preferred);
-            logger.LogInformation(
-                "[StreamResolution] Wraparound reordered healthy pool by recommendations ({Count} preferred)",
-                preferred.Count);
-        }
-    }
-
     /// <summary>
     /// Warm the next candidate's m3u8 in the background so the following Next click stays
     /// instant without relying on a long-lived health-check URL.
@@ -735,6 +1123,15 @@ public class StreamResolutionOrchestrator(
         var upcoming = streamSwitchingService.GetNextHealthyStream();
         // With a single candidate, "next" wraps to current — don't re-resolve the live stream.
         if (upcoming?.Stream == null || ReferenceEquals(upcoming, current)) return;
+
+        // One-shot rows: every attach re-/plays or takes a warm URL, so a bare
+        // ResolveM3U8ForPlaybackAsync write-back here was a wasted second /play per
+        // switch (Android ignored it). The single-flight pre-resolver owns these rows.
+        if (LocalServiceSoakTrust.RequiresFreshM3u8ForPlayback(upcoming))
+        {
+            prewarmer?.Kick();
+            return;
+        }
 
         var channel = upcoming.Stream.Channel;
         var path = $"/{game.ApiLeague}/{game.Home}/{game.Away}";
@@ -775,45 +1172,412 @@ public class StreamResolutionOrchestrator(
         }, cancellationToken);
     }
 
-    private async Task<bool> TryNextHealthyStreamAsync(
+    /// <summary>
+    /// Plays <paramref name="first"/>, and while a start fails on the stream itself
+    /// (an empty <c>/play</c>, or a player session that ended without playing) reports
+    /// that row once, removes it and plays the row that takes its pool index. It runs
+    /// alongside candidate testing, so a failed first play no longer waits for the
+    /// whole sweep before the next healthy row is tried.
+    /// <para>
+    /// Ends on success, the viewer leaving, or a local-service failure (no report, no
+    /// removal: the row stays for a later attempt). With an empty pool it calls
+    /// <paramref name="onPoolEmpty"/> under <paramref name="playbackLock"/>, so the next
+    /// row to join the pool starts playback.
+    /// </para>
+    /// </summary>
+    internal async Task<PlaybackResult?> RunPlaybackChainAsync(
         Game game,
+        EnrichedStream first,
         IPlaybackLauncher launcher,
+        Action onPoolEmpty,
+        object playbackLock,
         CancellationToken cancellationToken)
     {
-        var nextStream = streamSwitchingService.GetNextHealthyStream();
-        if (nextStream == null)
+        var stream = first;
+        while (true)
         {
-            _status = "All available streams failed - testing others...";
-            PublishProgress();
-            return false;
-        }
+            var race = await RaceStartAsync(game, stream, playbackLock, cancellationToken).ConfigureAwait(false);
+            if (race.Ran)
+            {
+                if (race.Terminal != null)
+                {
+                    if (race.Terminal.IsLocalServiceUnavailable)
+                    {
+                        // No verdict: the chain parks and a later healthy row starts playback.
+                        lock (playbackLock)
+                            onPoolEmpty();
+                        return race.Terminal;
+                    }
 
-        await PlayStreamAsync(game, nextStream, launcher, cancellationToken);
-        return true;
+                    EnrichedStream? afterRace;
+                    lock (playbackLock)
+                    {
+                        afterRace = streamSwitchingService.GetCurrentStream();
+                        if (afterRace == null)
+                            onPoolEmpty();
+                    }
+
+                    _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+                    if (afterRace == null)
+                    {
+                        _status = "All available streams failed - testing others...";
+                        PublishProgress();
+                        return race.Terminal;
+                    }
+
+                    logger.LogInformation(
+                        "[StreamResolution] Race produced no playable URL — playing {Next}",
+                        afterRace.Stream?.Channel);
+                    stream = afterRace;
+                    continue;
+                }
+
+                if (race.Play != null)
+                    stream = race.Play;
+            }
+
+            var attempt = new PlayAttempt();
+            var result = await PlayStreamAsync(game, stream, launcher, cancellationToken, attempt).ConfigureAwait(false);
+            if (result is null || result.Success || result.ViewerLeft || cancellationToken.IsCancellationRequested)
+                return result;
+
+            if (result.IsLocalServiceUnavailable)
+            {
+                // Infrastructure, not the stream: no report, nothing removed. A row that
+                // joins the pool later (the service is back) starts playback again.
+                lock (playbackLock)
+                    onPoolEmpty();
+                return result;
+            }
+
+            // The player never opened: the row we tried is the one that failed. Once it
+            // opened, the native session may have moved through the pool, so the row
+            // under the pool index is the one it ended on.
+            var failed = attempt.PlayerOpened ? streamSwitchingService.GetCurrentStream() : stream;
+            if (failed != null)
+            {
+                _ = ReportHealthAsync(game, failed.Stream, "failed", result.Message, failed.Health, cancellationToken);
+                RemoveFromPool(failed);
+            }
+
+            EnrichedStream? next;
+            lock (playbackLock)
+            {
+                // RemoveCurrentStream leaves the index on the row that took the failed
+                // row's place (a merged fallback, or the following row). Play that one:
+                // the old TryNextHealthyStreamAsync took GetNextHealthyStream() here,
+                // which skipped a row, left the pool index on a row that was not playing,
+                // and dropped the result of the next play.
+                next = streamSwitchingService.GetCurrentStream();
+                if (next == null)
+                    onPoolEmpty();
+            }
+
+            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+            if (next == null)
+            {
+                _status = "All available streams failed - testing others...";
+                PublishProgress();
+                return result;
+            }
+
+            logger.LogInformation(
+                "[StreamResolution] Start failed on {Failed} ({Message}) - playing next healthy {Next}",
+                failed?.Stream?.Channel, result.Message, next.Stream?.Channel);
+            PublishProgress();
+            stream = next;
+        }
     }
 
-    private async Task HandlePlaybackFailureAsync(
+    /// <summary>What <see cref="RaceStartAsync"/> decided.</summary>
+    internal readonly record struct RaceStart(bool Ran, EnrichedStream? Play, PlaybackResult? Terminal);
+
+    /// <summary>
+    /// Races the start row's fresh <c>/play</c> against the next row's when both need one.
+    /// A playlist that proves video beats a URL we could not check. An audio-only playlist
+    /// never wins and is reported failed. When the recommended row is already empty and
+    /// another pooled row can play from cache, that row plays immediately — the partner
+    /// <c>/play</c> is not waited on (it stays warm if a URL comes back). Candidate testing
+    /// pauses for the decision so the two race calls do not stack on top of the find-phase
+    /// Chromium cap (<see cref="ResolverRaceThrottle"/>).
+    /// </summary>
+    internal async Task<RaceStart> RaceStartAsync(
         Game game,
-        EnrichedStream enrichedStream,
-        PlaybackResult playbackResult,
-        IPlaybackLauncher launcher,
+        EnrichedStream stream,
+        object playbackLock,
         CancellationToken cancellationToken)
     {
-        _ = ReportHealthAsync(game, enrichedStream.Stream, "failed", playbackResult.Message, enrichedStream.Health,
-            cancellationToken);
+        if (warmUrls == null || stream.Stream is null)
+            return new RaceStart(false, null, null);
+
+        // Let the enumerator add healthy rows it has already produced before we look
+        // for a partner. One millisecond, not a sweep: a solo start is not held for
+        // candidates that are still resolving.
+        await Task.Yield();
+        await PartnerLookoutAsync(cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        if (!PlaybackRacePolicy.NeedsFreshPlay(stream, now) || warmUrls.IsWarmOrInFlight(stream))
+            return new RaceStart(false, null, null);
+
+        EnrichedStream? partner;
+        lock (playbackLock)
+        {
+            partner = PlaybackRacePolicy.PickPartner(
+                streamSwitchingService.GetHealthyStreams(),
+                stream,
+                DateTimeOffset.UtcNow,
+                warmUrls.IsWarmOrInFlight);
+        }
+
+        if (partner?.Stream is null)
+            return new RaceStart(false, null, null);
+
+        logger.LogInformation(
+            "[StreamResolution] Racing fresh /play: {Recommended} (recommended, {Grace}ms grace) vs {Partner}",
+            stream.Stream.Channel,
+            (int)PlaybackRacePolicy.RecommendedGrace.TotalMilliseconds,
+            partner.Stream.Channel);
+
+        using var raceHold = raceThrottle?.BeginRace();
+        if (raceThrottle != null)
+            await raceThrottle.DrainOthersAsync(cancellationToken).ConfigureAwait(false);
+
+        _raceWarmExclude = null;
+        var race = await PlaybackUrlRacer.RaceAsync(
+            stream,
+            partner,
+            ResolveRaceLegAsync,
+            ClassifyRaceLegAsync,
+            OnRaceLegFinished,
+            () => OtherRowCanPlayNow(stream, partner, playbackLock),
+            cancellationToken).ConfigureAwait(false);
+
+        // Warm only the losing URL (rule 5). Legs that finished before the decision
+        // skipped PutUntil; late-finishing losers still hit OnRaceLegFinished with
+        // _raceWarmExclude set so the winner is never stored via LoserTakeBy.
+        // PlayReadyRow: exclude the empty recommended row so a late partner still warms.
+        _raceWarmExclude = race.Winner ?? (race.PlayReadyRow ? stream : null);
+        WarmRaceLoserIfNeeded(race.Recommended, _raceWarmExclude);
+        WarmRaceLoserIfNeeded(race.Partner, _raceWarmExclude);
+
+        foreach (var verdict in race.StreamVerdicts)
+        {
+            if (verdict.Row.Stream is null)
+                continue;
+            var reason = verdict.State == RaceLegState.AudioOnly
+                ? "No video (audio only)"
+                : "Failed to resolve m3u8";
+            logger.LogInformation(
+                "[StreamResolution] Race verdict on {Channel}: {Reason}",
+                verdict.Row.Stream.Channel, reason);
+            _ = ReportHealthAsync(game, verdict.Row.Stream, "failed", reason, verdict.Row.Health, cancellationToken);
+            lock (playbackLock)
+                RemoveFromPool(verdict.Row);
+        }
+
+        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+
+        if (race.Winner is { } winner)
+        {
+            if (race.WinnerValue is { } winnerValue && !string.IsNullOrWhiteSpace(winnerValue.Url))
+            {
+                EnrichedStreamM3U8Apply.Apply(winner, winnerValue);
+                _racePlayReady[winner] = 0;
+            }
+
+            lock (playbackLock)
+                SelectInPool(winner);
+            logger.LogInformation(
+                "[StreamResolution] Race won by {Winner}{Which}",
+                winner.Stream?.Channel,
+                ReferenceEquals(winner, stream) ? " (recommended)" : " (partner)");
+            return new RaceStart(true, winner, null);
+        }
+
+        if (race.PlayReadyRow)
+        {
+            var ready = ReadyCachedRow(stream, partner, playbackLock);
+            if (ready != null)
+            {
+                lock (playbackLock)
+                    SelectInPool(ready);
+                logger.LogInformation(
+                    "[StreamResolution] Race recommended row had no video URL — playing cached {Channel}",
+                    ready.Stream?.Channel);
+                return new RaceStart(true, ready, null);
+            }
+        }
+
+        logger.LogWarning(
+            "[StreamResolution] Race produced no playable URL ({Recommended} vs {Partner})",
+            stream.Stream.Channel, partner.Stream.Channel);
+        return new RaceStart(
+            true,
+            null,
+            race.AnyInfrastructure
+                ? PlaybackResult.Completed(
+                    $"{PlaybackCloseReasons.LocalServiceUnavailable}: {race.InfrastructureError}", true)
+                : PlaybackResult.Completed("Failed to resolve m3u8", true));
+    }
+
+    private async Task<M3U8Response?> ResolveRaceLegAsync(EnrichedStream row, CancellationToken cancellationToken)
+    {
+        using var mark = raceThrottle?.MarkRaceLeg();
+        if (row.Stream is null)
+            return null;
+        if (warmUrls != null && warmUrls.BeginInFlight(row))
+            _raceInFlight.TryAdd(row, 0);
+        return await apiService.GetM3U8UrlAsync(
+            row.Stream.Url,
+            EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(row.Stream),
+            row.Stream.ResolutionStrategy,
+            row.Stream.Source,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<RaceLegState> ClassifyRaceLegAsync(M3U8Response response, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(response.Url))
+            return RaceLegState.Empty;
+        if (playlistProbe is null)
+            return RaceLegState.Unverified;
+
+        try
+        {
+            var verdict = await playlistProbe.ClassifyAsync(response, cancellationToken).ConfigureAwait(false);
+            return verdict switch
+            {
+                PlaylistVideoVerdict.Video => RaceLegState.Video,
+                PlaylistVideoVerdict.AudioOnly => RaceLegState.AudioOnly,
+                _ => RaceLegState.Unverified,
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamResolution] Race playlist probe failed; URL stays unverified");
+            return RaceLegState.Unverified;
+        }
+    }
+
+    private void OnRaceLegFinished(RaceLegResult<M3U8Response> leg)
+    {
+        if (warmUrls == null)
+            return;
+
+        // Before a winner is known, skip PutUntil — RaceStartAsync warms finished
+        // losers after Decide. After a winner is known, warm only a late non-winner.
+        if (_raceWarmExclude != null
+            && !ReferenceEquals(leg.Row, _raceWarmExclude))
+        {
+            WarmRaceLoserLeg(leg);
+        }
+
+        if (_raceInFlight.TryRemove(leg.Row, out _))
+            warmUrls.EndInFlight(leg.Row);
+    }
+
+    private void WarmRaceLoserIfNeeded(RaceLegResult<M3U8Response>? leg, EnrichedStream? winner)
+    {
+        if (leg is null || (winner != null && ReferenceEquals(leg.Row, winner)))
+            return;
+        WarmRaceLoserLeg(leg);
+    }
+
+    private void WarmRaceLoserLeg(RaceLegResult<M3U8Response> leg)
+    {
+        if (warmUrls == null)
+            return;
+        if (leg.Value is not { } response
+            || leg.State is not (RaceLegState.Video or RaceLegState.Unverified)
+            || string.IsNullOrWhiteSpace(response.Url))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        warmUrls.PutUntil(leg.Row, response, PlaybackRacePolicy.LoserTakeBy(response.Url, now), now);
+    }
+
+    private bool OtherRowCanPlayNow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
+        => ReadyCachedRow(recommended, partner, playbackLock) != null;
+
+    private EnrichedStream? ReadyCachedRow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
+    {
+        lock (playbackLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var row in streamSwitchingService.GetHealthyStreams())
+            {
+                if (ReferenceEquals(row, recommended) || ReferenceEquals(row, partner))
+                    continue;
+                if (!PlaybackRacePolicy.NeedsFreshPlay(row, now))
+                    return row;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Moves the pool index onto <paramref name="row"/>. False when it is no longer in the pool.</summary>
+    private bool SelectInPool(EnrichedStream row)
+    {
+        if (ReferenceEquals(streamSwitchingService.GetCurrentStream(), row))
+            return true;
+        var healthy = streamSwitchingService.GetHealthyStreams();
+        for (var i = 0; i < healthy.Count; i++)
+        {
+            if (ReferenceEquals(healthy[i], row))
+            {
+                streamSwitchingService.SwitchToStream(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+    private void RemoveFromPool(EnrichedStream failed)
+    {
+        if (!ReferenceEquals(streamSwitchingService.GetCurrentStream(), failed))
+        {
+            var healthy = streamSwitchingService.GetHealthyStreams();
+            var index = -1;
+            for (var i = 0; i < healthy.Count; i++)
+            {
+                if (ReferenceEquals(healthy[i], failed))
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            // Already gone (the native session removed it): nothing to do.
+            if (index < 0 || !streamSwitchingService.SwitchToStream(index))
+                return;
+        }
 
         streamSwitchingService.RemoveCurrentStream();
-        _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-        PublishProgress();
-
-        var playedNext = await TryNextHealthyStreamAsync(game, launcher, cancellationToken);
-        if (!playedNext)
-        {
-            selectionCoordinator.ResumeTesting();
-            _status = "Testing resumed";
-            PublishProgress();
-        }
     }
+
+    /// <summary>Whether a <see cref="PlayStreamAsync"/> call got as far as opening the player.</summary>
+    internal sealed class PlayAttempt
+    {
+        public bool PlayerOpened { get; set; }
+    }
+
+    private PlaybackResult LocalServiceUnavailableResult(EnrichedStream enrichedStream, InfrastructureUnavailableException ex)
+    {
+        logger.LogWarning(
+            "[StreamResolution] Fresh resolve for {Channel} deferred - local service unavailable: {Message}",
+            enrichedStream.Stream?.Channel, ex.Message);
+        return PlaybackResult.Completed($"{PlaybackCloseReasons.LocalServiceUnavailable}: {ex.Message}", true);
+    }
+
+
 
     private void PublishProgress()
     {

@@ -65,13 +65,27 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private void ShowSwitchStatusToast(string message)
+        {
+            RunOnUiThread(() =>
+            {
+                try
+                {
+                    Toast.MakeText(this, message, ToastLength.Short)?.Show();
+                }
+                catch (Exception ex) { LogIgnored("Toast.SwitchStatus", ex); }
+            });
+        }
+
         private void ShowSwitchFeedbackToast(bool switched, bool next)
         {
             try
             {
                 var message = switched
                     ? (next ? "Next stream…" : "Previous stream…")
-                    : "No other stream yet";
+                    : (_switching?.GetHealthyStreams().Count ?? 0) > 1
+                        ? PlaybackPolicy.NoOtherWorkingStreamText
+                        : "No other stream yet";
                 Toast.MakeText(this, message, ToastLength.Short)?.Show();
             }
             catch (Exception ex) { LogIgnored("Toast.SwitchFeedback", ex); }

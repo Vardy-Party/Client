@@ -6,7 +6,7 @@ namespace VardyParty.Playback;
 /// Pure business rules for unified stream playback.
 /// Platforms must not reimplement these branches — call <see cref="PlaybackSessionController"/> instead.
 /// </summary>
-public static class PlaybackPolicy
+public static partial class PlaybackPolicy
 {
     /// <summary>
     /// Whether the engine may attach a new URL (same rules as legacy SwitchingDecision).

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using VardyParty.Kernel;
@@ -35,7 +36,11 @@ public class StreamHealthChecker(
             // but rely on caller's token primarily.
             // We'll enforce a specific timeout for the HTTP calls if needed.
 
-            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken);
+            var evidence = new StrongBox<MirrorEvidence?>();
+            health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken,
+                m3u8Url, evidence);
+            if (health.Status == StreamHealthStatus.Healthy)
+                health.MirrorEvidence = evidence.Value;
 
             // Extract metadata from the manifest if check was successful
             if (health.Status == StreamHealthStatus.Healthy)
@@ -44,7 +49,8 @@ public class StreamHealthChecker(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Health check failed for {Url}", m3u8Url);
-            health.Status = StreamHealthStatus.ManifestUnreachable;
+            health.Status = CdnReachabilityPolicy.ClassifyTransportFailure(ex, cancellationToken)
+                            ?? StreamHealthStatus.ManifestUnreachable;
             health.ErrorMessage = ex.Message;
         }
         finally
@@ -135,7 +141,9 @@ public class StreamHealthChecker(
         string refererUrl,
         int depth,
         StreamHealthProbe? probe,
-        CancellationToken ct)
+        CancellationToken ct,
+        string sourceUrl,
+        StrongBox<MirrorEvidence?> evidence)
     {
         if (depth > MaxRecursionDepth)
         {
@@ -149,23 +157,37 @@ public class StreamHealthChecker(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.ManifestTimeoutSeconds));
 
-            content = await FetchManifestContentAsync(url, refererUrl, probe, cts.Token);
-            if (content is null && !string.IsNullOrEmpty(refererUrl))
+            var fetch = await FetchManifestContentAsync(url, refererUrl, probe, cts.Token);
+            if (fetch.Content is null && !string.IsNullOrEmpty(refererUrl))
             {
                 logger.LogInformation(
                     "[StreamHealthChecker] Manifest fetch with referer failed for {Url}; retrying without referer",
                     url);
-                content = await FetchManifestContentAsync(url, refererUrl: null, probe: null, cts.Token);
+                fetch = await FetchManifestContentAsync(url, refererUrl: null, probe: null, cts.Token);
             }
 
-            if (content is null)
+            if (fetch.Content is null)
             {
-                return StreamHealthStatus.ManifestUnreachable;
+                // 404/410 is dead (ManifestNotFound). 403/5xx never proved the
+                // playlist is gone: ManifestUnreachable, which is deferred.
+                return fetch.StatusCode is int code
+                    ? CdnReachabilityPolicy.ClassifyManifestHttpStatus(code) switch
+                    {
+                        StreamHealthStatus.Healthy => StreamHealthStatus.EmptyManifest,
+                        var status => status
+                    }
+                    : StreamHealthStatus.ManifestUnreachable;
             }
+
+            content = fetch.Content;
         }
-        catch
+        catch (Exception ex)
         {
-            return StreamHealthStatus.ManifestUnreachable;
+            // Connect timeout / refused / reset / TLS: CDN unreachable (deferred,
+            // rechecked). DNS: HostNotResolved (dead). The caller cancelling is no verdict.
+            var status = CdnReachabilityPolicy.ClassifyTransportFailure(ex, ct) ?? StreamHealthStatus.ManifestUnreachable;
+            logger.LogWarning(ex, "[StreamHealthChecker] Manifest fetch for {Url} failed: {Status}", url, status);
+            return status;
         }
 
         if (string.IsNullOrWhiteSpace(content)) return StreamHealthStatus.EmptyManifest;
@@ -176,12 +198,15 @@ public class StreamHealthChecker(
         {
             var nextUrl = ExtractFirstStreamUrl(content, url);
             if (string.IsNullOrEmpty(nextUrl)) return StreamHealthStatus.InvalidManifest;
-            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct);
+            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct, sourceUrl, evidence);
         }
 
         // Media playlist contains EXTINF
         if (content.Contains("#EXTINF"))
         {
+            // Mirror evidence is read from the playlist that is about to pass; the caller
+            // keeps it only when the status ends up Healthy (docs "Proven mirrors").
+            evidence.Value = CaptureMirrorEvidence(content, url, sourceUrl);
             var rewritten = probe?.RewrittenSegmentUrls?
                 .FirstOrDefault(segment => !string.IsNullOrWhiteSpace(segment));
             if (!string.IsNullOrEmpty(rewritten))
@@ -197,10 +222,14 @@ public class StreamHealthChecker(
             var segmentUrl = segmentUrls.FirstOrDefault(HlsMediaSegment.LooksLikeVideoSegment);
             if (string.IsNullOrEmpty(segmentUrl))
             {
-                logger.LogWarning(
-                    "[StreamHealthChecker] Media playlist lists only non-video segments for {Url}",
+                // Image-looking URLs (TikTok CDN ~tplv-/.image) are either plain
+                // placeholders (reject) or PNG-wrapped MPEG-TS (TIKTIKPX) that every
+                // client player unwraps. URL/Content-Type cannot tell them apart, so
+                // classify the bytes instead of trusting or rejecting by URL.
+                logger.LogInformation(
+                    "[StreamHealthChecker] Media playlist lists only image-like segments for {Url}; classifying bytes",
                     url);
-                return StreamHealthStatus.SegmentUnreachable;
+                return await ClassifySegmentBytesAsync(segmentUrls[0], refererUrl, ct, probe);
             }
 
             return await CheckSegmentAsync(segmentUrl, refererUrl, ct, probe);
@@ -210,6 +239,19 @@ public class StreamHealthChecker(
         if (content.TrimStart().StartsWith("#EXTM3U")) return StreamHealthStatus.EmptyManifest;
 
         return StreamHealthStatus.InvalidManifest;
+    }
+
+    private MirrorEvidence? CaptureMirrorEvidence(string content, string playlistUrl, string sourceUrl)
+    {
+        try
+        {
+            return MirrorEvidence.FromMediaPlaylist(content, playlistUrl, sourceUrl, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamHealthChecker] Mirror evidence not captured for {Url}", playlistUrl);
+            return null;
+        }
     }
 
     private string? ExtractFirstStreamUrl(string content, string baseUrl)
@@ -247,14 +289,15 @@ public class StreamHealthChecker(
         }
     }
 
-    private static string ResolveUrl(string baseUrl, string relativeUrl)
-    {
-        if (Uri.TryCreate(relativeUrl, UriKind.Absolute, out _)) return relativeUrl;
-        if (Uri.TryCreate(new Uri(baseUrl), relativeUrl, out var absoluteUri)) return absoluteUri.ToString();
-        return relativeUrl;
-    }
+    // Root-relative "/seg.ts" parses as file:/// on Android/Linux; the shared
+    // resolver only treats explicit http(s) URLs as absolute (same on every platform).
+    private static string ResolveUrl(string baseUrl, string relativeUrl) =>
+        HlsUriResolver.Resolve(baseUrl, relativeUrl);
 
-    private async Task<string?> FetchManifestContentAsync(
+    /// <summary>A manifest body, or null with the HTTP status that refused it.</summary>
+    private readonly record struct ManifestFetch(string? Content, int? StatusCode);
+
+    private async Task<ManifestFetch> FetchManifestContentAsync(
         string url,
         string? refererUrl,
         StreamHealthProbe? probe,
@@ -269,11 +312,13 @@ public class StreamHealthChecker(
         if (!response.IsSuccessStatusCode)
         {
             logger.LogWarning("Manifest fetch failed: {StatusCode} for {Url}", response.StatusCode, url);
-            return null;
+            return new ManifestFetch(null, (int)response.StatusCode);
         }
 
         var content = await response.Content.ReadAsStringAsync(ct);
-        return string.IsNullOrWhiteSpace(content) ? null : content;
+        return string.IsNullOrWhiteSpace(content)
+            ? new ManifestFetch(null, (int)response.StatusCode)
+            : new ManifestFetch(content, (int)response.StatusCode);
     }
 
     private async Task<StreamHealthStatus> CheckSegmentAsync(
@@ -305,14 +350,92 @@ public class StreamHealthChecker(
                 return StreamHealthStatus.Healthy;
             }
 
-            logger.LogWarning("Segment check failed for {Url}", url);
+        }
+        catch (Exception ex)
+        {
+            // Could not connect (timeout, refused, reset, TLS): CDN unreachable,
+            // deferred. DNS: HostNotResolved, dead. Anything else stays dead.
+            var status = SegmentFailureStatus(ex, ct);
+            logger.LogWarning(ex, "Segment exception for {Url}: {Status}", url, status);
+            return status;
+        }
+
+        // Header checks failed (often image/* Content-Type on a PNG-wrapped TS
+        // segment). The bytes decide: wrapped TS / TS / fMP4 are playable.
+        return await ClassifySegmentBytesAsync(url, refererUrl, ct, probe);
+    }
+
+    /// <summary>
+    /// Ranged GET of the first <see cref="SegmentPayload.ProbeBytes"/> bytes and
+    /// <see cref="SegmentPayload.Classify"/>. Only playable kinds are healthy;
+    /// plain images, HTML/JSON and unknown bodies are rejected.
+    /// </summary>
+    private async Task<StreamHealthStatus> ClassifySegmentBytesAsync(
+        string url,
+        string? refererUrl,
+        CancellationToken ct,
+        StreamHealthProbe? probe)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyPlaybackHeaders(request, refererUrl, probe?.RequestHeaders);
+            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, SegmentPayload.ProbeBytes - 1);
+
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning("[StreamHealthChecker] Segment byte probe returned {StatusCode} for {Url}",
+                    response.StatusCode, url);
+                return StreamHealthStatus.SegmentUnreachable;
+            }
+
+            var prefix = await ReadPrefixAsync(response.Content, SegmentPayload.ProbeBytes, cts.Token);
+            var kind = SegmentPayload.Classify(prefix);
+            if (SegmentPayload.IsPlayable(kind))
+            {
+                logger.LogInformation("[StreamHealthChecker] Segment {Url} classified {Kind} — healthy", url, kind);
+                return StreamHealthStatus.Healthy;
+            }
+
+            logger.LogWarning(
+                "[StreamHealthChecker] Rejecting segment {Url}: bytes classified {Kind} (Content-Type={ContentType})",
+                url, kind, response.Content.Headers.ContentType?.MediaType ?? "(none)");
             return StreamHealthStatus.SegmentUnreachable;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Segment exception for {Url}", url);
-            return StreamHealthStatus.SegmentUnreachable;
+            var status = SegmentFailureStatus(ex, ct);
+            logger.LogWarning(ex, "Segment byte probe exception for {Url}: {Status}", url, status);
+            return status;
         }
+    }
+
+    /// <summary>
+    /// A segment request that threw. Transport failures are classified by
+    /// <see cref="CdnReachabilityPolicy.ClassifyTransportFailure"/>; anything
+    /// else (an invalid URI, a bad body) stays <see cref="StreamHealthStatus.SegmentUnreachable"/>.
+    /// </summary>
+    private static StreamHealthStatus SegmentFailureStatus(Exception ex, CancellationToken ct) =>
+        CdnReachabilityPolicy.ClassifyTransportFailure(ex, ct) ?? StreamHealthStatus.SegmentUnreachable;
+
+    private static async Task<byte[]> ReadPrefixAsync(HttpContent content, int maxBytes, CancellationToken ct)
+    {
+        await using var stream = await content.ReadAsStreamAsync(ct);
+        var buffer = new byte[maxBytes];
+        var total = 0;
+        while (total < maxBytes)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total, maxBytes - total), ct);
+            if (read <= 0)
+                break;
+            total += read;
+        }
+
+        return total == maxBytes ? buffer : buffer[..total];
     }
 
     private async Task<bool> ProbeSegmentAsync(
@@ -353,6 +476,15 @@ public class StreamHealthChecker(
         return true;
     }
 
+    private static readonly HashSet<string> PlaybackHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "user-agent",
+        "referer",
+        "origin",
+        "cookie",
+        "authorization"
+    };
+
     private static void ApplyPlaybackHeaders(
         HttpRequestMessage request,
         string? refererUrl,
@@ -363,12 +495,26 @@ public class StreamHealthChecker(
         request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
 
         var referer = GetHeader(requestHeaders, "referer") ?? refererUrl;
-        if (!string.IsNullOrEmpty(referer) && Uri.TryCreate(referer, UriKind.Absolute, out var refUri))
+        if (HlsUriResolver.TryGetHttpUrl(referer, out var refUri))
             request.Headers.Referrer = refUri;
 
-        var origin = GetHeader(requestHeaders, "origin");
-        if (!string.IsNullOrEmpty(origin))
-            request.Headers.TryAddWithoutValidation("Origin", origin);
+        // LocalService /play captures Cookie (+ Origin / Authorization). ExoPlayer
+        // already sends them; health used to drop Cookie and get CDN 403/HTML.
+        if (requestHeaders is null)
+            return;
+
+        foreach (var pair in requestHeaders)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value)
+                || !PlaybackHeaderNames.Contains(pair.Key)
+                || pair.Key.Equals("user-agent", StringComparison.OrdinalIgnoreCase)
+                || pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            request.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+        }
     }
 
     private static string? GetHeader(IReadOnlyDictionary<string, string>? headers, string name)

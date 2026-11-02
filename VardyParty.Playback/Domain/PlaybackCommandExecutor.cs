@@ -17,6 +17,14 @@ public static class PlaybackCommandExecutor
         host.BeginIndexSwitchSuppression();
         try
         {
+            // Report BEFORE clear or remove, while the pool's current row is still
+            // the stream that failed. Hosts key the report on that row's catalog URL.
+            if (cmd.ReportFailed)
+                host.ReportFailed(cmd.Reason);
+
+            if (cmd.ReportDeclined)
+                host.ReportDeclined(cmd.Reason ?? "Health declined");
+
             if (cmd.ClearResolvedUrl)
                 host.ClearCurrentResolvedUrl();
 
@@ -24,12 +32,6 @@ public static class PlaybackCommandExecutor
                 host.RemoveCurrentFromPool();
 
             host.SyncHealthyStreamCount();
-
-            if (cmd.ReportFailed)
-                host.ReportFailed(cmd.Reason);
-
-            if (cmd.ReportDeclined)
-                host.ReportDeclined(cmd.Reason ?? "Health declined");
 
             if (cmd.MarkEstablished)
                 host.MarkEstablished();
@@ -41,7 +43,13 @@ public static class PlaybackCommandExecutor
                 host.RaiseBuffering(cmd.IsBuffering);
 
             if (!string.IsNullOrWhiteSpace(cmd.AttachUrl))
+            {
+                // A failed switch leaves the pool index on the target row. Point it
+                // back at the last-good row (still suppressed) before re-attaching it.
+                if (cmd.AttachIsRevert)
+                    host.RevertPoolIndexTo(cmd.AttachUrl);
                 host.Attach(cmd.AttachUrl, cmd.AttachIsRevert);
+            }
             else if (cmd.AttachCurrentAfterRemove)
                 host.AttachCurrentAfterRemove();
 

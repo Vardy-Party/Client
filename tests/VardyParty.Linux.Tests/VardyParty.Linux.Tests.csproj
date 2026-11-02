@@ -8,6 +8,8 @@
     <ProjectReference Include="..\..\VardyParty.Ports\VardyParty.Ports.csproj" />
     <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
     <ProjectReference Include="..\..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
+    <!-- LinuxHlsLocalProxy unwraps PNG-wrapped TS via VardyParty.Streaming. -->
+    <ProjectReference Include="..\..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
     <!--
       Policy-only sources: the Linux head is a MAUI/Avalonia exe and is
       not referenced from unit tests. These files have no LibVLC / SoundFlow
@@ -20,5 +22,7 @@
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxPlaybackFullscreenSession.cs" Link="LinuxPlaybackFullscreenSession.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxHlsPlaylistRewriter.cs" Link="LinuxHlsPlaylistRewriter.cs" />
     <Compile Include="..\..\VardyParty.Linux\Services\LinuxHlsLocalProxy.cs" Link="LinuxHlsLocalProxy.cs" />
+    <!-- Test-only TIKTIKPX PNG writer shared with Streaming.Tests. -->
+    <Compile Include="..\VardyParty.Streaming.Tests\WrappedPngBuilder.cs" Link="WrappedPngBuilder.cs" />
   </ItemGroup>
 </Project>

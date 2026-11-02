@@ -4,8 +4,9 @@ using VardyParty.Ports;
 namespace VardyParty.Presentation;
 
 /// <summary>
-/// Settings policy for "DNS over HTTPS fallback" (default ON). System DNS
-/// first; Cloudflare 1.1.1.1 when host lookup fails.
+/// Settings policy for DNS over HTTPS (default ON). When enabled, internet
+/// lookups prefer Cloudflare 1.1.1.1 and fall back to system DNS — same order
+/// as phone CONNECT — so a hijacked or wrong system answer cannot skip DoH.
 /// </summary>
 public sealed class DnsOverHttpsPreference
 {

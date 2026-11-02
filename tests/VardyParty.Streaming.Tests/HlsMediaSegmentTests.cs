@@ -17,6 +17,8 @@ public class HlsMediaSegmentTests
 
     [Theory]
     [InlineData("https://p16-common-sign.tiktokcdn-us.com/tos/abc~tplv-tiktokx-origin.image?dr=1")]
+    [InlineData("https://p19-common-sign.tiktokcdn-us.com/tiktok-obj-tx/0148~tplv-tiktokx-origin")]
+    [InlineData("https://p16-common-sign.tiktokcdn-us.com/tiktok-obj-tx/deadbeef")]
     [InlineData("https://cdn.example.com/frame.image")]
     [InlineData("https://cdn.example.com/thumb.jpg")]
     public void LooksLikeVideoSegment_RejectsImages(string url)

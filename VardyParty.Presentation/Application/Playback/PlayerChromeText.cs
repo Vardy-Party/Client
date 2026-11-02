@@ -101,6 +101,39 @@ public static class PlayerChromeText
     private static int GreatestCommonDivisor(int a, int b) =>
         b == 0 ? a : GreatestCommonDivisor(b, a % b);
 
+    /// <summary>
+    /// Quality line from what playback actually measured. A media playlist often has
+    /// no <c>#EXT-X-STREAM-INF</c>, so the health record is "Unknown Quality" while
+    /// the player already has a picture size. Measured size and bitrate win.
+    /// The playlist label is used only when nothing was measured.
+    /// </summary>
+    public static string FormatMeasuredQuality(string? measuredResolution, int? bitrateKbps, string? playlistQuality)
+    {
+        var parts = new List<string>();
+        var height = ExtractVerticalResolution(measuredResolution);
+        if (!string.IsNullOrEmpty(height))
+            parts.Add(height);
+        if (bitrateKbps is > 0)
+            parts.Add(FormatBitrateMbps(bitrateKbps.Value));
+        if (parts.Count > 0)
+            return string.Join(' ', parts);
+
+        if (!string.IsNullOrWhiteSpace(playlistQuality)
+            && !playlistQuality.Equals("Unknown Quality", StringComparison.OrdinalIgnoreCase))
+        {
+            return playlistQuality.Trim();
+        }
+
+        return "Unknown Quality";
+    }
+
+    /// <summary>One decimal Mbps, including rates under 1 Mbps (500 kbps is 0.5 Mbps).</summary>
+    public static string FormatBitrateMbps(int kbps)
+    {
+        var tenths = (kbps + 50) / 100;
+        return $"{tenths / 10}.{tenths % 10} Mbps";
+    }
+
     public static string RefererHost(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -140,6 +173,7 @@ public static class PlayerChromeText
         }
 
         var bitrate = overlay?.BitrateKbps ?? current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate;
+        quality = FormatMeasuredQuality(resolution, bitrate, quality);
         var buffer = bufferPercent ?? overlay?.BufferPercent;
 
         return new VideoInfoPanelModel
@@ -153,7 +187,7 @@ public static class PlayerChromeText
             Resolution = resolution,
             FrameRate = frameRate.HasValue ? $"{frameRate:0.##} fps" : null,
             AspectRatio = overlay?.AspectRatio ?? BuildAspectRatio(resolution),
-            Bitrate = bitrate is > 0 ? $"{bitrate} kbps" : null,
+            Bitrate = bitrate is > 0 ? FormatBitrateMbps(bitrate.Value) : null,
             VideoCodec = overlay?.VideoCodec,
             AudioCodec = overlay?.AudioCodec,
             // Game title from the host; never substitute the MP chip here.

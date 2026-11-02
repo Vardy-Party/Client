@@ -24,12 +24,20 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<IGameMatcher, GameMatcher>();
         services.AddSingleton<IBbcJsonParser, BbcJsonParser>();
         services.AddSingleton<IBbcHtmlParser, BbcHtmlParser>();
-        services.AddSingleton<IStreamDeduplicator, StreamDeduplicator>();
         services.AddSingleton<IEnrichedGameService, EnrichedGameService>();
         services.AddSingleton<ILeagueFilterService, LeagueFilterService>();
         services.AddSingleton<IHomePagePresentationService, HomePagePresentationService>();
         services.AddSingleton<IStreamSwitchingService, StreamSwitchingService>();
         services.AddSingleton<IStreamSelectionCoordinator, StreamSelectionCoordinator>();
+        services.AddSingleton<WarmPlaybackUrlCache>();
+        services.AddSingleton<ResolverRaceThrottle>();
+        services.AddSingleton<IUpcomingStreamPrewarmer>(sp =>
+        {
+            var prewarmer = ActivatorUtilities.CreateInstance<UpcomingStreamPrewarmer>(sp);
+            PlaybackRecoverySignals.SameStreamRetryStarted += prewarmer.Kick;
+            prewarmer.PlayingTokenReady += PlaybackRecoverySignals.RaisePlayingTokenReady;
+            return prewarmer;
+        });
         services.AddSingleton<IStreamResolutionOrchestrator, StreamResolutionOrchestrator>();
         services.AddSingleton<IStreamHealthReporter, StreamHealthReporter>();
         services.AddSingleton<ISessionIdProvider, SessionIdProvider>();

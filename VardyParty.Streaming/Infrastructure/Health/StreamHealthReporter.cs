@@ -7,6 +7,25 @@ public class StreamHealthReporter(
     ISessionIdProvider sessionIdProvider,
     SelectionState selectionState) : IStreamHealthReporter
 {
+    /// <summary>
+    /// The orchestrator's 30s tick and the native player's 30s timer both report
+    /// the stream that is playing. Without this window the API got every
+    /// working sample twice (seen at 16:49:27 and 16:49:29 UK time on 31 Oct 2026).
+    /// </summary>
+    internal static readonly TimeSpan DuplicateWindow = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// A failure is reported once per stream. The native session and the
+    /// orchestrator fallback can both report the same drop.
+    /// </summary>
+    internal static readonly TimeSpan DuplicateFailureWindow = TimeSpan.FromSeconds(60);
+
+    private readonly Dictionary<string, DateTimeOffset> _lastSent = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+
+    /// <summary>Test seam for the duplicate windows.</summary>
+    internal Func<DateTimeOffset> Clock { get; set; } = static () => DateTimeOffset.UtcNow;
+
     public Task ReportPlaybackStartedAsync(
         string? streamUrl,
         string? refererUrl,
@@ -67,6 +86,14 @@ public class StreamHealthReporter(
         var resolvedStreamUrl = StreamHealthIdentity.ResolveReportUrl(streamUrl, refererUrl);
         if (string.IsNullOrWhiteSpace(resolvedStreamUrl)) return;
 
+        // A started (metadata) report has its own key, so a metrics sample never
+        // swallows it. The orchestrator and the native player both send one
+        // per play, and only the first in the window is kept. user-report is
+        // the user's explicit action and is never dropped.
+        if (status != "user-report"
+            && IsDuplicate(includeMetadata ? "started" : status, resolvedStreamUrl, streamName))
+            return;
+
         var report = new StreamHealthReport
         {
             StreamUrl = resolvedStreamUrl,
@@ -92,6 +119,27 @@ public class StreamHealthReporter(
             game.Away,
             report,
             cancellationToken);
+    }
+
+    private bool IsDuplicate(string status, string url, string? streamName)
+    {
+        var key = $"{status}|{StreamHealthIdentity.BuildStreamKey(url, streamName)}";
+        var window = status == "failed" ? DuplicateFailureWindow : DuplicateWindow;
+        var now = Clock();
+        lock (_gate)
+        {
+            if (_lastSent.TryGetValue(key, out var last) && now - last < window)
+                return true;
+
+            _lastSent[key] = now;
+            if (_lastSent.Count > 256)
+            {
+                foreach (var stale in _lastSent.Where(p => now - p.Value >= DuplicateFailureWindow).Select(p => p.Key).ToList())
+                    _lastSent.Remove(stale);
+            }
+
+            return false;
+        }
     }
 
     private static string? DetectQuality(PlaybackMetrics? metrics)

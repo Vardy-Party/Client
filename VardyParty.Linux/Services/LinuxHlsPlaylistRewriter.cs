@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using VardyParty.Kernel;
 
 namespace VardyParty.Linux.Services;
 
@@ -46,8 +47,7 @@ public static class LinuxHlsPlaylistRewriter
         {
             if (string.IsNullOrWhiteSpace(url))
                 continue;
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            if (!HlsUriResolver.IsHttpUrl(url))
             {
                 continue;
             }
@@ -110,8 +110,8 @@ public static class LinuxHlsPlaylistRewriter
         ArgumentException.ThrowIfNullOrWhiteSpace(playlistUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(proxyPrefix);
 
-        if (!Uri.TryCreate(playlistUrl, UriKind.Absolute, out var baseUri))
-            throw new ArgumentException("playlistUrl must be an absolute URI.", nameof(playlistUrl));
+        if (!HlsUriResolver.TryGetHttpUrl(playlistUrl, out var baseUri))
+            throw new ArgumentException("playlistUrl must be an absolute http(s) URI.", nameof(playlistUrl));
 
         var prefix = proxyPrefix.EndsWith('/') ? proxyPrefix : proxyPrefix + "/";
         var sb = new StringBuilder(playlist.Length + 256);
@@ -170,8 +170,7 @@ public static class LinuxHlsPlaylistRewriter
                 token += new string('=', 4 - pad);
             var bytes = Convert.FromBase64String(token.Replace('-', '+').Replace('_', '/'));
             url = Encoding.UTF8.GetString(bytes);
-            return Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                   && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+            return HlsUriResolver.IsHttpUrl(url);
         }
         catch
         {
@@ -196,7 +195,7 @@ public static class LinuxHlsPlaylistRewriter
         });
 
     private static string Resolve(Uri baseUri, string reference) =>
-        Uri.TryCreate(baseUri, reference, out var absolute)
+        HlsUriResolver.TryResolve(baseUri, reference, out Uri? absolute)
             ? absolute.AbsoluteUri
             : reference;
 }

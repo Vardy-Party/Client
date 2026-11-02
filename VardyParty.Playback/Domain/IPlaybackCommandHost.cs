@@ -18,6 +18,15 @@ public interface IPlaybackCommandHost
     void MarkEstablished();
     void RaiseBuffering(bool isBuffering);
     void Attach(string url, bool isRevert);
+
+    /// <summary>
+    /// Before a revert attach: put the pool index back on the row that plays
+    /// <paramref name="url"/> (the last-good stream), so the overlay number, Next
+    /// and health reports follow what is on screen. Runs inside index-switch
+    /// suppression, so it must not re-attach. Hosts call
+    /// <see cref="PlaybackPoolCommandActions.RevertIndexToPlayingUrl"/>.
+    /// </summary>
+    void RevertPoolIndexTo(string url);
     void AttachCurrentAfterRemove();
     void RetryFreshResolve();
     void StopEngine();

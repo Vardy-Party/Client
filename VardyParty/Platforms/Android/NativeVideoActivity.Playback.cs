@@ -11,7 +11,61 @@ namespace VardyParty.Platforms.Android
 {
     public partial class NativeVideoActivity
     {
-        private readonly PlaybackSessionController _session = new();
+        // Android: ExoPlayer reports READY for audio-only HLS, so a stream is only
+        // "working" once it shows a picture (docs/STREAM_PLAYBACK_RULES.md "Audio-only streams").
+        private readonly PlaybackSessionController _session = CreateSession();
+        private long _videoSeenGeneration = -1;
+
+        private static PlaybackSessionController CreateSession()
+        {
+            var session = new PlaybackSessionController();
+            session.EnableVideoConfirmation();
+            return session;
+        }
+
+        /// <summary>ExoPlayer showed a picture for the current attach (first frame or a real video size).</summary>
+        private void NoteVideoSeen(string signal)
+        {
+            var gen = CurrentAttachGeneration;
+            if (Interlocked.Exchange(ref _videoSeenGeneration, gen) != gen)
+                _logger?.LogInformation("[NativeVideoActivity] Video confirmed ({Signal})", signal);
+            ProbeVideo();
+        }
+
+        /// <summary>
+        /// Tells the session whether this attach has shown video. Called on READY, on the
+        /// first picture and on every status-watchdog tick until confirmed; the session fails
+        /// the stream with "No video (audio only)" after its no-video timeout.
+        /// </summary>
+        private void ProbeVideo()
+        {
+            try
+            {
+                if (_session.Snapshot.IsVideoConfirmed || _player == null)
+                    return;
+                var gen = CurrentAttachGeneration;
+                _engine.Raise(MediaEngineEvent.VideoProbe(gen, Interlocked.Read(ref _videoSeenGeneration) == gen));
+            }
+            catch (Exception ex) { LogIgnored("ProbeVideo", ex); }
+        }
+
+        /// <summary>Puts the pool index back on the row that is playing (no re-attach); falls back to Previous.</summary>
+        private void RevertIndexToPlaying()
+        {
+            if (_pool?.RevertIndexToPlayingUrl(_m3u8Url) == true)
+                return;
+            if (_pool?.FindPlayingRow(_m3u8Url, null) is { } playing && ReferenceEquals(playing, _switching?.GetCurrentStream()))
+                return;
+            _switching?.SwitchToPreviousStream();
+        }
+
+        private void RunWithIndexSwitchSuppressed(Action action)
+        {
+            var previous = _suppressIndexDrivenSwitch;
+            _suppressIndexDrivenSwitch = true;
+            try { action(); }
+            finally { _suppressIndexDrivenSwitch = previous; }
+        }
         private readonly DelegatingMediaEngine _engine = new();
         private PlaybackPoolCommandActions? _pool;
         private bool _suppressIndexDrivenSwitch;
@@ -28,10 +82,11 @@ namespace VardyParty.Platforms.Android
         {
             try
             {
-                // Pool can grow while ExoPlayer is still preparing the first stream —
-                // refresh count before UserNext/Prev eligibility checks.
-                if (engineEvent.Kind is MediaEngineEventKind.UserNext or MediaEngineEventKind.UserPrevious)
-                    SyncHealthyStreamCount();
+                // The pool grows (find phase) and shrinks (drops) during the session.
+                // Refresh the count before EVERY event: a stale count of 1 used to turn
+                // an established error into "Closing playback session" while the pool
+                // still had streams (17:08:43 UK time, 31 Oct 2026).
+                SyncHealthyStreamCount();
 
                 var cmd = PlaybackCommand.FromEffects(_session.Handle(engineEvent));
                 ApplyPlaybackCommand(cmd);
@@ -110,8 +165,13 @@ namespace VardyParty.Platforms.Android
                     activity._logger?.LogWarning("[NativeVideoActivity] Reverting to last good stream: {Url}", url);
                 }
 
-                _ = activity._engine.AttachAsync(url);
+                // Pool switches used to keep Intent/first-stream headers (often dembed.st)
+                // while health checks used each stream's LS Referer — ExoPlayer then 403s.
+                activity.ApplySoakHeadersForPlaybackUrl(url);
+                _ = activity._engine.AttachAsync(url, activity._requestHeaders);
             }
+
+            public void RevertPoolIndexTo(string url) => activity._pool?.RevertIndexToPlayingUrl(url);
 
             public void AttachCurrentAfterRemove() => _ = activity._pool?.AttachCurrentFromPoolAsync();
 
@@ -135,19 +195,20 @@ namespace VardyParty.Platforms.Android
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
         }
 
-        private string? CurrentHealthStreamName()
-        {
-            var stream = _switching?.GetCurrentStream()?.Stream;
-            return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
-        }
+        /// <summary>
+        /// Crowd-health key for in-player reports: the pool row's catalog URL (the
+        /// same key the resolver uses), not the CDN embed referer.
+        /// </summary>
+        private (string? StreamUrl, string? StreamName) CurrentHealthIdentity()
+            => StreamHealthIdentity.ResolvePlaybackReportIdentity(_switching?.GetCurrentStream(), _m3u8Url, _refererUrl);
 
         private void PostHealthError(string? error)
         {
             if (_healthReporter == null) return;
             try
             {
-                _ = _healthReporter.ReportPlaybackErrorAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), error: error);
+                var (url, name) = CurrentHealthIdentity();
+                _ = _healthReporter.ReportPlaybackErrorAsync(url, _refererUrl, name, error: error);
             }
             catch (Exception ex) { LogIgnored("ReportPlaybackError", ex); }
         }
@@ -158,8 +219,8 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var metrics = BuildPlaybackMetrics(isBuffering: true);
-                _ = _healthReporter.ReportBufferingAsync(
-                    _m3u8Url, _refererUrl, CurrentHealthStreamName(), metrics: metrics);
+                var (url, name) = CurrentHealthIdentity();
+                _ = _healthReporter.ReportBufferingAsync(url, _refererUrl, name, metrics: metrics);
             }
             catch (Exception ex) { LogIgnored("ReportBuffering", ex); }
         }
@@ -195,6 +256,7 @@ namespace VardyParty.Platforms.Android
                 return false;
 
             _behindLiveWindowRecoveries++;
+            PlayedSegmentMemory.ArmTrimOnce();
             _logger?.LogWarning(
                 "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
                 _behindLiveWindowRecoveries,
@@ -222,6 +284,17 @@ namespace VardyParty.Platforms.Android
         }
 
         private static bool IsRecoverableLiveHlsStall(AndroidX.Media3.Common.PlaybackException error)
+            => PlaybackPolicy.IsRecoverableExoLiveHlsStall(error.ErrorCode, error.Message, DescribeCauses(error));
+
+        /// <summary>
+        /// The engine Error message: the message, the code name, then the cause
+        /// chain. The shared controller can then tell an expired token (fresh
+        /// /play) from a dead CDN (switch).
+        /// </summary>
+        private static string BuildEngineErrorMessage(AndroidX.Media3.Common.PlaybackException error)
+            => PlaybackPolicy.BuildEngineErrorMessage(error.Message, error.ErrorCode, DescribeCauses(error));
+
+        private static string? DescribeCauses(AndroidX.Media3.Common.PlaybackException error)
         {
             string? causeSummary = null;
             try
@@ -244,7 +317,7 @@ namespace VardyParty.Platforms.Android
                 // Ignore cause walk failures — ErrorCode / message checks remain.
             }
 
-            return PlaybackPolicy.IsRecoverableExoLiveHlsStall(error.ErrorCode, error.Message, causeSummary);
+            return causeSummary;
         }
 
         /// <summary>
@@ -277,6 +350,81 @@ namespace VardyParty.Platforms.Android
             return headers;
         }
 
+        private void ApplySoakHeadersForPlaybackUrl(string? m3u8Url)
+        {
+            if (string.IsNullOrWhiteSpace(m3u8Url) || _switching is null)
+                return;
+
+            EnrichedStream? match = null;
+            var current = _switching.GetCurrentStream();
+            if (current is not null
+                && string.Equals(current.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
+            {
+                match = current;
+            }
+            else
+            {
+                foreach (var stream in _switching.GetHealthyStreams())
+                {
+                    if (string.Equals(stream.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = stream;
+                        break;
+                    }
+                }
+            }
+
+            ApplySoakHeadersFromStream(match);
+        }
+
+        private void ApplySoakHeadersFromStream(EnrichedStream? stream)
+        {
+            if (stream is null)
+                return;
+
+            if (stream.RequestHeaders is { Count: > 0 })
+                _requestHeaders = stream.RequestHeaders;
+
+            if (!string.IsNullOrWhiteSpace(stream.Referer))
+            {
+                _refererUrl = stream.Referer;
+                return;
+            }
+
+            if (_requestHeaders is null)
+                return;
+
+            foreach (var pair in _requestHeaders)
+            {
+                if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    _refererUrl = pair.Value;
+                    return;
+                }
+            }
+        }
+
+        private void OnPlayingTokenReady(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return;
+            RunOnUiThread(() =>
+            {
+                if (IsLifecycleClosing || string.IsNullOrEmpty(_m3u8Url)
+                    || string.Equals(url, _m3u8Url, StringComparison.Ordinal))
+                    return;
+                // Same ExoPlayer. Its next playlist reload fetches this URL, so the
+                // decoder and the buffered segments are not torn down.
+                PlayingPlaylistRedirect.Arm(_m3u8Url, url);
+                _session.NoteRefreshedPlayingUrl(url);
+                _m3u8Url = url;
+                _logger?.LogInformation(
+                    "[LinkRefresh] Next playlist reload will use the new token {Url}",
+                    url);
+            });
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
@@ -307,10 +455,25 @@ namespace VardyParty.Platforms.Android
                             return;
                         }
 
-                        _isPreparing = true;
+                        // A real attach fetches the URL it was given. Drop a token redirect
+                        // aimed at the playlist being replaced.
+                        PlayingPlaylistRedirect.Clear();
+
+                        if (!_anticipatingToken)
+                        {
+                            _isPreparing = true;
+                            Interlocked.Exchange(ref _videoSeenGeneration, -1);
+                            _playerFaulted = false;
+                            _statusTracker.Reset();
+                            _transferMeter.Reset();
+                        }
+                        else
+                        {
+                            _session.NoteRefreshedPlayingUrl(m3u8Url);
+                            _logger?.LogInformation("[LinkRefresh] Swapping to the next token while playback continues");
+                        }
+
                         _m3u8Url = m3u8Url;
-                        _playerFaulted = false;
-                        _statusTracker.Reset();
                         StartStatusWatchdog();
                         RefreshPlaybackStatus();
 
@@ -341,7 +504,7 @@ namespace VardyParty.Platforms.Android
                             }
                             catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
 
-                            var customFactory = ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled);
+                            var customFactory = new UnwrappingDataSourceFactory(ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled), _transferMeter);
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -387,7 +550,7 @@ namespace VardyParty.Platforms.Android
                         fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(dataSourceFactory)
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 

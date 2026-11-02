@@ -395,6 +395,7 @@ Guest resolve over the compute relay:
 - A clean ICE miss stays on the relay. The guest sends `signal kind=failed` and does not raise a banner.
 - A drop after transport `webrtc` and before `rpc-result` banners `This phone failed: direct connection dropped. Correlation id: {id}`.
 - CONNECT DNS is DoH-first when DoH is enabled. Carrier DNS on 4G often answers and would skip DoH.
+- Internet `HttpClient` / stream health DNS uses the same DoH-first order when the preference is on (`SystemThenDohHostNameResolver` → `PhonePathDns`), so a successful-but-wrong system answer cannot starve CDN probes of Cloudflare.
 - Leftover MP chips after the first `/mp` keep resolving like LAN.
 - Leave always cancels headed Chrome.
 

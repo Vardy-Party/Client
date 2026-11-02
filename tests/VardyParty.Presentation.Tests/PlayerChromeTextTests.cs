@@ -41,6 +41,63 @@ public class PlayerChromeTextTests
     }
 
     [Fact]
+    public void FormatMeasuredQuality_UsesPictureSizeAndMeasuredBitrate()
+    {
+        // Arrange
+        // Act
+        var fromPlayback = PlayerChromeText.FormatMeasuredQuality("960x540", 1840, "Unknown Quality");
+        var subMbps = PlayerChromeText.FormatMeasuredQuality("960x540", 500, "Unknown Quality");
+        var sizeOnly = PlayerChromeText.FormatMeasuredQuality("960x540", null, "Unknown Quality");
+        var playlist = PlayerChromeText.FormatMeasuredQuality(null, null, "1080p 60fps 5000kbps");
+
+        // Assert
+        Assert.Equal("540p 1.8 Mbps", fromPlayback);
+        Assert.Equal("540p 0.5 Mbps", subMbps);
+        Assert.Equal("0.0 Mbps", PlayerChromeText.FormatBitrateMbps(3));
+        Assert.Equal("540p", sizeOnly);
+        Assert.Equal("1080p 60fps 5000kbps", playlist);
+    }
+
+    [Fact]
+    public void TransferMeter_PublishesBitrateAfterTwoSecondsOfBytes()
+    {
+        // Arrange
+        var meter = new PlaybackTransferMeter();
+
+        // Act
+        meter.Add(1, 0);
+        meter.Add(1, 1000);
+        var early = meter.BitrateKbps;
+        meter.Add(500_000, 2000);
+
+        // Assert
+        Assert.Null(early);
+        Assert.Equal(2000, meter.BitrateKbps);
+    }
+
+    [Fact]
+    public void TransferMeter_IgnoresPlaylistNoise_ThenAveragesVideoWindows()
+    {
+        // Arrange
+        var meter = new PlaybackTransferMeter();
+
+        // Act
+        meter.Add(750, 0);
+        meter.Add(1, 2000);
+        var noise = meter.BitrateKbps;
+        meter.Add(392_750, 2000);
+        meter.Add(1, 4000);
+        var first = meter.BitrateKbps;
+        meter.Add(400_000, 4000);
+        meter.Add(1, 6000);
+
+        // Assert
+        Assert.Null(noise);
+        Assert.Equal(1571, first);
+        Assert.Equal(1585, meter.BitrateKbps);
+    }
+
+    [Fact]
     public void FormatVideoInfo_IncludesStreamChannelAndSource()
     {
         // Arrange
@@ -140,7 +197,7 @@ public class PlayerChromeTextTests
         Assert.Equal("Home United vs Away City", model.Title);
         Assert.Equal("https://streams.example.com/live.m3u8", model.SourceUrl);
         Assert.Equal("referer.example.com", model.RefererHost);
-        Assert.Equal("2500 kbps", model.Bitrate);
+        Assert.Equal("2.5 Mbps", model.Bitrate);
     }
 
     [Fact]

@@ -13,11 +13,54 @@ namespace VardyParty.Hosting.Tests;
 public class SystemThenDohHostNameResolverTests
 {
     [Fact]
-    public async Task ResolveAsync_WhenSystemDnsWorks_DoesNotCallDoh()
+    public async Task ResolveAsync_WhenDohEnabled_UsesCloudflareBeforeSystem()
     {
         // Arrange
         var prefs = new Mock<IDnsPreferencesStore>();
         prefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
+        var expected = IPAddress.Parse("203.0.113.50");
+        var doh = new Mock<IDnsOverHttpsClient>();
+        doh.Setup(d => d.ResolveAsync("cdn.example.test", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([expected]);
+        var sut = new SystemThenDohHostNameResolver(prefs.Object, doh.Object);
+
+        // Act
+        var addresses = await sut.ResolveAsync("cdn.example.test");
+
+        // Assert — DoH must win even when system DNS would also answer
+        Assert.Equal([expected], addresses);
+        doh.Verify(
+            d => d.ResolveAsync("cdn.example.test", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenDohFails_AndDohEnabled_FallsBackToSystem()
+    {
+        // Arrange
+        var prefs = new Mock<IDnsPreferencesStore>();
+        prefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
+        var doh = new Mock<IDnsOverHttpsClient>();
+        doh.Setup(d => d.ResolveAsync("localhost", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new SocketException((int)SocketError.TimedOut));
+        var sut = new SystemThenDohHostNameResolver(prefs.Object, doh.Object);
+
+        // Act
+        var addresses = await sut.ResolveAsync("localhost");
+
+        // Assert — system DNS still resolves loopback after DoH miss
+        Assert.NotEmpty(addresses);
+        doh.Verify(
+            d => d.ResolveAsync("localhost", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenDohDisabled_DoesNotCallCloudflare()
+    {
+        // Arrange
+        var prefs = new Mock<IDnsPreferencesStore>();
+        prefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(false);
         var doh = new Mock<IDnsOverHttpsClient>(MockBehavior.Strict);
         var sut = new SystemThenDohHostNameResolver(prefs.Object, doh.Object);
 
@@ -32,29 +75,7 @@ public class SystemThenDohHostNameResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_WhenSystemDnsFails_AndDohEnabled_UsesCloudflare()
-    {
-        // Arrange
-        var prefs = new Mock<IDnsPreferencesStore>();
-        prefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
-        var expected = IPAddress.Parse("203.0.113.50");
-        var doh = new Mock<IDnsOverHttpsClient>();
-        doh.Setup(d => d.ResolveAsync("no.such.host.vardyparty.test", It.IsAny<CancellationToken>()))
-            .ReturnsAsync([expected]);
-        var sut = new SystemThenDohHostNameResolver(prefs.Object, doh.Object);
-
-        // Act
-        var addresses = await sut.ResolveAsync("no.such.host.vardyparty.test");
-
-        // Assert
-        Assert.Equal([expected], addresses);
-        doh.Verify(
-            d => d.ResolveAsync("no.such.host.vardyparty.test", It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task ResolveAsync_WhenSystemDnsFails_AndDohDisabled_Throws()
+    public async Task ResolveAsync_WhenDohDisabled_AndSystemFails_Throws()
     {
         // Arrange
         var prefs = new Mock<IDnsPreferencesStore>();
@@ -89,7 +110,7 @@ public class SystemThenDohHostNameResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_WhenDohThrows_SurfacesSocketExceptionNotAggregate()
+    public async Task ResolveAsync_WhenDohThrowsAggregate_AndSystemFails_SurfacesSocketException()
     {
         // Arrange
         var prefs = new Mock<IDnsPreferencesStore>();

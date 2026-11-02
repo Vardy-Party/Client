@@ -4,7 +4,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
@@ -23,26 +22,21 @@ public class RefererHandlingTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public async Task ResolveStreams_PassesPlayRefererToHealthChecker()
+    public async Task ResolveStreams_RefererSoak_ProbesWithSoakAndKeepsPlayReferer()
     {
-        // Arrange
+        // Arrange — Referer soak probes WITH headers (not bare); row still gets play Referer.
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "http://source.example/stream1")
             .With(s => s.Channel, "C1")
             .Create();
-        var handler = new FakeHttpHandler();
-        var playUrl = $"https://api.test/play/{Uri.EscapeDataString(stream.Url)}";
         var m3u8Resp = _fixture.Build<M3U8Response>()
             .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
             .With(r => r.RequestHeaders, new Dictionary<string, string>
             {
                 ["referer"] = "https://player.example.test/player.html"
             })
+            .With(r => r.RewrittenSegments, (List<string>?)null)
             .Create();
-        handler.AddResponse(playUrl, new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(m3u8Resp), Encoding.UTF8, "application/json")
-        });
 
         var healthChecker = new CapturingHealthChecker();
         var localLanPlayService = _fixture.GetMock<ILocalLanPlayService>();
@@ -70,9 +64,58 @@ public class RefererHandlingTests
 
         // Assert
         Assert.Single(list);
-        Assert.Equal("https://player.example.test/player.html", healthChecker.CapturedReferer);
         Assert.Equal("https://cdn.example.test/playlist.m3u8", healthChecker.CapturedM3U8);
+        Assert.NotNull(healthChecker.CapturedProbe);
         Assert.Equal("https://player.example.test/player.html", list[0].Referer);
+        Assert.Equal(StreamHealthStatus.Healthy, list[0].Health!.Status);
+    }
+
+    [Fact]
+    public async Task ResolveStreams_WithoutSoak_PassesFallbackRefererToHealthChecker()
+    {
+        // Arrange — no Cookie/Referer/Origin soak → Client CDN probe runs with page URL fallback.
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "http://source.example/stream1")
+            .With(s => s.Channel, "C1")
+            .Create();
+        var m3u8Resp = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
+            .With(r => r.RequestHeaders, new Dictionary<string, string>
+            {
+                ["user-agent"] = "TestAgent/1.0"
+            })
+            .With(r => r.RewrittenSegments, (List<string>?)null)
+            .Create();
+
+        var healthChecker = new CapturingHealthChecker();
+        var localLanPlayService = _fixture.GetMock<ILocalLanPlayService>();
+        localLanPlayService
+            .Setup(s => s.ResolveM3U8UrlAsync(
+                stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8Resp);
+
+        var resolver = new StreamResolver(
+            healthChecker,
+            localLanPlayService.Object,
+            new VardyParty.LocalService.V2.V2PlaybackTransportPlugin(),
+            NullLogger<StreamResolver>.Instance);
+
+        // Act
+        var list = new List<EnrichedStream>();
+        await foreach (var es in resolver.ResolveStreamsIncrementallyAsync([stream]))
+        {
+            list.Add(es);
+        }
+
+        // Assert
+        Assert.Single(list);
+        Assert.Equal(stream.Url, healthChecker.CapturedReferer);
+        Assert.Equal("https://cdn.example.test/playlist.m3u8", healthChecker.CapturedM3U8);
+        Assert.Equal(stream.Url, list[0].Referer);
     }
 
     [Fact]
@@ -162,6 +205,7 @@ public class RefererHandlingTests
     {
         public string? CapturedM3U8;
         public string? CapturedReferer;
+        public StreamHealthProbe? CapturedProbe;
 
         // ReSharper disable once InconsistentNaming
         public Task<StreamHealth> CheckStreamHealthAsync(string m3u8Url, string refererUrl,
@@ -169,6 +213,7 @@ public class RefererHandlingTests
         {
             CapturedReferer = refererUrl;
             CapturedM3U8 = m3u8Url;
+            CapturedProbe = null;
             var h = new StreamHealth { Url = m3u8Url, Status = StreamHealthStatus.Healthy };
             return Task.FromResult(h);
         }
@@ -177,7 +222,13 @@ public class RefererHandlingTests
             string m3u8Url,
             string refererUrl,
             StreamHealthProbe? probe,
-            CancellationToken cancellationToken = default) =>
-            CheckStreamHealthAsync(m3u8Url, refererUrl, cancellationToken);
+            CancellationToken cancellationToken = default)
+        {
+            CapturedReferer = refererUrl;
+            CapturedM3U8 = m3u8Url;
+            CapturedProbe = probe;
+            var h = new StreamHealth { Url = m3u8Url, Status = StreamHealthStatus.Healthy };
+            return Task.FromResult(h);
+        }
     }
 }
