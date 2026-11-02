@@ -46,6 +46,14 @@ public class StalledFirstPlayBusinessRulesTests
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((M3U8Response?)null);
+        // AutoMoq otherwise invents a GUID string for ResolveM3U8ForPlaybackAsync and
+        // PrefetchUpcomingStreamUrl overwrites the next row's cached URL with it.
+        _fixture.GetMock<IApiService>()
+            .Setup(a => a.ResolveM3U8ForPlaybackAsync(
+                It.IsAny<StreamModel>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
         _switching = _fixture.Create<StreamSwitchingService>();
         _fixture.Inject<IStreamSwitchingService>(_switching);
         _game = _fixture.Build<Game>()

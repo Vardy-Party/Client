@@ -987,8 +987,11 @@ public class StreamResolutionOrchestrator(
         {
             // One-shot row: the player's make-before-break switch resolves (or takes the
             // warm URL) on attach - resolving here too would be a second /play.
+            // Kick the single-flight prewarmer so attach can take a warm URL (and the
+            // following rows stay warm) instead of a bare Resolve write-back.
             logger.LogInformation("[StreamResolution] Next onto one-shot {Channel} - player resolves on attach",
                 nextStream.Stream.Channel);
+            prewarmer?.Kick();
         }
         else if (string.IsNullOrEmpty(nextStream.ResolvedM3U8Url))
         {
