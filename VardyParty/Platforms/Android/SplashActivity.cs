@@ -36,11 +36,14 @@ namespace VardyParty
         {
             base.OnCreate(savedInstanceState);
 
+            // Always paint a focused window before EnsureMauiApp. On TV the
+            // first cold start can still hit this activity (CATEGORY_LAUNCHER /
+            // GetLaunchIntentForPackage) before ApplyLauncherComponents disables
+            // it — skipping SetContentView and building MAUI inline ANRs with
+            // "no focused window". Same frame-then-idle handoff as phones.
             if (!PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(MauiProgram.IsTv))
             {
-                Log.Info("SplashActivity", "[SPLASH] television device — skip phone launcher, start MainActivity");
-                StartMauiThenMainActivity();
-                return;
+                Log.Info("SplashActivity", "[SPLASH] television device — paint then hand off (do not block OnCreate)");
             }
 
             var image = new ImageView(this);
