@@ -47,12 +47,15 @@ public static class FirstPlayOpenStrategy
         OpenRecommended,
 
         /// <summary>
-        /// Recommended is empty/audio-only/infrastructure — try a cached pool row,
+        /// Recommended is empty or audio-only — try a cached pool row,
         /// else await the partner warm leg.
         /// </summary>
         AwaitPartnerOrCached,
 
-        /// <summary>No playable URL from this start.</summary>
+        /// <summary>
+        /// No playable URL from this start. Infrastructure on the recommended leg
+        /// is terminal here (LocalServiceUnavailable) — do not advance to another row.
+        /// </summary>
         Fail,
     }
 
@@ -116,15 +119,18 @@ public static class FirstPlayOpenStrategy
     }
 
     /// <summary>
-    /// After the recommended fresh leg finishes classifying, whether to open it
-    /// or fall back (cached row / partner warm).
+    /// After the recommended fresh leg finishes classifying, whether to open it,
+    /// fall back (cached row / partner warm), or fail terminal (infrastructure).
     /// </summary>
     public static AfterRecommendedKind DecideAfterRecommended(RaceLegState recommended) =>
         recommended switch
         {
             RaceLegState.Video or RaceLegState.Unverified => AfterRecommendedKind.OpenRecommended,
-            RaceLegState.Empty or RaceLegState.AudioOnly or RaceLegState.Infrastructure
+            RaceLegState.Empty or RaceLegState.AudioOnly
                 => AfterRecommendedKind.AwaitPartnerOrCached,
+            // Infrastructure is not a stream verdict, but also not "try the next
+            // cached row" — open-recommended must surface LocalServiceUnavailable.
+            RaceLegState.Infrastructure => AfterRecommendedKind.Fail,
             _ => AfterRecommendedKind.Fail,
         };
 

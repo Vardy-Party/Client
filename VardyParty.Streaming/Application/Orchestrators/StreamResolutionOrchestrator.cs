@@ -938,31 +938,8 @@ public class StreamResolutionOrchestrator(
         using var raceHold = raceThrottle?.BeginRace();
         using var raceLeg = raceThrottle?.MarkRaceLeg();
 
-        M3U8Response? response;
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                response = await apiService.GetM3U8UrlAsync(
-                    stream.Url,
-                    EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
-                    stream.ResolutionStrategy,
-                    stream.Source,
-                    cancellationToken);
-                break;
-            }
-            catch (InfrastructureUnavailableException ex)
-                when (InfrastructureRetryPolicy.ShouldRetryFreshResolve(ex, attempt))
-            {
-                // A blip (unreachable, our timeout, LS 5xx): ask again, same as
-                // the find phase. MP disabled / auth skip straight to the caller.
-                var delay = InfrastructureRetryPolicy.FreshResolveDelays[attempt];
-                logger.LogWarning(
-                    "[StreamResolution] Fresh resolve for {Channel} hit local service unavailable ({Message}) - retry {Attempt} in {Delay}s",
-                    stream.Channel, ex.Message, attempt + 1, delay.TotalSeconds);
-                await DelayAsync(delay, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        var response = await GetM3U8UrlWithInfrastructureRetriesAsync(enrichedStream, cancellationToken)
+            .ConfigureAwait(false);
 
         if (response is null || string.IsNullOrWhiteSpace(response.Url))
             return null;
@@ -1405,7 +1382,10 @@ public class StreamResolutionOrchestrator(
         var infrastructure = false;
         try
         {
-            response = await ResolveRaceLegAsync(stream, cancellationToken).ConfigureAwait(false);
+            // Recommended leg shares InfrastructureRetryPolicy with ResolveFreshPlaybackOntoAsync.
+            // Partner warm stays single-shot (retryInfrastructure: false).
+            response = await ResolveRaceLegAsync(stream, cancellationToken, retryInfrastructure: true)
+                .ConfigureAwait(false);
             if (response is null || string.IsNullOrWhiteSpace(response.Url))
                 state = RaceLegState.Empty;
             else
@@ -1451,6 +1431,27 @@ public class StreamResolutionOrchestrator(
             _ = ReportHealthAsync(game, stream.Stream, "failed", reason, stream.Health, cancellationToken);
             lock (playbackLock)
                 RemoveFromPool(stream);
+        }
+
+        // Infrastructure (and other Fail kinds): do not ReadyCachedRow / partner-open —
+        // that would advance past LocalServiceUnavailable.
+        if (after == FirstPlayOpenStrategy.AfterRecommendedKind.Fail)
+        {
+            if (partnerTask is not null)
+                _ = ObservePartnerWarmAsync(partnerTask, partner?.Stream?.Channel);
+            logger.LogWarning(
+                "[StreamResolution] Open-recommended terminal ({State}) on {Recommended} partner={Partner}",
+                state,
+                stream.Stream?.Channel,
+                partner?.Stream?.Channel ?? "(none)");
+            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+            return new RaceStart(
+                true,
+                null,
+                infrastructure
+                    ? PlaybackResult.Completed(
+                        $"{PlaybackCloseReasons.LocalServiceUnavailable}: open-recommended infrastructure", true)
+                    : PlaybackResult.Completed("Failed to resolve m3u8", true));
         }
 
         var ready = ReadyCachedRow(stream, partner ?? stream, playbackLock);
@@ -1646,13 +1647,54 @@ public class StreamResolutionOrchestrator(
         logger.LogInformation("[FirstPlayDelay] playback_priority_end");
     }
 
-    private async Task<M3U8Response?> ResolveRaceLegAsync(EnrichedStream row, CancellationToken cancellationToken)
+    /// <summary>
+    /// Fresh <c>/play</c> with <see cref="InfrastructureRetryPolicy"/> — shared by
+    /// <see cref="ResolveFreshPlaybackOntoAsync"/> and the open-recommended recommended leg.
+    /// </summary>
+    private async Task<M3U8Response?> GetM3U8UrlWithInfrastructureRetriesAsync(
+        EnrichedStream enrichedStream,
+        CancellationToken cancellationToken)
+    {
+        var stream = enrichedStream.Stream
+            ?? throw new ArgumentException("Row has no Stream.", nameof(enrichedStream));
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await apiService.GetM3U8UrlAsync(
+                    stream.Url,
+                    EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),
+                    stream.ResolutionStrategy,
+                    stream.Source,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (InfrastructureUnavailableException ex)
+                when (InfrastructureRetryPolicy.ShouldRetryFreshResolve(ex, attempt))
+            {
+                // A blip (unreachable, our timeout, LS 5xx): ask again, same as
+                // the find phase. MP disabled / auth skip straight to the caller.
+                var delay = InfrastructureRetryPolicy.FreshResolveDelays[attempt];
+                logger.LogWarning(
+                    "[StreamResolution] Fresh resolve for {Channel} hit local service unavailable ({Message}) - retry {Attempt} in {Delay}s",
+                    stream.Channel, ex.Message, attempt + 1, delay.TotalSeconds);
+                await DelayAsync(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<M3U8Response?> ResolveRaceLegAsync(
+        EnrichedStream row,
+        CancellationToken cancellationToken,
+        bool retryInfrastructure = false)
     {
         using var mark = raceThrottle?.MarkRaceLeg();
         if (row.Stream is null)
             return null;
         if (warmUrls != null && warmUrls.BeginInFlight(row))
             _raceInFlight.TryAdd(row, 0);
+        if (retryInfrastructure)
+            return await GetM3U8UrlWithInfrastructureRetriesAsync(row, cancellationToken).ConfigureAwait(false);
         return await apiService.GetM3U8UrlAsync(
             row.Stream.Url,
             EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(row.Stream),

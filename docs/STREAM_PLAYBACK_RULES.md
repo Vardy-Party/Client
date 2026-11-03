@@ -462,7 +462,8 @@ Status text: Android toast, Windows stream-count line, Linux log only (no overla
 
 Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuseBusinessRulesTests`
 (Kernel); `WarmPlaybackUrlCacheTests`, `UpcomingStreamPrewarmerTests`, `SwitchPrewarmBusinessRulesTests`,
-`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
+`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay`
+(warm → ApplyWarmUnused) and `Rule_NextOntoOneShotRow_NoWarm_ClearsAndKicks` (Streaming);
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
 `PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
 
@@ -483,15 +484,19 @@ When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRa
    every platform's `PlanSwitch` can `AttachCached`.
 3. **Recommended empty / audio-only.** Report/remove as before. Prefer another pooled row that
    can play from cache; else await the partner warm leg and open that.
-4. **Playback-priority window.** From first playback-chain start until
+4. **Recommended infrastructure is terminal for open-recommended.** After
+   `InfrastructureRetryPolicy` retries on the recommended leg, LocalServiceUnavailable
+   closes the start — do **not** `ReadyCachedRow` / partner-open as if empty/audio failed.
+   Infrastructure is still not a stream verdict (no report/remove). Partner warm stays
+   single-shot; only the recommended open-first leg shares the fresh-resolve retry loop.
+5. **Playback-priority window.** From first playback-chain start until
    `PrewarmDepth` upcoming rows are warm (or `PlaybackPriorityTimeout` = 30s),
    `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase `/play|/mp`. Attach and
    prewarm use `MarkRaceLeg` so they still take slots. Logs: `[FirstPlayDelay] playback_priority_*`.
-5. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
+6. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
    orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not block consuming
    a partner warm.
-6. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
-7. **Infrastructure is still not a verdict.**
+7. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
 
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg

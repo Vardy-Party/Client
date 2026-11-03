@@ -162,13 +162,16 @@ public class FirstPlayOpenStrategyTests
     [InlineData(RaceLegState.Unverified, FirstPlayOpenStrategy.AfterRecommendedKind.OpenRecommended)]
     [InlineData(RaceLegState.Empty, FirstPlayOpenStrategy.AfterRecommendedKind.AwaitPartnerOrCached)]
     [InlineData(RaceLegState.AudioOnly, FirstPlayOpenStrategy.AfterRecommendedKind.AwaitPartnerOrCached)]
-    [InlineData(RaceLegState.Infrastructure, FirstPlayOpenStrategy.AfterRecommendedKind.AwaitPartnerOrCached)]
+    [InlineData(RaceLegState.Infrastructure, FirstPlayOpenStrategy.AfterRecommendedKind.Fail)]
     [InlineData(RaceLegState.Pending, FirstPlayOpenStrategy.AfterRecommendedKind.Fail)]
     public void DecideAfterRecommended_Table(
         RaceLegState state,
         FirstPlayOpenStrategy.AfterRecommendedKind expected)
     {
-        // Arrange / Act
+        // Arrange
+        _ = state;
+
+        // Act
         var kind = FirstPlayOpenStrategy.DecideAfterRecommended(state);
 
         // Assert
@@ -184,7 +187,10 @@ public class FirstPlayOpenStrategyTests
     [InlineData(RaceLegState.Pending, false)]
     public void ShouldWarmPartnerLeg_Table(RaceLegState state, bool expected)
     {
-        // Arrange / Act
+        // Arrange
+        _ = state;
+
+        // Act
         var warm = FirstPlayOpenStrategy.ShouldWarmPartnerLeg(state);
 
         // Assert
@@ -199,7 +205,10 @@ public class FirstPlayOpenStrategyTests
     [InlineData(RaceLegState.Infrastructure, false)]
     public void IsStreamVerdict_Table(RaceLegState state, bool expected)
     {
-        // Arrange / Act
+        // Arrange
+        _ = state;
+
+        // Act
         var verdict = FirstPlayOpenStrategy.IsStreamVerdict(state);
 
         // Assert
@@ -323,8 +332,14 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlaybackPriorityTimeout_IsThirtySeconds()
     {
-        // Arrange / Act / Assert
-        Assert.Equal(TimeSpan.FromSeconds(30), FirstPlayOpenStrategy.PlaybackPriorityTimeout);
+        // Arrange
+        var expected = TimeSpan.FromSeconds(30);
+
+        // Act
+        var actual = FirstPlayOpenStrategy.PlaybackPriorityTimeout;
+
+        // Assert
+        Assert.Equal(expected, actual);
     }
 
     [Theory]
@@ -334,7 +349,10 @@ public class FirstPlayOpenStrategyTests
     [InlineData(3, true)]
     public void PlaybackPrioritySatisfied_Table(int warmCount, bool expected)
     {
-        // Arrange / Act
+        // Arrange
+        _ = warmCount;
+
+        // Act
         var satisfied = FirstPlayOpenStrategy.PlaybackPrioritySatisfied(warmCount);
 
         // Assert
