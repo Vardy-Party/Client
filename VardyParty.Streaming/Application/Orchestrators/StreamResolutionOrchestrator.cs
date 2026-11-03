@@ -56,17 +56,10 @@ public class StreamResolutionOrchestrator(
         new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
-    /// Race winner that must not be <see cref="WarmPlaybackUrlCache.PutUntil"/>'d — the
-    /// losing URL is kept warm (STREAM_PLAYBACK_RULES startup race rule 5). Set for the
-    /// duration of a race so a late-finishing loser still warms; cleared when the next
-    /// race starts.
-    /// </summary>
-    private EnrichedStream? _raceWarmExclude;
-
-    /// <summary>
-    /// Rows that just won a startup race with <see cref="EnrichedStreamM3U8Apply"/> —
-    /// <see cref="PlayStreamAsync"/> plays that URL once without a second <c>/play</c>,
-    /// even when remaining token life is under <see cref="PlaybackUrlReusePolicy.MinComfortableLife"/>.
+    /// Rows that just won open-recommended (or partner fallback) with
+    /// <see cref="EnrichedStreamM3U8Apply"/> — <see cref="PlayStreamAsync"/> plays that
+    /// URL once without a second <c>/play</c>, even when remaining token life is under
+    /// <see cref="PlaybackUrlReusePolicy.MinComfortableLife"/>.
     /// </summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _racePlayReady =
         new(ReferenceEqualityComparer.Instance);
@@ -918,7 +911,9 @@ public class StreamResolutionOrchestrator(
         if (stream is null)
             return null;
 
-        if (warmUrls != null && FirstPlayOpenStrategy.PreferImmediateWarmTake)
+        // FirstPlayOpenStrategy: TryTake before WaitForInFlight so a partner warm
+        // is not blocked by a redundant Kick /play.
+        if (warmUrls != null)
         {
             if (warmUrls.TryTake(enrichedStream, DateTimeOffset.UtcNow, out var immediate))
             {
@@ -933,16 +928,6 @@ public class StreamResolutionOrchestrator(
                 logger.LogInformation("[StreamResolution] Using warm pre-resolved M3U8 for {Channel}", stream.Channel);
                 EnrichedStreamM3U8Apply.Apply(enrichedStream, afterWait);
                 return afterWait.Url;
-            }
-        }
-        else if (warmUrls != null)
-        {
-            await warmUrls.WaitForInFlightAsync(enrichedStream, cancellationToken);
-            if (warmUrls.TryTake(enrichedStream, DateTimeOffset.UtcNow, out var warm))
-            {
-                logger.LogInformation("[StreamResolution] Using warm pre-resolved M3U8 for {Channel}", stream.Channel);
-                EnrichedStreamM3U8Apply.Apply(enrichedStream, warm);
-                return warm.Url;
             }
         }
 
@@ -1062,7 +1047,6 @@ public class StreamResolutionOrchestrator(
         // Cross-platform Next prepare (<see cref="FirstPlayOpenStrategy.PlanNextPrepare"/>).
         var now = DateTimeOffset.UtcNow;
         var warmReady = warmUrls is not null
-            && FirstPlayOpenStrategy.PreferImmediateWarmTake
             && warmUrls.Peek(nextStream) is { } peek
             && peek.Expiry - now > PlaybackUrlReusePolicy.MinComfortableLife;
         var nextPlan = FirstPlayOpenStrategy.PlanNextPrepare(nextStream, now, warmReady);
@@ -1410,7 +1394,6 @@ public class StreamResolutionOrchestrator(
         if (raceThrottle != null)
             await raceThrottle.DrainOthersAsync(cancellationToken).ConfigureAwait(false);
 
-        _raceWarmExclude = stream;
         Task<(M3U8Response? Response, RaceLegState State, bool Infrastructure)>? partnerTask = null;
         if (partner?.Stream is not null)
         {
@@ -1478,6 +1461,9 @@ public class StreamResolutionOrchestrator(
             logger.LogInformation(
                 "[StreamResolution] Open-recommended had no video URL — playing cached {Channel}",
                 ready.Stream?.Channel);
+            // Partner warm continues for seamless Next — do not abandon the in-flight task.
+            if (partnerTask is not null)
+                _ = ObservePartnerWarmAsync(partnerTask, partner?.Stream?.Channel);
             _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
             return new RaceStart(true, ready, null);
         }
@@ -1502,6 +1488,11 @@ public class StreamResolutionOrchestrator(
                 return new RaceStart(true, partner, null);
             }
         }
+        else if (partnerTask is not null)
+        {
+            _ = ObservePartnerWarmAsync(partnerTask, partner?.Stream?.Channel);
+        }
+
         logger.LogWarning(
             "[StreamResolution] Open-recommended produced no playable URL ({Recommended} partner={Partner})",
             stream.Stream?.Channel, partner?.Stream?.Channel ?? "(none)");
@@ -1697,48 +1688,6 @@ public class StreamResolutionOrchestrator(
             return RaceLegState.Unverified;
         }
     }
-
-    private void OnRaceLegFinished(RaceLegResult<M3U8Response> leg)
-    {
-        if (warmUrls == null)
-            return;
-
-        // Before a winner is known, skip PutUntil — RaceStartAsync warms finished
-        // losers after Decide. After a winner is known, warm only a late non-winner.
-        if (_raceWarmExclude != null
-            && !ReferenceEquals(leg.Row, _raceWarmExclude))
-        {
-            WarmRaceLoserLeg(leg);
-        }
-
-        if (_raceInFlight.TryRemove(leg.Row, out _))
-            warmUrls.EndInFlight(leg.Row);
-    }
-
-    private void WarmRaceLoserIfNeeded(RaceLegResult<M3U8Response>? leg, EnrichedStream? winner)
-    {
-        if (leg is null || (winner != null && ReferenceEquals(leg.Row, winner)))
-            return;
-        WarmRaceLoserLeg(leg);
-    }
-
-    private void WarmRaceLoserLeg(RaceLegResult<M3U8Response> leg)
-    {
-        if (warmUrls == null)
-            return;
-        if (leg.Value is not { } response
-            || leg.State is not (RaceLegState.Video or RaceLegState.Unverified)
-            || string.IsNullOrWhiteSpace(response.Url))
-        {
-            return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        warmUrls.PutUntil(leg.Row, response, PlaybackRacePolicy.LoserTakeBy(response.Url, now), now);
-    }
-
-    private bool OtherRowCanPlayNow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
-        => ReadyCachedRow(recommended, partner, playbackLock) != null;
 
     private EnrichedStream? ReadyCachedRow(EnrichedStream recommended, EnrichedStream partner, object playbackLock)
     {

@@ -6,8 +6,8 @@ namespace VardyParty.Hosting;
 
 /// <summary>
 /// Adapts <see cref="IApiService"/> onto Playback's resolve delegate so OS players
-/// never take a catalog HTTP client. Warm take order follows
-/// <see cref="FirstPlayOpenStrategy.PreferImmediateWarmTake"/> (all platforms).
+/// never take a catalog HTTP client. Warm take order is always TryTake before
+/// WaitForInFlight (all platforms; <see cref="FirstPlayOpenStrategy"/>).
 /// </summary>
 public static class PlaybackUrlResolver
 {
@@ -28,7 +28,7 @@ public static class PlaybackUrlResolver
 
             // FirstPlayOpenStrategy: TryTake before WaitForInFlight so a partner/race
             // warm is not blocked by a redundant Kick /play.
-            if (warm != null && FirstPlayOpenStrategy.PreferImmediateWarmTake)
+            if (warm != null)
             {
                 if (warm.TryTake(current, time.GetUtcNow(), out var immediate))
                 {
@@ -41,15 +41,6 @@ public static class PlaybackUrlResolver
                 {
                     EnrichedStreamM3U8Apply.Apply(current, afterWait);
                     return afterWait.Url;
-                }
-            }
-            else if (warm != null)
-            {
-                await warm.WaitForInFlightAsync(current, cancellationToken).ConfigureAwait(false);
-                if (warm.TryTake(current, time.GetUtcNow(), out var warmResponse))
-                {
-                    EnrichedStreamM3U8Apply.Apply(current, warmResponse);
-                    return warmResponse.Url;
                 }
             }
 

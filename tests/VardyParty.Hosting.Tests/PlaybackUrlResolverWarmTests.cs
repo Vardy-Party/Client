@@ -115,7 +115,7 @@ public class PlaybackUrlResolverWarmTests
     [Fact]
     public async Task Bind_ExistingWarm_TakesBeforeWaitingOnInFlightKick()
     {
-        // FirstPlayOpenStrategy.PreferImmediateWarmTake: partner PutUntil must not
+        // FirstPlayOpenStrategy warm take order: partner PutUntil must not
         // block behind a redundant Kick BeginInFlight (Bravia Next ~15s stall).
         var row = Row();
         _cache.PutUntil(row, Warm(), Now.AddMinutes(2), Now);

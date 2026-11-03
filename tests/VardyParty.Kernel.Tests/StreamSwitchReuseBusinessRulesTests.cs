@@ -16,10 +16,10 @@ public class StreamSwitchReuseBusinessRulesTests
     public void Rule_V1RowWithLongLivedUzhiToken_SwitchesWithoutPlay()
     {
         // Arrange - Referer soak row whose token still has ~2.5h left.
-        var vivoentv = Row(M3u8TokenExpiryTests.UzhiUrl, "Vivoentv", RefererSoak());
+        var longLived = Row(M3u8TokenExpiryTests.UzhiUrl, "Channel North", RefererSoak());
 
         // Act
-        var plan = PlaybackUrlReusePolicy.PlanSwitch(vivoentv, Now);
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(longLived, Now);
 
         // Assert
         Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
@@ -29,25 +29,29 @@ public class StreamSwitchReuseBusinessRulesTests
     public void Rule_TokenInsideComfortMargin_RePlays()
     {
         // Arrange - cowedd token with 50s left.
-        var totalsportek = Row(M3u8TokenExpiryTests.CowedUrl, "Totalsportek", RefererSoak());
+        var shortLived = Row(M3u8TokenExpiryTests.CowedUrl, "Channel East", RefererSoak());
 
         // Act
-        var plan = PlaybackUrlReusePolicy.PlanSwitch(totalsportek, Now.AddSeconds(29));
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(shortLived, Now.AddSeconds(29));
 
         // Assert
         Assert.Equal(PlaybackSwitchKind.ResolveFresh, plan.Kind);
     }
 
     [Fact]
-    public void Rule_FbCookieSoakAndMpRewrittenRows_StayOnFreshPath()
+    public void Rule_FbCookieStaysFresh_MpHarvestAttachesWithoutPrewarm()
     {
-        // Arrange - the one-shot case behind 5604455.
-        var fb = Row(M3u8TokenExpiryTests.UzhiUrl, "FB", new Dictionary<string, string> { ["Cookie"] = "fb=1" });
-        var mp = Row(M3u8TokenExpiryTests.UzhiUrl, "MP", RefererSoak(), ["https://kdns.fr/seg.png"]);
+        // Arrange — FB cookie is single-use; MP harvest already streamed playlist to client.
+        var fb = Row(M3u8TokenExpiryTests.UzhiUrl, "Channel FB", new Dictionary<string, string> { ["Cookie"] = "fb=1" });
+        var mp = Row(M3u8TokenExpiryTests.UzhiUrl, "Channel MP", RefererSoak(), ["https://cdn.example.com/seg.png?_s2=1"]);
+
+        // Act
+        var fbPlan = PlaybackUrlReusePolicy.PlanSwitch(fb, Now);
+        var mpPlan = PlaybackUrlReusePolicy.PlanSwitch(mp, Now);
 
         // Assert
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, PlaybackUrlReusePolicy.PlanSwitch(fb, Now).Kind);
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, PlaybackUrlReusePolicy.PlanSwitch(mp, Now).Kind);
+        Assert.Equal(PlaybackSwitchKind.ResolveFresh, fbPlan.Kind);
+        Assert.Equal(PlaybackSwitchKind.AttachCached, mpPlan.Kind);
         Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(fb));
         Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(mp));
     }

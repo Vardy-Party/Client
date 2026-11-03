@@ -174,13 +174,6 @@ public static class FirstPlayOpenStrategy
     }
 
     /// <summary>
-    /// Warm-cache consume order for fresh resolve (orchestrator + PlaybackUrlResolver).
-    /// Always try take before waiting on in-flight Kick, so a race-loser / partner
-    /// warm is not blocked by a redundant prewarm <c>/play</c>.
-    /// </summary>
-    public static bool PreferImmediateWarmTake => true;
-
-    /// <summary>
     /// Playback-priority window is done when enough upcoming rows are warm
     /// (or the timeout elapses in the host).
     /// </summary>

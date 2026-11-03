@@ -18,8 +18,13 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_ReusableRecommended_UseExisting()
     {
+        // Arrange
         var row = Plain("https://cdn.example.com/a.m3u8?e=1893456000");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(row, [row], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.UseExisting, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
         Assert.Contains("without fresh", plan.Reason, StringComparison.OrdinalIgnoreCase);
@@ -28,10 +33,14 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_MpHarvestProbeReady_UseExisting_NoPartnerWarm()
     {
-        // Real life: /mp already streamed playlist + rewritten segments to the client.
-        var mp = MpHarvest("1X EN", "http://oak-lane.m3u8");
-        var fb = Soak("Hadcrack");
+        // Arrange — /mp already streamed playlist + rewritten segments to the client.
+        var mp = MpHarvest("Channel MP Alpha", "http://oak-lane.m3u8");
+        var fb = Soak("Channel East");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(mp, [mp, fb], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.UseExisting, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
     }
@@ -39,22 +48,31 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_TwoFbHealthy_OpensRecommended_WarmsNextInSwitchOrder()
     {
-        // Real life: rSoccerlink + Hadcrack both healthy — open first, warm second for Next.
-        var rec = Soak("rSoccerlink");
-        var partner = Soak("Hadcrack");
+        // Arrange — two healthy soak rows: open first, warm second for Next.
+        var rec = Soak("Channel North");
+        var partner = Soak("Channel East");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(rec, [rec, partner], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
         Assert.Same(partner, plan.PartnerToWarm);
-        Assert.Contains("Hadcrack", plan.Reason, StringComparison.Ordinal);
+        Assert.Contains("Channel East", plan.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
     public void PlanStart_ThreeHealthy_PartnerIsImmediateNextOnly()
     {
-        var a = Soak("Apexstreams");
-        var b = Soak("1ststreams");
-        var c = Soak("Liveverse");
+        // Arrange
+        var a = Soak("Channel West");
+        var b = Soak("Channel South");
+        var c = Soak("Channel Delta");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(a, [a, b, c], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
         Assert.Same(b, plan.PartnerToWarm);
         Assert.NotSame(c, plan.PartnerToWarm);
@@ -63,8 +81,13 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_NeedsFresh_NoPartner_StillOpenRecommendedFirst()
     {
-        var rec = Soak("solo");
+        // Arrange
+        var rec = Soak("Channel Solo");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(rec, [rec], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
         Assert.Contains("no partner", plan.Reason, StringComparison.OrdinalIgnoreCase);
@@ -73,10 +96,15 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_RecommendedAlreadyWarmOrInFlight_UseExisting()
     {
-        var rec = Soak("north");
-        var partner = Soak("south");
+        // Arrange
+        var rec = Soak("Channel North");
+        var partner = Soak("Channel South");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(
             rec, [rec, partner], Now, isWarmOrInFlight: r => ReferenceEquals(r, rec));
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.UseExisting, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
     }
@@ -84,10 +112,15 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_PartnerAlreadyWarm_OpensRecommended_WithoutPartnerWarm()
     {
-        var rec = Soak("north");
-        var partner = Soak("south");
+        // Arrange
+        var rec = Soak("Channel North");
+        var partner = Soak("Channel South");
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(
             rec, [rec, partner], Now, isWarmOrInFlight: r => ReferenceEquals(r, partner));
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
     }
@@ -95,10 +128,15 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_CachedReusablePartner_NotPickedForWarm()
     {
-        var rec = Soak("north");
+        // Arrange
+        var rec = Soak("Channel North");
         var cached = Plain("https://cdn.example.com/east.m3u8?e=1893456000");
-        cached.Stream!.Channel = "east";
+        cached.Stream!.Channel = "Channel East";
+
+        // Act
         var plan = FirstPlayOpenStrategy.PlanStart(rec, [rec, cached], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
         // PickPartner requires NeedsFreshPlay on partner — cached row is skipped.
         Assert.Null(plan.PartnerToWarm);
@@ -107,7 +145,10 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_NullArgs_Throw()
     {
-        var row = Soak("x");
+        // Arrange
+        var row = Soak("Channel X");
+
+        // Act / Assert
         Assert.Throws<ArgumentNullException>(() =>
             FirstPlayOpenStrategy.PlanStart(null!, [row], Now));
         Assert.Throws<ArgumentNullException>(() =>
@@ -127,7 +168,11 @@ public class FirstPlayOpenStrategyTests
         RaceLegState state,
         FirstPlayOpenStrategy.AfterRecommendedKind expected)
     {
-        Assert.Equal(expected, FirstPlayOpenStrategy.DecideAfterRecommended(state));
+        // Arrange / Act
+        var kind = FirstPlayOpenStrategy.DecideAfterRecommended(state);
+
+        // Assert
+        Assert.Equal(expected, kind);
     }
 
     [Theory]
@@ -138,7 +183,13 @@ public class FirstPlayOpenStrategyTests
     [InlineData(RaceLegState.Infrastructure, false)]
     [InlineData(RaceLegState.Pending, false)]
     public void ShouldWarmPartnerLeg_Table(RaceLegState state, bool expected)
-        => Assert.Equal(expected, FirstPlayOpenStrategy.ShouldWarmPartnerLeg(state));
+    {
+        // Arrange / Act
+        var warm = FirstPlayOpenStrategy.ShouldWarmPartnerLeg(state);
+
+        // Assert
+        Assert.Equal(expected, warm);
+    }
 
     [Theory]
     [InlineData(RaceLegState.Empty, true)]
@@ -147,91 +198,134 @@ public class FirstPlayOpenStrategyTests
     [InlineData(RaceLegState.Unverified, false)]
     [InlineData(RaceLegState.Infrastructure, false)]
     public void IsStreamVerdict_Table(RaceLegState state, bool expected)
-        => Assert.Equal(expected, FirstPlayOpenStrategy.IsStreamVerdict(state));
+    {
+        // Arrange / Act
+        var verdict = FirstPlayOpenStrategy.IsStreamVerdict(state);
+
+        // Assert
+        Assert.Equal(expected, verdict);
+    }
 
     // --- PlanNextPrepare (early Next / switch) -------------------------------
 
     [Fact]
     public void PlanNextPrepare_WarmReady_ApplyWarmUnused_EvenWithBurnedFindUrl()
     {
-        // Real life: Next onto Hadcrack after partner warm — avoid 15s ResolveFresh.
-        var next = Soak("Hadcrack");
-        next.ResolvedM3U8Url = "https://find.example/burned.m3u8";
+        // Arrange — Next onto warm partner after open-recommended; avoid ResolveFresh.
+        var next = Soak("Channel East");
+        next.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: true);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ApplyWarmUnused, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_UnusedPlaybackUrl_AttachAsIs()
     {
-        var next = Soak("Hadcrack");
+        // Arrange
+        var next = Soak("Channel East");
         next.ResolvedM3U8Url = "https://cdn.example.com/fresh.m3u8";
         next.UnusedResolvedUrl = true;
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_MpHarvestCanReuse_AttachAsIs()
     {
-        var next = MpHarvest("TD EN", "http://oak-lane.m3u8");
+        // Arrange
+        var next = MpHarvest("Channel MP Beta", "http://oak-lane.m3u8");
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_FbCookieOneShot_NoWarm_ClearAndResolveFresh()
     {
-        var next = CookieFb("Streameast");
-        next.ResolvedM3U8Url = "https://find.example/burned.m3u8";
+        // Arrange
+        var next = CookieFb("Channel Cookie");
+        next.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ClearAndResolveFresh, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_RefererSoak_NoWarm_ClearAndResolveFresh()
     {
-        var next = Soak("Apexstreams");
-        next.ResolvedM3U8Url = "https://find.example/burned.m3u8";
+        // Arrange
+        var next = Soak("Channel West");
+        next.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ClearAndResolveFresh, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_EmptyUrl_NonSoak_ClearAndResolveFresh()
     {
+        // Arrange
         var next = Plain(null);
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ClearAndResolveFresh, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_PlainCachedUrl_AttachAsIs()
     {
+        // Arrange
         var next = Plain("https://cdn.example.com/plain.m3u8");
+
+        // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
     }
 
     [Fact]
     public void PlanNextPrepare_WarmReadyBeatsBurnedFind_OverClear()
     {
-        var next = Soak("x");
-        next.ResolvedM3U8Url = "https://burned/";
-        Assert.Equal(
-            FirstPlayOpenStrategy.NextPrepareKind.ApplyWarmUnused,
-            FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: true));
-    }
+        // Arrange
+        var next = Soak("Channel X");
+        next.ResolvedM3U8Url = "https://cdn.example.com/burned/";
 
-    [Fact]
-    public void PreferImmediateWarmTake_IsAlwaysTrue()
-        => Assert.True(FirstPlayOpenStrategy.PreferImmediateWarmTake);
+        // Act
+        var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: true);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ApplyWarmUnused, kind);
+    }
 
     // --- Playback priority helpers -----------------------------------------
 
     [Fact]
     public void PlaybackPriorityTimeout_IsThirtySeconds()
-        => Assert.Equal(TimeSpan.FromSeconds(30), FirstPlayOpenStrategy.PlaybackPriorityTimeout);
+    {
+        // Arrange / Act / Assert
+        Assert.Equal(TimeSpan.FromSeconds(30), FirstPlayOpenStrategy.PlaybackPriorityTimeout);
+    }
 
     [Theory]
     [InlineData(0, false)]
@@ -240,16 +334,23 @@ public class FirstPlayOpenStrategyTests
     [InlineData(3, true)]
     public void PlaybackPrioritySatisfied_Table(int warmCount, bool expected)
     {
+        // Arrange / Act
+        var satisfied = FirstPlayOpenStrategy.PlaybackPrioritySatisfied(warmCount);
+
+        // Assert
         Assert.Equal(2, PlaybackUrlReusePolicy.PrewarmDepth);
-        Assert.Equal(expected, FirstPlayOpenStrategy.PlaybackPrioritySatisfied(warmCount));
+        Assert.Equal(expected, satisfied);
     }
 
     [Fact]
     public void CountWarmUpcoming_IgnoresStaleAndMissing()
     {
-        var playing = Soak("playing");
-        var next1 = Soak("next1");
-        var next2 = Soak("next2");
+        // Arrange
+        var playing = Soak("Channel Playing");
+        var next1 = Soak("Channel Next1");
+        var next2 = Soak("Channel Next2");
+
+        // Act
         var n = FirstPlayOpenStrategy.CountWarmUpcoming(
             [playing, next1, next2],
             playing,
@@ -262,17 +363,21 @@ public class FirstPlayOpenStrategyTests
                     return Now + TimeSpan.FromSeconds(5); // under MinComfortableLife → ignore
                 return null;
             });
+
+        // Assert
         Assert.Equal(1, n);
     }
 
     [Fact]
     public void CountWarmUpcoming_OnlyLooksAtPrewarmDepth()
     {
-        var playing = Soak("p");
-        var u0 = Soak("u0");
-        var u1 = Soak("u1");
-        var u2 = Soak("u2");
-        // Depth 2 → u0,u1 only; u2 warm must not count.
+        // Arrange
+        var playing = Soak("Channel P");
+        var u0 = Soak("Channel U0");
+        var u1 = Soak("Channel U1");
+        var u2 = Soak("Channel U2");
+
+        // Act — depth 2 → u0,u1 only; u2 warm must not count.
         var n = FirstPlayOpenStrategy.CountWarmUpcoming(
             [playing, u0, u1, u2],
             playing,
@@ -280,6 +385,8 @@ public class FirstPlayOpenStrategyTests
             row => ReferenceEquals(row, u2)
                 ? Now + TimeSpan.FromMinutes(5)
                 : null);
+
+        // Assert
         Assert.Equal(0, n);
     }
 
@@ -287,35 +394,35 @@ public class FirstPlayOpenStrategyTests
 
     private static EnrichedStream Soak(string name) => new()
     {
-        Stream = new Stream { Url = $"https://page.example/{name}", Channel = name },
+        Stream = new Stream { Url = $"https://streams.example.com/{name}", Channel = name },
         Status = StreamResolutionStatus.Healthy,
-        Referer = "https://page.example/",
-        RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://page.example/" },
+        Referer = "https://streams.example.com/",
+        RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://streams.example.com/" },
     };
 
     private static EnrichedStream CookieFb(string name) => new()
     {
-        Stream = new Stream { Url = $"https://fb.example/{name}", Channel = name },
+        Stream = new Stream { Url = $"https://streams.example.com/fb/{name}", Channel = name },
         Status = StreamResolutionStatus.Healthy,
-        Referer = "https://fb.example/",
+        Referer = "https://streams.example.com/fb/",
         RequestHeaders = new Dictionary<string, string>
         {
-            ["Referer"] = "https://fb.example/",
+            ["Referer"] = "https://streams.example.com/fb/",
             ["Cookie"] = "session=1",
         },
     };
 
     private static EnrichedStream MpHarvest(string name, string url) => new()
     {
-        Stream = new Stream { Url = $"https://mp.example/{name}", Channel = name },
+        Stream = new Stream { Url = $"https://streams.example.com/mp/{name}", Channel = name },
         Status = StreamResolutionStatus.Healthy,
         ResolvedM3U8Url = url,
-        RewrittenSegments = ["https://fhlsport.example/seg.exe?_s2=1"],
+        RewrittenSegments = ["https://cdn.example.com/seg.exe?_s2=1"],
     };
 
     private static EnrichedStream Plain(string? url) => new()
     {
-        Stream = new Stream { Url = "https://page.example/x", Channel = "x" },
+        Stream = new Stream { Url = "https://streams.example.com/x", Channel = "Channel X" },
         Status = StreamResolutionStatus.Healthy,
         ResolvedM3U8Url = url,
     };

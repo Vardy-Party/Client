@@ -227,11 +227,16 @@ public static class PlaybackUrlReusePolicy
         return left > TimeSpan.Zero && left <= PlayingLinkRefreshLead;
     }
 
-    /// <summary>Rows the background pre-resolver may keep warm.</summary>
+    /// <summary>
+    /// Rows the background pre-resolver may keep warm. Probe-ready MP harvest is
+    /// excluded — LocalService already streamed the playlist; re-fetching during
+    /// the playback-priority window fights <see cref="FirstPlayOpenStrategy"/>.
+    /// </summary>
     public static bool ShouldPrewarm(EnrichedStream? stream)
         => stream?.Stream is not null
             && RequiresFreshM3u8ForPlayback(stream)
-            && !IsKnownSingleUse(stream);
+            && !IsKnownSingleUse(stream)
+            && !MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments);
 
     /// <summary>
     /// Whether the pre-resolver should (re)resolve a candidate at <paramref name="depth"/>

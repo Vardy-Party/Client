@@ -51,10 +51,10 @@ public class FirstPlayOpenBusinessRulesTests
         _fixture.Inject(_warm);
         _fixture.Inject(_throttle);
         _game = _fixture.Build<Game>()
-            .With(g => g.Home, "Manchester United")
-            .With(g => g.Away, "AS Roma")
-            .With(g => g.ApiLeague, "ucl")
-            .With(g => g.League, "Champions League")
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
             .With(g => g.BBCHome, string.Empty)
             .With(g => g.BBCAway, string.Empty)
             .With(g => g.BBCLeague, string.Empty)
@@ -67,14 +67,14 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_TwoHealthyFb_OpensRecommendedWithoutWaitingOnSlowPartner()
     {
-        // Real life: 2 healthy → finding UI must not wait ~25s on dual /play race.
-        var recommended = Soak("rSoccerlink");
-        var partner = Soak("Hadcrack");
+        // Arrange — 2 healthy → finding UI must not wait ~25s on dual /play race.
+        var recommended = Soak("Channel North");
+        var partner = Soak("Channel East");
         Candidates(recommended, partner);
 
         var partnerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePartner = new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var recUrl = "https://hls.example/rSoccerlink.m3u8";
+        var recUrl = "https://hls.example.com/channel-north.m3u8";
         FreshPlay(recommended, () => Task.FromResult<M3U8Response?>(new M3U8Response
         {
             Url = recUrl,
@@ -97,9 +97,11 @@ public class FirstPlayOpenBusinessRulesTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.Equal(recUrl, url);
         Assert.True(partnerStarted.Task.IsCompleted, "partner warm should have started on second slot");
         Assert.False(releasePartner.Task.IsCompleted, "picture must not wait on partner /play");
@@ -114,7 +116,7 @@ public class FirstPlayOpenBusinessRulesTests
 
         releasePartner.TrySetResult(new M3U8Response
         {
-            Url = "https://edge.example/hadcrack.m3u8",
+            Url = "https://edge.example.com/channel-east.m3u8",
             RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl },
         });
         await start.WaitAsync(TimeSpan.FromSeconds(5));
@@ -123,19 +125,20 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_TwoHealthyFb_PartnerWarmsIntoCacheForSeamlessNext()
     {
-        var recommended = Soak("rSoccerlink");
-        var partner = Soak("Hadcrack");
+        // Arrange
+        var recommended = Soak("Channel North");
+        var partner = Soak("Channel East");
         Candidates(recommended, partner);
-        var partnerUrl = "https://edge2.matchix.example/hadcrack.m3u8";
+        var partnerUrl = "https://edge2.example.com/channel-east.m3u8";
         FreshPlay(recommended, () => Task.FromResult<M3U8Response?>(new M3U8Response
         {
-            Url = "https://hls.example/rSoccerlink.m3u8",
+            Url = "https://hls.example.com/channel-north.m3u8",
             RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl },
         }));
         FreshPlay(partner, () => Task.FromResult<M3U8Response?>(new M3U8Response
         {
             Url = partnerUrl,
-            RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://matchix.example/" },
+            RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://streams.example.com/" },
         }));
         _fixture.Inject<IRacePlaylistProbe>(new StubProbe(_ => PlaylistVideoVerdict.Video));
         ResolverYields(_ => Yield(recommended, partner));
@@ -152,10 +155,11 @@ public class FirstPlayOpenBusinessRulesTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
         await firstUrl.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Partner warm finishes into PutUntil while first stream plays.
+        // Assert — partner warm finishes into PutUntil while first stream plays.
         for (var i = 0; i < 50 && _warm.Peek(partner) is null; i++)
             await Task.Delay(50);
         Assert.NotNull(_warm.Peek(partner));
@@ -170,7 +174,7 @@ public class FirstPlayOpenBusinessRulesTests
             FirstPlayOpenStrategy.PlanNextPrepare(partner, now, warmReady));
 
         Assert.NotNull(onNext);
-        partner.ResolvedM3U8Url = "https://find.example/burned.m3u8";
+        partner.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
         partner.UnusedResolvedUrl = false;
         await onNext!();
         Assert.True(partner.UnusedResolvedUrl, "Next must mark warm URL unused for AttachCached");
@@ -183,8 +187,8 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_MpHarvestProbeReady_OpensWithoutFreshPlay()
     {
-        // Real life: /mp streamed playlist + rewritten segments — no second /mp for open.
-        var mp = MpHealthy("1X EN", "http://oak-lane.m3u8");
+        // Arrange — /mp streamed playlist + rewritten segments; no second /mp for open.
+        var mp = MpHealthy("Channel MP Alpha", "http://oak-lane.m3u8");
         Candidates(mp);
         ResolverYields(_ => Yield(mp));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -195,9 +199,11 @@ public class FirstPlayOpenBusinessRulesTests
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.Equal("http://oak-lane.m3u8", url);
         _fixture.GetMock<IApiService>().Verify(
             a => a.GetM3U8UrlAsync(
@@ -213,9 +219,10 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_EmptyRecommended_PlaysCachedThird_WhilePartnerStillRunning()
     {
-        var first = Soak("north");
-        var partner = Soak("south");
-        var cached = Cached("east", "https://cdn.example.com/live/east.m3u8");
+        // Arrange
+        var first = Soak("Channel North");
+        var partner = Soak("Channel South");
+        var cached = Cached("Channel East", "https://cdn.example.com/live/east.m3u8");
         Candidates(first, partner, cached);
         var partnerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePartner = new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -235,9 +242,11 @@ public class FirstPlayOpenBusinessRulesTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.Equal(cached.ResolvedM3U8Url, url);
         Assert.True(partnerStarted.Task.IsCompleted);
         Assert.False(releasePartner.Task.IsCompleted);
@@ -248,8 +257,9 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_AudioOnlyRecommended_FallsBackToPartnerVideo()
     {
-        var first = Soak("north");
-        var partner = Soak("south");
+        // Arrange
+        var first = Soak("Channel North");
+        var partner = Soak("Channel South");
         Candidates(first, partner);
         FreshPlay(first, () => Task.FromResult<M3U8Response?>(new M3U8Response
         {
@@ -273,9 +283,11 @@ public class FirstPlayOpenBusinessRulesTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.Equal("https://cdn.example.com/live/south.m3u8", url);
         Assert.DoesNotContain(first, _switching.GetHealthyStreams());
         await start.WaitAsync(TimeSpan.FromSeconds(5));
@@ -284,9 +296,10 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_SoloFb_OpensWithSingleFreshPlay()
     {
-        var only = Soak("Apexstreams");
+        // Arrange
+        var only = Soak("Channel West");
         Candidates(only);
-        var onlyUrl = "https://edge.wedd.example/apex.m3u8";
+        var onlyUrl = "https://edge.example.com/channel-west.m3u8";
         FreshPlay(only, () => Task.FromResult<M3U8Response?>(new M3U8Response
         {
             Url = onlyUrl,
@@ -302,8 +315,12 @@ public class FirstPlayOpenBusinessRulesTests
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
-        Assert.Equal(onlyUrl, await played.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(onlyUrl, url);
         _fixture.GetMock<IApiService>().Verify(
             a => a.GetM3U8UrlAsync(
                 only.Stream.Url,
@@ -318,7 +335,7 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_PlaybackPriorityHold_BlocksFindPhaseEnter_UntilReleased()
     {
-        // Strategy: temper LS — find-phase EnterAsync waits while priority/race hold is up.
+        // Arrange — find-phase EnterAsync waits while priority/race hold is up.
         using var hold = _throttle.BeginPlaybackPriority();
         Assert.True(_throttle.RaceInFlight);
 
@@ -333,11 +350,13 @@ public class FirstPlayOpenBusinessRulesTests
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
+        // Act
         await Task.Delay(80);
         Assert.False(entered);
-
         hold.Dispose();
         await waiting.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert
         Assert.True(entered);
         Assert.False(_throttle.RaceInFlight);
     }
@@ -345,8 +364,9 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_ShortLivedOpenRecommended_PlaysAppliedUrl_WithoutSecondPlay()
     {
-        var first = Soak("north");
-        var partner = Soak("south");
+        // Arrange
+        var first = Soak("Channel North");
+        var partner = Soak("Channel South");
         Candidates(first, partner);
         var expiry = DateTimeOffset.UtcNow.AddSeconds(50);
         var winnerUrl = $"https://cdn.example.com/live/north.m3u8?e={expiry.ToUnixTimeSeconds()}";
@@ -371,8 +391,12 @@ public class FirstPlayOpenBusinessRulesTests
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
 
+        // Act
         var start = sut.StartAsync(_game, player.Object);
-        Assert.Equal(winnerUrl, await played.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(winnerUrl, url);
         _fixture.GetMock<IApiService>().Verify(
             a => a.GetM3U8UrlAsync(
                 first.Stream.Url,
@@ -412,7 +436,7 @@ public class FirstPlayOpenBusinessRulesTests
             .With(e => e.Stream, stream)
             .With(e => e.ResolvedM3U8Url, url)
             .With(e => e.Status, StreamResolutionStatus.Healthy)
-            .With(e => e.RewrittenSegments, new List<string> { "https://fhlsport.example/seg.exe?_s2=1" })
+            .With(e => e.RewrittenSegments, new List<string> { "https://cdn.example.com/seg.exe?_s2=1" })
             .Without(e => e.RequestHeaders)
             .Create();
     }

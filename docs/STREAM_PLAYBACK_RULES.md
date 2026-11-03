@@ -487,9 +487,9 @@ When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRa
    `PrewarmDepth` upcoming rows are warm (or `PlaybackPriorityTimeout` = 30s),
    `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase `/play|/mp`. Attach and
    prewarm use `MarkRaceLeg` so they still take slots. Logs: `[FirstPlayDelay] playback_priority_*`.
-5. **Warm take order.** `PreferImmediateWarmTake`: `TryTake` before `WaitForInFlight` (then
-   take again) in orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not
-   block consuming a partner/race warm.
+5. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
+   orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not block consuming
+   a partner warm.
 6. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
 7. **Infrastructure is still not a verdict.**
 

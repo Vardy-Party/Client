@@ -52,7 +52,7 @@ public class PlaybackUrlReusePolicyTests
             Row(M3u8TokenExpiryTests.UzhiUrl, headers: new() { ["Cookie"] = "fb=1", ["Referer"] = "https://p.test/" })));
         // /mp harvest streamed the playlist — rewritten segments are probe evidence, not single-use.
         Assert.False(PlaybackUrlReusePolicy.IsKnownSingleUse(
-            Row(M3u8TokenExpiryTests.UzhiUrl, rewritten: ["https://kdns.fr/seg.png"])));
+            Row(M3u8TokenExpiryTests.UzhiUrl, rewritten: ["https://cdn.example.com/seg.png?_s2=1"])));
         Assert.True(PlaybackUrlReusePolicy.IsKnownSingleUse(
             Row("https://edge.burn-once.northgate.test/live.m3u8?e=1793147900", headers: RefererSoak())));
     }
@@ -74,24 +74,35 @@ public class PlaybackUrlReusePolicyTests
     [Fact]
     public void CanReuseCached_MpHarvestProbeReady_PlaysWithoutSecondMp()
     {
+        // Arrange
         var harvested = Row(
             "http://oak-lane.m3u8",
-            rewritten: ["https://fhlsport.example/seg.exe?_s2=1"]);
-        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(harvested, Now));
+            rewritten: ["https://cdn.example.com/seg.exe?_s2=1"]);
 
+        // Act
+        var canReuse = PlaybackUrlReusePolicy.CanReuseCached(harvested, Now);
         var plan = PlaybackUrlReusePolicy.PlanSwitch(harvested, Now);
+
+        // Assert
+        Assert.True(canReuse);
         Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
         Assert.Contains("mp harvest", plan.Reason);
+        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(harvested));
     }
 
     [Fact]
     public void CanReuseCached_UnusedPlaybackUrl_SkipsSecondPlay()
     {
+        // Arrange
         var justResolved = Row("http://oak-lane.m3u8", headers: new() { ["Cookie"] = "fb=1" });
         justResolved.UnusedResolvedUrl = true;
-        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(justResolved, Now));
 
+        // Act
+        var canReuse = PlaybackUrlReusePolicy.CanReuseCached(justResolved, Now);
         var plan = PlaybackUrlReusePolicy.PlanSwitch(justResolved, Now);
+
+        // Assert
+        Assert.True(canReuse);
         Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
         Assert.Contains("unused", plan.Reason);
     }
@@ -123,10 +134,19 @@ public class PlaybackUrlReusePolicyTests
     [Fact]
     public void ShouldPrewarm_OnlyReusableOneShotRows()
     {
-        // Assert
-        Assert.True(PlaybackUrlReusePolicy.ShouldPrewarm(Row(null, headers: RefererSoak())));
-        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(Row("http://oak-lane.m3u8")));
-        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(Row(null, headers: new() { ["cookie"] = "fb=1" })));
+        // Arrange
+        var refererSoak = Row(null, headers: RefererSoak());
+        var plain = Row("http://oak-lane.m3u8");
+        var cookie = Row(null, headers: new() { ["cookie"] = "fb=1" });
+        var harvest = Row(
+            "http://oak-lane.m3u8",
+            rewritten: ["https://cdn.example.com/seg.exe?_s2=1"]);
+
+        // Act / Assert
+        Assert.True(PlaybackUrlReusePolicy.ShouldPrewarm(refererSoak));
+        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(plain));
+        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(cookie));
+        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(harvest));
         Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(null));
     }
 
@@ -173,8 +193,8 @@ public class PlaybackUrlReusePolicyTests
     public void SwitchTexts_NameTheTarget()
     {
         // Assert
-        Assert.Equal("Switching to Vivoentv\u2026", PlaybackUrlReusePolicy.SwitchPendingText("Vivoentv"));
+        Assert.Equal("Switching to Channel North\u2026", PlaybackUrlReusePolicy.SwitchPendingText("Channel North"));
         Assert.Equal("Switching to next stream\u2026", PlaybackUrlReusePolicy.SwitchPendingText(" "));
-        Assert.Contains("staying on the current stream", PlaybackUrlReusePolicy.SwitchFailedText("Vivoentv"));
+        Assert.Contains("staying on the current stream", PlaybackUrlReusePolicy.SwitchFailedText("Channel North"));
     }
 }
