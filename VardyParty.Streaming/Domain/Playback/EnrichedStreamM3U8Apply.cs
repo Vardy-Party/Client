@@ -15,6 +15,7 @@ public static class EnrichedStreamM3U8Apply
         ArgumentNullException.ThrowIfNull(response);
 
         current.ResolvedM3U8Url = response.Url;
+        current.UnusedResolvedUrl = !string.IsNullOrWhiteSpace(response.Url);
         current.RequestHeaders = response.RequestHeaders;
         current.RewrittenSegments = response.RewrittenSegments?
             .Where(url => !string.IsNullOrWhiteSpace(url))

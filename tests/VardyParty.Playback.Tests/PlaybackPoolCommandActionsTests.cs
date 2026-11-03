@@ -299,9 +299,15 @@ public class PlaybackPoolCommandActionsTests
                 .With(s => s.Url, "http://northgate.test/oak-lane")
                 .Create())
             .With(stream => stream.ResolvedM3U8Url, resolvedUrl)
+            .With(stream => stream.UnusedResolvedUrl, false)
             .With(stream => stream.Status, StreamResolutionStatus.Healthy)
             .With(stream => stream.Referer, "http://northgate.test/oak-lane")
+            .With(stream => stream.RequestHeaders, new Dictionary<string, string>
+            {
+                ["Referer"] = "http://northgate.test/oak-lane",
+            })
             .Without(stream => stream.Health)
+            .Without(stream => stream.RewrittenSegments)
             .Create();
 
     private (

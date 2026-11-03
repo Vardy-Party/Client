@@ -84,4 +84,34 @@ public class ResolverRaceThrottleTests
         Assert.True(drained);
         race.Dispose();
     }
+
+    [Fact]
+    public void BeginRace_MarksRaceInFlight_UntilDisposed()
+    {
+        var throttle = new ResolverRaceThrottle();
+        Assert.False(throttle.RaceInFlight);
+        var hold = throttle.BeginRace();
+        Assert.True(throttle.RaceInFlight);
+        hold.Dispose();
+        Assert.False(throttle.RaceInFlight);
+    }
+
+    [Fact]
+    public void BeginPlaybackPriority_PausesFindPhase_SameAsRaceHold()
+    {
+        var throttle = new ResolverRaceThrottle();
+        Assert.False(throttle.RaceInFlight);
+        var hold = throttle.BeginPlaybackPriority();
+        Assert.True(throttle.RaceInFlight);
+        hold.Dispose();
+        Assert.False(throttle.RaceInFlight);
+    }
+
+    [Fact]
+    public void PlaybackPriorityTimeout_ComesFromFirstPlayOpenStrategy()
+    {
+        Assert.Equal(
+            VardyParty.Kernel.FirstPlayOpenStrategy.PlaybackPriorityTimeout,
+            ResolverRaceThrottle.PlaybackPriorityTimeout);
+    }
 }

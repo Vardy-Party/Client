@@ -91,10 +91,12 @@ public class StreamSelectionCoordinator(
                 logger.LogWarning(ex, "[StreamSelection] Failed to fetch recommendations, defaulting to discovery spread");
             }
 
-            var expandedStreams = StreamCatalogSourceOrderer.OrderMpBeforeFb(
-                StreamRecommendationPolicy.ApplyRecommendedChips(
+            // Catalog / chip order as-is (FB and MP both eligible). First healthy
+            // wins playback; no MP-before-FB / FB-before-MP reshuffle.
+            var expandedStreams = StreamRecommendationPolicy.ApplyRecommendedChips(
                     V2StreamExpander.Expand(streamsResponse.Streams),
-                    recommendations));
+                    recommendations)
+                .ToList();
 
             List<int> testOrder;
             lock (_gate)

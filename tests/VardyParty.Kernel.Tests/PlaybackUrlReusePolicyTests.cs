@@ -41,7 +41,7 @@ public class PlaybackUrlReusePolicyTests
     }
 
     [Fact]
-    public void IsKnownSingleUse_CookieRewrittenOrRegisteredHost()
+    public void IsKnownSingleUse_CookieOrRegisteredHost_NotMpHarvest()
     {
         // Arrange
         PlaybackUrlReusePolicy.RegisterSingleUseHost("burn-once.northgate.test");
@@ -50,7 +50,8 @@ public class PlaybackUrlReusePolicyTests
         Assert.False(PlaybackUrlReusePolicy.IsKnownSingleUse(Row(M3u8TokenExpiryTests.UzhiUrl, headers: RefererSoak())));
         Assert.True(PlaybackUrlReusePolicy.IsKnownSingleUse(
             Row(M3u8TokenExpiryTests.UzhiUrl, headers: new() { ["Cookie"] = "fb=1", ["Referer"] = "https://p.test/" })));
-        Assert.True(PlaybackUrlReusePolicy.IsKnownSingleUse(
+        // /mp harvest streamed the playlist — rewritten segments are probe evidence, not single-use.
+        Assert.False(PlaybackUrlReusePolicy.IsKnownSingleUse(
             Row(M3u8TokenExpiryTests.UzhiUrl, rewritten: ["https://kdns.fr/seg.png"])));
         Assert.True(PlaybackUrlReusePolicy.IsKnownSingleUse(
             Row("https://edge.burn-once.northgate.test/live.m3u8?e=1793147900", headers: RefererSoak())));
@@ -68,6 +69,31 @@ public class PlaybackUrlReusePolicyTests
         Assert.False(PlaybackUrlReusePolicy.CanReuseCached(Row("http://oak-lane.m3u8", headers: RefererSoak()), Now));
         Assert.False(PlaybackUrlReusePolicy.CanReuseCached(Row(null, headers: RefererSoak()), Now));
         Assert.False(PlaybackUrlReusePolicy.CanReuseCached(null, Now));
+    }
+
+    [Fact]
+    public void CanReuseCached_MpHarvestProbeReady_PlaysWithoutSecondMp()
+    {
+        var harvested = Row(
+            "http://oak-lane.m3u8",
+            rewritten: ["https://fhlsport.example/seg.exe?_s2=1"]);
+        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(harvested, Now));
+
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(harvested, Now);
+        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
+        Assert.Contains("mp harvest", plan.Reason);
+    }
+
+    [Fact]
+    public void CanReuseCached_UnusedPlaybackUrl_SkipsSecondPlay()
+    {
+        var justResolved = Row("http://oak-lane.m3u8", headers: new() { ["Cookie"] = "fb=1" });
+        justResolved.UnusedResolvedUrl = true;
+        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(justResolved, Now));
+
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(justResolved, Now);
+        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
+        Assert.Contains("unused", plan.Reason);
     }
 
     [Fact]

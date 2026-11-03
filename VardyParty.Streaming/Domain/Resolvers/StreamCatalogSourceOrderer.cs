@@ -3,56 +3,21 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Orders catalog streams so MP (v2) candidates are tried before FB (footybites) alternates.
+/// Legacy helpers. Catalog try-order is first-come-first-served (recommendations
+/// then remaining indexes); these no longer reshape MP ahead of FB.
 /// </summary>
 public static class StreamCatalogSourceOrderer
 {
+    /// <summary>Preserves input order (FB and MP stay mixed).</summary>
     public static List<StreamModel> OrderMpBeforeFb(IEnumerable<StreamModel> streams)
-    {
-        return streams
-            .Select((stream, index) => (stream, index))
-            .OrderBy(x => GetCatalogSourcePriority(x.stream))
-            .ThenBy(x => x.index)
-            .Select(x => x.stream)
-            .ToList();
-    }
+        => streams.ToList();
 
+    /// <summary>Preserves index order (FB and MP stay mixed).</summary>
     public static List<int> OrderIndexesMpBeforeFb(
         IReadOnlyList<int> indexes,
         Func<int, StreamModel> getStream)
     {
-        var mp = new List<int>();
-        var fb = new List<int>();
-        var other = new List<int>();
-
-        foreach (var index in indexes)
-        {
-            switch (getStream(index).ResolveCatalogSource())
-            {
-                case "mp":
-                    mp.Add(index);
-                    break;
-                case "fb":
-                    fb.Add(index);
-                    break;
-                default:
-                    other.Add(index);
-                    break;
-            }
-        }
-
-        var ordered = new List<int>(indexes.Count);
-        ordered.AddRange(mp);
-        ordered.AddRange(fb);
-        ordered.AddRange(other);
-        return ordered;
+        _ = getStream;
+        return indexes.ToList();
     }
-
-    internal static int GetCatalogSourcePriority(StreamModel stream) =>
-        stream.ResolveCatalogSource() switch
-        {
-            "mp" => 0,
-            "fb" => 1,
-            _ => 2
-        };
 }

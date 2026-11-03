@@ -113,13 +113,13 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_NoRecommendations_KeepsMpBeforeFbCatalogOrder()
+    public void Build_NoRecommendations_PreservesCatalogIndexOrder()
     {
-        // Arrange
+        // Arrange — FB ahead of MP in the catalog; FCFS keeps that (salt 0).
         var streams = new[]
         {
-            Mp("https://mpoutqn.example.com/east", "Channel East"),
             Fb("https://streams.example.com/north", "Channel North"),
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
             Fb("https://streams.example.com/south", "Channel South")
         };
 
@@ -135,7 +135,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_UnmatchedRecommendation_FallsBackToCatalogSourceOrder()
+    public void Build_UnmatchedRecommendation_FallsBackToCatalogIndexOrder()
     {
         // Arrange
         var streams = new[]
@@ -160,8 +160,8 @@ public class StreamTestOrderPolicyTests
             (_, _) => -1,
             index => streams[index]);
 
-        // Assert
-        Assert.Equal([1, 0], order);
+        // Assert — unmatched recs → same as empty: catalog indexes, salt 0
+        Assert.Equal([0, 1], order);
     }
 
     [Fact]

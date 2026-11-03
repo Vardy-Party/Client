@@ -370,10 +370,12 @@ MigrationBackup/
 FodyWeavers.xsd
 /Private-Documents
 /certs/vardyparty.keystore
+/certs/android-signing.pass
 /browsers
 /nuget.config
 .nuget-local/
 /certs
+VardyParty/certs/
 
 # Build-generated (GenerateBuildInfo now writes to obj/, but older branches still write here)
 VardyParty/Resources/Raw/buildinfo.txt

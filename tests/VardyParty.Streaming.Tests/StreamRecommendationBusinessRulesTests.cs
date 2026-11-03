@@ -31,11 +31,11 @@ public class StreamRecommendationBusinessRulesTests
         var order1 = StreamRecommendationPolicy.SpreadDiscoveryOrder(
             streams.Length, i => streams[i], sessionSalt: 1);
 
-        Assert.Equal("mp", streams[order0[0]].ResolveCatalogSource());
-        Assert.Equal(3, order0.Skip(1).Count(i => streams[i].ResolveCatalogSource() == "fb"));
-        Assert.NotEqual(
-            streams[order0[1]].Channel,
-            streams[order1[1]].Channel);
+        // FCFS catalog indexes + rotate — no MP-before-FB bucket.
+        Assert.Equal([0, 1, 2, 3], order0);
+        Assert.Equal([1, 2, 3, 0], order1);
+        Assert.Equal(4, order0.Count);
+        Assert.Equal(order0.OrderBy(i => i), order1.OrderBy(i => i));
     }
 
     [Fact]

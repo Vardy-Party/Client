@@ -2,13 +2,21 @@ namespace VardyParty.Streaming;
 
 /// <summary>
 /// Caps LocalService browser work at <see cref="MaxConcurrent"/> plays. A startup race
-/// marks itself with <see cref="BeginRace"/> and <see cref="MarkRaceLeg"/> so its two
-/// <c>/play</c> calls use the slots, and candidate testing waits instead of stacking
-/// more Chromium on top.
+/// or playback-priority window marks itself with <see cref="BeginRace"/> /
+/// <see cref="BeginPlaybackPriority"/> and <see cref="MarkRaceLeg"/> so attach /
+/// prewarm <c>/play</c> calls use the slots, and candidate testing waits instead of
+/// stacking more Chromium on top.
 /// </summary>
 public sealed class ResolverRaceThrottle
 {
     public const int MaxConcurrent = 2;
+
+    /// <summary>
+    /// How long find-phase stays paused after first playback starts so Next can take
+    /// a warm URL (unless prewarm depth is satisfied sooner).
+    /// </summary>
+    public static TimeSpan PlaybackPriorityTimeout =>
+        VardyParty.Kernel.FirstPlayOpenStrategy.PlaybackPriorityTimeout;
 
     private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
     private readonly object _gate = new();
@@ -18,6 +26,10 @@ public sealed class ResolverRaceThrottle
     private TaskCompletionSource _othersDrained = Completed();
     private static readonly AsyncLocal<int> RaceLegDepth = new();
 
+    /// <summary>
+    /// True while a startup open/race or the early-Next playback-priority window holds
+    /// the find-phase pause.
+    /// </summary>
     public bool RaceInFlight
     {
         get
@@ -27,8 +39,16 @@ public sealed class ResolverRaceThrottle
         }
     }
 
-    /// <summary>Marks a playback race as running. Dispose when the winner is known.</summary>
-    public IDisposable BeginRace()
+    /// <summary>Marks a playback race or attach as running. Dispose when finished.</summary>
+    public IDisposable BeginRace() => BeginHold();
+
+    /// <summary>
+    /// Pauses find-phase Chromium for the early-Next window (same hold as
+    /// <see cref="BeginRace"/>). Dispose when prewarm depth is warm or the timeout fires.
+    /// </summary>
+    public IDisposable BeginPlaybackPriority() => BeginHold();
+
+    private IDisposable BeginHold()
     {
         lock (_gate)
         {

@@ -85,9 +85,9 @@ public static class StreamRecommendationPolicy
     }
 
     /// <summary>
-    /// When there are no recommendations, try MP before FB and rotate within
-    /// each source bucket by <paramref name="sessionSalt"/> so concurrent
-    /// joiners spread discovery and both benefit once working reports land.
+    /// When there are no recommendations, rotate the full catalog by
+    /// <paramref name="sessionSalt"/> so concurrent joiners spread discovery.
+    /// FB and MP stay mixed — first healthy wins; no source-bucket preference.
     /// </summary>
     public static List<int> SpreadDiscoveryOrder(
         int totalStreams,
@@ -99,33 +99,14 @@ public static class StreamRecommendationPolicy
             return [];
         }
 
-        var fb = new List<int>();
-        var other = new List<int>();
-        var mp = new List<int>();
-        for (var i = 0; i < totalStreams; i++)
-        {
-            switch (getStream(i).ResolveCatalogSource())
-            {
-                case "fb":
-                    fb.Add(i);
-                    break;
-                case "mp":
-                    mp.Add(i);
-                    break;
-                default:
-                    other.Add(i);
-                    break;
-            }
-        }
-
-        RotateInPlace(fb, sessionSalt);
-        RotateInPlace(other, sessionSalt + 17);
-        RotateInPlace(mp, sessionSalt + 31);
+        // getStream retained so call sites stay stable; order is index-based FCFS + rotate.
+        _ = getStream;
 
         var ordered = new List<int>(totalStreams);
-        ordered.AddRange(mp);
-        ordered.AddRange(fb);
-        ordered.AddRange(other);
+        for (var i = 0; i < totalStreams; i++)
+            ordered.Add(i);
+
+        RotateInPlace(ordered, sessionSalt);
         return ordered;
     }
 

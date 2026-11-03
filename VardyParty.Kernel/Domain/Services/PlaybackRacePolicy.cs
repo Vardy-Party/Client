@@ -44,12 +44,11 @@ public enum RaceDecision
 }
 
 /// <summary>
-/// Rules for racing two fresh <c>/play</c> calls when playback has nothing playing yet.
-/// The recommended row and the next row in switch order resolve together. A proven-video
-/// URL beats a URL we could not check. A playlist that is audio-only never wins. The
-/// recommended row gets <see cref="RecommendedGrace"/> to finish after the partner does.
-/// The losing URL was never played, so it is kept warm for one later switch
-/// (<see cref="LoserTakeBy"/>) and never reported.
+/// Helpers for first-play playlist legs: <see cref="NeedsFreshPlay"/>,
+/// <see cref="PickPartner"/>, <see cref="LoserTakeBy"/>, and <see cref="RaceLegState"/>.
+/// First picture + early Next capacity is owned by <see cref="FirstPlayOpenStrategy"/>
+/// (open recommended first; partner warms for Next). The blocking dual-leg
+/// <see cref="PlaybackUrlRacer"/> wait is no longer used to open the player.
 /// </summary>
 public static class PlaybackRacePolicy
 {

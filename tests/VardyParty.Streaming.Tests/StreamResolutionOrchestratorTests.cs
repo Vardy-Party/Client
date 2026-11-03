@@ -1195,7 +1195,13 @@ public class StreamResolutionOrchestratorTests
             await Task.Delay(20);
         Assert.NotNull(onNext);
         Assert.True(startCount >= 1, $"prewarmer was not wired (Start count={startCount})");
-        second.ResolvedM3U8Url = null;
+        second.ResolvedM3U8Url = "https://cdn.example.com/live/south-find-burned.m3u8";
+        second.UnusedResolvedUrl = false;
+        second.RequestHeaders = new Dictionary<string, string>
+        {
+            ["Referer"] = "https://player.example.test/south",
+        };
+        var kicksBeforeNext = kickCount;
         await onNext!();
         await Task.Delay(100);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
@@ -1205,7 +1211,10 @@ public class StreamResolutionOrchestratorTests
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
         Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
-        Assert.True(kickCount >= 1, $"Kick was never performed (count={kickCount}, starts={startCount})");
+        Assert.True(
+            kickCount > kicksBeforeNext,
+            $"Next did not Kick prewarmer (before={kicksBeforeNext}, after={kickCount}, starts={startCount})");
+        Assert.Null(second.ResolvedM3U8Url);
     }
 
     private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()

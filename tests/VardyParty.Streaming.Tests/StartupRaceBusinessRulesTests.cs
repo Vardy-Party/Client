@@ -16,8 +16,8 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Streaming.Tests;
 
 /// <summary>
-/// Startup race: two fresh /play calls, a video check before a URL can win, and an
-/// empty recommended row must not hold the finding-streams dialog when a cached row is ready.
+/// FirstPlayOpenStrategy: open recommended first, partner warms for Next, empty
+/// recommended must not hold the finding-streams dialog when a cached row is ready.
 /// </summary>
 public class StartupRaceBusinessRulesTests
 {
