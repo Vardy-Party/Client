@@ -28,6 +28,11 @@ public sealed class PlaybackSessionController
     private bool _recoveryAttachPending;
     private int _sameStreamRetries;
     private DateTimeOffset? _lastSameStreamRetryAt;
+    /// <summary>
+    /// Player saw a non-HLS playlist body. At most one fresh <c>/play</c>; an empty
+    /// scrape advances immediately (no multi-minute EmptyFreshPlay loop).
+    /// </summary>
+    private bool _malformedPlaylistRecovery;
 
     // Same-stream recovery of a SWITCH TARGET (a row we switched to that has not
     // played yet, with a last-good stream to fall back on). A failure that is not
@@ -249,7 +254,10 @@ public sealed class PlaybackSessionController
         {
             // A switch target's fresh /play came back empty: spend an attempt; when
             // the budget is gone go back to last good, keeping the target unreported.
+            // Malformed-playlist recovery: one empty is enough — revert now.
             _recoveryAttachPending = false;
+            if (_malformedPlaylistRecovery)
+                return RevertSwitchKeepingTarget(message);
             var retry = TryRecoverSameStream(message, PlaybackErrorKind.TokenOrPlaylistInvalid);
             return retry ?? RevertSwitchKeepingTarget(message);
         }
@@ -260,7 +268,11 @@ public sealed class PlaybackSessionController
             // or an unsigned playlist sampled before the signed one. Keep scraping
             // a little longer, then move on without reporting or removing the row:
             // the channel was playing, so an empty scrape is not proof it is dead.
+            // Exception: non-HLS body already proved the cached URL unusable — do not
+            // burn ~20s LocalService scrapes (TV black screen 4 Nov 2026 ~100s).
             _recoveryAttachPending = false;
+            if (_malformedPlaylistRecovery)
+                return KeepUnresolvedPlayAndMoveOn(message);
             var retry = TryRecoverSameStream(
                 message,
                 PlaybackErrorKind.TokenOrPlaylistInvalid,
@@ -596,6 +608,8 @@ public sealed class PlaybackSessionController
 
         var reason = string.IsNullOrWhiteSpace(e.Message) ? "Playback error" : e.Message;
         var kind = PlaybackPolicy.ClassifyPlaybackError(reason);
+        if (PlaybackPolicy.IsMalformedPlaylistBody(reason))
+            _malformedPlaylistRecovery = true;
 
         // A switch target that is already being retried errored again: keep
         // retrying it within the budget; dead reports and removes it; an empty
@@ -748,6 +762,10 @@ public sealed class PlaybackSessionController
         if (!_recovering && PlaybackPolicy.ShouldResetSameStreamRetries(_lastSameStreamRetryAt, now))
             _sameStreamRetries = 0;
 
+        // Non-HLS body: one fresh /play only (reload of the same bytes is useless).
+        if (_malformedPlaylistRecovery)
+            maxAttempts = Math.Min(maxAttempts, 1);
+
         if (kind == PlaybackErrorKind.ConfirmedDead || _sameStreamRetries >= maxAttempts)
             return null;
 
@@ -807,6 +825,7 @@ public sealed class PlaybackSessionController
         _recovering = false;
         _recoveryAttachPending = false;
         _recoveringSwitch = false;
+        _malformedPlaylistRecovery = false;
         if (clearBudget)
         {
             _sameStreamRetries = 0;

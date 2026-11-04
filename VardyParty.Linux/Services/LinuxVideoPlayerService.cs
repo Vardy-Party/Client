@@ -81,6 +81,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private string? _playbackHomeTeam;
     private string? _playbackAwayTeam;
     private bool _isNextStreamRequestInProgress;
+    /// <summary>True while Next/Prev attach is in flight — video-info omits telemetry/URLs.</summary>
+    public bool StreamSwitchInProgress { get; private set; }
     /// <summary>
     /// When true, <see cref="CurrentStreamIndexChanged"/> must not re-attach —
     /// the session command path already owns Attach (same as Windows/Android).
@@ -89,6 +91,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
+    /// <summary>Raised when <see cref="StreamSwitchInProgress"/> flips so chrome can refresh immediately.</summary>
+    public event EventHandler? StreamSwitchChromeChanged;
 
     public PlaybackResult? LastPlaybackResult { get; private set; }
 
@@ -337,6 +341,18 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// <c>TrySwitchToCurrentStreamAsync</c> / Android <c>TrySwitchToCurrentStream</c>).
     /// </summary>
     private void TrySwitchToCurrentStream(bool force = false)
+        => _ = TrySwitchToCurrentStreamAsync(force);
+
+    private void SetStreamSwitchInProgress(bool value)
+    {
+        if (StreamSwitchInProgress == value)
+            return;
+        StreamSwitchInProgress = value;
+        try { StreamSwitchChromeChanged?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex) { _logger.LogDebug(ex, "[LinuxVideoPlayerService] StreamSwitchChromeChanged failed"); }
+    }
+
+    private async Task TrySwitchToCurrentStreamAsync(bool force)
     {
         if (_suppressIndexDrivenSwitch)
         {
@@ -370,15 +386,23 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     "[LinuxVideoPlayerService] One-shot switch to {Channel} ({Reason})",
                     current?.Stream?.Channel ?? "(unknown)",
                     plan.Reason);
-                _ = _pool.SwitchToCurrentAsync(
-                    force: false,
-                    status => _logger.LogInformation("[LinuxVideoPlayerService] {Status}", status),
-                    revert =>
-                    {
-                        _suppressIndexDrivenSwitch = true;
-                        try { revert(); }
-                        finally { _suppressIndexDrivenSwitch = false; }
-                    });
+                SetStreamSwitchInProgress(true);
+                try
+                {
+                    await _pool.SwitchToCurrentAsync(
+                        force: false,
+                        status => _logger.LogInformation("[LinuxVideoPlayerService] {Status}", status),
+                        revert =>
+                        {
+                            _suppressIndexDrivenSwitch = true;
+                            try { revert(); }
+                            finally { _suppressIndexDrivenSwitch = false; }
+                        }).ConfigureAwait(false);
+                }
+                finally
+                {
+                    SetStreamSwitchInProgress(false);
+                }
                 return;
             }
 
@@ -391,6 +415,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // LibVLC often never raises Playing on the vmem/HLS path, so the
             // session stays IsPreparing and CanAttach rejects the new URL.
             // Index-driven switches already compared URLs — force the attach.
+            // Keep scrub true until Ready/Error (DispatchEngine) so video-info can
+            // sample Switching; clear immediately when attach was rejected.
+            SetStreamSwitchInProgress(true);
             _logger.LogInformation(
                 "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
                 true,
@@ -399,9 +426,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             if (!string.IsNullOrWhiteSpace(current?.Referer))
                 _refererUrl = current.Referer;
             AttachViaSession(url, usedCachedUrl: false, force: true);
+            if (!_session.Snapshot.IsPreparing)
+                SetStreamSwitchInProgress(false);
         }
         catch (Exception ex)
         {
+            SetStreamSwitchInProgress(false);
             _logger.LogError(ex, "[LinuxVideoPlayerService] Stream switch failed");
         }
     }
@@ -826,6 +856,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
+            // Cached switch leaves StreamSwitchInProgress set across AttachViaSession;
+            // end scrub when the attach settles or fails so video-info is not stuck.
+            if (StreamSwitchInProgress
+                && (engineEvent.Kind == MediaEngineEventKind.Ready
+                    || engineEvent.Kind == MediaEngineEventKind.Error))
+            {
+                SetStreamSwitchInProgress(false);
+            }
         }
         catch (Exception ex)
         {

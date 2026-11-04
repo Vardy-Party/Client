@@ -709,11 +709,15 @@ namespace VardyParty.Platforms.Windows
 
             private void ShowSwitchStatus(string message)
             {
+                // Toast text only — streamSwitchInProgress is owned by TrySwitchToCurrentStreamAsync
+                // (set before await / clear in finally). Setting the flag here raced late MainThread
+                // callbacks past finally and left video-info stuck on Status: Switching.
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     try
                     {
                         streamCountText.Text = message;
+                        UpdateInfo();
                     }
                     catch (Exception ex) { _host.LogIgnored("ShowSwitchStatus", ex); }
                 });
@@ -735,6 +739,9 @@ namespace VardyParty.Platforms.Windows
                         plan.Kind,
                         plan.Reason);
 
+                    streamSwitchInProgress = true;
+                    UpdateInfo();
+
                     // Make-before-break: the playing stream keeps playing while a one-shot
                     // row re-/plays (or takes its warm URL); on failure the pool index goes
                     // back to the playing row and the toast line says so.
@@ -751,6 +758,11 @@ namespace VardyParty.Platforms.Windows
                 catch (Exception ex)
                 {
                     _host._logger.LogError(ex, "Stream switch failed");
+                }
+                finally
+                {
+                    streamSwitchInProgress = false;
+                    UpdateInfo();
                 }
             }
         }

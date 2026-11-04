@@ -110,7 +110,22 @@ public sealed class PlaybackPoolCommandActions(
     {
         var failed = switching.GetCurrentStream();
         if (failed != null)
+        {
             failed.ResolvedM3U8Url = null;
+            failed.UnusedResolvedUrl = false;
+        }
+    }
+
+    private static void MarkResolvedUrlConsumed(EnrichedStream? row)
+    {
+        if (row != null)
+            row.UnusedResolvedUrl = false;
+    }
+
+    private void AttachAndConsume(EnrichedStream row, string url, bool usedCachedUrl, bool force)
+    {
+        MarkResolvedUrlConsumed(row);
+        attachViaSession(url, usedCachedUrl, force);
     }
 
     public void RemoveCurrentFromPool() => switching.RemoveCurrentStream();
@@ -149,7 +164,7 @@ public sealed class PlaybackPoolCommandActions(
         {
             if (TryRejectFailedFeed(current.ResolvedM3U8Url))
                 return;
-            attachViaSession(current.ResolvedM3U8Url!, true, true);
+            AttachAndConsume(current, current.ResolvedM3U8Url!, true, true);
             return;
         }
 
@@ -160,8 +175,12 @@ public sealed class PlaybackPoolCommandActions(
             try
             {
                 url = await resolveFresh(current, CancellationToken.None);
+                // PlaybackUrlResolver.Apply sets UnusedResolvedUrl; mocks may only return a URL.
                 if (!string.IsNullOrWhiteSpace(url))
+                {
                     current.ResolvedM3U8Url = url;
+                    current.UnusedResolvedUrl = true;
+                }
             }
             catch
             {
@@ -181,7 +200,7 @@ public sealed class PlaybackPoolCommandActions(
         if (TryRejectFailedFeed(url))
             return;
 
-        attachViaSession(url, usedCachedUrl, true);
+        AttachAndConsume(current, url, usedCachedUrl, true);
     }
 
     /// <summary>Rule 3 on the auto-advance path: a URL whose feed failed this cycle is skipped, inheriting that failure.</summary>
@@ -224,6 +243,8 @@ public sealed class PlaybackPoolCommandActions(
             if (string.IsNullOrWhiteSpace(cached)
                 || (!force && string.Equals(playingUrl, cached, StringComparison.OrdinalIgnoreCase)))
             {
+                // Orchestrator already opened this URL (or same attach) — do not re-/play.
+                MarkResolvedUrlConsumed(target);
                 return false;
             }
 
@@ -233,7 +254,7 @@ public sealed class PlaybackPoolCommandActions(
                 return false;
             }
 
-            attachViaSession(cached, true, true);
+            AttachAndConsume(target, cached, true, true);
             return true;
         }
 
@@ -265,12 +286,15 @@ public sealed class PlaybackPoolCommandActions(
             if (playing != null)
                 RevertIndexTo(playing, runWithIndexSwitchSuppressed);
             else if (string.IsNullOrWhiteSpace(playingUrl) && !string.IsNullOrWhiteSpace(target.ResolvedM3U8Url))
-                attachViaSession(target.ResolvedM3U8Url, true, true);
+                AttachAndConsume(target, target.ResolvedM3U8Url, true, true);
             return false;
         }
 
         if (!force && string.Equals(playingUrl, fresh, StringComparison.OrdinalIgnoreCase))
+        {
+            MarkResolvedUrlConsumed(target);
             return false;
+        }
 
         if (DuplicateFeedReason(target, fresh, playingUrl, force) is { } dupFresh)
         {
@@ -278,7 +302,7 @@ public sealed class PlaybackPoolCommandActions(
             return false;
         }
 
-        attachViaSession(fresh, false, true);
+        AttachAndConsume(target, fresh, false, true);
         return true;
     }
 
@@ -393,9 +417,15 @@ public sealed class PlaybackPoolCommandActions(
             }
 
             if (current != null)
+            {
                 current.ResolvedM3U8Url = fresh;
-
-            attachViaSession(fresh!, false, true);
+                current.UnusedResolvedUrl = true;
+                AttachAndConsume(current, fresh!, false, true);
+            }
+            else
+            {
+                attachViaSession(fresh!, false, true);
+            }
         }
         catch (InfrastructureUnavailableException ex)
         {

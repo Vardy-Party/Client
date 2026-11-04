@@ -80,6 +80,6 @@ public class StreamCatalogSourceTests
 
         // Assert
         Assert.Equal("fb", source);
-        Assert.Equal("FB", badge);
+        Assert.Equal("V1", badge);
     }
 }

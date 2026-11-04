@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoFixture;
@@ -1139,8 +1140,9 @@ public class StreamResolutionOrchestratorTests
     [Fact]
     public async Task Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay()
     {
-        // (d): every switch used to fire a bare ResolveM3U8ForPlaybackAsync for the
-        // following row that Android then ignored - a wasted /play per switch.
+        // Arrange — partner warmed during open-recommended; Next must ApplyWarmUnused
+        // (no bare ResolveM3U8ForPlaybackAsync prefetch).
+        const string warmUrl = "https://cdn.example.com/live/fresh.m3u8";
         var (game, first) = BuildGameAndHealthyStream();
         first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/north" };
         var second = _fixture.Build<EnrichedStream>()
@@ -1155,6 +1157,8 @@ public class StreamResolutionOrchestratorTests
             .Create();
         var bothYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ArrangeCommon(game, first.Stream);
+        var warm = new WarmPlaybackUrlCache();
+        _fixture.Inject(warm);
         _fixture.GetMock<IStreamResolver>()
             .Setup(r => r.ResolveStreamsIncrementallyAsync(
                 It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
@@ -1174,38 +1178,138 @@ public class StreamResolutionOrchestratorTests
             .Setup(a => a.GetM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new M3U8Response
             {
-                Url = "https://cdn.example.com/live/fresh.m3u8",
+                Url = warmUrl,
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
-        var kickCount = 0;
         var startCount = 0;
         var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>()))
             .Callback(() => Interlocked.Increment(ref startCount))
             .Returns(Mock.Of<IDisposable>());
-        prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
+        prewarmer.Setup(p => p.Kick());
         _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
 
+        // Act
         var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
         await bothYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
         for (var i = 0; i < 100 && onNext == null; i++)
             await Task.Delay(20);
         Assert.NotNull(onNext);
         Assert.True(startCount >= 1, $"prewarmer was not wired (Start count={startCount})");
-        second.ResolvedM3U8Url = null;
+        for (var i = 0; i < 50 && warm.Peek(second) is null; i++)
+            await Task.Delay(50);
+        Assert.NotNull(warm.Peek(second));
+        second.ResolvedM3U8Url = "https://cdn.example.com/live/south-find-burned.m3u8";
+        second.UnusedResolvedUrl = false;
+        second.RequestHeaders = new Dictionary<string, string>
+        {
+            ["Referer"] = "https://player.example.test/south",
+        };
         await onNext!();
         await Task.Delay(100);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert — ApplyWarmUnused; never bare ResolveM3U8ForPlaybackAsync prefetch.
         _fixture.GetMock<IApiService>().Verify(
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
         Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
-        Assert.True(kickCount >= 1, $"Kick was never performed (count={kickCount}, starts={startCount})");
+        Assert.True(second.UnusedResolvedUrl, "Next must mark warm URL unused for AttachCached");
+        Assert.Equal(warmUrl, second.ResolvedM3U8Url);
+    }
+
+    [Fact]
+    public async Task Rule_NextOntoOneShotRow_NoWarm_ClearsAndKicks()
+    {
+        // Arrange — second joins after open-recommended (no partner warm); Next clears + Kick.
+        var (game, first) = BuildGameAndHealthyStream();
+        first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/north" };
+        var second = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Build<StreamModel>()
+                .With(s => s.Url, "https://streams.example.com/south.html")
+                .With(s => s.Channel, "Channel South")
+                .Create())
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south-find-burned.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, "https://streams.example.com/south.html")
+            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south" })
+            .With(e => e.UnusedResolvedUrl, false)
+            .Create();
+        var firstYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+        _fixture.Inject(new WarmPlaybackUrlCache());
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, first.Stream).Create()
+            });
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                YieldThenWait(first, second, firstYielded, releaseSecond.Task, ct));
+        Func<Task>? onNext = null;
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fixture.GetMock<INativeVideoPlayerService>()
+            .Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback<string, string, string, Func<Task>?, string?, string?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, next, _, _, _, _) => onNext = next)
+            .Returns(playbackGate.Task);
+        _fixture.GetMock<IApiService>()
+            .Setup(a => a.GetM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new M3U8Response
+            {
+                Url = "https://cdn.example.com/live/north-fresh.m3u8",
+                RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
+            });
+        var kickCount = 0;
+        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>())).Returns(Mock.Of<IDisposable>());
+        prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
+        _fixture.Inject(prewarmer.Object);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var statuses = new List<string>();
+        sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
+
+        // Act
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        await firstYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 100 && onNext == null; i++)
+            await Task.Delay(20);
+        Assert.NotNull(onNext);
+        releaseSecond.TrySetResult();
+        for (var i = 0; i < 100 && !switching.GetHealthyStreams().Any(s => ReferenceEquals(s, second)); i++)
+            await Task.Delay(20);
+        Assert.Contains(second, switching.GetHealthyStreams());
+        second.UnusedResolvedUrl = false;
+        var kicksBeforeNext = kickCount;
+        await onNext!();
+        await Task.Delay(100);
+        playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert — ClearAndResolveFresh + Kick; never bare prefetch.
+        _fixture.GetMock<IApiService>().Verify(
+            a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        Assert.True(
+            kickCount > kicksBeforeNext,
+            $"Next did not Kick prewarmer (before={kicksBeforeNext}, after={kickCount})");
+        Assert.Null(second.ResolvedM3U8Url);
     }
 
     private (Game Game, EnrichedStream Enriched) BuildGameAndHealthyStream()

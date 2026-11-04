@@ -82,12 +82,11 @@ public sealed class PlaybackChromePresenter
         }
 
         CanGoNext = info.Total > 1;
-        var vertical = PlayerOverlayFormatter.ExtractVerticalResolutionLabel(info.Resolution);
-        var toast = new StreamToastModel(info.Index, info.Total, vertical);
+        // Switch toast is index/total only — do not flash resolution/bitrate here.
+        var toast = new StreamToastModel(info.Index, info.Total, VerticalResolutionLabel: null);
         var changed = StreamToast is null
             || StreamToast.Index != toast.Index
-            || StreamToast.Total != toast.Total
-            || !string.Equals(StreamToast.VerticalResolutionLabel, toast.VerticalResolutionLabel, StringComparison.Ordinal);
+            || StreamToast.Total != toast.Total;
 
         StreamToast = toast;
 

@@ -111,7 +111,7 @@ namespace VardyParty.Kernel.Tests
         [Theory]
         [InlineData(1, 0, null, "Streams: 0")]
         [InlineData(2, 5, null, "Stream: 2/5")]
-        [InlineData(2, 5, "720p", "Stream: 2/5 (720p)")]
+        [InlineData(2, 5, "720p", "Stream: 2/5")] // resolution ignored on switch toast
         public void FormatStreamToast_BuildsExpectedCopy(int index, int total, string? vertical, string expected)
         {
             // Arrange
@@ -122,12 +122,14 @@ namespace VardyParty.Kernel.Tests
             Assert.Equal(expected, actual);
         }
 
-        [Fact]
-        public void SourceBadgeStyle_ForFb_UsesBluePair()
+        [Theory]
+        [InlineData("V1")]
+        [InlineData("FB")] // legacy channel stamp alias — same blue pair as V1
+        public void SourceBadgeStyle_ForV1OrFb_UsesBluePair(string label)
         {
             // Arrange
             // Act
-            var style = SourceBadgeStyle.ForLabel("FB");
+            var style = SourceBadgeStyle.ForLabel(label);
 
             // Assert
             Assert.NotNull(style);

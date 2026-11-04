@@ -26,7 +26,8 @@ public sealed class UpcomingStreamPrewarmer(
     IStreamSwitchingService switching,
     WarmPlaybackUrlCache cache,
     ILogger<UpcomingStreamPrewarmer> logger,
-    TimeProvider? timeProvider = null) : IUpcomingStreamPrewarmer
+    TimeProvider? timeProvider = null,
+    ResolverRaceThrottle? raceThrottle = null) : IUpcomingStreamPrewarmer
 {
     public static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(15);
 
@@ -104,6 +105,9 @@ public sealed class UpcomingStreamPrewarmer(
                         ? "[LinkRefresh] Fetching the next token for {Channel} before the one playing expires"
                         : "[Prewarm] Pre-resolving upcoming {Channel}",
                     stream.Channel);
+                // During FirstPlayOpenStrategy playback-priority / race hold, MarkRaceLeg
+                // lets this /play take a Chromium slot instead of waiting out the hold.
+                using var priorityLeg = raceThrottle?.MarkRaceLeg();
                 var response = await apiService.GetM3U8UrlAsync(
                     stream.Url,
                     EnrichedStreamM3U8Apply.PlayerStreamNameForPlayback(stream),

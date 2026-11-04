@@ -3,10 +3,18 @@
 # gone and PublishTrimmed must stay ON — the CoreCLR linker path requires it.
 #
 # Usage:
-#   pwsh ./package-android.ps1                  # device APK (default)
+#   pwsh ./package-android.ps1                  # device APK (default; debug-signed)
+#   pwsh ./package-android.ps1 -ReleaseSign     # same keystore as CD / site APKs
 #   pwsh ./package-android.ps1 -Mode all        # store/emulator fat APK
 #   pwsh ./package-android.ps1 -Api preview     # bake Api:HeadlessBaseUrl-Preview
 #   pwsh ./package-android.ps1 -KeepPatchedAppSettings
+#
+# -ReleaseSign password (do NOT paste into chat — agent shells will not see a
+# side-terminal $env: either). Prefer a one-line gitignored file:
+#   certs/android-signing.pass
+# Or set ANDROID_KEYSTORE_PASSWORD (or ANDROID_SIGNING_KEY_PASS +
+# ANDROID_SIGNING_STORE_PASS) in the same process that runs this script.
+# Passwords are never passed on the dotnet command line (MSBuild reads env).
 #
 # Default (device): one APK for 32-bit ARM TVs (armeabi-v7a) and 64-bit ARM
 # phones (arm64-v8a, e.g. Nokia C12) — AndroidArmOnly=true.
@@ -36,7 +44,11 @@ param(
 
     # After a successful build, leave secrets in source appsettings.json.
     # Default is also leave them (no auto git restore). Kept for compat.
-    [switch]$KeepPatchedAppSettings
+    [switch]$KeepPatchedAppSettings,
+
+    # Sign with certs/vardyparty.keystore (same as CD). Needs the password via
+    # certs/android-signing.pass or ANDROID_KEYSTORE_PASSWORD in this process.
+    [switch]$ReleaseSign
 )
 
 $ErrorActionPreference = 'Stop'
@@ -115,9 +127,52 @@ $buildArgs = @(
 ) + $modeProps + @(
     '-p:RunGenerateBuildInfo=true',
     '-p:RunGenerateSplash=true',
-    '-p:AndroidKeyStore=false',
     '-p:PatchAppSettings=true'
 )
+
+if ($ReleaseSign) {
+    $repoKeystore = Join-Path $PSScriptRoot 'certs/vardyparty.keystore'
+    $mauiKeystore = Join-Path $PSScriptRoot 'VardyParty/certs/vardyparty.keystore'
+    if (-not (Test-Path -LiteralPath $repoKeystore)) {
+        throw "Release signing needs $repoKeystore (gitignored). Decode ANDROID_KEYSTORE_BASE64 from GH secrets or copy the CD keystore here."
+    }
+    $mauiCertsDir = Split-Path -Parent $mauiKeystore
+    if (-not (Test-Path -LiteralPath $mauiCertsDir)) {
+        New-Item -ItemType Directory -Path $mauiCertsDir | Out-Null
+    }
+    Copy-Item -LiteralPath $repoKeystore -Destination $mauiKeystore -Force
+
+    $passFile = Join-Path $PSScriptRoot 'certs/android-signing.pass'
+    $pass = $env:ANDROID_KEYSTORE_PASSWORD
+    if ([string]::IsNullOrWhiteSpace($pass) -and (Test-Path -LiteralPath $passFile)) {
+        $pass = (Get-Content -LiteralPath $passFile -Raw -Encoding utf8).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ANDROID_SIGNING_KEY_PASS) -and -not [string]::IsNullOrWhiteSpace($pass)) {
+        $env:ANDROID_SIGNING_KEY_PASS = $pass
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ANDROID_SIGNING_STORE_PASS) -and -not [string]::IsNullOrWhiteSpace($pass)) {
+        $env:ANDROID_SIGNING_STORE_PASS = $pass
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ANDROID_SIGNING_KEY_PASS) -or [string]::IsNullOrWhiteSpace($env:ANDROID_SIGNING_STORE_PASS)) {
+        throw @"
+Release signing needs the keystore password in this process (agent shells do not see a side-terminal `$env:`).
+
+Write the password alone on one line (no quotes) to the gitignored file:
+  certs/android-signing.pass
+
+Or set ANDROID_KEYSTORE_PASSWORD before running this script in the same window.
+Do not paste the password into chat.
+"@
+    }
+
+    Write-Host 'Release signing: vardyparty.keystore (password from env or certs/android-signing.pass)'
+    $buildArgs += '-p:AndroidKeyStore=true'
+}
+else {
+    # Debug-signed — cannot adb -r over a CD/site APK (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+    $buildArgs += '-p:AndroidKeyStore=false'
+}
+
 if ($Api) {
     Write-Host "API target: $Api (this package only; user-secrets are not changed)"
     $buildArgs += "-p:ApiTarget=$Api"

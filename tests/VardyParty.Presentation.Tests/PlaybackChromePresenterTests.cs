@@ -92,7 +92,8 @@ public class PlaybackChromePresenterTests
         // Assert
         Assert.False(toastRequested);
         Assert.False(sut.IsStreamToastVisible);
-        Assert.Equal("Stream: 2/4 (1080p)", sut.StreamToast!.Text);
+        Assert.Null(sut.StreamToast!.VerticalResolutionLabel);
+        Assert.Equal("Stream: 2/4", sut.StreamToast.Text);
     }
 
     [Fact]

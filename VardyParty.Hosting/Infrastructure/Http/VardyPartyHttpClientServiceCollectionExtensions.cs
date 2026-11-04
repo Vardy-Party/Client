@@ -72,7 +72,8 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
         services.AddTransient<ResolveFreshPlaybackUrlAsync>(sp =>
             PlaybackUrlResolver.Bind(
                 sp.GetRequiredService<IApiService>(),
-                sp.GetService<WarmPlaybackUrlCache>()));
+                sp.GetService<WarmPlaybackUrlCache>(),
+                raceThrottle: sp.GetService<ResolverRaceThrottle>()));
         services.AddTransient<IAuth0OAuthClient, Auth0OAuthClient>();
 
         services.AddHttpClient<IStreamHealthChecker, StreamHealthChecker>()

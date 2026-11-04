@@ -82,7 +82,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 | Phase | Shared Core | Android / Windows / Linux | Notes |
 |-------|-------------|---------------------------|-------|
-| **Select / order** | Recommendations + catalog order + FB-before-MP | Uses Core | Keep in Core |
+| **Select / order** | Recommendations + catalog FCFS (FB and MP) | Uses Core | Keep in Core |
 | **Pre-play probe** | `StreamHealthChecker` | Uses Core | Keep in Core |
 | **Skip countdown** | `StreamResolver` skips `IsCountdown` | — | Keep |
 | **Start first healthy** | First healthy → `PlayVideoAsync`; continue testing | Attaches ExoPlayer / AdaptiveMediaSource / LibVLC | Keep |
@@ -106,7 +106,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 ### 1. Selection & pre-play (Core — keep)
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
-2. Expand V2 / order catalog sources; prefer FB-before-MP where applicable.
+2. Expand V2 chips; keep catalog order (FB and MP both eligible — first healthy wins).
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
@@ -425,9 +425,11 @@ re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8To
 2. **Reuse** - a one-shot row whose cached URL has a readable expiry with **> 60 s** left
    (`MinComfortableLife`) and is not **known single-use** plays the cached URL straight away
    (`usedCachedUrl: true`, so a failed start still gets the session's one fresh `/play` retry).
-3. **Known single-use** stays on the fresh path: Cookie-bound rows (FB), MP rewritten-segment rows,
-   hosts registered with `PlaybackUrlReusePolicy.RegisterSingleUseHost`, and any URL with **no readable
-   expiry** (unknown = single-use; keeps 5604455's tests).
+3. **Known single-use** stays on the fresh path: Cookie-bound rows (FB), hosts registered with
+   `PlaybackUrlReusePolicy.RegisterSingleUseHost`, and any URL with **no readable expiry**
+   (unknown = single-use; keeps 5604455's tests). **MP harvest** rows with probe-ready rewritten
+   segments are **not** single-use here — LocalService already streamed those playlists to the
+   client, so first play / Next attach the harvested URL (with the usual one fresh retry on fail).
 4. **Pre-resolve** - `UpcomingStreamPrewarmer` runs for the whole playback session and keeps the next
    `PrewarmDepth` = 2 rows in switch order warm in `WarmPlaybackUrlCache`. It also refreshes the
    **current** row when the playing URL's readable expiry has 90 s or less left
@@ -460,40 +462,53 @@ Status text: Android toast, Windows stream-count line, Linux log only (no overla
 
 Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuseBusinessRulesTests`
 (Kernel); `WarmPlaybackUrlCacheTests`, `UpcomingStreamPrewarmerTests`, `SwitchPrewarmBusinessRulesTests`,
-`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay` (Streaming);
+`StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay`
+(warm → ApplyWarmUnused) and `Rule_NextOntoOneShotRow_NoWarm_ClearsAndKicks` (Streaming);
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
 `PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
 
-## Startup race (two fresh /play calls)
+## First play open + early Next capacity (`FirstPlayOpenStrategy`)
 
-When nothing is playing yet and the row we would start needs a fresh `/play`, and the next
-pooled row needs one too, both resolve together (`PlaybackRacePolicy`, `PlaybackUrlRacer`).
-Rules (tests in `PlaybackRaceBusinessRulesTests`, `PlaylistVideoEvidenceTests`,
-`StartupRaceBusinessRulesTests`, `ResolverRaceThrottleTests`):
+Cross-platform policy in Kernel (`FirstPlayOpenStrategy`). Android, Windows, and desktop
+all execute it through `StreamResolutionOrchestrator` + `PlaybackUrlResolver` — do not fork
+per OS. Tune the strategy type while experimenting.
 
-1. **A non-empty URL is not a win by itself.** The playlist is read (`RacePlaylistProbe` /
-   `PlaylistVideoEvidence`). Proven video on the recommended row wins. Proven video on the
-   partner beats a recommended URL whose playlist could not be checked. A playlist that is
-   audio-only (0x0, audio codecs, or only `.aac` / `.m4a` segments) never wins: it is reported
-   failed as `No video (audio only)` and removed, the same stream failure as the player rule.
-   A fetch that fails or is blocked stays unverified and can still be played; the Android
-   8s video confirmation is unchanged.
-2. **Recommended grace** is 1.5s. A partner URL does not replace a recommended row that is
-   still resolving until that window has elapsed. After it, an unverified partner can win
-   only while the recommended row is still pending.
-3. **The finding-streams dialog does not wait.** If the recommended `/play` is already empty
-   or audio-only and another pooled row can play from cache, that row plays at once. The
-   partner `/play` is left to finish into the warm cache; it is not a second wait and it is
-   not reported.
-4. **Chromium stays capped at 2.** `ResolverRaceThrottle` allows two LocalService `/play` or
-   `/mp` calls at a time. The race marks its legs and drains plays that already started, and
-   candidate testing starts nothing new until the winner is known. The two race calls use the
-   cap; they do not add a second pair on top of the find phase.
-5. **A losing URL is kept warm** until its token expiry minus the comfort margin (or 60s when
-   the expiry is not readable) and is taken once, like any other warm entry. It is not reported.
-6. **Infrastructure is still not a verdict.** A leg the service could not answer is not
-   reported and not removed. If neither leg can be played, the chain parks the same way a
-   local-service failure does.
+When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRacePolicy.NeedsFreshPlay`):
+
+1. **Open recommended first.** One Chromium `/play` (and playlist probe) for the recommended
+   row. Picture opens as soon as that leg is video or unverified. The finding UI must not wait
+   on a dual-leg winner race (~25s stall measured on Bravia when both slots raced).
+2. **Partner warms for Next.** If the next switch-order row also needs fresh `/play`, it runs
+   on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not** awaited for first
+   picture. Immediate Next applies that warm as `UnusedResolvedUrl` (`PlanNextPrepare`) so
+   every platform's `PlanSwitch` can `AttachCached`.
+3. **Recommended empty / audio-only.** Report/remove as before. Prefer another pooled row that
+   can play from cache; else await the partner warm leg and open that.
+4. **Recommended infrastructure is terminal for open-recommended.** After
+   `InfrastructureRetryPolicy` retries on the recommended leg, LocalServiceUnavailable
+   closes the start — do **not** `ReadyCachedRow` / partner-open as if empty/audio failed.
+   Infrastructure is still not a stream verdict (no report/remove). Partner warm stays
+   single-shot; only the recommended open-first leg shares the fresh-resolve retry loop.
+5. **Playback-priority window.** From first playback-chain start until
+   `PrewarmDepth` upcoming rows are warm (or `PlaybackPriorityTimeout` = 30s),
+   `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase `/play|/mp`. Attach and
+   prewarm use `MarkRaceLeg` so they still take slots. Logs: `[FirstPlayDelay] playback_priority_*`.
+6. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
+   orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not block consuming
+   a partner warm.
+7. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
+
+`PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
+(`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
+`RaceAsync` winner wait is no longer used for first picture.
+
+Tests:
+- Unit: `FirstPlayOpenStrategyTests` (PlanStart / DecideAfter / PlanNext / priority helpers)
+- Business rules: `FirstPlayOpenBusinessRulesTests`, `StartupRaceBusinessRulesTests`
+  (two-healthy open without waiting partner; partner warm for Next; MP harvest;
+  audio-only / empty fallbacks; playback-priority hold)
+- Warm take order: `PlaybackUrlResolverWarmTests.Bind_ExistingWarm_TakesBeforeWaitingOnInFlightKick`
+- Also: `ResolverRaceThrottleTests`, `PlaybackRaceBusinessRulesTests`.
 
 The first same-stream retry raises `PlaybackRecoverySignals.SameStreamRetryStarted` so the
 prewarmer can refresh the next rows. That refresh takes a slot from the same cap.
@@ -510,8 +525,8 @@ Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57
 |---|---|---|
 | `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
 | `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout", HTTP 500/502/503/504 | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
-| `TokenOrPlaylistInvalid` | 401/403 | Fresh `/play` for the same row |
-| `Transient` | A playlist body that is not HLS (`#EXTM3U` missing, manifest parse error), a bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
+| `TokenOrPlaylistInvalid` | 401/403, or a playlist body that is not HLS (`#EXTM3U` missing, manifest parse error) | One fresh `/play` (no same-URL reload). If that scrape is empty after a malformed body, advance immediately — do not burn multi-minute EmptyFreshPlay loops on a black screen |
+| `Transient` | A bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
 
 Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.
 
@@ -522,7 +537,7 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - The budget refills when the last retry was at least 90s ago (`SameStreamRetryWindow`). A recovered stream that flaps inside 90s keeps using the same budget.
 - A health decline (buffering or bitrate window) gets one reload (`MaxHealthDeclineRetries`), then `ReportDeclined` and a switch.
 - A burst of download failures uses one attempt, not the whole budget: the failure counter resets when a retry starts.
-- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects).
+- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects). Exception: recovery started by a malformed non-HLS body (`#EXTM3U` / parsing manifest malformed) advances on the first empty scrape (4 Nov 2026 TV: four ~20s NotFound scrapes left a ~100s black screen).
 - When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
 - A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
 - A failed switch gets the same budget for its target before reverting to last-good (next section).

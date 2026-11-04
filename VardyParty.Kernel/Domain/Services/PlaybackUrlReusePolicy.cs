@@ -18,11 +18,13 @@ public readonly record struct PlaybackSwitchPlan(PlaybackSwitchKind Kind, string
 /// Cached-vs-fresh m3u8 decisions shared by every player host and the orchestrator.
 /// <para>
 /// One-shot rows (<see cref="RequiresFreshM3u8ForPlayback"/>: soak headers or rewritten media)
-/// re-/play on attach because find-phase health may burn the token (5604455). A one-shot
-/// row may still reuse its cached URL when the token expiry is readable, more than
-/// <see cref="MinComfortableLife"/> remains, and the row is not <see cref="IsKnownSingleUse"/>
-/// (Cookie-bound session, <c>/mp</c> rewritten media, or a registered single-use host).
-/// Unreadable expiry stays on the fresh path.
+/// historically re-/played on every attach. A row may reuse its cached URL when
+/// <see cref="EnrichedStream.UnusedResolvedUrl"/> (just resolved for playback / warm take),
+/// when LocalService <c>/mp</c> already streamed a probe-ready playlist to the client
+/// (<see cref="MpRewrittenSegment.HasProbeReady"/>), or when the token expiry is readable,
+/// more than <see cref="MinComfortableLife"/> remains, and the row is not
+/// <see cref="IsKnownSingleUse"/> (Cookie-bound FB session or a registered single-use host).
+/// Unreadable FB find-phase expiry stays on the fresh path.
 /// </para>
 /// </summary>
 public static class PlaybackUrlReusePolicy
@@ -111,15 +113,13 @@ public static class PlaybackUrlReusePolicy
 
     /// <summary>
     /// Sources whose token is bound to one fetch or one browser session: never reuse,
-    /// never pre-resolve.
+    /// never pre-resolve. MP harvest rows with probe-ready rewritten segments are
+    /// <em>not</em> included — LocalService already streamed those playlists to the client.
     /// </summary>
     public static bool IsKnownSingleUse(EnrichedStream? stream)
     {
         if (stream is null)
             return false;
-
-        if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
-            return true;
 
         if (stream.RequestHeaders is { } headers
             && headers.Any(pair => pair.Key.Equals("cookie", StringComparison.OrdinalIgnoreCase)
@@ -156,10 +156,20 @@ public static class PlaybackUrlReusePolicy
     /// usual one fresh retry on a failed start).
     /// </summary>
     public static bool CanReuseCached(EnrichedStream? stream, DateTimeOffset now)
-        => stream?.Stream is not null
-            && !string.IsNullOrWhiteSpace(stream.ResolvedM3U8Url)
-            && !IsKnownSingleUse(stream)
-            && HasComfortableLife(stream.ResolvedM3U8Url, now);
+    {
+        if (stream?.Stream is null || string.IsNullOrWhiteSpace(stream.ResolvedM3U8Url))
+            return false;
+
+        // Fresh /play or warm take applied for this attach — do not burn a second Chromium slot.
+        if (stream.UnusedResolvedUrl)
+            return true;
+
+        // /mp harvest already delivered playlist + rewritten media for client playback.
+        if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
+            return true;
+
+        return !IsKnownSingleUse(stream) && HasComfortableLife(stream.ResolvedM3U8Url, now);
+    }
 
     /// <summary>Decision for an index-driven switch onto <paramref name="current"/>.</summary>
     public static PlaybackSwitchPlan PlanSwitch(EnrichedStream? current, DateTimeOffset now)
@@ -177,6 +187,22 @@ public static class PlaybackUrlReusePolicy
 
         if (CanReuseCached(current, now))
         {
+            if (current.UnusedResolvedUrl)
+            {
+                return new PlaybackSwitchPlan(
+                    PlaybackSwitchKind.AttachCached,
+                    url,
+                    "unused playback URL");
+            }
+
+            if (MpRewrittenSegment.HasProbeReady(current.RewrittenSegments))
+            {
+                return new PlaybackSwitchPlan(
+                    PlaybackSwitchKind.AttachCached,
+                    url,
+                    "mp harvest streamed to client");
+            }
+
             var left = M3u8TokenExpiry.RemainingLife(url, now)!.Value;
             return new PlaybackSwitchPlan(
                 PlaybackSwitchKind.AttachCached,
@@ -201,11 +227,16 @@ public static class PlaybackUrlReusePolicy
         return left > TimeSpan.Zero && left <= PlayingLinkRefreshLead;
     }
 
-    /// <summary>Rows the background pre-resolver may keep warm.</summary>
+    /// <summary>
+    /// Rows the background pre-resolver may keep warm. Probe-ready MP harvest is
+    /// excluded — LocalService already streamed the playlist; re-fetching during
+    /// the playback-priority window fights <see cref="FirstPlayOpenStrategy"/>.
+    /// </summary>
     public static bool ShouldPrewarm(EnrichedStream? stream)
         => stream?.Stream is not null
             && RequiresFreshM3u8ForPlayback(stream)
-            && !IsKnownSingleUse(stream);
+            && !IsKnownSingleUse(stream)
+            && !MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments);
 
     /// <summary>
     /// Whether the pre-resolver should (re)resolve a candidate at <paramref name="depth"/>

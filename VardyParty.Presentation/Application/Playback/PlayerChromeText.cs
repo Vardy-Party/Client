@@ -19,16 +19,19 @@ public static class PlayerChromeText
         @"^\d{3,4}p$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Switch toast copy — index/total only. Resolution/bitrate stay off this flash
+    /// (see <see cref="PlayerOverlayFormatter.FormatStreamToast"/>).
+    /// </summary>
     public static string FormatStreamCount(int index, int total, string? verticalResolution)
     {
+        _ = verticalResolution;
         if (total <= 0)
         {
             return "Streams: 0";
         }
 
-        return string.IsNullOrWhiteSpace(verticalResolution)
-            ? $"Stream: {index}/{total}"
-            : $"Stream: {index}/{total} ({verticalResolution})";
+        return $"Stream: {index}/{total}";
     }
 
     public static string FormatStreamHint(int index, int total) =>
@@ -51,7 +54,8 @@ public static class PlayerChromeText
     }
 
     public static bool IsFacebookSource(string? label) =>
-        string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
+        string.Equals(label, "V1", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
 
     public static string StripQuery(string? url)
     {
@@ -198,10 +202,18 @@ public static class PlayerChromeText
         };
     }
 
-    public static string FormatVideoInfo(VideoInfoPanelModel model)
+    /// <param name="whileSwitching">
+    /// When true (Next/Prev/chip in flight), omit measured stream telemetry and URLs so
+    /// the video-info overlay does not flash the previous stream's size/bitrate/m3u8.
+    /// Keeps status, index, channel, source badge, and game title.
+    /// </param>
+    public static string FormatVideoInfo(VideoInfoPanelModel model, bool whileSwitching = false)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"Status: {model.PlaybackState ?? "unknown"}");
+        var status = whileSwitching
+            ? "Switching"
+            : (string.IsNullOrWhiteSpace(model.PlaybackState) ? "unknown" : model.PlaybackState);
+        sb.AppendLine($"Status: {status}");
         if (model.StreamTotal > 0)
         {
             sb.AppendLine($"Stream: {model.StreamIndex}/{model.StreamTotal}");
@@ -217,49 +229,55 @@ public static class PlayerChromeText
             sb.AppendLine($"Source: {model.SourceLabel}");
         }
 
-        if (!string.IsNullOrWhiteSpace(model.Quality))
+        if (!whileSwitching)
         {
-            sb.AppendLine($"Quality: {model.Quality}");
+            if (!string.IsNullOrWhiteSpace(model.Quality))
+            {
+                sb.AppendLine($"Quality: {model.Quality}");
+            }
+
+            var resolution = string.IsNullOrWhiteSpace(model.Resolution) ? "pending" : model.Resolution;
+            sb.AppendLine(string.IsNullOrWhiteSpace(model.FrameRate)
+                ? $"Resolution: {resolution}"
+                : $"Resolution: {resolution} @ {model.FrameRate}");
+
+            sb.AppendLine(string.IsNullOrWhiteSpace(model.AspectRatio)
+                ? "Aspect ratio: pending"
+                : $"Aspect ratio: {model.AspectRatio}");
+
+            sb.AppendLine($"Bitrate: {model.Bitrate ?? "unknown"}");
+            sb.AppendLine($"Video Codec: {model.VideoCodec ?? "unknown"}");
+            sb.AppendLine($"Audio Codec: {model.AudioCodec ?? "unknown"}");
         }
-
-        var resolution = string.IsNullOrWhiteSpace(model.Resolution) ? "pending" : model.Resolution;
-        sb.AppendLine(string.IsNullOrWhiteSpace(model.FrameRate)
-            ? $"Resolution: {resolution}"
-            : $"Resolution: {resolution} @ {model.FrameRate}");
-
-        sb.AppendLine(string.IsNullOrWhiteSpace(model.AspectRatio)
-            ? "Aspect ratio: pending"
-            : $"Aspect ratio: {model.AspectRatio}");
-
-        sb.AppendLine($"Bitrate: {model.Bitrate ?? "unknown"}");
-        sb.AppendLine($"Video Codec: {model.VideoCodec ?? "unknown"}");
-        sb.AppendLine($"Audio Codec: {model.AudioCodec ?? "unknown"}");
 
         if (!string.IsNullOrWhiteSpace(model.Title))
         {
             sb.AppendLine(model.Title);
         }
 
-        if (!string.IsNullOrWhiteSpace(model.Buffer))
+        if (!whileSwitching)
         {
-            sb.AppendLine($"Buffer: {model.Buffer}");
-        }
+            if (!string.IsNullOrWhiteSpace(model.Buffer))
+            {
+                sb.AppendLine($"Buffer: {model.Buffer}");
+            }
 
-        if (!string.IsNullOrWhiteSpace(model.SourceUrl))
-        {
-            sb.AppendLine($"Source: {model.SourceUrl}");
-        }
+            if (!string.IsNullOrWhiteSpace(model.SourceUrl))
+            {
+                sb.AppendLine($"Source: {model.SourceUrl}");
+            }
 
-        if (!string.IsNullOrWhiteSpace(model.RefererHost))
-        {
-            sb.AppendLine($"Referer: {model.RefererHost}");
+            if (!string.IsNullOrWhiteSpace(model.RefererHost))
+            {
+                sb.AppendLine($"Referer: {model.RefererHost}");
+            }
         }
 
         return sb.ToString().TrimEnd();
     }
 
     /// <summary>
-    /// Prefer MP chip / player label over catalog badge placeholders like "V2".
+    /// Prefer MP chip / player label over catalog badge placeholders like "V1"/"V2".
     /// </summary>
     private static string? PreferChipLabel(string? overlayChannel, Kernel.Stream? stream)
     {
@@ -272,6 +290,7 @@ public static class PlayerChromeText
 
         var trimmed = overlayChannel.Trim();
         if (string.Equals(trimmed, "V2", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, "V1", StringComparison.OrdinalIgnoreCase)
             || string.Equals(trimmed, "MP", StringComparison.OrdinalIgnoreCase)
             || string.Equals(trimmed, "FB", StringComparison.OrdinalIgnoreCase))
         {

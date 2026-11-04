@@ -22,29 +22,16 @@ namespace VardyParty.Platforms.Windows
                     var height = session.NaturalVideoHeight;
                     var state = session.PlaybackState.ToString();
 
-                    // Get additional info from MediaPlaybackItem if available
-                    string frameRateText = "unknown";
-                    string vCodec = "unknown";
-                    string aCodec = "unknown";
-                    AdaptiveMediaSource? ams = null;
-
                     if (mediaPlayer.Source is MediaPlaybackItem item)
-                    {
-                        // Extract and store video metadata for health reporting
                         _host.ExtractVideoMetadata(item, mediaPlayer);
-                    }
-                    else if (mediaPlayer.Source is MediaSource ms)
-                    {
+
+                    AdaptiveMediaSource? ams = null;
+                    if (mediaPlayer.Source is MediaSource ms)
                         ams = ms.AdaptiveMediaSource;
-                    }
 
-                    var sb = new System.Text.StringBuilder();
-
+                    EnrichedStream? current = null;
                     int streamIndex = 0;
                     int streamTotal = 0;
-                    string? streamChannel = null;
-                    string? streamQuality = null;
-                    string? streamSourceLabel = null;
                     try
                     {
                         var switching = switchingService;
@@ -52,65 +39,50 @@ namespace VardyParty.Platforms.Windows
                         {
                             streamIndex = switching.GetCurrentStreamIndex();
                             streamTotal = switching.GetHealthyStreams().Count;
-                            var current = switching.GetCurrentStream();
-                            streamChannel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream);
-                            try { streamQuality = current?.GetQualityDisplay(); } catch (Exception ex) { _host.LogIgnored("GetQualityDisplay", ex); }
-                            try { streamSourceLabel = current?.Stream?.CatalogSourceBadgeLabel; } catch (Exception ex) { _host.LogIgnored("CatalogSourceBadgeLabel", ex); }
+                            current = switching.GetCurrentStream();
                         }
                     }
                     catch (Exception ex) { _host.LogIgnored("ReadCurrentStreamOverlay", ex); }
 
-                    sb.AppendLine($"Status: {state}");
-                    if (streamTotal > 0)
-                        sb.AppendLine($"Stream: {streamIndex}/{streamTotal}");
-                    if (!string.IsNullOrEmpty(streamChannel))
-                        sb.AppendLine($"Channel: {streamChannel}");
-                    if (!string.IsNullOrEmpty(streamSourceLabel))
-                        sb.AppendLine($"Source: {streamSourceLabel}");
-                    if (!string.IsNullOrEmpty(streamQuality))
-                        sb.AppendLine($"Quality: {streamQuality}");
-                    sb.AppendLine($"Resolution: {width}x{height} @ {frameRateText}");
-
-                    if (width > 0 && height > 0)
-                    {
-                        double r = (double)width / height;
-                        var aspect = PlayerOverlayFormatter.BuildAspect(width, height) ?? "pending";
-                        sb.AppendLine($"Aspect ratio: {aspect} ({r:0.00})");
-                    }
-                    else
-                    {
-                        sb.AppendLine($"Aspect ratio: pending");
-                    }
-
-                    string bitrateText = "unknown";
-                    if (ams != null && ams.CurrentDownloadBitrate > 0)
-                        bitrateText = $"{ams.CurrentDownloadBitrate / 1024.0:0.0} kbps";
-
-                    sb.AppendLine($"Bitrate: {bitrateText}");
-                    sb.AppendLine($"Video Codec: {vCodec}");
-                    sb.AppendLine($"Audio Codec: {aCodec}");
-
-
-                    if (!string.IsNullOrEmpty(_title))
-                        sb.AppendLine($"{_title}");
-
                     double bufferingProgress = 0;
-                    try
-                    {
-                        bufferingProgress = session.BufferingProgress;
-                    }
+                    try { bufferingProgress = session.BufferingProgress; }
                     catch (Exception ex) { _host.LogIgnored("ReadBufferingProgress", ex); }
-                    sb.AppendLine($"Buffer: {bufferingProgress * 100:0}%");
 
-                    string refHost = PlayerOverlayFormatter.RefererHost(_refererUrl);
+                    int? bitrateKbps = null;
+                    if (ams != null && ams.CurrentDownloadBitrate > 0)
+                        bitrateKbps = (int)(ams.CurrentDownloadBitrate / 1000);
 
-                    var source = PlayerOverlayFormatter.StripQuery(currentPlaybackUrl);
-                    if (!string.IsNullOrEmpty(source))
-                        sb.AppendLine($"Source: {source}");
-                    if (!string.IsNullOrEmpty(refHost))
-                        sb.AppendLine($"Referer: {refHost}");
+                    var metrics = _host.GetCurrentMetrics();
+                    var overlay = new PlayerOverlayInfo
+                    {
+                        Index = streamIndex,
+                        Total = streamTotal,
+                        Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
+                        Resolution = width > 0 && height > 0
+                            ? $"{width}x{height}"
+                            : metrics?.Resolution is { } r ? $"{r.Width}x{r.Height}" : null,
+                        BitrateKbps = bitrateKbps ?? metrics?.BitrateKbps,
+                        FrameRate = metrics?.Framerate is int fps ? fps : null,
+                        VideoCodec = metrics?.VideoCodec,
+                        AudioCodec = metrics?.AudioCodec,
+                        AspectRatio = width > 0 && height > 0
+                            ? PlayerOverlayFormatter.BuildAspect(width, height)
+                            : null,
+                        BufferPercent = (int)(bufferingProgress * 100),
+                        M3u8Url = currentPlaybackUrl,
+                        RefererUrl = _refererUrl
+                    };
 
-                    infoText.Text = sb.ToString();
+                    var model = PlayerChromeText.FromPlayback(
+                        overlay,
+                        current,
+                        playbackState: state,
+                        title: _title,
+                        sourceUrl: currentPlaybackUrl,
+                        refererUrl: _refererUrl,
+                        bufferPercent: overlay.BufferPercent);
+
+                    infoText.Text = PlayerChromeText.FormatVideoInfo(model, whileSwitching: streamSwitchInProgress);
                 });
             }
 
@@ -239,9 +211,9 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    var verticalResolution =
-                        PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Health?.Resolution)
-                        ?? PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Stream?.Resolution)
+                    // Video-info Resolution only — switch toast is index/total (no quality flash).
+                    var resolutionForInfo = current?.Health?.Resolution
+                        ?? current?.Stream?.Resolution
                         ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
 
                     var overlay = new PlayerOverlayInfo
@@ -249,17 +221,15 @@ namespace VardyParty.Platforms.Windows
                         Index = index,
                         Total = total,
                         Channel = current?.Stream?.Channel,
-                        Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? verticalResolution,
+                        Resolution = resolutionForInfo,
                         Title = current?.Stream?.Channel
                     };
                     chrome.ApplyOverlayInfo(overlay);
                     chrome.NotifyHealthyCount(total);
 
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
-                    var hasResolutionChanged = !string.Equals(lastStreamVerticalResolution ?? string.Empty, verticalResolution ?? string.Empty, StringComparison.Ordinal);
                     lastStreamTotal = total;
                     lastStreamIndex = index;
-                    lastStreamVerticalResolution = verticalResolution;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         if (chrome.IsVideoInfoVisible)
@@ -268,7 +238,7 @@ namespace VardyParty.Platforms.Windows
                         }
 
                         streamCountText.Text = chrome.StreamToast?.Text
-                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, verticalResolution);
+                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, null);
 
                         var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                         var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
@@ -303,10 +273,8 @@ namespace VardyParty.Platforms.Windows
                             nextButtonContainer.Opacity = isPointerNearNextButton ? 1 : 0;
                         }
 
-                        var shouldShowStreamOverlay = total > 0 &&
-                            (hasChanged
-                             || hasResolutionChanged
-                             || (streamInfoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(verticalResolution)));
+                        // Index/total only — match presenter + Android; do not re-flash on measured size.
+                        var shouldShowStreamOverlay = total > 0 && hasChanged;
                         if (shouldShowStreamOverlay)
                         {
                             streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;

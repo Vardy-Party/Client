@@ -278,7 +278,7 @@ public class StreamSelectionCoordinatorTests
     }
 
     [Fact]
-    public async Task InitializeAsync_RecommendationsThrow_FallsBackToMpBeforeFb()
+    public async Task InitializeAsync_RecommendationsThrow_KeepsCatalogWithSessionSpread()
     {
         // Arrange
         var streams = new List<StreamModel>
@@ -301,13 +301,12 @@ public class StreamSelectionCoordinatorTests
         // Act
         await sut.InitializeAsync(game);
 
-        // Assert — recs failure uses MP first, then session-spread within FB (salt is random)
+        // Assert — all sources kept; order is a rotate of catalog indexes (salt random)
         var channels = sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList();
-        Assert.Equal(3, channels.Count);
-        Assert.Equal("Channel East", channels[0]);
         Assert.Equal(
-            new HashSet<string> { "Channel North", "Channel South" },
-            channels.Skip(1).ToHashSet());
+            new HashSet<string> { "Channel East", "Channel North", "Channel South" },
+            channels.ToHashSet());
+        Assert.Equal(3, channels.Count);
     }
 
     [Fact]

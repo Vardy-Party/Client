@@ -5,7 +5,8 @@ namespace VardyParty.Streaming;
 
 /// <summary>
 /// Playback try-order: crowd-recommended streams first (high confidence
-/// before low), then MP before FB. The control panel badges a stream as
+/// before low), then remaining catalog indexes in order (FB and MP both
+/// eligible — first healthy wins). The control panel badges a stream as
 /// recommended whenever it is in the recommended list; confidence ranks
 /// that list instead of discarding it.
 /// </summary>
@@ -73,11 +74,11 @@ public static class StreamTestOrderPolicy
 
         if (ordered.Count == 0)
         {
-            // Empty crowd data: MP before FB with session-spread within each bucket.
+            // Empty crowd data: session-spread over the full catalog (no source bias).
             return StreamRecommendationPolicy.SpreadDiscoveryOrder(totalStreams, getStream, sessionSalt);
         }
 
-        ordered.AddRange(StreamCatalogSourceOrderer.OrderIndexesMpBeforeFb(remainder, getStream));
+        ordered.AddRange(remainder);
         return ordered;
     }
 

@@ -15,9 +15,11 @@ public enum PlaybackErrorKind
 
     /// <summary>
     /// The token was rejected: 401/403. Reloading the same URL cannot help, so go
-    /// straight to a fresh <c>/play</c>. A playlist body that is not HLS (a 504
-    /// gateway page, "Input does not start with the #EXTM3U header") is
-    /// <see cref="Transient"/>: reload the same URL once before scraping again.
+    /// straight to a fresh <c>/play</c>. A playlist body that is not HLS
+    /// ("Input does not start with the #EXTM3U header", parsing manifest
+    /// malformed) is the same: the bytes are not a playlist, so reload is waste.
+    /// A 504 gateway page that mentions #EXTM3U is <see cref="CdnUnreachable"/>
+    /// (status checked first).
     /// </summary>
     TokenOrPlaylistInvalid,
 
@@ -154,7 +156,25 @@ public static partial class PlaybackPolicy
                 return PlaybackErrorKind.TokenOrPlaylistInvalid;
         }
 
+        // Non-HLS body (gateway HTML, empty, wrong content-type bytes). Reloading
+        // the same URL only prolongs a black screen; one fresh /play then move on.
+        if (IsMalformedPlaylistBody(text))
+            return PlaybackErrorKind.TokenOrPlaylistInvalid;
+
         return PlaybackErrorKind.Transient;
+    }
+
+    /// <summary>
+    /// ExoPlayer/Media3 got bytes that are not an HLS playlist (no <c>#EXTM3U</c>).
+    /// </summary>
+    public static bool IsMalformedPlaylistBody(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+        var text = message.ToLowerInvariant();
+        return text.Contains("#extm3u", StringComparison.Ordinal)
+               || text.Contains("parsing manifest malformed", StringComparison.Ordinal)
+               || text.Contains("contentismalformed", StringComparison.Ordinal);
     }
 
     /// <summary>

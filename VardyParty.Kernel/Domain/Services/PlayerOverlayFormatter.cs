@@ -64,15 +64,16 @@ public static class PlayerOverlayFormatter
     }
 
     /// <summary>
-    /// Stream toast / flash copy. Empty total → <c>Streams: 0</c>; otherwise
-    /// <c>Stream: i/n</c> or <c>Stream: i/n (720p)</c>.
+    /// Stream toast / flash copy while switching. Empty total → <c>Streams: 0</c>;
+    /// otherwise <c>Stream: i/n</c> only — no resolution or bitrate (those belong on
+    /// the video-info panel after the new picture is measured).
     /// </summary>
+    /// <param name="verticalResolutionLabel">Ignored; kept so call sites stay stable.</param>
     public static string FormatStreamToast(int index, int total, string? verticalResolutionLabel)
     {
+        _ = verticalResolutionLabel;
         if (total <= 0) return "Streams: 0";
-        return string.IsNullOrWhiteSpace(verticalResolutionLabel)
-            ? $"Stream: {index}/{total}"
-            : $"Stream: {index}/{total} ({verticalResolutionLabel})";
+        return $"Stream: {index}/{total}";
     }
 
     public static string? MapCodecToFriendlyName(string? codec)
@@ -158,13 +159,14 @@ public static class PlayerOverlayFormatter
 
     private static bool IsCatalogBadgeChannel(string? channel) =>
         string.Equals(channel, "V2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(channel, "V1", StringComparison.OrdinalIgnoreCase)
         || string.Equals(channel, "MP", StringComparison.OrdinalIgnoreCase)
         || string.Equals(channel, "FB", StringComparison.OrdinalIgnoreCase);
 
     private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
 }
 
-/// <summary>ARGB tokens for catalog source badges (FB vs other).</summary>
+/// <summary>ARGB tokens for catalog source badges (V1/FB vs other).</summary>
 public readonly record struct SourceBadgeStyle(byte BgA, byte BgR, byte BgG, byte BgB, byte FgA, byte FgR, byte FgG, byte FgB)
 {
     public string BackgroundHex => $"#{BgR:x2}{BgG:x2}{BgB:x2}";
@@ -173,7 +175,8 @@ public readonly record struct SourceBadgeStyle(byte BgA, byte BgR, byte BgG, byt
     public static SourceBadgeStyle? ForLabel(string? label)
     {
         if (string.IsNullOrWhiteSpace(label)) return null;
-        if (string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(label, "V1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase))
         {
             return new SourceBadgeStyle(0xFF, 0x1E, 0x3A, 0x5F, 0xFF, 0x93, 0xC5, 0xFD);
         }

@@ -113,6 +113,35 @@ public class PlaybackUrlResolverWarmTests
     }
 
     [Fact]
+    public async Task Bind_ExistingWarm_TakesBeforeWaitingOnInFlightKick()
+    {
+        // FirstPlayOpenStrategy warm take order: partner PutUntil must not
+        // block behind a redundant Kick BeginInFlight (Bravia Next ~15s stall).
+        var row = Row();
+        _cache.PutUntil(row, Warm(), Now.AddMinutes(2), Now);
+        Assert.True(_cache.BeginInFlight(row));
+        _api.Setup(a => a.GetM3U8UrlAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string? _, string? _, string? _, CancellationToken ct) =>
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+                return null;
+            });
+        var resolve = PlaybackUrlResolver.Bind(_api.Object, _cache, _time);
+
+        var url = await resolve(row, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(WarmUrl, url);
+        _api.Verify(
+            a => a.GetM3U8UrlAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _cache.EndInFlight(row);
+    }
+
+    [Fact]
     public async Task Bind_WithoutCache_BehavesAsBefore()
     {
         // Arrange

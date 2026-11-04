@@ -21,6 +21,13 @@ public class EnrichedStream
     /// </summary>
     public string? ResolvedM3U8Url { get; set; }
 
+    /// <summary>
+    /// True when <see cref="ResolvedM3U8Url"/> was set for playback (fresh <c>/play</c>
+    /// or warm take) and has not been handed to a player yet. Find-phase probe URLs
+    /// leave this false so known single-use rows still re-resolve on attach.
+    /// </summary>
+    public bool UnusedResolvedUrl { get; set; }
+
     public string? Referer { get; set; }
 
     /// <summary>
