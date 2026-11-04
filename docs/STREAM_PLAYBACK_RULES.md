@@ -525,8 +525,8 @@ Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57
 |---|---|---|
 | `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
 | `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout", HTTP 500/502/503/504 | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
-| `TokenOrPlaylistInvalid` | 401/403 | Fresh `/play` for the same row |
-| `Transient` | A playlist body that is not HLS (`#EXTM3U` missing, manifest parse error), a bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
+| `TokenOrPlaylistInvalid` | 401/403, or a playlist body that is not HLS (`#EXTM3U` missing, manifest parse error) | One fresh `/play` (no same-URL reload). If that scrape is empty after a malformed body, advance immediately — do not burn multi-minute EmptyFreshPlay loops on a black screen |
+| `Transient` | A bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
 
 Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.
 
@@ -537,7 +537,7 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - The budget refills when the last retry was at least 90s ago (`SameStreamRetryWindow`). A recovered stream that flaps inside 90s keeps using the same budget.
 - A health decline (buffering or bitrate window) gets one reload (`MaxHealthDeclineRetries`), then `ReportDeclined` and a switch.
 - A burst of download failures uses one attempt, not the whole budget: the failure counter resets when a retry starts.
-- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects).
+- An empty fresh `/play` during recovery of a stream that was already playing uses the normal budget plus `EmptyFreshPlayExtraAttempts` (2). A wedd/premium page often returns an unsigned playlist (no video bytes) and a signed one on the next scrape. When those attempts are used up the session moves on, clears the cached URL, and does not report or remove the row (1 Nov 2026: Liveverse was removed after two unsigned rejects). Exception: recovery started by a malformed non-HLS body (`#EXTM3U` / parsing manifest malformed) advances on the first empty scrape (4 Nov 2026 TV: four ~20s NotFound scrapes left a ~100s black screen).
 - When the budget is spent, or the error is `ConfirmedDead`: report once, remove, advance. Close only when the healthy count (read live from the pool via `HealthyStreamCountProvider`) is zero.
 - A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
 - A failed switch gets the same budget for its target before reverting to last-good (next section).

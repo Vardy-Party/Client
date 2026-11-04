@@ -40,10 +40,10 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("No m3u8 URL returned", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("[decoder init failed] MediaCodecVideoDecoderException", PlaybackErrorKind.ConfirmedDead)]
-    [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.Transient)]
+    [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("Response code: 403", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 401 Unauthorized", PlaybackErrorKind.TokenOrPlaylistInvalid)]
-    [InlineData("[parsing manifest malformed]", PlaybackErrorKind.Transient)]
+    [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
     [InlineData(null, PlaybackErrorKind.Transient)]
@@ -69,7 +69,7 @@ public class SameStreamRecoveryBusinessRulesTests
         var message = PlaybackPolicy.BuildEngineErrorMessage("Source error", 3002, "ParserException: Input does not start with the #EXTM3U header");
 
         Assert.Equal("Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header", message);
-        Assert.Equal(PlaybackErrorKind.Transient, PlaybackPolicy.ClassifyPlaybackError(message));
+        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(message));
         Assert.Null(PlaybackPolicy.DescribeExoErrorCode(9999));
         Assert.Equal("Playback error", PlaybackPolicy.BuildEngineErrorMessage(null, null, null));
     }
@@ -121,14 +121,14 @@ public class SameStreamRecoveryBusinessRulesTests
     }
 
     [Fact]
-    public void MalformedPlaylist_ReloadsSameUrlBeforeFreshPlay()
+    public void MalformedPlaylist_GoesStraightToFreshPlay()
     {
         var session = Established();
 
         var effects = Error(session, "ParserException: Input does not start with the #EXTM3U header");
 
-        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.Attach && e.Url == "http://a.m3u8");
-        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.Attach);
     }
 
     [Fact]
@@ -264,6 +264,23 @@ public class SameStreamRecoveryBusinessRulesTests
         Assert.Contains(last, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
         Assert.Contains(last, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
         Assert.DoesNotContain(last, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
+    }
+
+    [Fact]
+    public void MalformedPlaylist_ThenEmptyFreshPlay_AdvancesImmediately()
+    {
+        // Arrange — TV black screen 4 Nov 2026: #EXTM3U then four ~20s /play NotFounds
+        var session = Established();
+        var first = Error(session, "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
+
+        // Act
+        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        var afterEmpty = session.NotifyFreshResolveUnavailable("Fresh M3U8 unavailable");
+
+        // Assert — one scrape max; do not keep EmptyFreshPlay looping
+        Assert.Contains(afterEmpty, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.DoesNotContain(afterEmpty, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(afterEmpty, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
     }
 
     [Fact]
