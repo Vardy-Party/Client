@@ -12,7 +12,7 @@ public class PlayerChromeTextTests
 
     [Theory]
     [InlineData(2, 5, null, "Stream: 2/5")]
-    [InlineData(1, 3, "720p", "Stream: 1/3 (720p)")]
+    [InlineData(1, 3, "720p", "Stream: 1/3")] // resolution/bitrate stay off the switch toast
     [InlineData(0, 0, null, "Streams: 0")]
     public void FormatStreamCount_MatchesWindowsAndroidToast(int index, int total, string? res, string expected)
     {

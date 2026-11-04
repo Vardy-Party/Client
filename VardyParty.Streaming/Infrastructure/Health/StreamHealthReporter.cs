@@ -100,11 +100,14 @@ public class StreamHealthReporter(
             StreamName = string.IsNullOrWhiteSpace(streamName) ? null : streamName.Trim(),
             Status = status,
             Quality = DetectQuality(metrics),
+            // Bitrate + resolution come from what the player measured on the live
+            // stream (same numbers the chrome quality line uses). Send them on every
+            // metrics tick, not only the "started" metadata report.
             Bitrate = metrics?.BitrateKbps,
             Buffering = status == "buffering" || metrics?.IsBuffering == true ? true : null,
             Error = error,
-            Resolution = includeMetadata && metrics?.Resolution.HasValue == true
-                ? $"{metrics.Resolution.Value.Width}x{metrics.Resolution.Value.Height}"
+            Resolution = metrics?.Resolution is { } size
+                ? $"{size.Width}x{size.Height}"
                 : null,
             Framerate = includeMetadata ? metrics?.Framerate : null,
             VideoCodec = includeMetadata ? metrics?.VideoCodec : null,

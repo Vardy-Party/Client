@@ -64,15 +64,16 @@ public static class PlayerOverlayFormatter
     }
 
     /// <summary>
-    /// Stream toast / flash copy. Empty total → <c>Streams: 0</c>; otherwise
-    /// <c>Stream: i/n</c> or <c>Stream: i/n (720p)</c>.
+    /// Stream toast / flash copy while switching. Empty total → <c>Streams: 0</c>;
+    /// otherwise <c>Stream: i/n</c> only — no resolution or bitrate (those belong on
+    /// the video-info panel after the new picture is measured).
     /// </summary>
+    /// <param name="verticalResolutionLabel">Ignored; kept so call sites stay stable.</param>
     public static string FormatStreamToast(int index, int total, string? verticalResolutionLabel)
     {
+        _ = verticalResolutionLabel;
         if (total <= 0) return "Streams: 0";
-        return string.IsNullOrWhiteSpace(verticalResolutionLabel)
-            ? $"Stream: {index}/{total}"
-            : $"Stream: {index}/{total} ({verticalResolutionLabel})";
+        return $"Stream: {index}/{total}";
     }
 
     public static string? MapCodecToFriendlyName(string? codec)

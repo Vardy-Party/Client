@@ -111,7 +111,7 @@ namespace VardyParty.Kernel.Tests
         [Theory]
         [InlineData(1, 0, null, "Streams: 0")]
         [InlineData(2, 5, null, "Stream: 2/5")]
-        [InlineData(2, 5, "720p", "Stream: 2/5 (720p)")]
+        [InlineData(2, 5, "720p", "Stream: 2/5")] // resolution ignored on switch toast
         public void FormatStreamToast_BuildsExpectedCopy(int index, int total, string? vertical, string expected)
         {
             // Arrange

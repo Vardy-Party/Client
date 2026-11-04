@@ -19,16 +19,19 @@ public static class PlayerChromeText
         @"^\d{3,4}p$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Switch toast copy — index/total only. Resolution/bitrate stay off this flash
+    /// (see <see cref="PlayerOverlayFormatter.FormatStreamToast"/>).
+    /// </summary>
     public static string FormatStreamCount(int index, int total, string? verticalResolution)
     {
+        _ = verticalResolution;
         if (total <= 0)
         {
             return "Streams: 0";
         }
 
-        return string.IsNullOrWhiteSpace(verticalResolution)
-            ? $"Stream: {index}/{total}"
-            : $"Stream: {index}/{total} ({verticalResolution})";
+        return $"Stream: {index}/{total}";
     }
 
     public static string FormatStreamHint(int index, int total) =>
