@@ -18,11 +18,17 @@ public static class PlaybackWaitChrome
     /// <param name="isPreparing">A new source is being attached (SetMediaSource / Prepare in flight).</param>
     /// <param name="chromeSuppressed">The player is closing or suspended (see <see cref="PlaybackLifecycleRules.SuppressesWaitChrome"/>). Never show: there is no live player for a spinner to describe.</param>
     /// <param name="failoverAgeMs">How long the player has been Idle/Error (0 when it is not).</param>
+    /// <param name="awaitingRetry">
+    /// Same-stream recovery (or switch recovery) is in flight — typically waiting on a fresh /play
+    /// before the next attach. The player stays Idle/Error with no prepare yet, so without this the
+    /// FailoverGrace would hide the spinner while the black screen is still being retried.
+    /// </param>
     public static bool ShouldShow(
         PlaybackStatus status,
         bool isPreparing,
         bool chromeSuppressed,
-        long failoverAgeMs = 0)
+        long failoverAgeMs = 0,
+        bool awaitingRetry = false)
     {
         if (chromeSuppressed)
             return false;
@@ -31,7 +37,8 @@ public static class PlaybackWaitChrome
         {
             PlaybackStatus.Buffering => true,
             PlaybackStatus.Playing => isPreparing,
-            PlaybackStatus.Idle or PlaybackStatus.Error => isPreparing || failoverAgeMs < FailoverGraceMs,
+            PlaybackStatus.Idle or PlaybackStatus.Error
+                => isPreparing || awaitingRetry || failoverAgeMs < FailoverGraceMs,
             _ => false // Ended
         };
     }

@@ -13,6 +13,9 @@ public enum MatchEventKind
 
     /// <summary>The game's phase moved INTO a penalty shoot-out.</summary>
     Penalties,
+
+    /// <summary>The game's phase moved INTO full time (finished with a score).</summary>
+    FullTime,
 }
 
 /// <summary>Which side's score moved on a <see cref="MatchEventKind.Goal"/>.</summary>
@@ -43,8 +46,9 @@ public sealed record MatchEvent(
 /// reports, per update:
 /// - GOAL: a live game's observed score moved up between two updates (score
 ///   corrections downwards are ignored, FT corrections are ignored);
-/// - EXTRA TIME / PENALTIES: an observed game's phase transitioned INTO
-///   <see cref="MatchPhase.ExtraTime"/> / <see cref="MatchPhase.Penalties"/>.
+/// - EXTRA TIME / PENALTIES / FULL TIME: an observed game's phase transitioned
+///   INTO <see cref="MatchPhase.ExtraTime"/> / <see cref="MatchPhase.Penalties"/>
+///   / <see cref="MatchPhase.FullTime"/> (FT only when both scores are present).
 /// A game's first observation never counts (first load, a game appearing
 /// mid-match, or a league being unhidden must not fire the sting).
 /// </summary>
@@ -98,6 +102,13 @@ public sealed class MatchEventDetector
                 else if (phase == MatchPhase.Penalties && previous.Phase != MatchPhase.Penalties)
                 {
                     events.Add(new MatchEvent(MatchEventKind.Penalties, game, home, away));
+                }
+                else if (phase == MatchPhase.FullTime
+                         && previous.Phase != MatchPhase.FullTime
+                         && game.HomeScore.HasValue
+                         && game.AwayScore.HasValue)
+                {
+                    events.Add(new MatchEvent(MatchEventKind.FullTime, game, home, away));
                 }
             }
 

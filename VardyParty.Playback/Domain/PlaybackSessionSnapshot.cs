@@ -23,6 +23,12 @@ public sealed class PlaybackSessionSnapshot
     /// <summary>A same-stream retry (reload or fresh /play) is in progress.</summary>
     public bool IsRecovering { get; init; }
 
+    /// <summary>
+    /// Start-error fresh <c>/play</c> is in flight (never established). Chrome only —
+    /// not same-stream recovery; pool actions must still reject an unchanged URL.
+    /// </summary>
+    public bool IsAwaitingFreshResolve { get; init; }
+
     /// <summary>Same-stream retries used in the current retry window.</summary>
     public int SameStreamRetries { get; init; }
 

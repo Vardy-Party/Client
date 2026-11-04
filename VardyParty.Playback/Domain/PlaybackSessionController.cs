@@ -26,6 +26,11 @@ public sealed class PlaybackSessionController
     private readonly Func<DateTimeOffset> _clock;
     private bool _recovering;
     private bool _recoveryAttachPending;
+    /// <summary>
+    /// Start-error fresh <c>/play</c> is in flight (never established). Chrome-only:
+    /// must not set <see cref="_recovering"/> — pool actions treat that as same-stream recovery.
+    /// </summary>
+    private bool _awaitingFreshResolve;
     private int _sameStreamRetries;
     private DateTimeOffset? _lastSameStreamRetryAt;
     /// <summary>
@@ -149,6 +154,7 @@ public sealed class PlaybackSessionController
         ConsecutiveDownloadFailures = _consecutiveDownloadFailures,
         IsRecovering = _recovering,
         IsRecoveringSwitch = _recoveringSwitch,
+        IsAwaitingFreshResolve = _awaitingFreshResolve,
         SameStreamRetries = _sameStreamRetries,
         IsVideoConfirmed = _videoConfirmed
     };
@@ -183,6 +189,7 @@ public sealed class PlaybackSessionController
 
         var isRecoveryAttach = _recoveryAttachPending;
         _recoveryAttachPending = false;
+        _awaitingFreshResolve = false;
 
         _attachGeneration++;
         _currentUrl = url;
@@ -464,6 +471,7 @@ public sealed class PlaybackSessionController
         // with no error.
         _recovering = false;
         _recoveryAttachPending = false;
+        _awaitingFreshResolve = false;
         _recoveringSwitch = false;
 
         if (!RequireVideoConfirmation)
@@ -658,7 +666,12 @@ public sealed class PlaybackSessionController
         {
             // Retry first, report later: ReportFailed is sent only if this retry
             // also fails (FailStartOrAdvance). A token rejected once is not a dead stream.
+            // Chrome bit only — do NOT set _recovering / _recoveryAttachPending: those mean
+            // established same-stream recovery (pool accepts unchanged URL, BeginAttach stays
+            // Buffering). Player is Error with no prepare until AttachEngine.
             _cacheRetryUsed = true;
+            _awaitingFreshResolve = true;
+            _isPreparing = false;
             return
             [
                 new PlaybackEffect(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason),
@@ -824,6 +837,7 @@ public sealed class PlaybackSessionController
     {
         _recovering = false;
         _recoveryAttachPending = false;
+        _awaitingFreshResolve = false;
         _recoveringSwitch = false;
         _malformedPlaylistRecovery = false;
         if (clearBudget)

@@ -21,7 +21,12 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Ended, true, false)]
     public void ShouldShow_StatusByPreparing(PlaybackStatus status, bool isPreparing, bool expected)
     {
-        Assert.Equal(expected, PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: false, failoverAgeMs: 0));
+        // Arrange
+        // Act
+        var show = PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: false, failoverAgeMs: 0);
+
+        // Assert
+        Assert.Equal(expected, show);
     }
 
     [Theory]
@@ -34,7 +39,12 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Idle, false)]
     public void ShouldShow_WhileClosing_IsAlwaysHidden(PlaybackStatus status, bool isPreparing)
     {
-        Assert.False(PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: true, failoverAgeMs: 0));
+        // Arrange
+        // Act
+        var show = PlaybackWaitChrome.ShouldShow(status, isPreparing, chromeSuppressed: true, failoverAgeMs: 0);
+
+        // Assert
+        Assert.False(show);
     }
 
     [Theory]
@@ -42,9 +52,16 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Error)]
     public void ShouldShow_IdleAndError_AreBoundedByTheFailoverGrace(PlaybackStatus status)
     {
-        Assert.True(PlaybackWaitChrome.ShouldShow(status, false, false, Grace - 1));
-        Assert.False(PlaybackWaitChrome.ShouldShow(status, false, false, Grace));
-        Assert.False(PlaybackWaitChrome.ShouldShow(status, false, false, Grace * 10));
+        // Arrange
+        // Act
+        var withinGrace = PlaybackWaitChrome.ShouldShow(status, false, false, Grace - 1);
+        var atGrace = PlaybackWaitChrome.ShouldShow(status, false, false, Grace);
+        var pastGrace = PlaybackWaitChrome.ShouldShow(status, false, false, Grace * 10);
+
+        // Assert
+        Assert.True(withinGrace);
+        Assert.False(atGrace);
+        Assert.False(pastGrace);
     }
 
     [Theory]
@@ -52,13 +69,38 @@ public class PlaybackWaitChromeTests
     [InlineData(PlaybackStatus.Error)]
     public void ShouldShow_IdleAndError_PastTheGrace_StillShowWhileAnAttachIsInFlight(PlaybackStatus status)
     {
-        Assert.True(PlaybackWaitChrome.ShouldShow(status, isPreparing: true, chromeSuppressed: false, failoverAgeMs: Grace * 10));
+        // Arrange
+        // Act
+        var show = PlaybackWaitChrome.ShouldShow(status, isPreparing: true, chromeSuppressed: false, failoverAgeMs: Grace * 10);
+
+        // Assert
+        Assert.True(show);
+    }
+
+    [Theory]
+    [InlineData(PlaybackStatus.Idle)]
+    [InlineData(PlaybackStatus.Error)]
+    public void ShouldShow_IdleAndError_PastTheGrace_StillShowWhileAwaitingRetry(PlaybackStatus status)
+    {
+        // Arrange — fresh /play recovery: player stays Error, prepare has not started yet.
+        // Act
+        var show = PlaybackWaitChrome.ShouldShow(
+            status, isPreparing: false, chromeSuppressed: false, failoverAgeMs: Grace * 10, awaitingRetry: true);
+
+        // Assert
+        Assert.True(show);
     }
 
     [Fact]
     public void ShouldShow_BufferingAndPlaying_AreNotBoundedByTheFailoverGrace()
     {
-        Assert.True(PlaybackWaitChrome.ShouldShow(PlaybackStatus.Buffering, false, false, Grace * 10));
-        Assert.False(PlaybackWaitChrome.ShouldShow(PlaybackStatus.Playing, false, false, Grace * 10));
+        // Arrange
+        // Act
+        var buffering = PlaybackWaitChrome.ShouldShow(PlaybackStatus.Buffering, false, false, Grace * 10);
+        var playing = PlaybackWaitChrome.ShouldShow(PlaybackStatus.Playing, false, false, Grace * 10);
+
+        // Assert
+        Assert.True(buffering);
+        Assert.False(playing);
     }
 }

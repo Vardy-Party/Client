@@ -112,11 +112,19 @@ namespace VardyParty.Platforms.Android
                         player.CurrentPosition,
                         _playerFaulted);
 
+                // Fresh /play (same-stream recovery or start-error cache retry) leaves the player
+                // Idle/Error with isPreparing false until AttachEngine runs again. Without
+                // awaitingRetry the FailoverGrace hides the spinner mid-black-screen.
+                var session = _session.Snapshot;
+                var awaitingRetry = session.IsRecovering
+                    || session.IsRecoveringSwitch
+                    || session.IsAwaitingFreshResolve;
                 var view = _statusTracker.Assess(
                     snapshot,
                     global::Android.OS.SystemClock.ElapsedRealtime(),
                     _isPreparing,
-                    PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle));
+                    PlaybackLifecycleRules.SuppressesWaitChrome(_lifecycle),
+                    awaitingRetry);
                 ApplyPlaybackStatus(view);
             }
             catch (Exception ex) { LogIgnored("RefreshPlaybackStatus", ex); }

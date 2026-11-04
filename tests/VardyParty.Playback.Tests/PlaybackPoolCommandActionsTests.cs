@@ -119,6 +119,46 @@ public class PlaybackPoolCommandActionsTests
     }
 
     [Fact]
+    public async Task RetryFreshResolveAsync_AfterStartError_StillRejectsUnchangedUrl()
+    {
+        // Arrange — start-error fresh /play must not enter same-stream recovery
+        // (which would accept an unchanged URL and raise SameStreamRetryStarted).
+        var oakLane = CreateOakLane("http://oak-lane-cached.m3u8");
+        var session = new PlaybackSessionController();
+        session.SetHealthyStreamCount(1);
+        session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);
+        var gen = session.Snapshot.AttachGeneration;
+        session.Handle(MediaEngineEvent.Error(gen, "403"));
+        Assert.True(session.Snapshot.IsAwaitingFreshResolve);
+        Assert.False(session.Snapshot.IsRecovering);
+        var sameStreamSignals = 0;
+        PlaybackRecoverySignals.SameStreamRetryStarted += OnSameStream;
+        var (_, actions, attaches, applies, _, _) = CreateSut(
+            oakLane,
+            freshUrl: "http://oak-lane-cached.m3u8",
+            session: session);
+
+        try
+        {
+            // Act
+            await actions.RetryFreshResolveAsync();
+
+            // Assert
+            Assert.Empty(attaches);
+            Assert.Single(applies);
+            Assert.True(applies[0].CloseSession || applies[0].RemoveCurrentFromPool);
+            Assert.Equal(0, sameStreamSignals);
+            Assert.False(session.Snapshot.IsRecovering);
+        }
+        finally
+        {
+            PlaybackRecoverySignals.SameStreamRetryStarted -= OnSameStream;
+        }
+
+        void OnSameStream() => sameStreamSignals++;
+    }
+
+    [Fact]
     public void ClearAndRemove_UpdatePoolAndSessionCount()
     {
         // Arrange
