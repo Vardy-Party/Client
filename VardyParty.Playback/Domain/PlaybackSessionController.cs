@@ -658,7 +658,12 @@ public sealed class PlaybackSessionController
         {
             // Retry first, report later: ReportFailed is sent only if this retry
             // also fails (FailStartOrAdvance). A token rejected once is not a dead stream.
+            // Mark recovering so wait chrome stays up for the whole /play wait (same as
+            // TryRecoverSameStream): player is Error with no prepare until AttachEngine.
             _cacheRetryUsed = true;
+            _recovering = true;
+            _recoveryAttachPending = true;
+            _isPreparing = false;
             return
             [
                 new PlaybackEffect(PlaybackEffectKind.ClearResolvedUrl, Url: _currentUrl, Reason: reason),

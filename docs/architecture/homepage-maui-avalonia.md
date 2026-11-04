@@ -558,7 +558,11 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 - **"Goal notifications"** (default ON, persisted via the
   `ISoundPreferencesStore` pattern): OFF suppresses sting + toast + card
-  flash entirely.
+  flash entirely. The same toggle covers **GOAL**, **EXTRA TIME**,
+  **PENALTIES**, and **FULL TIME** match events. Full-time toast fixture
+  text is the regulation scoreline (`Home 2–1 Away`); when BBC reported a
+  completed shoot-out it appends `(H–A pens)` (e.g.
+  `Home 2–2 Away (5–4 pens)`).
 - **"UI sounds"** (existing toggle): still governs navigation ticks
   independently, and still gates the sting's AUDIO when notifications are
   ON (the sting routes through `UiSoundService`, which also keeps its

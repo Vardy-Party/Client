@@ -695,6 +695,55 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void FlushPendingApply_FullTime_PublishesToastAndBusEvent()
+    {
+        var delivered = new List<MatchEvent>();
+        _bus.Published += delivered.Add;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 2, awayScore: 1, minute: 90));
+        _sut.FlushPendingApply();
+
+        _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 2, awayScore: 1));
+        _sut.FlushPendingApply();
+
+        var matchEvent = Assert.Single(delivered);
+        Assert.Equal(MatchEventKind.FullTime, matchEvent.Kind);
+        Assert.NotNull(_sut.Toast.Current);
+        Assert.Equal("FULL TIME — Home United 2–1 Away City", _sut.Toast.Current!.Headline);
+    }
+
+    [Fact]
+    public void FlushPendingApply_FullTimeOnPenalties_ShowsShootoutInToast()
+    {
+        var delivered = new List<MatchEvent>();
+        _bus.Published += delivered.Add;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 2, awayScore: 2, minute: 120));
+        _sut.FlushPendingApply();
+
+        _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 2, awayScore: 2, penaltyHome: 5, penaltyAway: 4));
+        _sut.FlushPendingApply();
+
+        Assert.Equal(MatchEventKind.FullTime, Assert.Single(delivered).Kind);
+        Assert.Equal("FULL TIME — Home United 2–2 Away City (5–4 pens)", _sut.Toast.Current!.Headline);
+    }
+
+    [Fact]
+    public void FlushPendingApply_FullTimeOnWatchedGame_WhilePlaying_DeliversNothing()
+    {
+        var delivered = 0;
+        _bus.Published += _ => delivered++;
+        _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 89));
+        _sut.FlushPendingApply();
+        _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
+        _notifications.IsPlaybackActive = true;
+
+        _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 1, awayScore: 0));
+        _sut.FlushPendingApply();
+
+        Assert.Equal(0, delivered);
+        Assert.Null(_sut.Toast.Current);
+    }
+
+    [Fact]
     public void RemoteSettings_WhileCheckingAnInvite_ChangesTheButtonAndThenSaysPaired()
     {
         var remote = new SettingsRemote { HasRelayUser = true };
@@ -875,8 +924,43 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)minute)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)awayScore)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             // Fixed kickoff: the event detector keys on Home|Away|Start, so
             // refreshes of the same fixture must carry the same Start.
+            .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+
+        return new Dictionary<string, List<Game>>
+        {
+            ["League Alpha"] = [game],
+        };
+    }
+
+    private Dictionary<string, List<Game>> CatalogWithFinishedGame(
+        int homeScore,
+        int awayScore,
+        int? penaltyHome = null,
+        int? penaltyAway = null)
+    {
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "")
+            .With(g => g.StatusText, "FT")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.HomeScore, (int?)homeScore)
+            .With(g => g.AwayScore, (int?)awayScore)
+            .With(g => g.PenaltyHomeScore, penaltyHome)
+            .With(g => g.PenaltyAwayScore, penaltyAway)
             .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
             .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
             .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")

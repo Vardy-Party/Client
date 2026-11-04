@@ -283,6 +283,7 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         g.AggregateHomeScore = bbc.AggregateHomeScore;
         g.AggregateAwayScore = bbc.AggregateAwayScore;
+        ApplyPenaltyScores(g, bbc);
 
         if (!bbc.HasProgress)
         {
@@ -482,6 +483,35 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Maps BBC's winner/loser shoot-out counts onto home/away on <paramref name="g"/>.
+    /// Clears both when the fixture has no completed pens.
+    /// </summary>
+    private static void ApplyPenaltyScores(Game g, BbcFixture bbc)
+    {
+        if (bbc.PenaltyWinnerGoals is not { } winnerGoals
+            || bbc.PenaltyLoserGoals is not { } loserGoals
+            || string.IsNullOrWhiteSpace(bbc.PenaltyWinner))
+        {
+            g.PenaltyHomeScore = null;
+            g.PenaltyAwayScore = null;
+            return;
+        }
+
+        var winner = bbc.PenaltyWinner.Trim();
+        var homeWon = winner.Equals((bbc.Home ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
+        if (homeWon)
+        {
+            g.PenaltyHomeScore = winnerGoals;
+            g.PenaltyAwayScore = loserGoals;
+        }
+        else
+        {
+            g.PenaltyHomeScore = loserGoals;
+            g.PenaltyAwayScore = winnerGoals;
+        }
     }
 
     private static string BuildStatusText(BbcFixture f)

@@ -9,20 +9,22 @@ public static class MatchEventPresenter
 {
     /// <summary>
     /// "GOAL — Home United 2–1 Away City" / "EXTRA TIME — Home United v Away
-    /// City" / "PENALTIES — Home United v Away City".
+    /// City" / "PENALTIES — Home United v Away City" / "FULL TIME — Home United
+    /// 2–2 Away City (5–4 pens)".
     /// </summary>
     public static string Headline(MatchEvent matchEvent) =>
         $"{Kind(matchEvent)} — {Fixture(matchEvent)}";
 
     /// <summary>
-    /// "GOAL" / "EXTRA TIME" / "PENALTIES"; a neutral "MATCH" for any kind
-    /// added later, so a new event can never masquerade as an existing one.
+    /// "GOAL" / "EXTRA TIME" / "PENALTIES" / "FULL TIME"; a neutral "MATCH" for
+    /// any kind added later, so a new event can never masquerade as an existing one.
     /// </summary>
     public static string Kind(MatchEvent matchEvent) => matchEvent.Kind switch
     {
         MatchEventKind.Goal => "GOAL",
         MatchEventKind.ExtraTime => "EXTRA TIME",
         MatchEventKind.Penalties => "PENALTIES",
+        MatchEventKind.FullTime => "FULL TIME",
         _ => "MATCH",
     };
 
@@ -33,12 +35,12 @@ public static class MatchEventPresenter
     /// so each badge is next to its own team (the kind label goes elsewhere).
     /// </summary>
     /// <remarks>
-    /// Homepage-toast wording: the score for a goal, "v" otherwise (unchanged
-    /// from the original headline). In-player banners use <see cref="Scoreline"/>.
+    /// Homepage-toast wording: the score for a goal or full time, "v" otherwise.
+    /// In-player banners use <see cref="Scoreline"/>.
     /// </remarks>
     public static string Fixture(MatchEvent matchEvent) => matchEvent.Kind switch
     {
-        MatchEventKind.Goal => Scoreline(matchEvent),
+        MatchEventKind.Goal or MatchEventKind.FullTime => Scoreline(matchEvent),
         MatchEventKind.ExtraTime or MatchEventKind.Penalties => Versus(matchEvent),
         _ => Versus(matchEvent),
     };
@@ -46,12 +48,21 @@ public static class MatchEventPresenter
     /// <summary>
     /// "Home United 1–1 Away City" for EVERY kind - the in-player banners
     /// (Android, Windows) have always shown the score for extra time and
-    /// penalties too. Home team first, away team last.
+    /// penalties too. Full time appends <c> (H–A pens)</c> when both shoot-out
+    /// scores are present. Home team first, away team last.
     /// </summary>
     public static string Scoreline(MatchEvent matchEvent)
     {
         var game = matchEvent.Game;
-        return $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
+        var line = $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
+        if (matchEvent.Kind == MatchEventKind.FullTime
+            && game.PenaltyHomeScore is { } penHome
+            && game.PenaltyAwayScore is { } penAway)
+        {
+            line += $" ({penHome}–{penAway} pens)";
+        }
+
+        return line;
     }
 
     private static string Versus(MatchEvent matchEvent) =>

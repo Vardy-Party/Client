@@ -337,4 +337,81 @@ public class MatchEventDetectorTests
         // Assert
         Assert.Empty(events);
     }
+
+    [Fact]
+    public void Observe_LiveToFullTime_RaisesFullTime()
+    {
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { LiveGame("Home United", "Away City", 2, 1) });
+
+        var events = sut.Observe(new[] { FinishedGame("Home United", "Away City", 2, 1) });
+
+        var fullTime = Assert.Single(events);
+        Assert.Equal(MatchEventKind.FullTime, fullTime.Kind);
+        Assert.Equal(2, fullTime.HomeScore);
+        Assert.Equal(1, fullTime.AwayScore);
+    }
+
+    [Fact]
+    public void Observe_PenaltiesToFullTime_RaisesFullTime()
+    {
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { PenaltiesGame("Home United", "Away City", 2, 2) });
+
+        var finished = FinishedGame("Home United", "Away City", 2, 2);
+        finished.PenaltyHomeScore = 5;
+        finished.PenaltyAwayScore = 4;
+        var events = sut.Observe(new[] { finished });
+
+        var fullTime = Assert.Single(events);
+        Assert.Equal(MatchEventKind.FullTime, fullTime.Kind);
+        Assert.Equal(5, fullTime.Game.PenaltyHomeScore);
+        Assert.Equal(4, fullTime.Game.PenaltyAwayScore);
+    }
+
+    [Fact]
+    public void Observe_ExtraTimeToFullTime_RaisesFullTime()
+    {
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { ExtraTimeGame("Home United", "Away City", 3, 2) });
+
+        var events = sut.Observe(new[] { FinishedGame("Home United", "Away City", 3, 2) });
+
+        Assert.Equal(MatchEventKind.FullTime, Assert.Single(events).Kind);
+    }
+
+    [Fact]
+    public void Observe_FirstSightAlreadyFullTime_DoesNotRaise()
+    {
+        var sut = new MatchEventDetector();
+        var events = sut.Observe(new[] { FinishedGame("Home United", "Away City", 1, 0) });
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void Observe_ScorelessFinished_DoesNotRaiseFullTime()
+    {
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { LiveGame("Home United", "Away City", 0, 0) });
+
+        var finished = FinishedGame("Home United", "Away City", 0, 0);
+        finished.HomeScore = null;
+        finished.AwayScore = null;
+        var events = sut.Observe(new[] { finished });
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void Observe_StayingFullTime_RaisesOnlyOnce()
+    {
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { LiveGame("Home United", "Away City", 1, 0) });
+        sut.Observe(new[] { FinishedGame("Home United", "Away City", 1, 0) });
+
+        var events = sut.Observe(new[] { FinishedGame("Home United", "Away City", 1, 0) });
+
+        Assert.Empty(events);
+    }
 }

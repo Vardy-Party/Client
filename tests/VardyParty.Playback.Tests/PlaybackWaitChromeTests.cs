@@ -55,6 +55,16 @@ public class PlaybackWaitChromeTests
         Assert.True(PlaybackWaitChrome.ShouldShow(status, isPreparing: true, chromeSuppressed: false, failoverAgeMs: Grace * 10));
     }
 
+    [Theory]
+    [InlineData(PlaybackStatus.Idle)]
+    [InlineData(PlaybackStatus.Error)]
+    public void ShouldShow_IdleAndError_PastTheGrace_StillShowWhileAwaitingRetry(PlaybackStatus status)
+    {
+        // Fresh /play recovery: player stays Error, prepare has not started yet.
+        Assert.True(PlaybackWaitChrome.ShouldShow(
+            status, isPreparing: false, chromeSuppressed: false, failoverAgeMs: Grace * 10, awaitingRetry: true));
+    }
+
     [Fact]
     public void ShouldShow_BufferingAndPlaying_AreNotBoundedByTheFailoverGrace()
     {
