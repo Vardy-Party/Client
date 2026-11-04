@@ -505,6 +505,7 @@ public class StreamResolver(
 
         if (!string.IsNullOrWhiteSpace(stream.Channel)
             && !string.Equals(stream.Channel, "V2", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(stream.Channel, "V1", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(stream.Channel, "MP", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(stream.Channel, "FB", StringComparison.OrdinalIgnoreCase))
         {

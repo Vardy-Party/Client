@@ -112,6 +112,8 @@ namespace VardyParty.Platforms.Windows
             private TypedEventHandler<MediaPlayer, object>? mediaEndedHandler;
             private TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs>? mediaFailedHandler;
             private bool suppressIndexDrivenSwitch;
+            /// <summary>True from switch status until the new attach finishes — video-info hides telemetry/URLs.</summary>
+            private bool streamSwitchInProgress;
             private DateTime lastMetricsRaiseUtc = DateTime.MinValue;
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;

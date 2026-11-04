@@ -81,6 +81,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private string? _playbackHomeTeam;
     private string? _playbackAwayTeam;
     private bool _isNextStreamRequestInProgress;
+    /// <summary>True while Next/Prev attach is in flight — video-info omits telemetry/URLs.</summary>
+    public bool StreamSwitchInProgress { get; private set; }
     /// <summary>
     /// When true, <see cref="CurrentStreamIndexChanged"/> must not re-attach —
     /// the session command path already owns Attach (same as Windows/Android).
@@ -370,6 +372,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     "[LinuxVideoPlayerService] One-shot switch to {Channel} ({Reason})",
                     current?.Stream?.Channel ?? "(unknown)",
                     plan.Reason);
+                StreamSwitchInProgress = true;
                 _ = _pool.SwitchToCurrentAsync(
                     force: false,
                     status => _logger.LogInformation("[LinuxVideoPlayerService] {Status}", status),
@@ -378,7 +381,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                         _suppressIndexDrivenSwitch = true;
                         try { revert(); }
                         finally { _suppressIndexDrivenSwitch = false; }
-                    });
+                    }).ContinueWith(_ => StreamSwitchInProgress = false);
                 return;
             }
 
@@ -391,17 +394,26 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             // LibVLC often never raises Playing on the vmem/HLS path, so the
             // session stays IsPreparing and CanAttach rejects the new URL.
             // Index-driven switches already compared URLs — force the attach.
-            _logger.LogInformation(
-                "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
-                true,
-                current?.Stream?.Channel ?? "(unknown)");
-            _requestHeaders = current?.RequestHeaders ?? _requestHeaders;
-            if (!string.IsNullOrWhiteSpace(current?.Referer))
-                _refererUrl = current.Referer;
-            AttachViaSession(url, usedCachedUrl: false, force: true);
+            StreamSwitchInProgress = true;
+            try
+            {
+                _logger.LogInformation(
+                    "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
+                    true,
+                    current?.Stream?.Channel ?? "(unknown)");
+                _requestHeaders = current?.RequestHeaders ?? _requestHeaders;
+                if (!string.IsNullOrWhiteSpace(current?.Referer))
+                    _refererUrl = current.Referer;
+                AttachViaSession(url, usedCachedUrl: false, force: true);
+            }
+            finally
+            {
+                StreamSwitchInProgress = false;
+            }
         }
         catch (Exception ex)
         {
+            StreamSwitchInProgress = false;
             _logger.LogError(ex, "[LinuxVideoPlayerService] Stream switch failed");
         }
     }

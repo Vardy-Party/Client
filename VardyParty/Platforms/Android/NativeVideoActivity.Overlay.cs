@@ -100,52 +100,64 @@ namespace VardyParty.Platforms.Android
             // Top line should be game title (Home vs Away) when provided
             var chip = info.Channel;
             var channelFallback = chip ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
-            var statusLine = $"{VardyParty.Resources.Strings.Resources.StatusLabel}: {_playbackStateText}";
+            var statusText = _streamSwitchInProgress ? "Switching" : _playbackStateText;
+            var statusLine = $"{VardyParty.Resources.Strings.Resources.StatusLabel}: {statusText}";
             var indexLine = info.Total > 0 ? string.Format(VardyParty.Resources.Strings.Resources.StreamIndexFormat, info.Index, info.Total) : string.Empty;
 
-            // Try to obtain a quality/health label from the current enriched stream if present
+            // During a switch, omit measured telemetry and URLs (previous stream would flash).
             string qualityLabel = string.Empty;
-            try
+            if (!_streamSwitchInProgress)
             {
-                var current = _switching?.GetCurrentStream();
-                if (current != null)
+                try
                 {
-                    qualityLabel = PlayerChromeText.FormatMeasuredQuality(
-                        info.Resolution,
-                        info.BitrateKbps,
-                        current.GetQualityDisplay());
+                    var current = _switching?.GetCurrentStream();
+                    if (current != null)
+                    {
+                        qualityLabel = PlayerChromeText.FormatMeasuredQuality(
+                            info.Resolution,
+                            info.BitrateKbps,
+                            current.GetQualityDisplay());
+                    }
                 }
+                catch (Exception ex) { LogIgnored("GetQualityDisplay", ex); }
             }
-            catch (Exception ex) { LogIgnored("GetQualityDisplay", ex); }
 
-            var aspectRatio = info.AspectRatio ?? string.Empty;
-            var buf = info.BufferPercent.HasValue ? $"Buffer {info.BufferPercent}%" : string.Empty;
-            var m3u8 = info.M3u8Url ?? string.Empty;
-            var referer = info.RefererUrl ?? string.Empty;
-            if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {PlayerOverlayFormatter.StripQuery(m3u8)}";
-            if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {PlayerOverlayFormatter.RefererHost(referer)}";
+            var aspectRatio = _streamSwitchInProgress ? string.Empty : (info.AspectRatio ?? string.Empty);
+            var buf = !_streamSwitchInProgress && info.BufferPercent.HasValue
+                ? $"Buffer {info.BufferPercent}%"
+                : string.Empty;
+            var m3u8 = string.Empty;
+            var referer = string.Empty;
+            if (!_streamSwitchInProgress)
+            {
+                m3u8 = info.M3u8Url ?? string.Empty;
+                referer = info.RefererUrl ?? string.Empty;
+                if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {PlayerOverlayFormatter.StripQuery(m3u8)}";
+                if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {PlayerOverlayFormatter.RefererHost(referer)}";
+            }
 
             if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channelFallback);
             if (_statusView != null) _statusView.Text = statusLine;
             if (_indexView != null) _indexView.Text = indexLine;
             ApplySourceBadge(_switching?.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
             if (_qualityView != null) _qualityView.Text = qualityLabel;
-            // Build lines: chip, resolution (+fr), bitrate, buffer each on its own line
+            // Build lines: chip, then (when settled) aspect / buffer / codecs / URLs
             var lines = new List<string>();
             if (!string.IsNullOrWhiteSpace(chip))
                 lines.Add($"Channel: {chip}");
             if (!string.IsNullOrEmpty(aspectRatio)) lines.Add($"Aspect ratio: {aspectRatio}");
             if (!string.IsNullOrEmpty(buf)) lines.Add(buf);
 
-            // Codec line
-            var codecLineParts = new List<string>();
-            if (!string.IsNullOrEmpty(info.VideoCodec)) codecLineParts.Add($"Video: {info.VideoCodec}");
-            if (!string.IsNullOrEmpty(info.AudioCodec)) codecLineParts.Add($"Audio: {info.AudioCodec}");
-            if (codecLineParts.Count > 0) lines.Add(string.Join(" / ", codecLineParts));
+            if (!_streamSwitchInProgress)
+            {
+                var codecLineParts = new List<string>();
+                if (!string.IsNullOrEmpty(info.VideoCodec)) codecLineParts.Add($"Video: {info.VideoCodec}");
+                if (!string.IsNullOrEmpty(info.AudioCodec)) codecLineParts.Add($"Audio: {info.AudioCodec}");
+                if (codecLineParts.Count > 0) lines.Add(string.Join(" / ", codecLineParts));
 
-            // m3u8 and referer each on their own lines
-            if (!string.IsNullOrEmpty(m3u8)) lines.Add(m3u8);
-            if (!string.IsNullOrEmpty(referer)) lines.Add(referer);
+                if (!string.IsNullOrEmpty(m3u8)) lines.Add(m3u8);
+                if (!string.IsNullOrEmpty(referer)) lines.Add(referer);
+            }
 
             if (_resBrView != null) _resBrView.Text = string.Join("\n", lines);
 

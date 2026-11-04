@@ -125,7 +125,7 @@ public class Stream
         ResolveCatalogSource() switch
         {
             "mp" => "V2",
-            "fb" => "FB",
+            "fb" => "V1",
             _ => string.Empty
         };
 

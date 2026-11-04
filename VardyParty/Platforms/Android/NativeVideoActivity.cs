@@ -250,6 +250,8 @@ namespace VardyParty.Platforms.Android
         private Java.Lang.Runnable? _statusRunnable;
         private string? _gameTitle;
         private bool _suppressOverlayShow;
+        /// <summary>Next/Prev/chip in flight — video-info hides size/bitrate/URLs until attach settles.</summary>
+        private bool _streamSwitchInProgress;
         private int? _videoWidth;
         private readonly PlaybackTransferMeter _transferMeter = new();
         private bool _anticipatingToken;
@@ -852,6 +854,8 @@ namespace VardyParty.Platforms.Android
                 && string.Equals(_m3u8Url, current.ResolvedM3U8Url, StringComparison.OrdinalIgnoreCase))
                 return;
 
+            BeginStreamSwitchOverlayScrub();
+
             var plan = PlaybackUrlReusePolicy.PlanSwitch(current, DateTimeOffset.UtcNow);
             _logger?.LogInformation(
                 "[NativeVideoActivity] Switch plan for {Channel}: {Plan} ({Reason})",
@@ -877,18 +881,23 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] Current stream has no ResolvedM3U8Url — reverting index (was showing {Channel})",
                         current.Stream?.Channel ?? "(null)");
+                    EndStreamSwitchOverlayScrub();
                     RevertIndexToPlaying();
                     return;
                 }
 
                 if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                {
+                    EndStreamSwitchOverlayScrub();
                     return;
+                }
 
                 // Rule 3 (docs "No loops"): same feed as a failed or the playing stream - skip it.
                 if (_pool?.DuplicateFeedReason(current, url, _m3u8Url) is { } dupCached)
                 {
                     _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupCached);
                     _pool.SkipDuplicateTarget(current, dupCached, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                    EndStreamSwitchOverlayScrub();
                     return;
                 }
 
@@ -902,6 +911,7 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Failed switching to current stream URL");
+                EndStreamSwitchOverlayScrub();
             }
         }
 
@@ -917,6 +927,7 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] One-shot stream {Channel} needs fresh /play but resolveFresh is null",
                         current.Stream?.Channel ?? "(null)");
+                    EndStreamSwitchOverlayScrub();
                     return;
                 }
 
@@ -952,6 +963,7 @@ namespace VardyParty.Platforms.Android
                         current.Stream?.Channel ?? "(null)",
                         playing.Stream?.Channel ?? "(null)");
                     ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
+                    EndStreamSwitchOverlayScrub();
                     RunOnUiThread(() =>
                     {
                         // TrySwitchToCurrentStream ignores the row that is already playing,
@@ -976,6 +988,7 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] Fresh /play returned no URL for {Channel} — reverting index",
                         current.Stream?.Channel ?? "(null)");
+                    EndStreamSwitchOverlayScrub();
                     RunOnUiThread(RevertIndexToPlaying);
                     return;
                 }
@@ -1016,6 +1029,22 @@ namespace VardyParty.Platforms.Android
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Fresh one-shot /play failed for {Channel}",
                     current.Stream?.Channel ?? "(null)");
             }
+        }
+
+        private void BeginStreamSwitchOverlayScrub()
+        {
+            if (_streamSwitchInProgress)
+                return;
+            _streamSwitchInProgress = true;
+            RunOnUiThread(UpdateOverlayFromCurrentStream);
+        }
+
+        private void EndStreamSwitchOverlayScrub()
+        {
+            if (!_streamSwitchInProgress)
+                return;
+            _streamSwitchInProgress = false;
+            RunOnUiThread(UpdateOverlayFromCurrentStream);
         }
 
         private CancellationToken ReplaceAttachLifetimeToken()

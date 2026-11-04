@@ -40,6 +40,7 @@ public static class StreamHealthIdentity
 
     private static bool IsCatalogBadgeLabel(string label) =>
         string.Equals(label, "V2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(label, "V1", StringComparison.OrdinalIgnoreCase)
         || string.Equals(label, "MP", StringComparison.OrdinalIgnoreCase)
         || string.Equals(label, "FB", StringComparison.OrdinalIgnoreCase);
 

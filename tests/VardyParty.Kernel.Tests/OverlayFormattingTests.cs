@@ -123,11 +123,11 @@ namespace VardyParty.Kernel.Tests
         }
 
         [Fact]
-        public void SourceBadgeStyle_ForFb_UsesBluePair()
+        public void SourceBadgeStyle_ForV1_UsesBluePair()
         {
             // Arrange
             // Act
-            var style = SourceBadgeStyle.ForLabel("FB");
+            var style = SourceBadgeStyle.ForLabel("V1");
 
             // Assert
             Assert.NotNull(style);

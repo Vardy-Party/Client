@@ -217,7 +217,9 @@ public partial class LinuxHomePage
                 sourceUrl: _switching.GetCurrentStream()?.ResolvedM3U8Url,
                 refererUrl: _switching.GetCurrentStream()?.Referer,
                 bufferPercent: linux?.BufferPercent);
-            VideoInfoText.Text = PlayerChromeText.FormatVideoInfo(model);
+            VideoInfoText.Text = PlayerChromeText.FormatVideoInfo(
+                model,
+                whileSwitching: linux?.StreamSwitchInProgress == true);
         }
         catch (Exception ex)
         {

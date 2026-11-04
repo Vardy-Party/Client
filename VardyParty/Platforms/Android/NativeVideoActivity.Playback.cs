@@ -28,7 +28,10 @@ namespace VardyParty.Platforms.Android
         {
             var gen = CurrentAttachGeneration;
             if (Interlocked.Exchange(ref _videoSeenGeneration, gen) != gen)
+            {
                 _logger?.LogInformation("[NativeVideoActivity] Video confirmed ({Signal})", signal);
+                EndStreamSwitchOverlayScrub();
+            }
             ProbeVideo();
         }
 

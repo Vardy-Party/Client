@@ -107,7 +107,7 @@ public class PlayerChromeTextTests
             StreamIndex = 2,
             StreamTotal = 5,
             Channel = "Channel North",
-            SourceLabel = "FB",
+            SourceLabel = "V1",
             Quality = "1080p 60fps",
             Resolution = "1920x1080",
             FrameRate = "60 fps",
@@ -128,7 +128,7 @@ public class PlayerChromeTextTests
         Assert.Contains("Status: Playing", text);
         Assert.Contains("Stream: 2/5", text);
         Assert.Contains("Channel: Channel North", text);
-        Assert.Contains("Source: FB", text);
+        Assert.Contains("Source: V1", text);
         Assert.Contains("Quality: 1080p 60fps", text);
         Assert.Contains("Resolution: 1920x1080 @ 60 fps", text);
         Assert.Contains("Aspect ratio: 16:9", text);
@@ -139,6 +139,49 @@ public class PlayerChromeTextTests
         Assert.Contains("Buffer: 100%", text);
         Assert.Contains("Source: https://streams.example.com/live.m3u8", text);
         Assert.Contains("Referer: referer.example.com", text);
+    }
+
+    [Fact]
+    public void FormatVideoInfo_WhileSwitching_KeepsBadgeOmitsTelemetryAndUrls()
+    {
+        // Arrange — known identity stays; measured size/bitrate/URLs go until the new stream settles
+        var model = new VideoInfoPanelModel
+        {
+            PlaybackState = "Playing",
+            StreamIndex = 3,
+            StreamTotal = 5,
+            Channel = "Channel North",
+            SourceLabel = "V1",
+            Quality = "540p 1.8 Mbps",
+            Resolution = "960x540",
+            FrameRate = "30 fps",
+            AspectRatio = "16:9",
+            Bitrate = "1.8 Mbps",
+            VideoCodec = "H.264",
+            AudioCodec = "AAC",
+            Title = "Home United vs Away City",
+            Buffer = "80%",
+            SourceUrl = "https://streams.example.com/live.m3u8",
+            RefererHost = "referer.example.com"
+        };
+
+        // Act
+        var text = PlayerChromeText.FormatVideoInfo(model, whileSwitching: true);
+
+        // Assert
+        Assert.Contains("Status: Switching", text);
+        Assert.DoesNotContain("Status: Playing", text);
+        Assert.Contains("Stream: 3/5", text);
+        Assert.Contains("Channel: Channel North", text);
+        Assert.Contains("Source: V1", text);
+        Assert.Contains("Home United vs Away City", text);
+        Assert.DoesNotContain("Quality:", text);
+        Assert.DoesNotContain("Resolution:", text);
+        Assert.DoesNotContain("Bitrate:", text);
+        Assert.DoesNotContain("Video Codec:", text);
+        Assert.DoesNotContain("https://streams.example.com", text);
+        Assert.DoesNotContain("Referer:", text);
+        Assert.DoesNotContain("Buffer:", text);
     }
 
     [Fact]
@@ -193,7 +236,7 @@ public class PlayerChromeTextTests
         Assert.Equal(1, model.StreamIndex);
         Assert.Equal(4, model.StreamTotal);
         Assert.Equal("Channel North", model.Channel);
-        Assert.Equal("FB", model.SourceLabel);
+        Assert.Equal("V1", model.SourceLabel);
         Assert.Equal("Home United vs Away City", model.Title);
         Assert.Equal("https://streams.example.com/live.m3u8", model.SourceUrl);
         Assert.Equal("referer.example.com", model.RefererHost);
@@ -252,11 +295,13 @@ public class PlayerChromeTextTests
     {
         // Arrange
         // Act
-        var fb = PlayerChromeText.IsFacebookSource("fb");
+        var v1 = PlayerChromeText.IsFacebookSource("v1");
+        var legacy = PlayerChromeText.IsFacebookSource("fb");
         var other = PlayerChromeText.IsFacebookSource("V2");
 
         // Assert
-        Assert.True(fb);
+        Assert.True(v1);
+        Assert.True(legacy);
         Assert.False(other);
     }
 }
