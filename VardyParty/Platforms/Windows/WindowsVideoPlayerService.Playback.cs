@@ -709,11 +709,13 @@ namespace VardyParty.Platforms.Windows
 
             private void ShowSwitchStatus(string message)
             {
+                // Toast text only — streamSwitchInProgress is owned by TrySwitchToCurrentStreamAsync
+                // (set before await / clear in finally). Setting the flag here raced late MainThread
+                // callbacks past finally and left video-info stuck on Status: Switching.
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     try
                     {
-                        streamSwitchInProgress = true;
                         streamCountText.Text = message;
                         UpdateInfo();
                     }

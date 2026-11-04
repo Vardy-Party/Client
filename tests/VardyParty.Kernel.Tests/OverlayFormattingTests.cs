@@ -122,12 +122,14 @@ namespace VardyParty.Kernel.Tests
             Assert.Equal(expected, actual);
         }
 
-        [Fact]
-        public void SourceBadgeStyle_ForV1_UsesBluePair()
+        [Theory]
+        [InlineData("V1")]
+        [InlineData("FB")] // legacy channel stamp alias — same blue pair as V1
+        public void SourceBadgeStyle_ForV1OrFb_UsesBluePair(string label)
         {
             // Arrange
             // Act
-            var style = SourceBadgeStyle.ForLabel("V1");
+            var style = SourceBadgeStyle.ForLabel(label);
 
             // Assert
             Assert.NotNull(style);

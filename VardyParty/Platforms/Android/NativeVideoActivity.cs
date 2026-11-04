@@ -920,6 +920,19 @@ namespace VardyParty.Platforms.Android
             int generation,
             CancellationToken cancellationToken)
         {
+            // End scrub on every terminal exit that still owns this generation. A newer
+            // Begin (generation bump) keeps the flag — do not clear for them.
+            var ended = false;
+            void EndIfOwned()
+            {
+                if (ended)
+                    return;
+                if (generation != Volatile.Read(ref _switchAttachGeneration))
+                    return;
+                ended = true;
+                EndStreamSwitchOverlayScrub();
+            }
+
             try
             {
                 if (_resolveFresh is null)
@@ -927,7 +940,7 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] One-shot stream {Channel} needs fresh /play but resolveFresh is null",
                         current.Stream?.Channel ?? "(null)");
-                    EndStreamSwitchOverlayScrub();
+                    EndIfOwned();
                     return;
                 }
 
@@ -963,7 +976,7 @@ namespace VardyParty.Platforms.Android
                         current.Stream?.Channel ?? "(null)",
                         playing.Stream?.Channel ?? "(null)");
                     ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
-                    EndStreamSwitchOverlayScrub();
+                    EndIfOwned();
                     RunOnUiThread(() =>
                     {
                         // TrySwitchToCurrentStream ignores the row that is already playing,
@@ -988,13 +1001,16 @@ namespace VardyParty.Platforms.Android
                     _logger?.LogWarning(
                         "[NativeVideoActivity] Fresh /play returned no URL for {Channel} — reverting index",
                         current.Stream?.Channel ?? "(null)");
-                    EndStreamSwitchOverlayScrub();
+                    EndIfOwned();
                     RunOnUiThread(RevertIndexToPlaying);
                     return;
                 }
 
                 if (string.Equals(_m3u8Url, url, StringComparison.OrdinalIgnoreCase))
+                {
+                    EndIfOwned();
                     return;
+                }
 
                 RunOnUiThread(() =>
                 {
@@ -1002,7 +1018,10 @@ namespace VardyParty.Platforms.Android
                         || generation != Volatile.Read(ref _switchAttachGeneration))
                         return;
                     if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
+                    {
+                        EndIfOwned();
                         return;
+                    }
 
                     // Rule 3 (docs "No loops"): the fresh URL is a feed that failed this
                     // cycle, or the one already playing - skip it, inherit its status.
@@ -1010,6 +1029,7 @@ namespace VardyParty.Platforms.Android
                     {
                         _logger?.LogInformation("[NativeVideoActivity] Skipping {Channel}: {Why}", current.Stream?.Channel ?? "(null)", dupFresh);
                         _pool.SkipDuplicateTarget(current, dupFresh, _m3u8Url, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                        EndIfOwned();
                         return;
                     }
 
@@ -1018,16 +1038,19 @@ namespace VardyParty.Platforms.Android
                         "[NativeVideoActivity] Switching player to fresh one-shot URL {Url} Referer={Referer}",
                         url,
                         _refererUrl ?? "(none)");
+                    // Scrub ends on video confirm (NoteVideoSeen) or player error.
                     AttachViaSession(url, usedCachedUrl: false);
                 });
             }
             catch (System.OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                EndIfOwned();
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] Fresh one-shot /play failed for {Channel}",
                     current.Stream?.Channel ?? "(null)");
+                EndIfOwned();
             }
         }
 
@@ -1742,6 +1765,7 @@ namespace VardyParty.Platforms.Android
                     _activity._anticipatingToken = false;
                     _activity._playerFaulted = true;
                     _activity._isPreparing = false;
+                    _activity.EndStreamSwitchOverlayScrub();
                     _activity.RefreshPlaybackStatus();
                     _activity._engine.Raise(MediaEngineEvent.Error(_activity.CurrentAttachGeneration, message));
                 }

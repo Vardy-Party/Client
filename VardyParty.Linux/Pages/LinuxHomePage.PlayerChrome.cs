@@ -37,6 +37,8 @@ public partial class LinuxHomePage
         _chromeSubscriptions.Add(_gameService.GamesStream.Subscribe(dict =>
             RememberGamesSnapshot(dict)));
         _videoPlayer.BufferingStateChanged += OnPlayerBufferingStateChanged;
+        if (_videoPlayer is LinuxVideoPlayerService linuxPlayer)
+            linuxPlayer.StreamSwitchChromeChanged += OnStreamSwitchChromeChanged;
 
         var hover = new PointerGestureRecognizer();
         hover.PointerEntered += (_, _) => ApplyCloseChip(_closeChip.OnHoverEnter());
@@ -98,6 +100,15 @@ public partial class LinuxHomePage
             {
                 RefreshVideoInfoText();
             }
+        });
+    }
+
+    private void OnStreamSwitchChromeChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.Dispatch(() =>
+        {
+            if (_playbackChrome?.IsVideoInfoVisible == true)
+                RefreshVideoInfoText();
         });
     }
 
