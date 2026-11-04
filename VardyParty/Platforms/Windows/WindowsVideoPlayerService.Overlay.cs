@@ -239,9 +239,9 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    var verticalResolution =
-                        PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Health?.Resolution)
-                        ?? PlayerOverlayFormatter.ExtractVerticalResolutionLabel(current?.Stream?.Resolution)
+                    // Video-info Resolution only — switch toast is index/total (no quality flash).
+                    var resolutionForInfo = current?.Health?.Resolution
+                        ?? current?.Stream?.Resolution
                         ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
 
                     var overlay = new PlayerOverlayInfo
@@ -249,17 +249,15 @@ namespace VardyParty.Platforms.Windows
                         Index = index,
                         Total = total,
                         Channel = current?.Stream?.Channel,
-                        Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? verticalResolution,
+                        Resolution = resolutionForInfo,
                         Title = current?.Stream?.Channel
                     };
                     chrome.ApplyOverlayInfo(overlay);
                     chrome.NotifyHealthyCount(total);
 
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
-                    var hasResolutionChanged = !string.Equals(lastStreamVerticalResolution ?? string.Empty, verticalResolution ?? string.Empty, StringComparison.Ordinal);
                     lastStreamTotal = total;
                     lastStreamIndex = index;
-                    lastStreamVerticalResolution = verticalResolution;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         if (chrome.IsVideoInfoVisible)
@@ -268,7 +266,7 @@ namespace VardyParty.Platforms.Windows
                         }
 
                         streamCountText.Text = chrome.StreamToast?.Text
-                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, verticalResolution);
+                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, null);
 
                         var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                         var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
@@ -303,10 +301,8 @@ namespace VardyParty.Platforms.Windows
                             nextButtonContainer.Opacity = isPointerNearNextButton ? 1 : 0;
                         }
 
-                        var shouldShowStreamOverlay = total > 0 &&
-                            (hasChanged
-                             || hasResolutionChanged
-                             || (streamInfoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible && !string.IsNullOrWhiteSpace(verticalResolution)));
+                        // Index/total only — match presenter + Android; do not re-flash on measured size.
+                        var shouldShowStreamOverlay = total > 0 && hasChanged;
                         if (shouldShowStreamOverlay)
                         {
                             streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;

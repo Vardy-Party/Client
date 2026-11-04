@@ -77,7 +77,6 @@ namespace VardyParty.Platforms.Windows
             private TypedEventHandler<Microsoft.UI.Dispatching.DispatcherQueueTimer, object>? streamInfoHideHandler;
             private int lastStreamTotal = -1;
             private int lastStreamIndex = -1;
-            private string? lastStreamVerticalResolution;
             private bool isPointerNearNextButton;
             private bool isNextStreamRequestInProgress;
             private WinButton menuButton = null!;
