@@ -296,15 +296,21 @@ public class PlaybackStatusTrackerTests
     [Fact]
     public void Assess_Error_KeepsSpinnerWhileAwaitingRetryPastGrace()
     {
-        // Same-stream fresh /play: no prepare yet, player still Error — spinner must not blink off.
+        // Arrange — same-stream fresh /play: no prepare yet, player still Error.
         var tracker = new PlaybackStatusTracker();
-        Assert.True(tracker.Assess(Snap(Idle, error: true), 0, false, false, awaitingRetry: true).ShowSpinner);
-        Assert.True(tracker.Assess(
+
+        // Act
+        var atStart = tracker.Assess(Snap(Idle, error: true), 0, false, false, awaitingRetry: true);
+        var pastGrace = tracker.Assess(
             Snap(Idle, error: true),
             PlaybackWaitChrome.FailoverGraceMs * 4,
             isPreparing: false,
             chromeSuppressed: false,
-            awaitingRetry: true).ShowSpinner);
+            awaitingRetry: true);
+
+        // Assert — spinner must not blink off while awaitingRetry.
+        Assert.True(atStart.ShowSpinner);
+        Assert.True(pastGrace.ShowSpinner);
     }
 
     [Fact]

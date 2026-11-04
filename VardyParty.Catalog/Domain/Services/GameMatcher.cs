@@ -487,7 +487,8 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
     /// <summary>
     /// Maps BBC's winner/loser shoot-out counts onto home/away on <paramref name="g"/>.
-    /// Clears both when the fixture has no completed pens.
+    /// Clears both when the fixture has no completed pens, or when
+    /// <see cref="BbcFixture.PenaltyWinner"/> matches neither BBC home nor away.
     /// </summary>
     private static void ApplyPenaltyScores(Game g, BbcFixture bbc)
     {
@@ -501,16 +502,24 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
         }
 
         var winner = bbc.PenaltyWinner.Trim();
-        var homeWon = winner.Equals((bbc.Home ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
+        var home = (bbc.Home ?? string.Empty).Trim();
+        var away = (bbc.Away ?? string.Empty).Trim();
+        var homeWon = winner.Equals(home, StringComparison.OrdinalIgnoreCase);
+        var awayWon = winner.Equals(away, StringComparison.OrdinalIgnoreCase);
         if (homeWon)
         {
             g.PenaltyHomeScore = winnerGoals;
             g.PenaltyAwayScore = loserGoals;
         }
-        else
+        else if (awayWon)
         {
             g.PenaltyHomeScore = loserGoals;
             g.PenaltyAwayScore = winnerGoals;
+        }
+        else
+        {
+            g.PenaltyHomeScore = null;
+            g.PenaltyAwayScore = null;
         }
     }
 

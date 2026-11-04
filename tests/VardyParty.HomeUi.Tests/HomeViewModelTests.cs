@@ -697,14 +697,17 @@ public sealed class HomeViewModelTests : IDisposable
     [Fact]
     public void FlushPendingApply_FullTime_PublishesToastAndBusEvent()
     {
+        // Arrange
         var delivered = new List<MatchEvent>();
         _bus.Published += delivered.Add;
         _sut.UpdateGames(CatalogWithScoredGame(homeScore: 2, awayScore: 1, minute: 90));
         _sut.FlushPendingApply();
-
         _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 2, awayScore: 1));
+
+        // Act
         _sut.FlushPendingApply();
 
+        // Assert
         var matchEvent = Assert.Single(delivered);
         Assert.Equal(MatchEventKind.FullTime, matchEvent.Kind);
         Assert.NotNull(_sut.Toast.Current);
@@ -714,14 +717,17 @@ public sealed class HomeViewModelTests : IDisposable
     [Fact]
     public void FlushPendingApply_FullTimeOnPenalties_ShowsShootoutInToast()
     {
+        // Arrange
         var delivered = new List<MatchEvent>();
         _bus.Published += delivered.Add;
         _sut.UpdateGames(CatalogWithScoredGame(homeScore: 2, awayScore: 2, minute: 120));
         _sut.FlushPendingApply();
-
         _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 2, awayScore: 2, penaltyHome: 5, penaltyAway: 4));
+
+        // Act
         _sut.FlushPendingApply();
 
+        // Assert
         Assert.Equal(MatchEventKind.FullTime, Assert.Single(delivered).Kind);
         Assert.Equal("FULL TIME — Home United 2–2 Away City (5–4 pens)", _sut.Toast.Current!.Headline);
     }
@@ -729,16 +735,19 @@ public sealed class HomeViewModelTests : IDisposable
     [Fact]
     public void FlushPendingApply_FullTimeOnWatchedGame_WhilePlaying_DeliversNothing()
     {
+        // Arrange
         var delivered = 0;
         _bus.Published += _ => delivered++;
         _sut.UpdateGames(CatalogWithScoredGame(homeScore: 1, awayScore: 0, minute: 89));
         _sut.FlushPendingApply();
         _selection.CurrentGame = _sut.Rows[0].Cards[0].Game;
         _notifications.IsPlaybackActive = true;
-
         _sut.UpdateGames(CatalogWithFinishedGame(homeScore: 1, awayScore: 0));
+
+        // Act
         _sut.FlushPendingApply();
 
+        // Assert
         Assert.Equal(0, delivered);
         Assert.Null(_sut.Toast.Current);
     }

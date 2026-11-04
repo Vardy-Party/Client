@@ -302,6 +302,7 @@ namespace VardyParty.Catalog.Tests
         [Fact]
         public void EnrichGame_FinishedOnPenalties_AwayWinner_MapsLoserOntoHome()
         {
+            // Arrange
             var games = new List<Game>
             {
                 _fixture.Build<Game>()
@@ -337,16 +338,69 @@ namespace VardyParty.Catalog.Tests
             };
             var matcher = _fixture.Create<GameMatcher>();
 
+            // Act
             matcher.EnrichGames(games, bbc, "Cup Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Equal(3, g.PenaltyHomeScore);
             Assert.Equal(4, g.PenaltyAwayScore);
         }
 
         [Fact]
+        public void EnrichGame_FinishedOnPenalties_UnknownWinner_ClearsPenaltyScores()
+        {
+            // Arrange — BBC short-name / alias drift must not invent home/away orientation.
+            var games = new List<Game>
+            {
+                _fixture.Build<Game>()
+                    .With(g => g.Home, "Home United")
+                    .With(g => g.Away, "Away City")
+                    .With(g => g.League, string.Empty)
+                    .With(g => g.ApiLeague, string.Empty)
+                    .With(g => g.PenaltyHomeScore, 5)
+                    .With(g => g.PenaltyAwayScore, 4)
+                    .Create()
+            };
+            var bbc = new List<BbcFixture>
+            {
+                _fixture.Create<BbcFixture>() with
+                {
+                    Home = "Home United",
+                    Away = "Away City",
+                    KickoffUtc = DateTime.UtcNow.AddHours(-3),
+                    Status = "FT",
+                    IsFinished = true,
+                    IsInProgress = false,
+                    IsHalfTime = false,
+                    Minute = null,
+                    HomeScore = 1,
+                    AwayScore = 1,
+                    HomeBadgeUrl = "",
+                    AwayBadgeUrl = "",
+                    League = "Cup Alpha",
+                    HasProgress = true,
+                    AfterExtraTime = true,
+                    PenaltyWinner = "United FC",
+                    PenaltyWinnerGoals = 5,
+                    PenaltyLoserGoals = 4
+                }
+            };
+            var matcher = _fixture.Create<GameMatcher>();
+
+            // Act
+            matcher.EnrichGames(games, bbc, "Cup Alpha");
+
+            // Assert
+            var g = games.First();
+            Assert.Null(g.PenaltyHomeScore);
+            Assert.Null(g.PenaltyAwayScore);
+        }
+
+        [Fact]
         public void EnrichGame_FinishedWithoutPens_ClearsPenaltyScores()
         {
+            // Arrange
             var games = new List<Game>
             {
                 _fixture.Build<Game>()
@@ -384,8 +438,10 @@ namespace VardyParty.Catalog.Tests
             };
             var matcher = _fixture.Create<GameMatcher>();
 
+            // Act
             matcher.EnrichGames(games, bbc, "League Alpha");
 
+            // Assert
             var g = games.First();
             Assert.Null(g.PenaltyHomeScore);
             Assert.Null(g.PenaltyAwayScore);
