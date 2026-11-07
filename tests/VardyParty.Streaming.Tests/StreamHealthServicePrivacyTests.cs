@@ -78,6 +78,40 @@ public class StreamHealthServicePrivacyTests
         Assert.Contains("/health", captured.RequestUri!.AbsolutePath, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ReportHealthAsync_WhenOptedOut_StillPostsUserReport()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        var handler = new ScriptHandler((request, _) =>
+        {
+            captured = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        });
+        var prefs = new InMemoryStreamHealthDataCollectionPreferencesStore();
+        prefs.SaveStreamHealthDataCollectionEnabled(false);
+        var sut = CreateService(handler, prefs);
+
+        // Act
+        await sut.ReportHealthAsync(
+            "League Alpha",
+            "Home United",
+            "Away City",
+            new StreamHealthReport
+            {
+                StreamUrl = "https://streams.example.com/channel-north",
+                Status = "user-report",
+                Error = "picture frozen",
+                SessionId = "session-north",
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Contains("/health", captured.RequestUri!.AbsolutePath, StringComparison.Ordinal);
+    }
+
     private static StreamHealthService CreateService(
         HttpMessageHandler handler,
         IStreamHealthDataCollectionPreferencesStore prefs) =>

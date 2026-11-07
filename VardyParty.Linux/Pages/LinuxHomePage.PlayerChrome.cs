@@ -38,7 +38,10 @@ public partial class LinuxHomePage
             RememberGamesSnapshot(dict)));
         _videoPlayer.BufferingStateChanged += OnPlayerBufferingStateChanged;
         if (_videoPlayer is LinuxVideoPlayerService linuxPlayer)
+        {
             linuxPlayer.StreamSwitchChromeChanged += OnStreamSwitchChromeChanged;
+            linuxPlayer.PlaybackLifecycleChanged += OnPlaybackLifecycleChanged;
+        }
 
         var hover = new PointerGestureRecognizer();
         hover.PointerEntered += (_, _) => ApplyCloseChip(_closeChip.OnHoverEnter());
@@ -72,6 +75,7 @@ public partial class LinuxHomePage
     {
         try
         {
+            SyncChromeContentStateFromPlayback();
             PushOverlayInfoFromSwitching();
             ApplyPlayerChromeVisuals();
             if (_playbackChrome?.IsVideoInfoVisible == true)
@@ -107,9 +111,64 @@ public partial class LinuxHomePage
     {
         Dispatcher.Dispatch(() =>
         {
+            SyncChromeContentStateFromPlayback();
             if (_playbackChrome?.IsVideoInfoVisible == true)
                 RefreshVideoInfoText();
+            ApplyPlayerChromeVisuals();
         });
+    }
+
+    private void OnPlaybackLifecycleChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.Dispatch(() =>
+        {
+            SyncChromeContentStateFromPlayback();
+            ApplyPlayerChromeVisuals();
+        });
+    }
+
+    /// <summary>
+    /// Drive shared chrome ContentState so IsNextForcedVisible / hold-toast work
+    /// on Linux (mirrors Windows SyncChromeContentStateFromPlayback).
+    /// </summary>
+    private void SyncChromeContentStateFromPlayback()
+    {
+        if (_playbackChrome is null)
+            return;
+
+        var linux = _videoPlayer as LinuxVideoPlayerService;
+        if (linux is null)
+            return;
+
+        var previous = _playbackChrome.ContentState;
+        var snapshot = linux.SessionSnapshot;
+        PlaybackChromeContentState proposed;
+        if (linux.StreamSwitchInProgress)
+        {
+            proposed = PlaybackChromeContentState.Switching;
+        }
+        else if (snapshot.IsRecovering || snapshot.IsRecoveringSwitch)
+        {
+            proposed = PlaybackChromeContentState.Recovering;
+        }
+        else if (linux.PlaybackFailed)
+        {
+            proposed = PlaybackChromeContentState.Error;
+        }
+        else if (snapshot.IsPreparing)
+        {
+            proposed = PlaybackChromeContentState.Opening;
+        }
+        else
+        {
+            proposed = PlaybackChromeContentState.Playing;
+        }
+
+        var next = PlaybackChromePresenter.ResolveFromPlayback(
+            previous,
+            proposed,
+            snapshot.HasEstablishedPlayback);
+        _playbackChrome.SetContentState(next);
     }
 
     private void ApplyStreamToastTimer(bool start)

@@ -79,6 +79,7 @@ public class MatchEventDetectorTests
         // Assert
         var goal = Assert.Single(events);
         Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.False(goal.IsPenaltyGoal);
         Assert.Equal("Home United", goal.Game.Home);
         Assert.Equal(1, goal.HomeScore);
         Assert.Equal(0, goal.AwayScore);
@@ -364,6 +365,7 @@ public class MatchEventDetectorTests
         // Assert
         var goal = Assert.Single(events);
         Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.True(goal.IsPenaltyGoal);
         Assert.Equal(GoalSide.Home, goal.ScoringSide);
         Assert.Equal(1, goal.HomeScore);
         Assert.Equal(0, goal.AwayScore);
@@ -382,6 +384,7 @@ public class MatchEventDetectorTests
         // Assert
         var goal = Assert.Single(events);
         Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.True(goal.IsPenaltyGoal);
         Assert.Equal(GoalSide.Away, goal.ScoringSide);
         Assert.Equal(1, goal.HomeScore);
         Assert.Equal(1, goal.AwayScore);

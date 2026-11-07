@@ -1469,6 +1469,7 @@ public partial class LinuxHomePage : ContentPage
             EnsurePlaybackChrome();
             WirePlayerChrome();
             _chromeVisible = true;
+            SyncChromeContentStateFromPlayback();
             PushOverlayInfoFromSwitching();
             ApplyPlayerChromeVisuals();
         }
@@ -1916,6 +1917,14 @@ public partial class LinuxHomePage : ContentPage
         PushErrorBanner();
         _isResolvingStreams = false;
         _resolveOverlayOpen = false;
-        Dispatcher.Dispatch(() => ResolveOverlay.IsVisible = false);
+        Dispatcher.Dispatch(() =>
+        {
+            ResolveOverlay.IsVisible = false;
+            if (_chromeVisible && _playbackChrome is not null)
+            {
+                _playbackChrome.SetContentState(PlaybackChromeContentState.Error);
+                ApplyPlayerChromeVisuals();
+            }
+        });
     }
 }

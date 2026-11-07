@@ -128,6 +128,32 @@ public sealed class PlaybackChromePresenter
         RaiseStateChanged();
     }
 
+    /// <summary>
+    /// Hosts map raw player ticks into a proposed content state, then call this
+    /// so <see cref="PlaybackChromeContentState.Error"/> stays sticky across
+    /// Opening / None / non-established Playing until a deliberate recovery
+    /// (Switching / Recovering) or established Playing.
+    /// </summary>
+    public static PlaybackChromeContentState ResolveFromPlayback(
+        PlaybackChromeContentState previous,
+        PlaybackChromeContentState proposed,
+        bool hasEstablishedPlayback)
+    {
+        if (previous != PlaybackChromeContentState.Error)
+            return proposed;
+
+        if (proposed is PlaybackChromeContentState.Switching
+            or PlaybackChromeContentState.Recovering)
+        {
+            return proposed;
+        }
+
+        if (proposed == PlaybackChromeContentState.Playing && hasEstablishedPlayback)
+            return PlaybackChromeContentState.Playing;
+
+        return PlaybackChromeContentState.Error;
+    }
+
     public void ApplyOverlayInfo(PlayerOverlayInfo? info)
     {
         OverlayInfo = info;

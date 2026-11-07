@@ -88,11 +88,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// the session command path already owns Attach (same as Windows/Android).
     /// </summary>
     private bool _suppressIndexDrivenSwitch;
+    private bool _playbackFailed;
+
+    /// <summary>Session snapshot for chrome content-state sync (Opening / Recovering / Playing).</summary>
+    public PlaybackSessionSnapshot SessionSnapshot => _session.Snapshot;
+
+    /// <summary>True after an engine Error until the next Ready / fresh attach.</summary>
+    public bool PlaybackFailed => _playbackFailed;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
     /// <summary>Raised when <see cref="StreamSwitchInProgress"/> flips so chrome can refresh immediately.</summary>
     public event EventHandler? StreamSwitchChromeChanged;
+    /// <summary>Raised when attach / ready / error / recover flags change for chrome SetContentState.</summary>
+    public event EventHandler? PlaybackLifecycleChanged;
 
     public PlaybackResult? LastPlaybackResult { get; private set; }
 
@@ -350,6 +359,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         StreamSwitchInProgress = value;
         try { StreamSwitchChromeChanged?.Invoke(this, EventArgs.Empty); }
         catch (Exception ex) { _logger.LogDebug(ex, "[LinuxVideoPlayerService] StreamSwitchChromeChanged failed"); }
+        RaisePlaybackLifecycleChanged();
+    }
+
+    private void RaisePlaybackLifecycleChanged()
+    {
+        try { PlaybackLifecycleChanged?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex) { _logger.LogDebug(ex, "[LinuxVideoPlayerService] PlaybackLifecycleChanged failed"); }
     }
 
     private async Task TrySwitchToCurrentStreamAsync(bool force)
@@ -856,6 +872,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
+            if (engineEvent.Kind == MediaEngineEventKind.Error)
+                _playbackFailed = true;
+            else if (engineEvent.Kind == MediaEngineEventKind.Ready)
+                _playbackFailed = false;
             // Cached switch leaves StreamSwitchInProgress set across AttachViaSession;
             // end scrub when the attach settles or fails so video-info is not stuck.
             if (StreamSwitchInProgress
@@ -863,6 +883,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     || engineEvent.Kind == MediaEngineEventKind.Error))
             {
                 SetStreamSwitchInProgress(false);
+            }
+            else
+            {
+                RaisePlaybackLifecycleChanged();
             }
         }
         catch (Exception ex)
@@ -890,6 +914,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
     {
         _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
+        _playbackFailed = false;
         var effects = _session.BeginAttach(url, usedCachedUrl, force);
         if (effects.Count > 0 && effects[0].Kind == PlaybackEffectKind.None)
         {
@@ -901,6 +926,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         ApplyPlaybackCommand(PlaybackCommand.FromEffects(effects));
+        RaisePlaybackLifecycleChanged();
     }
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)

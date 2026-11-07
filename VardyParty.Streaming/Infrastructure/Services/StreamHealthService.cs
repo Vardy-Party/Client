@@ -74,7 +74,10 @@ public class StreamHealthService(
         StreamHealthReport report,
         CancellationToken cancellationToken = default)
     {
-        if (!dataCollectionPreferences.LoadStreamHealthDataCollectionEnabled())
+        // Explicit in-player "Report bad stream" must still POST when privacy is OFF.
+        // Only anonymous/automatic working/failed/buffering telemetry is gated.
+        var isUserReport = string.Equals(report.Status, "user-report", StringComparison.Ordinal);
+        if (!isUserReport && !dataCollectionPreferences.LoadStreamHealthDataCollectionEnabled())
         {
             logger.LogDebug("[StreamHealth] Skipping health report — data collection opt-in is off");
             return;

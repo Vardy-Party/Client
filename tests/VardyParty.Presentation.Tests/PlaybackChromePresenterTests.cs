@@ -366,4 +366,52 @@ public class PlaybackChromePresenterTests
         Assert.False(sut.ShouldHoldStreamToast);
         Assert.True(sut.IsNextForcedVisible);
     }
+
+    [Theory]
+    [InlineData(PlaybackChromeContentState.Opening)]
+    [InlineData(PlaybackChromeContentState.Playing)]
+    public void ResolveFromPlayback_Error_SticksAcrossOpeningAndNonEstablishedPlaying(
+        PlaybackChromeContentState proposed)
+    {
+        // Arrange
+        var previous = PlaybackChromeContentState.Error;
+
+        // Act
+        var next = PlaybackChromePresenter.ResolveFromPlayback(
+            previous,
+            proposed,
+            hasEstablishedPlayback: false);
+
+        // Assert
+        Assert.Equal(PlaybackChromeContentState.Error, next);
+    }
+
+    [Fact]
+    public void ResolveFromPlayback_Error_ClearsOnEstablishedPlaying()
+    {
+        // Arrange / Act
+        var next = PlaybackChromePresenter.ResolveFromPlayback(
+            PlaybackChromeContentState.Error,
+            PlaybackChromeContentState.Playing,
+            hasEstablishedPlayback: true);
+
+        // Assert
+        Assert.Equal(PlaybackChromeContentState.Playing, next);
+    }
+
+    [Theory]
+    [InlineData(PlaybackChromeContentState.Switching)]
+    [InlineData(PlaybackChromeContentState.Recovering)]
+    public void ResolveFromPlayback_Error_ClearsOnDeliberateRecovery(
+        PlaybackChromeContentState proposed)
+    {
+        // Arrange / Act
+        var next = PlaybackChromePresenter.ResolveFromPlayback(
+            PlaybackChromeContentState.Error,
+            proposed,
+            hasEstablishedPlayback: false);
+
+        // Assert
+        Assert.Equal(proposed, next);
+    }
 }

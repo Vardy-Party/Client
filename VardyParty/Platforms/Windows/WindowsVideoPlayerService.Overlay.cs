@@ -330,15 +330,16 @@ namespace VardyParty.Platforms.Windows
             private void SyncChromeContentStateFromPlayback()
             {
                 var previous = chrome.ContentState;
+                PlaybackChromeContentState proposed;
                 if (streamSwitchInProgress)
                 {
-                    chrome.SetContentState(PlaybackChromeContentState.Switching);
+                    proposed = PlaybackChromeContentState.Switching;
                 }
                 else if (liveHlsSoftRecoverInFlight
                     || session.Snapshot.IsRecovering
                     || session.Snapshot.IsRecoveringSwitch)
                 {
-                    chrome.SetContentState(PlaybackChromeContentState.Recovering);
+                    proposed = PlaybackChromeContentState.Recovering;
                 }
                 else
                 {
@@ -346,15 +347,22 @@ namespace VardyParty.Platforms.Windows
                     try { playbackState = mediaPlayer.PlaybackSession.PlaybackState; }
                     catch { playbackState = MediaPlaybackState.None; }
 
-                    chrome.SetContentState(playbackState switch
+                    proposed = playbackState switch
                     {
                         MediaPlaybackState.Opening => PlaybackChromeContentState.Opening,
                         MediaPlaybackState.None => PlaybackChromeContentState.Opening,
                         _ => PlaybackChromeContentState.Playing
-                    });
+                    };
                 }
 
-                // Error uses infoPanel without chrome video-info; clear it once playable again.
+                var next = PlaybackChromePresenter.ResolveFromPlayback(
+                    previous,
+                    proposed,
+                    session.Snapshot.HasEstablishedPlayback);
+                chrome.SetContentState(next);
+
+                // Error uses infoPanel without chrome video-info; clear only when
+                // leaving Error deliberately (ResolveFromPlayback cleared it).
                 if (previous == PlaybackChromeContentState.Error
                     && chrome.ContentState != PlaybackChromeContentState.Error
                     && !chrome.IsVideoInfoVisible

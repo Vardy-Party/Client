@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VardyParty.Catalog;
 using VardyParty.Kernel;
 
 namespace VardyParty.Presentation;
@@ -28,10 +29,15 @@ public static partial class MatchStatusPresenter
     public static MatchPhase GetPhase(Game game)
     {
         if (game.IsPostponed) return MatchPhase.Postponed;
+
+        // BBC often leaves IsFinished true while a shootout is still live — same
+        // quirk as ScoresTickerPolicy: pens-in-progress wins over FT.
+        if (ScoresTickerPolicy.IsPenaltyShootoutInProgress(game))
+            return MatchPhase.Penalties;
+
         if (game.IsFinished) return MatchPhase.FullTime;
 
         var status = game.StatusText ?? string.Empty;
-        if (status.Contains("pen", StringComparison.OrdinalIgnoreCase)) return MatchPhase.Penalties;
         if (status.Contains("extra time", StringComparison.OrdinalIgnoreCase) || ExtraTimeToken().IsMatch(status))
         {
             return MatchPhase.ExtraTime;

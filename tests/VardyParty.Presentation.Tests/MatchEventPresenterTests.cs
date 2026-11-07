@@ -156,7 +156,7 @@ public sealed class MatchEventPresenterTests
             IsFinished = true,
             StatusText = "Penalties",
         };
-        // Detector stores shoot-out totals on the event score fields.
-        return new MatchEvent(MatchEventKind.Goal, game, penHome, penAway, GoalSide.Away);
+        // Detector stores shoot-out totals on the event score fields and sets IsPenaltyGoal.
+        return new MatchEvent(MatchEventKind.Goal, game, penHome, penAway, GoalSide.Away, IsPenaltyGoal: true);
     }
 }

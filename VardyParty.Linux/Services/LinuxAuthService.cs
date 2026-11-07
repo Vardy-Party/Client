@@ -338,12 +338,11 @@ public class LinuxAuthService : Auth0TokenSession
 
             var context = await getContextTask;
             var query = context.Request.QueryString;
-            var html = string.IsNullOrWhiteSpace(query["error"])
-                ? "<html><body><h2>Login complete</h2><p>You can close this tab and return to VardyParty.</p></body></html>"
-                : "<html><body><h2>Login failed</h2><p>You can close this tab and return to VardyParty.</p></body></html>";
+            var success = string.IsNullOrWhiteSpace(query["error"]);
+            var html = Auth0Pkce.BuildBrowserCallbackHtml(success);
 
             var responseBuffer = Encoding.UTF8.GetBytes(html);
-            context.Response.StatusCode = string.IsNullOrWhiteSpace(query["error"]) ? 200 : 400;
+            context.Response.StatusCode = success ? 200 : 400;
             context.Response.ContentType = "text/html; charset=utf-8";
             context.Response.ContentLength64 = responseBuffer.Length;
             await context.Response.OutputStream.WriteAsync(responseBuffer);

@@ -54,6 +54,25 @@ public class MatchStatusPresenterTests
     }
 
     [Fact]
+    public void GetPhase_FinishedWithPenaltiesStatus_IsPensNotFullTime()
+    {
+        // Arrange — BBC quirk: IsFinished stays true while shootout status reads "Penalties".
+        var game = new Game
+        {
+            IsFinished = true,
+            StatusText = "Penalties",
+            HomeScore = 1,
+            AwayScore = 1,
+            PenaltyHomeScore = 2,
+            PenaltyAwayScore = 1,
+        };
+
+        // Act & Assert
+        Assert.Equal(MatchPhase.Penalties, MatchStatusPresenter.GetPhase(game));
+        Assert.Equal("Pens", MatchStatusPresenter.GetStatusText(game));
+    }
+
+    [Fact]
     public void GetPhase_ExtraTime_ShowsStatusText()
     {
         // Arrange

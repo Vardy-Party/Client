@@ -122,6 +122,68 @@ public static class Auth0Pkce
 
         return null;
     }
+
+    /// <summary>
+    /// HTML for the loopback browser callback. Visual language matches the API
+    /// installers homepage (<c>installers.css</c>: #003090 header, #eef2f8 page, white card).
+    /// Tries to close the tab when the browser allows it.
+    /// </summary>
+    public static string BuildBrowserCallbackHtml(bool success)
+    {
+        var title = success ? "Login complete" : "Login failed";
+        var body = success
+            ? "Returning to VardyParty…"
+            : "Sign-in failed. You can close this tab and return to VardyParty.";
+        // Same crest as Vardy-Party/API installersPage LOGO_SVG (simplified for inline CSS pages).
+        const string logoSvg =
+            "<svg class=\"logo\" viewBox=\"0 0 456 456\" aria-hidden=\"true\">" +
+            "<rect width=\"456\" height=\"456\" rx=\"80\" fill=\"#003090\"/>" +
+            "<g transform=\"translate(228,228)\">" +
+            "<circle cx=\"0\" cy=\"0\" r=\"150\" fill=\"#0052B4\" stroke=\"#ffffff\" stroke-width=\"8\"/>" +
+            "<path d=\"M 0,-128 L 42,-53 L 0,-12 L -42,-53 Z\" fill=\"#003090\"/>" +
+            "<path d=\"M 42,-53 L 106,-68 L 118,0 L 53,27 L 0,-12 Z\" fill=\"#E8E8E8\"/>" +
+            "<path d=\"M -42,-53 L -106,-68 L -118,0 L -53,27 L 0,-12 Z\" fill=\"#E8E8E8\"/>" +
+            "<path d=\"M 53,27 L 78,93 L 27,128 L -27,128 L -53,27 Z\" fill=\"#E8E8E8\"/>" +
+            "<path d=\"M 0,-12 L 53,27 L -53,27 Z\" fill=\"#D5D5D5\"/>" +
+            "</g></svg>";
+
+        return string.Concat(
+            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\" />",
+            "<title>", title, " — VardyParty</title>",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+            "<style>",
+            "*{box-sizing:border-box}",
+            "body{margin:0;min-height:100vh;font-family:\"Segoe UI\",Arial,sans-serif;",
+            "background:#eef2f8;color:#142033;display:flex;flex-direction:column}",
+            "header{background:#003090;color:#fff;padding:28px 24px 26px;text-align:center}",
+            ".brand{display:inline-flex;flex-direction:column;align-items:center;gap:14px;color:inherit}",
+            ".logo{width:72px;height:72px}",
+            "header h1{margin:0;font-size:2.4rem;font-weight:700;letter-spacing:-0.03em;line-height:1.1}",
+            "header p{margin:10px auto 0;max-width:28rem;color:#d6e4ff;font-size:1.25rem;line-height:1.4}",
+            "main{max-width:40rem;margin:0 auto;padding:28px 24px 48px;width:100%}",
+            ".card{padding:22px 24px 20px;border-radius:16px;background:#fff;",
+            "box-shadow:0 10px 30px rgba(0,32,96,0.08);text-align:center}",
+            ".card h2{margin:0 0 12px;font-size:1.6rem;font-weight:700;line-height:1.2;color:#142033}",
+            ".card p{margin:0;font-size:1.2rem;line-height:1.45;color:#243044}",
+            "#fallback{display:none;margin-top:16px;color:#243044}",
+            "</style></head><body>",
+            "<header><div class=\"brand\">", logoSvg,
+            "<h1>VardyParty</h1>",
+            "<p>", title, "</p></div></header>",
+            "<main><article class=\"card\">",
+            "<h2>", title, "</h2>",
+            "<p id=\"status\">", body, "</p>",
+            "<p id=\"fallback\">If this tab is still open, you can close it — VardyParty should be in front.</p>",
+            "</article></main>",
+            "<script>(function(){",
+            "try{window.open('','_self');}catch(e){}",
+            "try{window.close();}catch(e){}",
+            "setTimeout(function(){",
+            "try{window.close();}catch(e){}",
+            "var f=document.getElementById('fallback');if(f)f.style.display='block';",
+            "var s=document.getElementById('status');if(s)s.textContent='You can close this tab.';",
+            "},400);})();</script></body></html>");
+    }
 }
 
 public sealed record Auth0PkceStart(

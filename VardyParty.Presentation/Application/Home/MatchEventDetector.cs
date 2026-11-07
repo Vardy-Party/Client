@@ -35,7 +35,8 @@ public sealed record MatchEvent(
     Game Game,
     int HomeScore,
     int AwayScore,
-    GoalSide? ScoringSide = null);
+    GoalSide? ScoringSide = null,
+    bool IsPenaltyGoal = false);
 
 /// <summary>
 /// Pure detector for match events, generalizing the old score-only
@@ -114,7 +115,12 @@ public sealed class MatchEventDetector
                             ? GoalSide.Both
                             : penHomeScored ? GoalSide.Home : GoalSide.Away;
                         events.Add(new MatchEvent(
-                            MatchEventKind.Goal, game, newPenHome, newPenAway, side));
+                            MatchEventKind.Goal,
+                            game,
+                            newPenHome,
+                            newPenAway,
+                            side,
+                            IsPenaltyGoal: true));
                     }
                 }
 
