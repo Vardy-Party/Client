@@ -93,7 +93,7 @@ namespace VardyParty.Platforms.Windows
                         _logger.LogInformation("Framerate not available from encoding properties (expected for HLS adaptive streams)");
                     }
 
-                    // Extract bitrate - typically 0 for HLS (use AdaptiveMediaSource instead)
+                    // Extract bitrate - typically 0 for HLS (use AdaptiveMediaSource / transfer meter)
                     if (videoProps.Bitrate > 0)
                     {
                         metrics.BitrateKbps = (int)(videoProps.Bitrate / 1000);
@@ -101,16 +101,23 @@ namespace VardyParty.Platforms.Windows
                     }
                     else
                     {
-                        _logger.LogInformation("Bitrate not in encoding properties (will use AdaptiveMediaSource.CurrentDownloadBitrate)");
+                        _logger.LogInformation("Bitrate not in encoding properties (will use AdaptiveMediaSource / transfer meter)");
                     }
+
+                    metrics.VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(videoProps.Subtype)
+                        ?? videoProps.Subtype;
                 }
 
                 if (mediaItem.AudioTracks.Count > 0)
                 {
-                    _ = mediaItem.AudioTracks[0].GetEncodingProperties();
+                    var audioProps = mediaItem.AudioTracks[0].GetEncodingProperties();
+                    metrics.AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(audioProps.Subtype)
+                        ?? audioProps.Subtype;
                 }
 
                 _currentMetrics = metrics;
+                // Prefer AMS when available; otherwise the transfer meter fills bitrate for health.
+                UpdateBitrateFromAdaptiveSource(mediaItem);
             }
             catch (Exception ex)
             {
@@ -120,34 +127,42 @@ namespace VardyParty.Platforms.Windows
 
         private void UpdateBitrateFromAdaptiveSource(MediaPlaybackItem? mediaItem)
         {
-            // For HLS/DASH streams, bitrate comes from AdaptiveMediaSource during playback, not encoding properties
-            if (mediaItem?.Source is MediaSource ms && ms.AdaptiveMediaSource != null && _currentMetrics != null)
+            // For HLS/DASH streams, prefer AdaptiveMediaSource when it reports a rate.
+            // Custom DownloadRequested handlers often leave CurrentDownloadBitrate at 0 —
+            // fall back to the transfer meter (same as Android Format.Bitrate → meter).
+            if (_currentMetrics == null)
+                return;
+
+            if (mediaItem?.Source is MediaSource ms && ms.AdaptiveMediaSource != null)
             {
                 var ams = ms.AdaptiveMediaSource;
                 if (ams.CurrentDownloadBitrate > 0)
                 {
                     _currentMetrics.BitrateKbps = (int)(ams.CurrentDownloadBitrate / 1000);
                     _logger.LogInformation("Bitrate from AdaptiveMediaSource: {BitrateKbps} kbps", _currentMetrics.BitrateKbps);
+                    return;
                 }
-                else
-                {
-                    _logger.LogInformation(
-                        "AdaptiveMediaSource.CurrentDownloadBitrate not available yet: {Bitrate}",
-                        ams.CurrentDownloadBitrate);
-                }
+
+                _logger.LogDebug(
+                    "AdaptiveMediaSource.CurrentDownloadBitrate not available yet: {Bitrate}",
+                    ams.CurrentDownloadBitrate);
             }
-            else
+
+            ApplyTransferMeterBitrate();
+        }
+
+        private void ApplyTransferMeterBitrate()
+        {
+            if (_currentMetrics == null)
+                return;
+
+            if (_currentMetrics.BitrateKbps is > 0)
+                return;
+
+            if (_activeTransferMeter?.BitrateKbps is int measuredKbps && measuredKbps > 0)
             {
-                var hasMediaItem = mediaItem != null;
-                var hasMediaSource = mediaItem?.Source != null;
-                var hasAMS = mediaItem?.Source is MediaSource msCheck && msCheck.AdaptiveMediaSource != null;
-                var hasMetrics = _currentMetrics != null;
-                _logger.LogInformation(
-                    "Cannot update bitrate - mediaItem={HasMediaItem}, MediaSource={HasMediaSource}, AMS={HasAms}, metrics={HasMetrics}",
-                    hasMediaItem,
-                    hasMediaSource,
-                    hasAMS,
-                    hasMetrics);
+                _currentMetrics.BitrateKbps = measuredKbps;
+                _logger.LogInformation("Bitrate from transfer meter: {BitrateKbps} kbps", measuredKbps);
             }
         }
 

@@ -48,8 +48,9 @@ namespace VardyParty.Platforms.Windows
                     try { bufferingProgress = session.BufferingProgress; }
                     catch (Exception ex) { _host.LogIgnored("ReadBufferingProgress", ex); }
 
-                    int? bitrateKbps = null;
-                    if (ams != null && ams.CurrentDownloadBitrate > 0)
+                    // Prefer bytes actually pulled through DownloadRequested (matches Android transfer meter).
+                    int? bitrateKbps = transferMeter.BitrateKbps;
+                    if (bitrateKbps is null or <= 0 && ams != null && ams.CurrentDownloadBitrate > 0)
                         bitrateKbps = (int)(ams.CurrentDownloadBitrate / 1000);
 
                     var metrics = _host.GetCurrentMetrics();
@@ -82,8 +83,43 @@ namespace VardyParty.Platforms.Windows
                         refererUrl: _refererUrl,
                         bufferPercent: overlay.BufferPercent);
 
-                    infoText.Text = PlayerChromeText.FormatVideoInfo(model, whileSwitching: streamSwitchInProgress);
+                    ApplyVideoInfoPanel(model, streamSwitchInProgress, current?.Stream?.CatalogSourceBadgeLabel);
                 });
+            }
+
+            private void ApplyVideoInfoPanel(VideoInfoPanelModel model, bool whileSwitching, string? sourceLabel)
+            {
+                infoGameTitleText.Text = model.Title ?? string.Empty;
+                infoStatusText.Text = PlayerChromeText.FormatStatusLine(model, whileSwitching);
+                infoStreamIndexText.Text = PlayerChromeText.FormatStreamIndexLine(model);
+                infoStreamIndexText.Visibility = string.IsNullOrEmpty(infoStreamIndexText.Text)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
+
+                var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
+                if (badgeStyle is { } style && !string.IsNullOrWhiteSpace(sourceLabel))
+                {
+                    infoSourceBadgeText.Text = sourceLabel;
+                    infoSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                        global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
+                    infoSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                        global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
+                    infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                }
+                else
+                {
+                    infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                }
+
+                infoQualityText.Text = whileSwitching ? string.Empty : (model.Quality ?? string.Empty);
+                infoQualityText.Visibility = string.IsNullOrEmpty(infoQualityText.Text)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
+
+                infoDetailText.Text = PlayerChromeText.FormatVideoInfoDetail(model, whileSwitching);
+                infoDetailText.Visibility = string.IsNullOrEmpty(infoDetailText.Text)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
             }
 
             private void RefreshDismissSurface()
@@ -102,7 +138,15 @@ namespace VardyParty.Platforms.Windows
                     try
                     {
                         infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                        infoText.Text = message;
+                        infoGameTitleText.Text = string.Empty;
+                        infoStatusText.Text = message;
+                        infoStreamIndexText.Text = string.Empty;
+                        infoStreamIndexText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoQualityText.Text = string.Empty;
+                        infoQualityText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoDetailText.Text = string.Empty;
+                        infoDetailText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                     }
                     catch (Exception ex) { _host.LogIgnored("ShowStreamError", ex); }
                 });

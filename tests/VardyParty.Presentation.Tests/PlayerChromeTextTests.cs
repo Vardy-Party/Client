@@ -116,7 +116,7 @@ public class PlayerChromeTextTests
             VideoCodec = "H.264",
             AudioCodec = "AAC",
             Title = "Home United vs Away City",
-            Buffer = "100%",
+            Buffer = "Buffer 100%",
             SourceUrl = "https://streams.example.com/live.m3u8",
             RefererHost = "referer.example.com"
         };
@@ -124,19 +124,20 @@ public class PlayerChromeTextTests
         // Act
         var text = PlayerChromeText.FormatVideoInfo(model);
 
-        // Assert
+        // Assert — Android panel order: title, status, stream, source badge, quality, detail
+        Assert.StartsWith("Home United vs Away City", text);
         Assert.Contains("Status: Playing", text);
         Assert.Contains("Stream: 2/5", text);
-        Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Source: V1", text);
-        Assert.Contains("Quality: 1080p 60fps", text);
-        Assert.Contains("Resolution: 1920x1080 @ 60 fps", text);
+        Assert.Contains("1080p 60fps", text);
+        Assert.DoesNotContain("Quality:", text);
+        Assert.DoesNotContain("Resolution:", text);
+        Assert.DoesNotContain("Bitrate:", text);
+        Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Aspect ratio: 16:9", text);
-        Assert.Contains("Bitrate: 4500 kbps", text);
-        Assert.Contains("Video Codec: H.264", text);
-        Assert.Contains("Audio Codec: AAC", text);
-        Assert.Contains("Home United vs Away City", text);
-        Assert.Contains("Buffer: 100%", text);
+        Assert.Contains("Video: H.264", text);
+        Assert.Contains("Audio: AAC", text);
+        Assert.Contains("Buffer 100%", text);
         Assert.Contains("Source: https://streams.example.com/live.m3u8", text);
         Assert.Contains("Referer: referer.example.com", text);
     }
@@ -175,13 +176,12 @@ public class PlayerChromeTextTests
         Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Source: V1", text);
         Assert.Contains("Home United vs Away City", text);
-        Assert.DoesNotContain("Quality:", text);
-        Assert.DoesNotContain("Resolution:", text);
-        Assert.DoesNotContain("Bitrate:", text);
-        Assert.DoesNotContain("Video Codec:", text);
+        Assert.DoesNotContain("540p 1.8 Mbps", text);
+        Assert.DoesNotContain("Aspect ratio:", text);
+        Assert.DoesNotContain("Video:", text);
         Assert.DoesNotContain("https://streams.example.com", text);
         Assert.DoesNotContain("Referer:", text);
-        Assert.DoesNotContain("Buffer:", text);
+        Assert.DoesNotContain("Buffer ", text);
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public class PlayerChromeTextTests
         Assert.Equal("BE ID", model.Channel);
         Assert.Equal("V2", model.SourceLabel);
         Assert.Equal("Home United vs Away City", model.Title);
-        Assert.Equal("72%", model.Buffer);
+        Assert.Equal("Buffer 72%", model.Buffer);
         Assert.DoesNotContain("V2", model.Channel);
     }
 

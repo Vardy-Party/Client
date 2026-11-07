@@ -179,6 +179,10 @@ public static class PlayerChromeText
         var bitrate = overlay?.BitrateKbps ?? current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate;
         quality = FormatMeasuredQuality(resolution, bitrate, quality);
         var buffer = bufferPercent ?? overlay?.BufferPercent;
+        var videoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(overlay?.VideoCodec)
+            ?? PlayerOverlayFormatter.MapCodecToFriendlyName(current?.Health?.VideoCodec);
+        var audioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(overlay?.AudioCodec)
+            ?? PlayerOverlayFormatter.MapCodecToFriendlyName(current?.Health?.AudioCodec);
 
         return new VideoInfoPanelModel
         {
@@ -192,14 +196,62 @@ public static class PlayerChromeText
             FrameRate = frameRate.HasValue ? $"{frameRate:0.##} fps" : null,
             AspectRatio = overlay?.AspectRatio ?? BuildAspectRatio(resolution),
             Bitrate = bitrate is > 0 ? FormatBitrateMbps(bitrate.Value) : null,
-            VideoCodec = overlay?.VideoCodec,
-            AudioCodec = overlay?.AudioCodec,
+            VideoCodec = videoCodec,
+            AudioCodec = audioCodec,
             // Game title from the host; never substitute the MP chip here.
             Title = string.IsNullOrWhiteSpace(title) ? null : title.Trim(),
-            Buffer = buffer.HasValue ? $"{buffer}%" : null,
+            Buffer = buffer.HasValue ? $"Buffer {buffer}%" : null,
             SourceUrl = StripQuery(sourceUrl ?? overlay?.M3u8Url ?? current?.ResolvedM3U8Url),
             RefererHost = RefererHost(refererUrl ?? overlay?.RefererUrl)
         };
+    }
+
+    /// <summary>Status line shared by Android / Windows / Linux video-info panels.</summary>
+    public static string FormatStatusLine(VideoInfoPanelModel model, bool whileSwitching = false) =>
+        whileSwitching
+            ? "Status: Switching"
+            : $"Status: {(string.IsNullOrWhiteSpace(model.PlaybackState) ? "unknown" : model.PlaybackState)}";
+
+    /// <summary>Stream index line, or empty when the pool has no healthy streams.</summary>
+    public static string FormatStreamIndexLine(VideoInfoPanelModel model) =>
+        model.StreamTotal > 0 ? $"Stream: {model.StreamIndex}/{model.StreamTotal}" : string.Empty;
+
+    /// <summary>
+    /// Detail block under quality (Android <c>_resBrView</c>): channel, aspect, buffer,
+    /// codecs, source URL, referer. Empty while switching.
+    /// </summary>
+    public static string FormatVideoInfoDetail(VideoInfoPanelModel model, bool whileSwitching = false)
+    {
+        // Keep channel while switching; drop measured telemetry/URLs until the new stream settles.
+        if (whileSwitching)
+        {
+            return !string.IsNullOrWhiteSpace(model.Channel)
+                ? $"Channel: {model.Channel}"
+                : string.Empty;
+        }
+
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(model.Channel))
+            lines.Add($"Channel: {model.Channel}");
+        if (!string.IsNullOrWhiteSpace(model.AspectRatio))
+            lines.Add($"Aspect ratio: {model.AspectRatio}");
+        if (!string.IsNullOrWhiteSpace(model.Buffer))
+            lines.Add(model.Buffer);
+
+        var codecParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(model.VideoCodec))
+            codecParts.Add($"Video: {model.VideoCodec}");
+        if (!string.IsNullOrWhiteSpace(model.AudioCodec))
+            codecParts.Add($"Audio: {model.AudioCodec}");
+        if (codecParts.Count > 0)
+            lines.Add(string.Join(" / ", codecParts));
+
+        if (!string.IsNullOrWhiteSpace(model.SourceUrl))
+            lines.Add($"Source: {model.SourceUrl}");
+        if (!string.IsNullOrWhiteSpace(model.RefererHost))
+            lines.Add($"Referer: {model.RefererHost}");
+
+        return string.Join('\n', lines);
     }
 
     /// <param name="whileSwitching">
@@ -207,71 +259,31 @@ public static class PlayerChromeText
     /// the video-info overlay does not flash the previous stream's size/bitrate/m3u8.
     /// Keeps status, index, channel, source badge, and game title.
     /// </param>
+    /// <remarks>
+    /// Field order matches the Android multi-line panel (title, status, stream, channel via
+    /// detail, quality, aspect/buffer/codecs/urls). Single-block hosts (Linux) use this dump.
+    /// </remarks>
     public static string FormatVideoInfo(VideoInfoPanelModel model, bool whileSwitching = false)
     {
         var sb = new StringBuilder();
-        var status = whileSwitching
-            ? "Switching"
-            : (string.IsNullOrWhiteSpace(model.PlaybackState) ? "unknown" : model.PlaybackState);
-        sb.AppendLine($"Status: {status}");
-        if (model.StreamTotal > 0)
-        {
-            sb.AppendLine($"Stream: {model.StreamIndex}/{model.StreamTotal}");
-        }
+        if (!string.IsNullOrWhiteSpace(model.Title))
+            sb.AppendLine(model.Title);
 
-        if (!string.IsNullOrWhiteSpace(model.Channel))
-        {
-            sb.AppendLine($"Channel: {model.Channel}");
-        }
+        sb.AppendLine(FormatStatusLine(model, whileSwitching));
+
+        var indexLine = FormatStreamIndexLine(model);
+        if (!string.IsNullOrEmpty(indexLine))
+            sb.AppendLine(indexLine);
 
         if (!string.IsNullOrWhiteSpace(model.SourceLabel))
-        {
             sb.AppendLine($"Source: {model.SourceLabel}");
-        }
 
-        if (!whileSwitching)
-        {
-            if (!string.IsNullOrWhiteSpace(model.Quality))
-            {
-                sb.AppendLine($"Quality: {model.Quality}");
-            }
+        if (!whileSwitching && !string.IsNullOrWhiteSpace(model.Quality))
+            sb.AppendLine(model.Quality);
 
-            var resolution = string.IsNullOrWhiteSpace(model.Resolution) ? "pending" : model.Resolution;
-            sb.AppendLine(string.IsNullOrWhiteSpace(model.FrameRate)
-                ? $"Resolution: {resolution}"
-                : $"Resolution: {resolution} @ {model.FrameRate}");
-
-            sb.AppendLine(string.IsNullOrWhiteSpace(model.AspectRatio)
-                ? "Aspect ratio: pending"
-                : $"Aspect ratio: {model.AspectRatio}");
-
-            sb.AppendLine($"Bitrate: {model.Bitrate ?? "unknown"}");
-            sb.AppendLine($"Video Codec: {model.VideoCodec ?? "unknown"}");
-            sb.AppendLine($"Audio Codec: {model.AudioCodec ?? "unknown"}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(model.Title))
-        {
-            sb.AppendLine(model.Title);
-        }
-
-        if (!whileSwitching)
-        {
-            if (!string.IsNullOrWhiteSpace(model.Buffer))
-            {
-                sb.AppendLine($"Buffer: {model.Buffer}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(model.SourceUrl))
-            {
-                sb.AppendLine($"Source: {model.SourceUrl}");
-            }
-
-            if (!string.IsNullOrWhiteSpace(model.RefererHost))
-            {
-                sb.AppendLine($"Referer: {model.RefererHost}");
-            }
-        }
+        var detail = FormatVideoInfoDetail(model, whileSwitching);
+        if (!string.IsNullOrEmpty(detail))
+            sb.Append(detail);
 
         return sb.ToString().TrimEnd();
     }

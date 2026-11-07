@@ -15,6 +15,7 @@ using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 using System.Text.RegularExpressions;
 
@@ -68,20 +69,26 @@ namespace VardyParty.Platforms.Windows
 
         private PlaybackMetrics? _currentMetrics;
         private MediaPlaybackItem? _currentPlaybackItem;
+        /// <summary>
+        /// Active session's transfer meter — AMS <c>CurrentDownloadBitrate</c> is often 0 when
+        /// segments are fetched via DownloadRequested; health needs the measured rate like Android.
+        /// </summary>
+        private PlaybackTransferMeter? _activeTransferMeter;
+
+        internal void BindTransferMeter(PlaybackTransferMeter? meter) => _activeTransferMeter = meter;
 
         public PlaybackMetrics? GetCurrentMetrics()
         {
-            // Refresh bitrate from adaptive source before returning
+            // Refresh bitrate (AMS + transfer meter) before health/orchestrator samples.
             try
             {
                 if (_currentPlaybackItem != null)
                 {
-                    _logger.LogInformation($"GetCurrentMetrics: Refreshing bitrate from adaptive source...");
                     UpdateBitrateFromAdaptiveSource(_currentPlaybackItem);
                 }
                 else
                 {
-                    _logger.LogInformation($"GetCurrentMetrics: No current playback item available");
+                    ApplyTransferMeterBitrate();
                 }
             }
             catch (Exception ex)
@@ -89,7 +96,11 @@ namespace VardyParty.Platforms.Windows
                 _logger.LogWarning(ex, "GetCurrentMetrics: Failed to update bitrate");
             }
 
-            _logger.LogInformation($"GetCurrentMetrics returning: Resolution={_currentMetrics?.Resolution}, Bitrate={_currentMetrics?.BitrateKbps}, Framerate={_currentMetrics?.Framerate}");
+            _logger.LogInformation(
+                "GetCurrentMetrics returning: Resolution={Resolution}, Bitrate={Bitrate}, Framerate={Framerate}",
+                _currentMetrics?.Resolution,
+                _currentMetrics?.BitrateKbps,
+                _currentMetrics?.Framerate);
             return _currentMetrics;
         }
 

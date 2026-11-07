@@ -1449,11 +1449,18 @@ namespace VardyParty.Platforms.Android
                 if (format != null && format.Bitrate > 0)
                 {
                     metrics.BitrateKbps = format.Bitrate / 1000;
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps");
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps (format)");
+                }
+                else if (_transferMeter.BitrateKbps is int measuredKbps && measuredKbps > 0)
+                {
+                    // HLS often leaves Format.Bitrate as -1; the transfer meter is what the
+                    // overlay already shows, and health/recommendations need the same value.
+                    metrics.BitrateKbps = measuredKbps;
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps (transfer meter)");
                 }
                 else
                 {
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0})");
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0}, transfer meter unset)");
                 }
 
                 // Extract codec information from video format

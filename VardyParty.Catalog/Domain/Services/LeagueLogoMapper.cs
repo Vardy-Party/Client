@@ -49,6 +49,8 @@ public static class LeagueLogoMapper
             _ when Is("League 2") || Is("League Two") => "images/leagues/EFL_League_Two-O9RxRtxBf_brandlogos.net.svg",
             _ when Is("Scottish Premiership") => "images/leagues/scottish-premiership-logo-brandlogos.net_rhkzuu3i1.svg",
             _ when Is("Copa Libertadores") || Is("Libertadores") => "images/leagues/copa-libertadores-logo-brandlogos.net_4ttrycfhm.svg",
+            _ when Is("Copa do Brasil") || Is("Brazilian Cup") || Is("Brazil Cup") || Is("Copa Brasil") => "images/leagues/Copa_do_Brasil_logo_2018.svg",
+            _ when Is("Slovak Nike League") || Is("Nike Liga") || Is("Niké Liga") || Is("Niké liga") => "images/leagues/nike-liga.svg",
             _ when Is("Africa Cup") || Is("AFCON") || Is("Africa Cup of Nations") => "images/leagues/2025-africa-cup-of-nations-logo-brandlogos.net_fbuximlvy.svg",
             _ when Is("FA Cup") || Is("Emirates FA Cup") || Is("Emirates") => "images/leagues/Emirates_FA_Cup-5g9PL9zG_brandlogos.net.svg",
             _ when Is("League Cup") || Is("Carabao Cup") || Is("EFL Cup") || Is("Carabao") => "images/leagues/carabao-cup-efl-cup-logo-brandlogos.net_j9hqfyazu.svg",

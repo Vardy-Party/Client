@@ -104,6 +104,8 @@ namespace VardyParty.Platforms.Windows
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
                 CancelPlaybackDownloads();
+                _host.BindTransferMeter(null);
+                transferMeter.Reset();
 
                 try
                 {
@@ -418,6 +420,7 @@ namespace VardyParty.Platforms.Windows
 
                 StopTickerScroll();
                 ReleasePreviousPlaybackResources();
+                transferMeter.Reset();
                 try
                 {
                     mediaPlayer.Pause();
@@ -539,6 +542,10 @@ namespace VardyParty.Platforms.Windows
                                             args.ResourceUri);
                                     }
                                 }
+
+                                transferMeter.Add(
+                                    body.Length,
+                                    Environment.TickCount64);
 
                                 var winrtStream = await CopyToRandomAccessStreamAsync(body);
                                 if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
@@ -740,6 +747,7 @@ namespace VardyParty.Platforms.Windows
                         plan.Reason);
 
                     streamSwitchInProgress = true;
+                    transferMeter.Reset();
                     UpdateInfo();
 
                     // Make-before-break: the playing stream keeps playing while a one-shot
