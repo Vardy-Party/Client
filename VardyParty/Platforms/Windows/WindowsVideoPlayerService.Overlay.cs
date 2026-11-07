@@ -48,10 +48,7 @@ namespace VardyParty.Platforms.Windows
                     try { bufferingProgress = session.BufferingProgress; }
                     catch (Exception ex) { _host.LogIgnored("ReadBufferingProgress", ex); }
 
-                    // Prefer bytes actually pulled through DownloadRequested (matches Android transfer meter).
-                    int? bitrateKbps = transferMeter.BitrateKbps;
-                    if (bitrateKbps is null or <= 0 && ams != null && ams.CurrentDownloadBitrate > 0)
-                        bitrateKbps = (int)(ams.CurrentDownloadBitrate / 1000);
+                    var bitrateKbps = _host.ResolveBitrateKbps(ams, transferMeter);
 
                     var metrics = _host.GetCurrentMetrics();
                     var overlay = new PlayerOverlayInfo

@@ -136,6 +136,8 @@ namespace VardyParty.Platforms.Windows
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
             /// <summary>Window bounds before entering AppWindow FullScreen — restored on the next double-click.</summary>
             private global::Windows.Graphics.RectInt32? preFullScreenBounds;
+            /// <summary>True when the window was maximized before entering FullScreen — re-maximized on exit.</summary>
+            private bool wasMaximizedBeforeFullScreen;
             private readonly PlaybackTransferMeter transferMeter = new();
             private bool isClosingPlayer;
             /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
@@ -232,12 +234,13 @@ namespace VardyParty.Platforms.Windows
                             if (isFullScreen)
                             {
                                 var boundsToRestore = preFullScreenBounds;
+                                var maximizeAfterRestore = wasMaximizedBeforeFullScreen;
                                 preFullScreenBounds = null;
+                                wasMaximizedBeforeFullScreen = false;
                                 // Default re-applies the window's original OverlappedPresenter.
                                 appWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.Default);
-                                if (boundsToRestore is { } bounds
-                                    && bounds.Width > 0
-                                    && bounds.Height > 0)
+                                var hasBounds = boundsToRestore is { Width: > 0, Height: > 0 };
+                                if (hasBounds || maximizeAfterRestore)
                                 {
                                     // MoveAndResize during the presenter switch is often ignored —
                                     // apply once Default has taken effect.
@@ -252,7 +255,11 @@ namespace VardyParty.Platforms.Windows
                                                 if (appWindow.Presenter?.Kind
                                                     == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen)
                                                     return;
-                                                appWindow.MoveAndResize(bounds);
+                                                // Restored bounds first, so un-maximizing later returns to them.
+                                                if (boundsToRestore is { Width: > 0, Height: > 0 } bounds)
+                                                    appWindow.MoveAndResize(bounds);
+                                                if (maximizeAfterRestore)
+                                                    (appWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.Maximize();
                                             }
                                             catch (Exception resizeEx)
                                             {
@@ -264,9 +271,11 @@ namespace VardyParty.Platforms.Windows
                             else
                             {
                                 // If maximized, restore first so Position/Size are the real windowed bounds.
+                                wasMaximizedBeforeFullScreen = false;
                                 if (appWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter overlapped
                                     && overlapped.State == Microsoft.UI.Windowing.OverlappedPresenterState.Maximized)
                                 {
+                                    wasMaximizedBeforeFullScreen = true;
                                     overlapped.Restore();
                                 }
 

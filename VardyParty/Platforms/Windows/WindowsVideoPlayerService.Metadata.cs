@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Presentation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
@@ -18,6 +19,7 @@ namespace VardyParty.Platforms.Windows
             try
             {
                 var metrics = new PlaybackMetrics();
+                int? encodingKbps = null;
 
                 // Get actual playback resolution from the session (not encoding properties)
                 // For HLS adaptive streams, encoding properties return max variant, not actual playing resolution
@@ -93,15 +95,15 @@ namespace VardyParty.Platforms.Windows
                         _logger.LogInformation("Framerate not available from encoding properties (expected for HLS adaptive streams)");
                     }
 
-                    // Extract bitrate - typically 0 for HLS (use AdaptiveMediaSource / transfer meter)
+                    // Encoding bitrate is the last-resort source; typically 0 for HLS.
                     if (videoProps.Bitrate > 0)
                     {
-                        metrics.BitrateKbps = (int)(videoProps.Bitrate / 1000);
-                        _logger.LogInformation("Bitrate from encoding properties: {BitrateKbps} kbps", metrics.BitrateKbps);
+                        encodingKbps = (int)(videoProps.Bitrate / 1000);
+                        _logger.LogInformation("Bitrate from encoding properties: {BitrateKbps} kbps", encodingKbps);
                     }
                     else
                     {
-                        _logger.LogInformation("Bitrate not in encoding properties (will use AdaptiveMediaSource / transfer meter)");
+                        _logger.LogInformation("Bitrate not in encoding properties (will use transfer meter / AdaptiveMediaSource)");
                     }
 
                     metrics.VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(videoProps.Subtype)
@@ -116,7 +118,7 @@ namespace VardyParty.Platforms.Windows
                 }
 
                 _currentMetrics = metrics;
-                // Prefer AMS when available; otherwise the transfer meter fills bitrate for health.
+                _encodingBitrateKbps = encodingKbps;
                 UpdateBitrateFromAdaptiveSource(mediaItem);
             }
             catch (Exception ex)
@@ -125,46 +127,26 @@ namespace VardyParty.Platforms.Windows
             }
         }
 
+        /// <summary>
+        /// Re-resolve <see cref="PlaybackMetrics.BitrateKbps"/> on every call so health samples
+        /// follow the transfer meter's rolling average instead of keeping the startup window.
+        /// </summary>
         private void UpdateBitrateFromAdaptiveSource(MediaPlaybackItem? mediaItem)
         {
-            // For HLS/DASH streams, prefer AdaptiveMediaSource when it reports a rate.
-            // Custom DownloadRequested handlers often leave CurrentDownloadBitrate at 0 —
-            // fall back to the transfer meter (same as Android Format.Bitrate → meter).
             if (_currentMetrics == null)
                 return;
 
-            if (mediaItem?.Source is MediaSource ms && ms.AdaptiveMediaSource != null)
-            {
-                var ams = ms.AdaptiveMediaSource;
-                if (ams.CurrentDownloadBitrate > 0)
-                {
-                    _currentMetrics.BitrateKbps = (int)(ams.CurrentDownloadBitrate / 1000);
-                    _logger.LogInformation("Bitrate from AdaptiveMediaSource: {BitrateKbps} kbps", _currentMetrics.BitrateKbps);
-                    return;
-                }
-
-                _logger.LogDebug(
-                    "AdaptiveMediaSource.CurrentDownloadBitrate not available yet: {Bitrate}",
-                    ams.CurrentDownloadBitrate);
-            }
-
-            ApplyTransferMeterBitrate();
+            var ams = (mediaItem?.Source as MediaSource)?.AdaptiveMediaSource;
+            _currentMetrics.BitrateKbps = ResolveBitrateKbps(ams, _activeTransferMeter);
+            _logger.LogDebug("Resolved bitrate: {BitrateKbps} kbps", _currentMetrics.BitrateKbps);
         }
 
-        private void ApplyTransferMeterBitrate()
-        {
-            if (_currentMetrics == null)
-                return;
-
-            if (_currentMetrics.BitrateKbps is > 0)
-                return;
-
-            if (_activeTransferMeter?.BitrateKbps is int measuredKbps && measuredKbps > 0)
-            {
-                _currentMetrics.BitrateKbps = measuredKbps;
-                _logger.LogInformation("Bitrate from transfer meter: {BitrateKbps} kbps", measuredKbps);
-            }
-        }
+        /// <summary>The one bitrate both the video-info overlay and health report.</summary>
+        internal int? ResolveBitrateKbps(AdaptiveMediaSource? ams, PlaybackTransferMeter? meter) =>
+            MeasuredBitrate.ResolveKbps(
+                _encodingBitrateKbps,
+                ams?.CurrentDownloadBitrate ?? 0,
+                meter?.BitrateKbps);
 
         private const string PlaybackUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";

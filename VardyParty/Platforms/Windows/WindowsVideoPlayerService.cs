@@ -75,21 +75,27 @@ namespace VardyParty.Platforms.Windows
         /// </summary>
         private PlaybackTransferMeter? _activeTransferMeter;
 
-        internal void BindTransferMeter(PlaybackTransferMeter? meter) => _activeTransferMeter = meter;
+        /// <summary>Declared encoding bitrate of the current item; the last-resort bitrate source.</summary>
+        private int? _encodingBitrateKbps;
+
+        internal void BindTransferMeter(PlaybackTransferMeter meter) => _activeTransferMeter = meter;
+
+        /// <summary>
+        /// Unbind only when <paramref name="meter"/> is still bound, so a closing session's cleanup
+        /// does not drop a newer session's meter.
+        /// </summary>
+        internal void UnbindTransferMeter(PlaybackTransferMeter meter)
+        {
+            if (ReferenceEquals(_activeTransferMeter, meter))
+                _activeTransferMeter = null;
+        }
 
         public PlaybackMetrics? GetCurrentMetrics()
         {
-            // Refresh bitrate (AMS + transfer meter) before health/orchestrator samples.
+            // Refresh bitrate (transfer meter, AMS, encoding) before health/orchestrator samples.
             try
             {
-                if (_currentPlaybackItem != null)
-                {
-                    UpdateBitrateFromAdaptiveSource(_currentPlaybackItem);
-                }
-                else
-                {
-                    ApplyTransferMeterBitrate();
-                }
+                UpdateBitrateFromAdaptiveSource(_currentPlaybackItem);
             }
             catch (Exception ex)
             {

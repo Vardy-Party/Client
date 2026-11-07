@@ -105,7 +105,7 @@ namespace VardyParty.Platforms.Android
             var model = PlayerChromeText.FromPlayback(
                 info,
                 current,
-                playbackState: _streamSwitchInProgress ? "Switching" : _playbackStateText,
+                playbackState: _playbackStateText,
                 title: BuildOverlayGameTitle(channelFallback),
                 sourceUrl: info.M3u8Url,
                 refererUrl: info.RefererUrl,

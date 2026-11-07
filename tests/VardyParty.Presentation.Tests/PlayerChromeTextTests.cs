@@ -184,6 +184,97 @@ public class PlayerChromeTextTests
         Assert.DoesNotContain("Buffer ", text);
     }
 
+    [Theory]
+    [InlineData("Channel North", "Channel: Channel North")]
+    [InlineData(null, "")]
+    [InlineData("  ", "")]
+    public void FormatVideoInfoDetail_WhileSwitching_ReturnsOnlyChannel(string? channel, string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel
+        {
+            Channel = channel,
+            AspectRatio = "16:9",
+            Buffer = "Buffer 80%",
+            VideoCodec = "H.264",
+            AudioCodec = "AAC",
+            SourceUrl = "https://streams.example.com/live.m3u8",
+            RefererHost = "referer.example.com"
+        };
+
+        // Act
+        var detail = PlayerChromeText.FormatVideoInfoDetail(model, whileSwitching: true);
+
+        // Assert
+        Assert.Equal(expected, detail);
+    }
+
+    [Theory]
+    [InlineData(2, 5, "Stream: 2/5")]
+    [InlineData(0, 0, "")]
+    [InlineData(3, 0, "")]
+    public void FormatStreamIndexLine_IsEmptyWithoutHealthyStreams(int index, int total, string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { StreamIndex = index, StreamTotal = total };
+
+        // Act
+        var line = PlayerChromeText.FormatStreamIndexLine(model);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Theory]
+    [InlineData("Playing", false, "Status: Playing")]
+    [InlineData("Playing", true, "Status: Switching")]
+    [InlineData(null, false, "Status: unknown")]
+    [InlineData(" ", false, "Status: unknown")]
+    public void FormatStatusLine_SwitchingOverridesStateAndBlankIsUnknown(
+        string? playbackState,
+        bool whileSwitching,
+        string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { PlaybackState = playbackState };
+
+        // Act
+        var line = PlayerChromeText.FormatStatusLine(model, whileSwitching);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Fact]
+    public void FromPlayback_WithoutOverlayCodecs_UsesHealthCodecs()
+    {
+        // Arrange
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.VideoCodec, "avc1.64001f")
+            .With(h => h.AudioCodec, "mp4a.40.2")
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(s => s.Health, health)
+            .Create();
+        var overlay = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.VideoCodec, (string?)null)
+            .With(i => i.AudioCodec, (string?)null)
+            .Create();
+
+        // Act
+        var model = PlayerChromeText.FromPlayback(
+            overlay,
+            enriched,
+            playbackState: "Playing",
+            title: "Home United vs Away City",
+            sourceUrl: null,
+            refererUrl: null);
+
+        // Assert
+        Assert.Equal("H.264", model.VideoCodec);
+        Assert.Equal("AAC", model.AudioCodec);
+    }
+
     [Fact]
     public void StripQuery_RemovesQueryString()
     {

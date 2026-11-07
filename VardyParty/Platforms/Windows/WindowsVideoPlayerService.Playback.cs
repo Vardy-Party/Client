@@ -104,7 +104,7 @@ namespace VardyParty.Platforms.Windows
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
                 CancelPlaybackDownloads();
-                _host.BindTransferMeter(null);
+                _host.UnbindTransferMeter(transferMeter);
                 transferMeter.Reset();
 
                 try

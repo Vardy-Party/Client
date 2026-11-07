@@ -132,12 +132,6 @@
   <data name="StatusError" xml:space="preserve">
     <value>Error</value>
   </data>
-  <data name="StatusLabel" xml:space="preserve">
-    <value>Status</value>
-  </data>
-  <data name="StreamIndexFormat" xml:space="preserve">
-    <value>Stream {0}/{1}</value>
-  </data>
   <data name="UnknownChannel" xml:space="preserve">
     <value>Unknown channel</value>
   </data>

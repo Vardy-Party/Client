@@ -106,29 +106,11 @@ namespace VardyParty.Resources.Strings {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Status.
-        /// </summary>
-        internal static string StatusLabel {
-            get {
-                return ResourceManager.GetString("StatusLabel", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to Playing.
         /// </summary>
         internal static string StatusPlaying {
             get {
                 return ResourceManager.GetString("StatusPlaying", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to Stream {0}/{1}.
-        /// </summary>
-        internal static string StreamIndexFormat {
-            get {
-                return ResourceManager.GetString("StreamIndexFormat", resourceCulture);
             }
         }
         
