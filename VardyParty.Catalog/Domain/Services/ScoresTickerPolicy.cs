@@ -25,7 +25,19 @@ public static class ScoresTickerPolicy
 
     public static bool IsInPlay(Game game)
     {
-        if (game.IsFinished || game.IsPostponed)
+        if (game.IsPostponed)
+        {
+            return false;
+        }
+
+        // BBC often leaves IsFinished true while a shootout is still live; status
+        // text with "pen" (e.g. "Penalties") marks that phase. Completed pens use FT.
+        if (IsPenaltyShootoutInProgress(game))
+        {
+            return true;
+        }
+
+        if (game.IsFinished)
         {
             return false;
         }
@@ -34,16 +46,28 @@ public static class ScoresTickerPolicy
     }
 
     public static bool IsFinishedWithScore(Game game) =>
-        game.IsFinished && game.HomeScore.HasValue && game.AwayScore.HasValue;
+        game.IsFinished
+        && game.HomeScore.HasValue
+        && game.AwayScore.HasValue
+        && !IsPenaltyShootoutInProgress(game);
 
     public static bool IsUpcoming(Game game)
     {
-        if (game.IsFinished || game.IsPostponed)
+        if (game.IsFinished || game.IsPostponed || IsPenaltyShootoutInProgress(game))
         {
             return false;
         }
 
         return !game.IsInProgress && !game.IsHalfTime && !game.Minute.HasValue;
+    }
+
+    /// <summary>
+    /// True when status indicates an active penalty shootout (not FT after pens).
+    /// </summary>
+    public static bool IsPenaltyShootoutInProgress(Game game)
+    {
+        var status = game.StatusText ?? string.Empty;
+        return status.Contains("pen", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsSameLeague(Game game, string? league)

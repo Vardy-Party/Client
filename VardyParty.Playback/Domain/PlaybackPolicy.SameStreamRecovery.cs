@@ -79,6 +79,9 @@ public static partial class PlaybackPolicy
     [
         "no m3u8",
         "decoy",
+        // Windows MediaPlayerError.SourceNotSupported / AdaptiveMediaSource
+        // "Unsupported…" statuses — before token/CDN so format death switches now.
+        "source not supported",
         "not supported",
         "unsupported",
         "decoder init",

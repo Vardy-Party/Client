@@ -13,6 +13,7 @@ public class StreamResolutionOrchestrator(
     IStreamHealthService streamHealthService,
     IStreamHealthReporter streamHealthReporter,
     ISessionIdProvider sessionIdProvider,
+    IStreamHealthClientEnvironment clientEnvironment,
     SelectionState selectionState,
     IStreamSwitchingService streamSwitchingService,
     ILogger<StreamResolutionOrchestrator> logger,
@@ -752,7 +753,11 @@ public class StreamResolutionOrchestrator(
             VideoCodec = health?.VideoCodec,
             AudioCodec = health?.AudioCodec,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            SessionId = sessionIdProvider.SessionId
+            SessionId = sessionIdProvider.SessionId,
+            ClientOs = clientEnvironment.ClientOs,
+            ClientVersion = clientEnvironment.ClientVersion,
+            LocalServiceOs = clientEnvironment.LocalServiceOs,
+            LocalServiceVersion = clientEnvironment.LocalServiceVersion
         };
 
         return streamHealthService.ReportHealthAsync(game.ApiLeague, game.Home, game.Away, report, cancellationToken);

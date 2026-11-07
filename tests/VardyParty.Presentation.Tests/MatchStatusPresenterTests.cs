@@ -192,4 +192,16 @@ public class MatchStatusPresenterTests
         Assert.Equal("Agg 1-1", MatchStatusPresenter.GetAggregateText(both));
         Assert.Null(MatchStatusPresenter.GetAggregateText(one));
     }
+
+    [Fact]
+    public void GetPenaltyText_RequiresBothSides()
+    {
+        // Arrange
+        var both = new Game { PenaltyHomeScore = 1, PenaltyAwayScore = 1 };
+        var one = new Game { PenaltyHomeScore = 3 };
+
+        // Act & Assert
+        Assert.Equal("Penalties 1-1", MatchStatusPresenter.GetPenaltyText(both));
+        Assert.Null(MatchStatusPresenter.GetPenaltyText(one));
+    }
 }

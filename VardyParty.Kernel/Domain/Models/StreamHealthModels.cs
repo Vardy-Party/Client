@@ -45,6 +45,26 @@ public class StreamHealthReport
 
     [JsonPropertyName("sessionId")]
     public string SessionId { get; set; } = string.Empty;
+
+    /// <summary>Client OS label when data collection is opted in (e.g. android, windows).</summary>
+    [JsonPropertyName("clientOs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientOs { get; set; }
+
+    /// <summary>App version when data collection is opted in.</summary>
+    [JsonPropertyName("clientVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientVersion { get; set; }
+
+    /// <summary>Paired LocalService OS when known.</summary>
+    [JsonPropertyName("localServiceOs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LocalServiceOs { get; set; }
+
+    /// <summary>Paired LocalService version when known.</summary>
+    [JsonPropertyName("localServiceVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LocalServiceVersion { get; set; }
 }
 
 public class RecommendationResponse

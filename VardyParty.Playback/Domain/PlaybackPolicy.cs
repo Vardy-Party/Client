@@ -205,7 +205,28 @@ public static partial class PlaybackPolicy
         var detail = detailMessage.ToLowerInvariant();
         return detail.Contains("403")
                || detail.Contains("401")
-               || detail.Contains("not supported", StringComparison.Ordinal);
+               || detail.Contains("source not supported", StringComparison.Ordinal)
+               || detail.Contains("not supported", StringComparison.Ordinal)
+               || detail.Contains("unsupported", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Windows <c>MediaFailed</c> → session Error text. When the OS reports
+    /// <c>SourceNotSupported</c>, the ErrorMessage is often a bare HRESULT with
+    /// no "unsupported" words — stamp the marker so <see cref="ClassifyPlaybackError"/>
+    /// returns <see cref="PlaybackErrorKind.ConfirmedDead"/> and the pool advances.
+    /// </summary>
+    public static string FormatWindowsMediaFailedMessage(
+        bool isSourceNotSupported,
+        string? errorMessage,
+        string? extendedMessage = null)
+    {
+        var errMsg = string.IsNullOrWhiteSpace(errorMessage) ? "Unknown media error" : errorMessage.Trim();
+        var ext = string.IsNullOrWhiteSpace(extendedMessage) ? string.Empty : extendedMessage.Trim();
+        var head = isSourceNotSupported
+            ? $"Media failed (source not supported): {errMsg}"
+            : $"Media failed: {errMsg}";
+        return string.IsNullOrEmpty(ext) ? head : $"{head}\n{ext}";
     }
 
     private static bool ContainsLiveWindowMarker(string? text)

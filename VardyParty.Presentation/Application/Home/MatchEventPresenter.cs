@@ -15,11 +15,12 @@ public static class MatchEventPresenter
         $"{Kind(matchEvent)} — {Fixture(matchEvent)}";
 
     /// <summary>
-    /// "GOAL" / "EXTRA TIME" / "PENALTIES"; a neutral "MATCH" for any kind
+    /// "GOAL" / "PENALTY" / "EXTRA TIME" / "PENALTIES"; a neutral "MATCH" for any kind
     /// added later, so a new event can never masquerade as an existing one.
     /// </summary>
     public static string Kind(MatchEvent matchEvent) => matchEvent.Kind switch
     {
+        MatchEventKind.Goal when IsPenaltyGoal(matchEvent) => "PENALTY",
         MatchEventKind.Goal => "GOAL",
         MatchEventKind.ExtraTime => "EXTRA TIME",
         MatchEventKind.Penalties => "PENALTIES",
@@ -46,16 +47,46 @@ public static class MatchEventPresenter
     /// <summary>
     /// "Home United 1–1 Away City" for EVERY kind - the in-player banners
     /// (Android, Windows) have always shown the score for extra time and
-    /// penalties too. Home team first, away team last.
+    /// penalties too. Home team first, away team last. Penalty-shoot-out
+    /// goals keep the regulation score and append <c>(pens H–A)</c>.
     /// </summary>
     public static string Scoreline(MatchEvent matchEvent)
     {
         var game = matchEvent.Game;
+        if (IsPenaltyGoal(matchEvent))
+        {
+            var regulationHome = game.HomeScore?.ToString() ?? "-";
+            var regulationAway = game.AwayScore?.ToString() ?? "-";
+            return $"{game.DisplayHome} {regulationHome}–{regulationAway} {game.DisplayAway} (pens {matchEvent.HomeScore}–{matchEvent.AwayScore})";
+        }
+
         return $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
     }
 
     private static string Versus(MatchEvent matchEvent) =>
         $"{matchEvent.Game.DisplayHome} v {matchEvent.Game.DisplayAway}";
+
+    /// <summary>
+    /// Detector puts shoot-out totals in <see cref="MatchEvent.HomeScore"/> /
+    /// <see cref="MatchEvent.AwayScore"/> for pen goals; match them to
+    /// <see cref="Game.PenaltyHomeScore"/> so regulation goals stay unchanged.
+    /// </summary>
+    private static bool IsPenaltyGoal(MatchEvent matchEvent)
+    {
+        if (matchEvent.Kind != MatchEventKind.Goal)
+        {
+            return false;
+        }
+
+        var game = matchEvent.Game;
+        if (!game.PenaltyHomeScore.HasValue || !game.PenaltyAwayScore.HasValue)
+        {
+            return false;
+        }
+
+        return game.PenaltyHomeScore.Value == matchEvent.HomeScore
+            && game.PenaltyAwayScore.Value == matchEvent.AwayScore;
+    }
 
     /// <summary>League name for the toast's attribution line.</summary>
     public static string LeagueName(MatchEvent matchEvent) =>

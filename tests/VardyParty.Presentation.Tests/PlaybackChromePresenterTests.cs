@@ -252,4 +252,118 @@ public class PlaybackChromePresenterTests
         // Assert
         Assert.False(called);
     }
+
+    [Theory]
+    [InlineData(PlaybackChromeContentState.Opening)]
+    [InlineData(PlaybackChromeContentState.Recovering)]
+    [InlineData(PlaybackChromeContentState.Switching)]
+    [InlineData(PlaybackChromeContentState.Error)]
+    public void SetContentState_Awaiting_ForcesNextAndHoldsToast(PlaybackChromeContentState state)
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        var info = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 2)
+            .With(i => i.Total, 5)
+            .Create();
+        sut.ApplyOverlayInfo(info);
+        sut.DismissStreamToast();
+        Assert.False(sut.IsStreamToastVisible);
+
+        // Act
+        sut.SetContentState(state);
+
+        // Assert
+        Assert.True(sut.IsAwaitingPlayableContent);
+        Assert.True(sut.IsNextForcedVisible);
+        Assert.True(sut.ShouldHoldStreamToast);
+        Assert.True(sut.IsStreamToastVisible);
+        sut.DismissStreamToast();
+        Assert.True(sut.IsStreamToastVisible);
+    }
+
+    [Fact]
+    public void SetContentState_Playing_AllowsHoverFadeAndToastDismiss()
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        var info = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 1)
+            .With(i => i.Total, 3)
+            .Create();
+        sut.ApplyOverlayInfo(info);
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        Assert.True(sut.IsNextForcedVisible);
+
+        // Act
+        sut.SetContentState(PlaybackChromeContentState.Playing);
+
+        // Assert
+        Assert.False(sut.IsAwaitingPlayableContent);
+        Assert.False(sut.IsNextForcedVisible);
+        Assert.True(sut.CanGoNext);
+        Assert.False(sut.ShouldHoldStreamToast);
+        sut.DismissStreamToast();
+        Assert.False(sut.IsStreamToastVisible);
+    }
+
+    [Fact]
+    public void IsNextForcedVisible_RequiresCanGoNext()
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        sut.NotifyHealthyCount(1);
+
+        // Act
+        sut.SetContentState(PlaybackChromeContentState.Opening);
+
+        // Assert
+        Assert.True(sut.IsAwaitingPlayableContent);
+        Assert.False(sut.IsNextForcedVisible);
+    }
+
+    [Fact]
+    public void ApplyOverlayInfo_WhileSwitching_KeepsToastVisible()
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        var first = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 1)
+            .With(i => i.Total, 4)
+            .Create();
+        sut.ApplyOverlayInfo(first);
+        Assert.True(sut.IsStreamToastVisible);
+
+        // Act — same index (no change) must still hold toast while switching
+        sut.ApplyOverlayInfo(first);
+
+        // Assert
+        Assert.True(sut.ShouldHoldStreamToast);
+        Assert.True(sut.IsStreamToastVisible);
+        Assert.True(sut.IsNextForcedVisible);
+    }
+
+    [Fact]
+    public void ShowVideoInfo_WhileSwitching_StillDismissesToast()
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        var info = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 3)
+            .With(i => i.Total, 6)
+            .Create();
+        sut.ApplyOverlayInfo(info);
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        Assert.True(sut.IsStreamToastVisible);
+
+        // Act
+        sut.ShowVideoInfo();
+
+        // Assert
+        Assert.True(sut.IsVideoInfoVisible);
+        Assert.False(sut.IsStreamToastVisible);
+        Assert.False(sut.ShouldHoldStreamToast);
+        Assert.True(sut.IsNextForcedVisible);
+    }
 }

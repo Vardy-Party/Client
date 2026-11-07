@@ -244,6 +244,8 @@ public static class MauiProgram
 #if ANDROID || WINDOWS
         builder.Services.AddSingleton<VardyParty.Ports.ISoundPreferencesStore, MauiSoundPreferencesStore>();
         builder.Services.AddSingleton<VardyParty.Ports.IDnsPreferencesStore, MauiDnsPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IStreamHealthDataCollectionPreferencesStore, MauiStreamHealthDataCollectionPreferencesStore>();
+        builder.Services.AddSingleton<VardyParty.Ports.IStreamHealthClientEnvironment, MauiStreamHealthClientEnvironment>();
         builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputePreferences, MauiRemoteComputePreferences>();
 #if ANDROID
         builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputeKeepAlive, VardyParty.Platforms.Android.AndroidRemoteComputeKeepAlive>();

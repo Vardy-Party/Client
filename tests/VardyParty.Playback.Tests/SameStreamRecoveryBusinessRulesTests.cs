@@ -40,6 +40,10 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("No m3u8 URL returned", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("[decoder init failed] MediaCodecVideoDecoderException", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Unsupported video type / format", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Media failed (source not supported): Exception from HRESULT: 0xC00D36C4", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Adaptive source failed: UnsupportedManifestContentType", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("format not supported", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("Response code: 403", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 401 Unauthorized", PlaybackErrorKind.TokenOrPlaylistInvalid)]
@@ -151,6 +155,48 @@ public class SameStreamRecoveryBusinessRulesTests
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportFailed);
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Equal(0, session.Snapshot.SameStreamRetries);
+    }
+
+    [Fact]
+    public void FormatWindowsMediaFailedMessage_StampsSourceNotSupportedMarker()
+    {
+        // Arrange
+        // Act
+        var stamped = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Exception from HRESULT: 0xC00D36C4",
+            extendedMessage: null);
+        var network = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: false,
+            errorMessage: "network blip",
+            extendedMessage: "ext");
+
+        // Assert
+        Assert.Equal("Media failed (source not supported): Exception from HRESULT: 0xC00D36C4", stamped);
+        Assert.Equal(PlaybackErrorKind.ConfirmedDead, PlaybackPolicy.ClassifyPlaybackError(stamped));
+        Assert.Equal("Media failed: network blip\next", network);
+        Assert.Equal(PlaybackErrorKind.Transient, PlaybackPolicy.ClassifyPlaybackError(network));
+    }
+
+    [Fact]
+    public void UnsupportedSource_SwitchesImmediatelyWithoutSameStreamSoak()
+    {
+        // Arrange
+        var session = Established();
+        var reason = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Exception from HRESULT: 0xC00D36C4");
+
+        // Act
+        var effects = Error(session, reason);
+
+        // Assert — SourceNotSupported is ConfirmedDead: report, remove, advance; no reload/fresh soak.
+        Assert.Equal(PlaybackErrorKind.ConfirmedDead, PlaybackPolicy.ClassifyPlaybackError(reason));
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportFailed);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RemoveCurrentFromPool);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.Attach or PlaybackEffectKind.RetryFreshResolve);
         Assert.Equal(0, session.Snapshot.SameStreamRetries);
     }
 

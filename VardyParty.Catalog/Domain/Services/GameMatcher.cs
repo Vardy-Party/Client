@@ -283,6 +283,8 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         g.AggregateHomeScore = bbc.AggregateHomeScore;
         g.AggregateAwayScore = bbc.AggregateAwayScore;
+        g.PenaltyHomeScore = bbc.PenaltyHomeScore;
+        g.PenaltyAwayScore = bbc.PenaltyAwayScore;
 
         if (!bbc.HasProgress)
         {

@@ -18,7 +18,7 @@ public enum MatchPhase
 /// <summary>
 /// Turns a <see cref="Game"/> into display strings for the homepage card:
 /// status chip (minutes / injury time / HT / FT / extra time / penalties),
-/// kick-off time, score and aggregate. Pure and unit-testable.
+/// kick-off time, score, aggregate and penalty shootout. Pure and unit-testable.
 /// </summary>
 public static partial class MatchStatusPresenter
 {
@@ -92,5 +92,10 @@ public static partial class MatchStatusPresenter
     public static string? GetAggregateText(Game game) =>
         game.AggregateHomeScore.HasValue && game.AggregateAwayScore.HasValue
             ? $"Agg {game.AggregateHomeScore}-{game.AggregateAwayScore}"
+            : null;
+
+    public static string? GetPenaltyText(Game game) =>
+        game.PenaltyHomeScore.HasValue && game.PenaltyAwayScore.HasValue
+            ? $"Penalties {game.PenaltyHomeScore}-{game.PenaltyAwayScore}"
             : null;
 }

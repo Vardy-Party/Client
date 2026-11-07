@@ -59,6 +59,56 @@ public class ScoresTickerPolicyTests
     }
 
     [Fact]
+    public void IsInPlay_IncludesPenaltyShootoutEvenWhenFinishedFlagSet()
+    {
+        // Arrange — BBC often marks FT while pens are still live
+        var pens = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 2)
+            .With(g => g.PenaltyHomeScore, 1)
+            .With(g => g.PenaltyAwayScore, 1)
+            .With(g => g.StatusText, "Penalties")
+            .Create();
+
+        // Act
+        var inPlay = ScoresTickerPolicy.IsInPlay(pens);
+        var finished = ScoresTickerPolicy.IsFinishedWithScore(pens);
+
+        // Assert
+        Assert.True(inPlay);
+        Assert.False(finished);
+    }
+
+    [Fact]
+    public void IsInPlay_CompletedPensWithFtStayFinished()
+    {
+        // Arrange — shootout over; BBC status is FT with pen scores retained
+        var afterPens = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 2)
+            .With(g => g.PenaltyHomeScore, 4)
+            .With(g => g.PenaltyAwayScore, 3)
+            .With(g => g.StatusText, "FT")
+            .Create();
+
+        // Act
+        var inPlay = ScoresTickerPolicy.IsInPlay(afterPens);
+        var finished = ScoresTickerPolicy.IsFinishedWithScore(afterPens);
+
+        // Assert
+        Assert.False(inPlay);
+        Assert.True(finished);
+    }
+
+    [Fact]
     public void IsSameLeague_TreatsBlankLeagueAsMatchAll()
     {
         // Arrange

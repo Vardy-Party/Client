@@ -23,6 +23,8 @@ public static class HomeUiServiceCollectionExtensions
         services.TryAddSingleton<IUiSoundPlayer, NullUiSoundPlayer>();
         services.TryAddSingleton<ISoundPreferencesStore, InMemorySoundPreferencesStore>();
         services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
+        services.TryAddSingleton<IStreamHealthDataCollectionPreferencesStore, InMemoryStreamHealthDataCollectionPreferencesStore>();
+        services.TryAddSingleton<StreamHealthDataCollectionPreference>();
         services.TryAddSingleton<UiSoundService>();
         services.TryAddSingleton<MatchEventNotificationPolicy>();
         services.TryAddSingleton<DnsOverHttpsPreference>();

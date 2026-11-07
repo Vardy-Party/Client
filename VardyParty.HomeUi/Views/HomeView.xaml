@@ -277,6 +277,21 @@
                                 OnColor="#34D399"
                                 VerticalOptions="Center" />
                     </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                            <Label Text="Share stream health data"
+                                   TextColor="#E5E7EB"
+                                   FontSize="15" />
+                            <Label Text="Anonymous scrape + playback reports (no account id)"
+                                   TextColor="#9CA3AF"
+                                   FontSize="12" />
+                        </VerticalStackLayout>
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding StreamHealthDataCollectionEnabled, Mode=TwoWay}"
+                                Focused="OnMenuItemFocused"
+                                OnColor="#34D399"
+                                VerticalOptions="Center" />
+                    </Grid>
                     <VerticalStackLayout Spacing="10"
                                           IsVisible="{OnPlatform Android=False, Default=True}">
                         <VerticalStackLayout Spacing="10"

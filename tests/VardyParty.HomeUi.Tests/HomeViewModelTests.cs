@@ -52,7 +52,8 @@ public sealed class HomeViewModelTests : IDisposable
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         _notifications = new MatchEventNotificationPolicy(preferences);
         var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
-        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns);
+        var health = new StreamHealthDataCollectionPreference(new InMemoryStreamHealthDataCollectionPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns, health);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
@@ -802,7 +803,8 @@ public sealed class HomeViewModelTests : IDisposable
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         var notifications = new MatchEventNotificationPolicy(preferences);
         var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
-        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns);
+        var health = new StreamHealthDataCollectionPreference(new InMemoryStreamHealthDataCollectionPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns, health);
         return new HomeViewModel(
             _filter.Object,
             menu,

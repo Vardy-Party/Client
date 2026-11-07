@@ -12,6 +12,24 @@ public enum PlaybackReportUiState
     Unavailable
 }
 
+/// <summary>
+/// Host-reported content phase used for Next / stream-toast chrome policy.
+/// Hover-near Next fade is allowed only while <see cref="Playing"/>.
+/// </summary>
+public enum PlaybackChromeContentState
+{
+    /// <summary>Picture is up; Next may fade unless the pointer is near.</summary>
+    Playing,
+    /// <summary>Source attach / Opening — no picture yet.</summary>
+    Opening,
+    /// <summary>Same-stream or soft recovery in flight.</summary>
+    Recovering,
+    /// <summary>Pool switch / auto-advance between streams.</summary>
+    Switching,
+    /// <summary>Hard error / declined until the next attach.</summary>
+    Error
+}
+
 public sealed record StreamToastModel(int Index, int Total, string? VerticalResolutionLabel)
 {
     public string Text => PlayerOverlayFormatter.FormatStreamToast(Index, Total, VerticalResolutionLabel);
@@ -63,6 +81,29 @@ public sealed class PlaybackChromePresenter
     public StreamToastModel? StreamToast { get; private set; }
     public PlaybackReportUiState ReportState { get; private set; } = PlaybackReportUiState.Idle;
     public string ReportStatusText { get; private set; } = string.Empty;
+    public PlaybackChromeContentState ContentState { get; private set; } = PlaybackChromeContentState.Playing;
+
+    /// <summary>
+    /// Opening / recovering / switching / error — user is waiting on a dead or
+    /// not-yet-playable stream.
+    /// </summary>
+    public bool IsAwaitingPlayableContent =>
+        ContentState is PlaybackChromeContentState.Opening
+            or PlaybackChromeContentState.Recovering
+            or PlaybackChromeContentState.Switching
+            or PlaybackChromeContentState.Error;
+
+    /// <summary>
+    /// Hosts must show Next at full opacity and keep it tappable when true.
+    /// Hover-near-only fade is OK only when <see cref="CanGoNext"/> and this is false.
+    /// </summary>
+    public bool IsNextForcedVisible => CanGoNext && IsAwaitingPlayableContent;
+
+    /// <summary>
+    /// While awaiting playable content, hosts must keep switch feedback visible
+    /// (no auto-hide). Video-info still suppresses the toast layer.
+    /// </summary>
+    public bool ShouldHoldStreamToast => IsAwaitingPlayableContent && !IsVideoInfoVisible;
 
     public event EventHandler? StateChanged;
     public event EventHandler<StreamToastModel>? StreamToastRequested;
@@ -70,6 +111,22 @@ public sealed class PlaybackChromePresenter
     public event EventHandler? ExitRequested;
     public event EventHandler? NextStreamRequested;
     public event EventHandler? PreviousStreamRequested;
+
+    public void SetContentState(PlaybackChromeContentState state)
+    {
+        if (ContentState == state) return;
+        ContentState = state;
+
+        if (ShouldHoldStreamToast
+            && StreamToast is { Total: > 0 }
+            && !IsStreamToastVisible)
+        {
+            IsStreamToastVisible = true;
+            StreamToastRequested?.Invoke(this, StreamToast);
+        }
+
+        RaiseStateChanged();
+    }
 
     public void ApplyOverlayInfo(PlayerOverlayInfo? info)
     {
@@ -90,10 +147,14 @@ public sealed class PlaybackChromePresenter
 
         StreamToast = toast;
 
-        if (changed && info.Total > 0 && !IsVideoInfoVisible)
+        // Show on index/total change, and keep showing while awaiting playable content
+        // so auto-switch feedback does not vanish mid-attempt.
+        if (info.Total > 0 && !IsVideoInfoVisible
+            && (changed || ShouldHoldStreamToast))
         {
             IsStreamToastVisible = true;
-            StreamToastRequested?.Invoke(this, toast);
+            if (changed)
+                StreamToastRequested?.Invoke(this, toast);
         }
 
         RaiseStateChanged();
@@ -121,8 +182,9 @@ public sealed class PlaybackChromePresenter
     public void ShowVideoInfo()
     {
         HideMenu();
-        DismissStreamToast();
+        // Mark info visible first so ShouldHoldStreamToast no longer blocks dismiss.
         IsVideoInfoVisible = true;
+        DismissStreamToast();
         RaiseStateChanged();
     }
 
@@ -256,6 +318,7 @@ public sealed class PlaybackChromePresenter
         IsMenuVisible = false;
         IsVideoInfoVisible = false;
         IsScoresVisible = false;
+        ContentState = PlaybackChromeContentState.Playing;
         DismissStreamToast();
         ClearReportStatus();
         _cleanupPool?.Invoke();
@@ -266,6 +329,12 @@ public sealed class PlaybackChromePresenter
     public void DismissStreamToast()
     {
         if (!IsStreamToastVisible)
+        {
+            return;
+        }
+
+        // Auto-hide must not clear feedback while Opening / Recovering / Switching / Error.
+        if (ShouldHoldStreamToast)
         {
             return;
         }

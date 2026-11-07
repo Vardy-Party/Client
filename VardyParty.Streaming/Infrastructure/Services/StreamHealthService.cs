@@ -5,12 +5,14 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VardyParty.Kernel;
+using VardyParty.Ports;
 
 namespace VardyParty.Streaming;
 
 public class StreamHealthService(
     HttpClient httpClient,
     IOptions<APISettings> apiSettings,
+    IStreamHealthDataCollectionPreferencesStore dataCollectionPreferences,
     ILogger<StreamHealthService> logger) : IStreamHealthService
 {
     private readonly string? _baseUrl = apiSettings.Value.HeadlessBaseUrl?.TrimEnd('/') ?? string.Empty;
@@ -72,6 +74,12 @@ public class StreamHealthService(
         StreamHealthReport report,
         CancellationToken cancellationToken = default)
     {
+        if (!dataCollectionPreferences.LoadStreamHealthDataCollectionEnabled())
+        {
+            logger.LogDebug("[StreamHealth] Skipping health report — data collection opt-in is off");
+            return;
+        }
+
         var url = $"{_baseUrl}/{Uri.EscapeDataString(league)}/{BuildMatchSegment(homeTeam, awayTeam)}/health";
 
         try

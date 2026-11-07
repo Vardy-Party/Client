@@ -116,6 +116,13 @@ public partial class LinuxHomePage
     {
         if (start)
         {
+            // Hold switch feedback for the whole Opening / Switching / Error attempt.
+            if (_playbackChrome?.ShouldHoldStreamToast == true)
+            {
+                _streamToastHideTimer?.Stop();
+                return;
+            }
+
             _streamToastHideTimer ??= CreateStreamToastHideTimer();
             _streamToastHideTimer.Stop();
             _streamToastHideTimer.Start();
@@ -179,7 +186,9 @@ public partial class LinuxHomePage
         PlaybackBufferingIndicator.IsVisible = _isPlaybackBuffering;
         PlaybackBufferingIndicator.IsRunning = _isPlaybackBuffering;
 
-        var canSwitch = chromeRevealed && chrome?.CanGoNext == true;
+        // Force Next while Opening / Recovering / Switching / Error (shared chrome policy).
+        var canSwitch = chrome?.CanGoNext == true
+            && (chromeRevealed || chrome.IsNextForcedVisible);
         PreviousStreamButton.IsVisible = canSwitch;
         NextStreamCluster.IsVisible = canSwitch;
         NextStreamHintLabel.Text = toast is null

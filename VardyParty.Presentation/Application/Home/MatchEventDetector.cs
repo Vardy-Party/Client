@@ -27,7 +27,8 @@ public enum GoalSide
 
 /// <summary>
 /// One detected match event with its scoring context. <see cref="HomeScore"/>
-/// and <see cref="AwayScore"/> are the NEW (post-event) scores.
+/// and <see cref="AwayScore"/> are the NEW (post-event) scores — regulation
+/// for open-play goals, penalty-shoot-out totals for pen goals.
 /// </summary>
 public sealed record MatchEvent(
     MatchEventKind Kind,
@@ -42,15 +43,18 @@ public sealed record MatchEvent(
 /// list, so games in hidden leagues are never observed and never fire. It
 /// reports, per update:
 /// - GOAL: a live game's observed score moved up between two updates (score
-///   corrections downwards are ignored, FT corrections are ignored);
+///   corrections downwards are ignored, FT corrections are ignored); OR a
+///   penalty-shoot-out score moved up after a prior pen scoreline was seen
+///   (BBC often keeps IsFinished/FT while pens advance);
 /// - EXTRA TIME / PENALTIES: an observed game's phase transitioned INTO
 ///   <see cref="MatchPhase.ExtraTime"/> / <see cref="MatchPhase.Penalties"/>.
 /// A game's first observation never counts (first load, a game appearing
-/// mid-match, or a league being unhidden must not fire the sting).
+/// mid-match, or a league being unhidden must not fire the sting). The first
+/// sight of a pen scoreline is also silent — only subsequent increases raise.
 /// </summary>
 public sealed class MatchEventDetector
 {
-    private readonly Dictionary<string, (int Home, int Away, MatchPhase Phase)> _observed =
+    private readonly Dictionary<string, Observation> _observed =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -77,6 +81,8 @@ public sealed class MatchEventDetector
 
             var home = game.HomeScore ?? 0;
             var away = game.AwayScore ?? 0;
+            var penHome = game.PenaltyHomeScore;
+            var penAway = game.PenaltyAwayScore;
             var phase = MatchStatusPresenter.GetPhase(game);
 
             if (_observed.TryGetValue(key, out var previous))
@@ -91,6 +97,27 @@ public sealed class MatchEventDetector
                     events.Add(new MatchEvent(MatchEventKind.Goal, game, home, away, side));
                 }
 
+                // Pen shoot-out goals: BBC often leaves IsFinished/FT on while
+                // PenaltyHome/Away advance. Require a prior pen scoreline so
+                // first sight (e.g. already 1-1) stays silent like mid-update
+                // appearance; regulation FT bumps remain gated by IsLiveForOrdering.
+                if (previous.PenHome.HasValue && previous.PenAway.HasValue
+                    && (penHome.HasValue || penAway.HasValue))
+                {
+                    var newPenHome = penHome ?? previous.PenHome.Value;
+                    var newPenAway = penAway ?? previous.PenAway.Value;
+                    var penHomeScored = newPenHome > previous.PenHome.Value;
+                    var penAwayScored = newPenAway > previous.PenAway.Value;
+                    if (penHomeScored || penAwayScored)
+                    {
+                        var side = penHomeScored && penAwayScored
+                            ? GoalSide.Both
+                            : penHomeScored ? GoalSide.Home : GoalSide.Away;
+                        events.Add(new MatchEvent(
+                            MatchEventKind.Goal, game, newPenHome, newPenAway, side));
+                    }
+                }
+
                 if (phase == MatchPhase.ExtraTime && previous.Phase != MatchPhase.ExtraTime)
                 {
                     events.Add(new MatchEvent(MatchEventKind.ExtraTime, game, home, away));
@@ -101,7 +128,7 @@ public sealed class MatchEventDetector
                 }
             }
 
-            _observed[key] = (home, away, phase);
+            _observed[key] = new Observation(home, away, penHome, penAway, phase);
         }
 
         return events;
@@ -111,4 +138,11 @@ public sealed class MatchEventDetector
     public void Reset() => _observed.Clear();
 
     private static string KeyOf(Game game) => $"{game.Home}|{game.Away}|{game.Start:O}";
+
+    private readonly record struct Observation(
+        int Home,
+        int Away,
+        int? PenHome,
+        int? PenAway,
+        MatchPhase Phase);
 }

@@ -97,9 +97,12 @@ public class MenuViewModelTests
         var prefs = _fixture.GetMock<VardyParty.Ports.ISoundPreferencesStore>();
         var dnsPrefs = _fixture.GetMock<VardyParty.Ports.IDnsPreferencesStore>();
         dnsPrefs.Setup(p => p.LoadDnsOverHttpsFallbackEnabled()).Returns(true);
+        var healthPrefs = _fixture.GetMock<VardyParty.Ports.IStreamHealthDataCollectionPreferencesStore>();
+        healthPrefs.Setup(p => p.LoadStreamHealthDataCollectionEnabled()).Returns(false);
         _fixture.Inject(new UiSoundService(player.Object, prefs.Object));
         _fixture.Inject(new MatchEventNotificationPolicy(prefs.Object));
         _fixture.Inject(new DnsOverHttpsPreference(dnsPrefs.Object));
+        _fixture.Inject(new StreamHealthDataCollectionPreference(healthPrefs.Object));
         return (player, prefs);
     }
 
