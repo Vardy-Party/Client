@@ -877,6 +877,10 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)minute)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)awayScore)
+            // AutoFixture otherwise invents random pen totals; MatchEventDetector
+            // then emits spurious IsPenaltyGoal events beside regulation goals.
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             // Fixed kickoff: the event detector keys on Home|Away|Start, so
             // refreshes of the same fixture must carry the same Start.
             .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
@@ -907,6 +911,8 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)20)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)0)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             .With(g => g.Start, kickoff)
             .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
             .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
