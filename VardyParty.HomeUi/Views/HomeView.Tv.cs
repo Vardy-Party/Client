@@ -57,6 +57,9 @@ public partial class HomeView
     private readonly List<AView> _wiredTrapItems = new();
     private AView? _wiredMenuButton;
     private HomeViewModel? _tvTrapViewModel;
+    private Java.Lang.IRunnable? _homescreenClockTick;
+    private Android.OS.Handler? _homescreenClockHandler;
+    private int _homescreenClockGeneration;
 
     partial void WireTvHeaderFocus()
     {
@@ -587,6 +590,75 @@ public partial class HomeView
         ring.SetStroke((int)(3 * density), AColor.Rgb(0xE2, 0xEC, 0xFF));
         ring.SetCornerRadius(10 * density);
         view.Foreground = ring;
+    }
+
+    partial void StartTvHomescreenClock()
+    {
+        if (!IsTelevision())
+        {
+            return;
+        }
+
+        StopTvHomescreenClock();
+        RefreshHomescreenClockText();
+
+        // Main-looper PostDelayed (not IDispatcherTimer): TV Choreographer load
+        // can starve MAUI timers. Align each tick to the next minute boundary.
+        var looper = Android.OS.Looper.MainLooper;
+        if (looper is null)
+        {
+            return;
+        }
+
+        _homescreenClockHandler = new Android.OS.Handler(looper);
+        var generation = ++_homescreenClockGeneration;
+        _homescreenClockTick = new Java.Lang.Runnable(() =>
+        {
+            if (generation != _homescreenClockGeneration)
+            {
+                return;
+            }
+
+            RefreshHomescreenClockText();
+            ScheduleHomescreenClockTick(generation);
+        });
+        ScheduleHomescreenClockTick(generation);
+    }
+
+    partial void StopTvHomescreenClock()
+    {
+        _homescreenClockGeneration++;
+        if (_homescreenClockHandler is { } handler && _homescreenClockTick is { } tick)
+        {
+            handler.RemoveCallbacks(tick);
+        }
+
+        _homescreenClockTick = null;
+        _homescreenClockHandler = null;
+    }
+
+    private void RefreshHomescreenClockText()
+    {
+        HomescreenClock.Text = MatchStatusPresenter.FormatLocalClock();
+    }
+
+    private void ScheduleHomescreenClockTick(int generation)
+    {
+        if (_homescreenClockHandler is null
+            || _homescreenClockTick is null
+            || generation != _homescreenClockGeneration)
+        {
+            return;
+        }
+
+        var now = DateTime.Now;
+        var delayMs = ((60 - now.Second) * 1000) - now.Millisecond;
+        if (delayMs < 250)
+        {
+            delayMs += 60_000;
+        }
+
+        _homescreenClockHandler.PostDelayed(_homescreenClockTick, delayMs);
     }
 
     private interface IStreamExitPass

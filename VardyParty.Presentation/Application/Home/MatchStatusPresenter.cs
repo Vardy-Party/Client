@@ -85,9 +85,21 @@ public static partial class MatchStatusPresenter
 
         var local = start.Kind == DateTimeKind.Local ? start : start.ToLocalTime();
         var today = (nowLocal ?? DateTime.Now).Date;
-        if (local.Date == today) return local.ToString("h:mm tt");
-        if (local.Date == today.AddDays(1)) return $"Tomorrow {local:h:mm tt}";
-        return local.ToString("MMM dd, h:mm tt");
+        if (local.Date == today) return FormatLocalClock(local);
+        if (local.Date == today.AddDays(1)) return $"Tomorrow {FormatLocalClock(local)}";
+        return $"{local:MMM dd}, {FormatLocalClock(local)}";
+    }
+
+    /// <summary>
+    /// Local wall-clock / same-day kick-off time: <c>h:mm tt</c> (e.g. "5:30 PM").
+    /// Used by match cards and the Android TV homescreen clock.
+    /// </summary>
+    public static string FormatLocalClock(DateTime? nowLocal = null)
+    {
+        var local = nowLocal ?? DateTime.Now;
+        if (local.Kind == DateTimeKind.Utc)
+            local = local.ToLocalTime();
+        return local.ToString("h:mm tt");
     }
 
     public static bool HasScore(Game game) => game.HomeScore.HasValue || game.AwayScore.HasValue;

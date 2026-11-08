@@ -86,37 +86,51 @@
                                FontSize="{Binding Layout.PageSubtitleFontSize}"
                                TextColor="#8A93A6" />
                     </VerticalStackLayout>
-                    <Grid Grid.Column="2" VerticalOptions="Center">
-                        <Button x:Name="MenuButton"
-                                Text="Menu"
-                                Clicked="OnMenuClicked"
-                                Focused="OnMenuItemFocused"
-                                Unfocused="OnHeaderUnfocused"
-                                BackgroundColor="#1C2333"
-                                TextColor="#E5E7EB"
-                                CornerRadius="10"
-                                Padding="18,10"
-                                VerticalOptions="Center" />
-                        <Border HorizontalOptions="End"
-                                VerticalOptions="Start"
-                                Margin="0,-6,-6,0"
-                                Padding="0"
-                                WidthRequest="18"
-                                HeightRequest="18"
-                                BackgroundColor="#34D399"
-                                StrokeThickness="0"
-                                StrokeShape="RoundRectangle 9"
-                                IsVisible="{Binding HasUpdateAvailable}"
-                                InputTransparent="True">
-                            <Label Text="★"
-                                   FontSize="10"
-                                   TextColor="#0B0F1A"
-                                   HorizontalOptions="Center"
-                                   VerticalOptions="Center"
-                                   HorizontalTextAlignment="Center"
-                                   VerticalTextAlignment="Center" />
-                        </Border>
-                    </Grid>
+                    <HorizontalStackLayout Grid.Column="2"
+                                           Spacing="18"
+                                           VerticalOptions="Center">
+                        <!-- Android TV only: wall clock in the same h:mm tt form as
+                             same-day kick-off chips, so unstarted games are easy to
+                             compare. Hidden on phone/desktop via Layout.IsTv. -->
+                        <Label x:Name="HomescreenClock"
+                               FontSize="{Binding Layout.PageTitleFontSize}"
+                               FontAttributes="Bold"
+                               TextColor="#E5E7EB"
+                               VerticalOptions="Center"
+                               InputTransparent="True"
+                               IsVisible="{Binding Layout.IsTv}" />
+                        <Grid VerticalOptions="Center">
+                            <Button x:Name="MenuButton"
+                                    Text="Menu"
+                                    Clicked="OnMenuClicked"
+                                    Focused="OnMenuItemFocused"
+                                    Unfocused="OnHeaderUnfocused"
+                                    BackgroundColor="#1C2333"
+                                    TextColor="#E5E7EB"
+                                    CornerRadius="10"
+                                    Padding="18,10"
+                                    VerticalOptions="Center" />
+                            <Border HorizontalOptions="End"
+                                    VerticalOptions="Start"
+                                    Margin="0,-6,-6,0"
+                                    Padding="0"
+                                    WidthRequest="18"
+                                    HeightRequest="18"
+                                    BackgroundColor="#34D399"
+                                    StrokeThickness="0"
+                                    StrokeShape="RoundRectangle 9"
+                                    IsVisible="{Binding HasUpdateAvailable}"
+                                    InputTransparent="True">
+                                <Label Text="★"
+                                       FontSize="10"
+                                       TextColor="#0B0F1A"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Center"
+                                       HorizontalTextAlignment="Center"
+                                       VerticalTextAlignment="Center" />
+                            </Border>
+                        </Grid>
+                    </HorizontalStackLayout>
                 </Grid>
 
                 <views:ErrorBannerView Text="{Binding ErrorMessage}"
