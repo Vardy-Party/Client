@@ -428,6 +428,21 @@ namespace VardyParty.Platforms.Android
             });
         }
 
+        /// <summary>
+        /// Sit behind the live edge so ExoPlayer can actually fill a buffer. LoadControl
+        /// only loads around the playhead; on live HLS there is nothing ahead of the edge,
+        /// so without this target offset <c>BufferedPercentage</c> stays near 0% and brief
+        /// stalls become BehindLiveWindow. Matches Windows <c>DesiredLiveOffset</c>.
+        /// </summary>
+        private static void ApplyLiveBackoff(AndroidX.Media3.Common.MediaItem.Builder builder)
+        {
+            var targetMs = PlaybackPolicy.DesiredLiveOffsetSeconds * 1000L;
+            var live = new AndroidX.Media3.Common.MediaItem.LiveConfiguration.Builder()
+                .SetTargetOffsetMs(targetMs)!
+                .Build();
+            builder.SetLiveConfiguration(live);
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
@@ -512,6 +527,7 @@ namespace VardyParty.Platforms.Android
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
                             headerBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                            ApplyLiveBackoff(headerBuilder);
                             var headerItem = headerBuilder.Build()
                                 ?? throw new InvalidOperationException("MediaItem.Build returned null.");
                             var headerSource = mediaSourceFactory.CreateMediaSource(headerItem)
@@ -528,8 +544,9 @@ namespace VardyParty.Platforms.Android
                             }
 
                             _logger?.LogInformation(
-                                "[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory)",
-                                m3u8Url);
+                                "[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory, liveOffset={Offset}s)",
+                                m3u8Url,
+                                PlaybackPolicy.DesiredLiveOffsetSeconds);
                             return;
                         }
                         catch (Exception ex)
@@ -551,6 +568,7 @@ namespace VardyParty.Platforms.Android
                         var fallbackBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                         fallbackBuilder.SetUri(m3u8Url);
                         fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                        ApplyLiveBackoff(fallbackBuilder);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
                         var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter))

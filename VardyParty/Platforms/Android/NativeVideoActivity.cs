@@ -345,8 +345,9 @@ namespace VardyParty.Platforms.Android
             _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;
 
             // Basic UI: PlayerView with overlay.
-            // Larger buffers reduce BehindLiveWindow on flaky live HLS (Linux LibVLC uses network-caching + reconnect).
-            // Durations live in PlaybackPolicy next to DesiredLiveOffsetSeconds for cross-OS parity tests.
+            // LoadControl sizes the download window around the playhead. Live backoff
+            // (sitting ~DesiredLiveOffsetSeconds behind the edge) is set per MediaItem
+            // in AttachEngine — without that, BufferedPercentage sits near 0% on live HLS.
             var loadControl = new DefaultLoadControl.Builder()
                 .SetBufferDurationsMs(
                     PlaybackPolicy.AndroidMinBufferMs,
@@ -1649,9 +1650,11 @@ namespace VardyParty.Platforms.Android
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
-                    // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
-                    if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
-                        _activity._behindLiveWindowRecoveries = 0;
+                    // Do NOT zero _behindLiveWindowRecoveries here. Soft live-edge
+                    // recover always returns to READY; resetting on READY made every
+                    // BehindLiveWindow look like attempt 1/5 forever (Bravia stop/start
+                    // thrash). Budget resets only on a new attach generation — same as
+                    // Windows soft-reattach (see PlaybackPolicy.MaxLiveHlsRecoveries).
                     _activity._anticipatingToken = false;
                     _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));

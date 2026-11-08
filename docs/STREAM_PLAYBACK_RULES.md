@@ -133,7 +133,7 @@ Android duplicates this in `NativeVideoActivity.CanSwitchTo`. Windows uses local
 
 ExoPlayer facts go through `DelegatingMediaEngine` → `PlaybackSessionController`. The activity executes `PlaybackCommand` (pool remove, attach, buffering report). Null `OnPlayerErrorChanged` is ignored (`ShouldIgnoreClearedEngineError`). Playback ended does not auto-next.
 
-**Soft live-HLS recover (host-local, before Error):** On `BehindLiveWindow` (`PlaybackPolicy.IsBehindLiveWindowFailure` / Media3 error code 1002), the host seeks to the live edge and `Prepare`s without raising `MediaEngineEvent.Error`. Attempts are capped by `PlaybackPolicy.MaxLiveHlsRecoveries` (shared with Windows). Budget resets on intentional attach generation change and on `STATE_READY`. After the budget is exhausted, the host escalates via `MediaEngineEvent.Error` → pool remove / advance (same session path as any hard failure).
+**Soft live-HLS recover (host-local, before Error):** On `BehindLiveWindow` (`PlaybackPolicy.IsBehindLiveWindowFailure` / Media3 error code 1002), the host seeks to the live edge and `Prepare`s without raising `MediaEngineEvent.Error`. Attempts are capped by `PlaybackPolicy.MaxLiveHlsRecoveries` (shared with Windows). Budget resets only on intentional attach generation change — **not** on `STATE_READY` (READY always follows a soft recover; zeroing there made every stall look like attempt 1/5 forever and thrash stop/start on Bravia). After the budget is exhausted, the host escalates via `MediaEngineEvent.Error` → pool remove / advance (same session path as any hard failure).
 
 **Brief rebuffer tolerance:** `DefaultLoadControl` buffer durations come from `PlaybackPolicy` (`AndroidMinBufferMs` / `AndroidMaxBufferMs` / `AndroidBufferForPlaybackMs` / `AndroidBufferForPlaybackAfterRebufferMs`), paired with Windows `DesiredLiveOffsetSeconds` and Linux `--network-caching`.
 
@@ -525,7 +525,7 @@ Found in the 31 Oct 2026 Android TV and local-service logs (UK time): a 16:35:57
 |---|---|---|
 | `ConfirmedDead` | DNS failure (`UnknownHostException`), playlist 404/410, decoy or image segment, decoder init failure, "No m3u8 URL returned" | Report and switch now |
 | `CdnUnreachable` | Connection refused, connect timeout (`SocketTimeoutException`), reset, TLS/SSL handshake, "network connection failed/timeout", HTTP 500/502/503/504 | Reload the same URL; when the budget is spent keep the row (see "CDN unreachable is never dead") |
-| `TokenOrPlaylistInvalid` | 401/403, or a playlist body that is not HLS (`#EXTM3U` missing, manifest parse error) | One fresh `/play` (no same-URL reload). If that scrape is empty after a malformed body, advance immediately — do not burn multi-minute EmptyFreshPlay loops on a black screen |
+| `TokenOrPlaylistInvalid` | 401/403, or a playlist body that is not HLS (`#EXTM3U` missing, manifest parse error) | **Malformed body + other healthy rows:** advance immediately (no fresh `/play` wait — Bravia 8 Nov 2026 Hadcrack closed to home after a black-screen scrape). **Sole row / 401/403:** one fresh `/play` (no same-URL reload). If that scrape is empty after a malformed body, advance immediately — do not burn multi-minute EmptyFreshPlay loops on a black screen |
 | `Transient` | A bare "Source error", timeouts, segment 404 | Reload the same URL once, then a fresh `/play` |
 
 Hosts must put the error-code name and cause chain into the Error message (`PlaybackPolicy.BuildEngineErrorMessage`); Android "Source error" alone classifies as Transient.

@@ -99,14 +99,16 @@ public static partial class PlaybackPolicy
     public const int MaxLiveHlsRecoveries = 5;
 
     /// <summary>
-    /// WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c> backoff from the live edge (seconds).
-    /// Larger = more tolerant of brief rebuffers (pairs with Android LoadControl buffers).
+    /// Live-edge backoff (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
+    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>. Larger = more
+    /// media held behind the edge (the only place a live buffer can exist).
     /// </summary>
     public const int DesiredLiveOffsetSeconds = 25;
 
     /// <summary>
-    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms). Pairs with
-    /// <see cref="DesiredLiveOffsetSeconds"/> / Linux <c>--network-caching</c>.
+    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms) — how much to keep
+    /// loaded around the playhead. Not a live-edge backoff; see
+    /// <see cref="DesiredLiveOffsetSeconds"/>.
     /// </summary>
     public const int AndroidMinBufferMs = 30_000;
 

@@ -127,12 +127,14 @@ public class SameStreamRecoveryBusinessRulesTests
     [Fact]
     public void MalformedPlaylist_GoesStraightToFreshPlay()
     {
-        var session = Established();
+        // Sole healthy row: still one fresh /play (multi-row cuts over immediately).
+        var session = Established(healthy: 1);
 
         var effects = Error(session, "ParserException: Input does not start with the #EXTM3U header");
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.Attach);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
     }
 
     [Fact]
@@ -313,14 +315,47 @@ public class SameStreamRecoveryBusinessRulesTests
     }
 
     [Fact]
+    public void MalformedPlaylist_WithOtherStreams_AdvancesImmediately_NoFreshWait()
+    {
+        // Arrange — Bravia 8 Nov 2026: Hadcrack non-#EXTM3U closed to home after a
+        // late fresh /play; keep the player up and cut over when the pool has peers.
+        var session = Established(healthy: 3);
+        var effects = Error(
+            session,
+            "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
+
+        // Assert — seamless: no RetryFreshResolve black-screen wait, no Close
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.CloseSession);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
+    }
+
+    [Fact]
+    public void MalformedPlaylist_SoleStream_StillTriesOneFreshPlay()
+    {
+        var session = Established(healthy: 1);
+        var first = Error(
+            session,
+            "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
+
+        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(first, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+    }
+
+    [Fact]
     public void MalformedPlaylist_ThenEmptyFreshPlay_AdvancesImmediately()
     {
         // Arrange — TV black screen 4 Nov 2026: #EXTM3U then four ~20s /play NotFounds
-        var session = Established();
+        // Sole healthy row: still one fresh /play, then advance (no EmptyFreshPlay loop).
+        var session = Established(healthy: 1);
+        session.ConfigureCycleTracking(null, null, () => true);
         var first = Error(session, "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
 
         // Act
         Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        session.SetHealthyStreamCount(3);
         var afterEmpty = session.NotifyFreshResolveUnavailable("Fresh M3U8 unavailable");
 
         // Assert — one scrape max; do not keep EmptyFreshPlay looping

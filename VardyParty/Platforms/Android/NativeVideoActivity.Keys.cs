@@ -15,6 +15,9 @@ namespace VardyParty.Platforms.Android
             {
                 if (_switching is not null)
                 {
+                    if (!TryBeginUserStreamNavigate("swipe next"))
+                        return;
+
                     bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
                     if (!wasVisible)
                     {
@@ -43,6 +46,9 @@ namespace VardyParty.Platforms.Android
             {
                 if (_switching != null)
                 {
+                    if (!TryBeginUserStreamNavigate("swipe previous"))
+                        return;
+
                     bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
                     if (!wasVisible)
                     {
@@ -63,6 +69,31 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogWarning(ex, "[NativeVideoActivity] SwipeToPreviousStream failed");
             }
+        }
+
+        long _streamNavigateAtMs;
+
+        /// <summary>
+        /// Debounce user next/previous so TV key-repeat (or a held D-pad) cannot
+        /// hop several streams in a couple of seconds. Logs the source so a
+        /// "why did it switch?" logcat has a clear UserNext line.
+        /// </summary>
+        private bool TryBeginUserStreamNavigate(string source)
+        {
+            var now = Java.Lang.JavaSystem.CurrentTimeMillis();
+            if (now - _streamNavigateAtMs < 800)
+            {
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Ignoring rapid stream navigate ({Source})",
+                    source);
+                return false;
+            }
+
+            _streamNavigateAtMs = now;
+            _logger?.LogInformation(
+                "[NativeVideoActivity] User stream navigate ({Source})",
+                source);
+            return true;
         }
 
         private void ShowSwitchStatusToast(string message)
@@ -267,8 +298,20 @@ namespace VardyParty.Platforms.Android
                         return true;
 
                     case global::Android.Views.Keycode.DpadRight:
+                        // Menu / info own focus — don't treat Right as "next stream".
+                        if (_isMenuVisible || _isInfoVisible)
+                            return false;
+
+                        // Key-repeat while holding Right used to fire UserNext every
+                        // ~40ms and jump several pool rows; only the first Down counts.
+                        if (e is { RepeatCount: > 0 })
+                            return true;
+
                         try
                         {
+                            if (!TryBeginUserStreamNavigate("D-pad Right"))
+                                return true;
+
                             bool wasVisible = _overlayContainer != null && _overlayContainer.Visibility == global::Android.Views.ViewStates.Visible;
                             if (!wasVisible)
                             {
