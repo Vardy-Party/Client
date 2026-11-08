@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using VardyParty.Kernel;
 
 namespace VardyParty.Catalog;
@@ -13,8 +14,15 @@ public enum ScoresTickerMode
 /// <summary>
 /// Shared ticker filter/cycle rules. Platforms only render.
 /// </summary>
-public static class ScoresTickerPolicy
+public static partial class ScoresTickerPolicy
 {
+    /// <summary>
+    /// Whole-token match for an active shootout. Substring <c>pen</c> is too loose
+    /// (<c>pending</c>, <c>Open</c>). Aligns with BBC emissions (<c>Penalties</c>, <c>pens</c>).
+    /// </summary>
+    [GeneratedRegex(@"\b(?:pens?|penalties)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PenaltyShootoutToken();
+
     public static ScoresTickerMode Next(ScoresTickerMode current) => current switch
     {
         ScoresTickerMode.SameLeagueInPlay => ScoresTickerMode.AllLeaguesInPlay,
@@ -30,8 +38,8 @@ public static class ScoresTickerPolicy
             return false;
         }
 
-        // BBC often leaves IsFinished true while a shootout is still live; status
-        // text with "pen" (e.g. "Penalties") marks that phase. Completed pens use FT.
+        // BBC often leaves IsFinished true while a shootout is still live; whole-token
+        // pens/penalties marks that phase. Completed pens use FT.
         if (IsPenaltyShootoutInProgress(game))
         {
             return true;
@@ -63,11 +71,13 @@ public static class ScoresTickerPolicy
 
     /// <summary>
     /// True when status indicates an active penalty shootout (not FT after pens).
+    /// Matches whole tokens only (<c>pen</c>/<c>pens</c>/<c>penalties</c>), never
+    /// substrings inside <c>pending</c> or <c>Open</c>.
     /// </summary>
     public static bool IsPenaltyShootoutInProgress(Game game)
     {
         var status = game.StatusText ?? string.Empty;
-        return status.Contains("pen", StringComparison.OrdinalIgnoreCase);
+        return PenaltyShootoutToken().IsMatch(status);
     }
 
     public static bool IsSameLeague(Game game, string? league)

@@ -108,6 +108,58 @@ public class ScoresTickerPolicyTests
         Assert.True(finished);
     }
 
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("Open")]
+    [InlineData("FT")]
+    public void IsPenaltyShootoutInProgress_FalsePositives_NotInProgress(string statusText)
+    {
+        // Arrange — substring "pen" must not force pens (pending / Open).
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.HomeScore, 1)
+            .With(g => g.AwayScore, 0)
+            .With(g => g.StatusText, statusText)
+            .Create();
+
+        // Act
+        var shootout = ScoresTickerPolicy.IsPenaltyShootoutInProgress(game);
+        var inPlay = ScoresTickerPolicy.IsInPlay(game);
+        var finished = ScoresTickerPolicy.IsFinishedWithScore(game);
+
+        // Assert
+        Assert.False(shootout);
+        Assert.False(inPlay);
+        Assert.True(finished);
+    }
+
+    [Theory]
+    [InlineData("Penalties")]
+    [InlineData("pens")]
+    [InlineData("2-2 pens")]
+    public void IsPenaltyShootoutInProgress_WholeTokens_StillMatch(string statusText)
+    {
+        // Arrange
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 2)
+            .With(g => g.StatusText, statusText)
+            .Create();
+
+        // Act
+        var shootout = ScoresTickerPolicy.IsPenaltyShootoutInProgress(game);
+
+        // Assert
+        Assert.True(shootout);
+    }
+
     [Fact]
     public void IsSameLeague_TreatsBlankLeagueAsMatchAll()
     {
