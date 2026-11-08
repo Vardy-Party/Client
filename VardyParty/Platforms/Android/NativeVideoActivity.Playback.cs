@@ -431,14 +431,17 @@ namespace VardyParty.Platforms.Android
         /// <summary>
         /// Sit behind the live edge so ExoPlayer can actually fill a buffer. LoadControl
         /// only loads around the playhead; on live HLS there is nothing ahead of the edge,
-        /// so without this target offset <c>BufferedPercentage</c> stays near 0% and brief
-        /// stalls become BehindLiveWindow. Matches Windows <c>DesiredLiveOffset</c>.
+        /// so without this target offset brief stalls become BehindLiveWindow. Matches
+        /// Windows <c>DesiredLiveOffset</c>. Min/max keep the player from drifting back
+        /// onto the tip of the window (where Media3 <c>BufferedPercentage</c> reads ~0%).
         /// </summary>
         private static void ApplyLiveBackoff(AndroidX.Media3.Common.MediaItem.Builder builder)
         {
             var targetMs = PlaybackPolicy.DesiredLiveOffsetSeconds * 1000L;
             var live = new AndroidX.Media3.Common.MediaItem.LiveConfiguration.Builder()
                 .SetTargetOffsetMs(targetMs)!
+                .SetMinOffsetMs(Math.Max(10_000L, targetMs - 10_000L))!
+                .SetMaxOffsetMs(targetMs + 15_000L)!
                 .Build();
             builder.SetLiveConfiguration(live);
         }

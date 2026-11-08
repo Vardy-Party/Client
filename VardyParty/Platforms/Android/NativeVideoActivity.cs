@@ -1656,7 +1656,20 @@ namespace VardyParty.Platforms.Android
                     // thrash). Budget resets only on a new attach generation — same as
                     // Windows soft-reattach (see PlaybackPolicy.MaxLiveHlsRecoveries).
                     _activity._anticipatingToken = false;
-                    _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
+                    try
+                    {
+                        var ahead = _activity._player?.TotalBufferedDuration ?? -1;
+                        var pct = _activity.ReadPlaybackBufferPercent();
+                        _activity._logger?.LogInformation(
+                            "[NativeVideoActivity] Player ready (bufferAhead={AheadMs}ms bufferPct={Pct} liveOffset={Offset}s)",
+                            ahead,
+                            pct,
+                            PlaybackPolicy.DesiredLiveOffsetSeconds);
+                    }
+                    catch
+                    {
+                        _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
+                    }
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Ready is not "working" on Android until a picture shows (audio-only HLS is READY too).
                     _activity.ProbeVideo();

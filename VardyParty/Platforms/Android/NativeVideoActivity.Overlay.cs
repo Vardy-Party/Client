@@ -26,6 +26,49 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }
         }
 
+        /// <summary>
+        /// Live Media3 <c>BufferedPercentage</c> collapses toward 0% even with a healthy
+        /// live-edge backoff (same trap Windows hit with <c>BufferingProgress</c>). Report
+        /// buffered-ahead vs <see cref="PlaybackPolicy.DesiredLiveOffsetSeconds"/> instead.
+        /// </summary>
+        private int? ReadPlaybackBufferPercent()
+        {
+            var player = _player;
+            if (player is null)
+                return null;
+
+            try
+            {
+                var targetMs = (double)PlaybackPolicy.DesiredLiveOffsetSeconds * 1000.0;
+                if (targetMs <= 0)
+                    targetMs = 25_000;
+
+                long aheadMs = player.TotalBufferedDuration;
+                if (aheadMs < 0 || aheadMs == AndroidX.Media3.Common.C.TimeUnset)
+                {
+                    var buffered = player.BufferedPosition;
+                    var current = player.CurrentPosition;
+                    if (buffered >= 0 && current >= 0 && buffered != AndroidX.Media3.Common.C.TimeUnset
+                        && current != AndroidX.Media3.Common.C.TimeUnset && buffered >= current)
+                    {
+                        aheadMs = buffered - current;
+                    }
+                    else
+                    {
+                        return player.BufferedPercentage;
+                    }
+                }
+
+                return (int)Math.Clamp(Math.Round(100.0 * aheadMs / targetMs), 0, 100);
+            }
+            catch (Exception ex)
+            {
+                LogIgnored("ReadPlaybackBufferPercent", ex);
+                try { return player.BufferedPercentage; }
+                catch { return null; }
+            }
+        }
+
         private PlayerOverlayInfo? BuildOverlayInfoFromCurrentStream()
         {
             try
@@ -47,7 +90,7 @@ namespace VardyParty.Platforms.Android
                         : current.Stream?.Resolution ?? current.Health?.Resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
-                    BufferPercent = _player?.BufferedPercentage,
+                    BufferPercent = ReadPlaybackBufferPercent(),
                     FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                     VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
                     AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
