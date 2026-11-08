@@ -298,8 +298,9 @@ namespace VardyParty.Platforms.Android
                         return true;
 
                     case global::Android.Views.Keycode.DpadRight:
-                        // Menu / info own focus — don't treat Right as "next stream".
-                        if (_isMenuVisible || _isInfoVisible)
+                        // Menu owns focus for item navigation. Video-info is display-only —
+                        // Right must still advance the stream (user keeps the panel open).
+                        if (_isMenuVisible)
                             return false;
 
                         // Key-repeat while holding Right used to fire UserNext every
@@ -326,7 +327,7 @@ namespace VardyParty.Platforms.Android
 
                             ShowSwitchFeedbackToast(switched, next: true);
 
-                            if (wasVisible)
+                            if (wasVisible || _isInfoVisible)
                             {
                                 ShowOverlayAnimated();
                                 if (!_overlayLocked) ScheduleHideOverlay();

@@ -1039,7 +1039,7 @@ namespace VardyParty.Platforms.Android
                         "[NativeVideoActivity] Switching player to fresh one-shot URL {Url} Referer={Referer}",
                         url,
                         _refererUrl ?? "(none)");
-                    // Scrub ends on video confirm (NoteVideoSeen) or player error.
+                    // Scrub ends on READY / video confirm / player error / 15s timeout.
                     AttachViaSession(url, usedCachedUrl: false);
                 });
             }
@@ -1055,20 +1055,65 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private Java.Lang.IRunnable? _streamSwitchScrubTimeout;
+
         private void BeginStreamSwitchOverlayScrub()
         {
             if (_streamSwitchInProgress)
                 return;
             _streamSwitchInProgress = true;
+            ScheduleStreamSwitchScrubTimeout();
             RunOnUiThread(UpdateOverlayFromCurrentStream);
         }
 
         private void EndStreamSwitchOverlayScrub()
         {
+            CancelStreamSwitchScrubTimeout();
             if (!_streamSwitchInProgress)
                 return;
             _streamSwitchInProgress = false;
             RunOnUiThread(UpdateOverlayFromCurrentStream);
+        }
+
+        /// <summary>
+        /// AttachCached can sit in BUFFERING with no READY/first-frame; without a
+        /// deadline the overlay stays on "Switching" and hides Buffer % forever.
+        /// </summary>
+        private void ScheduleStreamSwitchScrubTimeout()
+        {
+            try
+            {
+                CancelStreamSwitchScrubTimeout();
+                var handler = _overlayHandler;
+                if (handler is null)
+                    return;
+                _streamSwitchScrubTimeout = new Java.Lang.Runnable(() =>
+                {
+                    try
+                    {
+                        if (!_streamSwitchInProgress)
+                            return;
+                        _logger?.LogWarning(
+                            "[NativeVideoActivity] Switch overlay scrub timed out — clearing Switching status");
+                        EndStreamSwitchOverlayScrub();
+                    }
+                    catch (Exception ex) { LogIgnored("StreamSwitchScrubTimeout", ex); }
+                });
+                handler.PostDelayed(_streamSwitchScrubTimeout, 15_000);
+            }
+            catch (Exception ex) { LogIgnored("ScheduleStreamSwitchScrubTimeout", ex); }
+        }
+
+        private void CancelStreamSwitchScrubTimeout()
+        {
+            try
+            {
+                var runnable = _streamSwitchScrubTimeout;
+                _streamSwitchScrubTimeout = null;
+                if (runnable != null)
+                    RemoveCallback(_overlayHandler, runnable);
+            }
+            catch (Exception ex) { LogIgnored("CancelStreamSwitchScrubTimeout", ex); }
         }
 
         private CancellationToken ReplaceAttachLifetimeToken()
@@ -1447,15 +1492,17 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var format = _player?.VideoFormat;
-                if (format != null && format.Bitrate > 0)
-                {
-                    metrics.BitrateKbps = format.Bitrate / 1000;
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps");
-                }
+                // Same precedence as Windows video-info + health: transfer meter first,
+                // then declared format bitrate (HLS often leaves Format.Bitrate unset / -1).
+                int? encodingKbps = format is { Bitrate: > 0 } ? format.Bitrate / 1000 : null;
+                metrics.BitrateKbps = MeasuredBitrate.ResolveKbps(
+                    encodingKbps,
+                    amsBitsPerSecond: 0,
+                    _transferMeter.BitrateKbps);
+                if (metrics.BitrateKbps is int kbps)
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {kbps} kbps (format={encodingKbps?.ToString() ?? "n/a"} meter={_transferMeter.BitrateKbps?.ToString() ?? "n/a"})");
                 else
-                {
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0})");
-                }
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0}, meter: n/a)");
 
                 // Extract codec information from video format
                 if (format != null)
@@ -1656,6 +1703,10 @@ namespace VardyParty.Platforms.Android
                     // thrash). Budget resets only on a new attach generation — same as
                     // Windows soft-reattach (see PlaybackPolicy.MaxLiveHlsRecoveries).
                     _activity._anticipatingToken = false;
+                    // Scrub ("Status: Switching") must not wait for first frame — AttachCached
+                    // can buffer forever with no picture, leaving the overlay stuck on Switching
+                    // and hiding Buffer %. Video-confirmed still reports via NoteVideoSeen.
+                    _activity.EndStreamSwitchOverlayScrub();
                     try
                     {
                         var ahead = _activity._player?.TotalBufferedDuration ?? -1;

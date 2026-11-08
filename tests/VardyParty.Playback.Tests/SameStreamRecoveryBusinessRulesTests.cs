@@ -47,6 +47,8 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("Response code: 403", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 401 Unauthorized", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("HTTP 442", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("Media failed (source not supported): Unknown media error Forbidden (403). (0x80190193)", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
@@ -173,12 +175,18 @@ public class SameStreamRecoveryBusinessRulesTests
             isSourceNotSupported: false,
             errorMessage: "network blip",
             extendedMessage: "ext");
+        var forbidden = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Unknown media error Forbidden (403). (0x80190193)");
 
         // Assert
         Assert.Equal("Media failed (source not supported): Exception from HRESULT: 0xC00D36C4", stamped);
         Assert.Equal(PlaybackErrorKind.ConfirmedDead, PlaybackPolicy.ClassifyPlaybackError(stamped));
         Assert.Equal("Media failed: network blip\next", network);
         Assert.Equal(PlaybackErrorKind.Transient, PlaybackPolicy.ClassifyPlaybackError(network));
+        // WinRT maps HTTP 403 → SourceNotSupported; keep it as a token reject, not format death.
+        Assert.Equal("Media failed: Unknown media error Forbidden (403). (0x80190193)", forbidden);
+        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(forbidden));
     }
 
     [Fact]

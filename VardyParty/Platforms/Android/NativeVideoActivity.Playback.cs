@@ -255,23 +255,40 @@ namespace VardyParty.Platforms.Android
                 return false;
             }
 
-            if (_player == null)
+            if (_player == null || string.IsNullOrWhiteSpace(_m3u8Url))
                 return false;
 
             _behindLiveWindowRecoveries++;
             PlayedSegmentMemory.ArmTrimOnce();
-            _logger?.LogWarning(
-                "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
-                _behindLiveWindowRecoveries,
-                PlaybackPolicy.MaxLiveHlsRecoveries);
+
+            var stuckPlaylist = PlaybackPolicy.IsStuckLivePlaylistFailure(
+                error.Message,
+                DescribeCauses(error));
 
             try
             {
-                // The live-edge seek is a position discontinuity and a new prepare: forget position history and let
-                // the tracker derive Buffering (and the Started signal) from the player instead of latching it by hand.
+                // Position discontinuity / new prepare: forget history and let the tracker
+                // derive Buffering (and Started) from the player instead of latching by hand.
                 _isPreparing = true;
                 _playerFaulted = false;
                 _statusTracker.Reset();
+
+                if (stuckPlaylist)
+                {
+                    // Seek alone cannot unstick a frozen media playlist — rebuild the
+                    // MediaSource so ExoPlayer reloads it (same attach generation / budget).
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Live HLS stall — reloading playlist (attempt {Attempt}/{Max})",
+                        _behindLiveWindowRecoveries,
+                        PlaybackPolicy.MaxLiveHlsRecoveries);
+                    AttachEngine(_m3u8Url);
+                    return true;
+                }
+
+                _logger?.LogWarning(
+                    "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
+                    _behindLiveWindowRecoveries,
+                    PlaybackPolicy.MaxLiveHlsRecoveries);
 
                 _player.SeekToDefaultPosition();
                 _player.Prepare();
@@ -432,15 +449,16 @@ namespace VardyParty.Platforms.Android
         /// Sit behind the live edge so ExoPlayer can actually fill a buffer. LoadControl
         /// only loads around the playhead; on live HLS there is nothing ahead of the edge,
         /// so without this target offset brief stalls become BehindLiveWindow. Matches
-        /// Windows <c>DesiredLiveOffset</c>. Min/max keep the player from drifting back
-        /// onto the tip of the window (where Media3 <c>BufferedPercentage</c> reads ~0%).
+        /// Windows <c>DesiredLiveOffset</c>. Target prefers
+        /// <see cref="PlaybackPolicy.DesiredLiveOffsetSeconds"/>; min stays low (3s) so
+        /// short CDN sliding windows remain playable instead of thrashing BehindLiveWindow.
         /// </summary>
         private static void ApplyLiveBackoff(AndroidX.Media3.Common.MediaItem.Builder builder)
         {
             var targetMs = PlaybackPolicy.DesiredLiveOffsetSeconds * 1000L;
             var live = new AndroidX.Media3.Common.MediaItem.LiveConfiguration.Builder()
                 .SetTargetOffsetMs(targetMs)!
-                .SetMinOffsetMs(Math.Max(10_000L, targetMs - 10_000L))!
+                .SetMinOffsetMs(3_000L)!
                 .SetMaxOffsetMs(targetMs + 15_000L)!
                 .Build();
             builder.SetLiveConfiguration(live);

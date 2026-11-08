@@ -79,22 +79,31 @@ namespace VardyParty.Platforms.Android
                     return null;
                 }
 
+                var measuredResolution = _videoWidth is > 0 && _videoHeight is > 0
+                    ? $"{_videoWidth}x{_videoHeight}"
+                    : null;
+                var resolution = measuredResolution
+                    ?? current.Stream?.Resolution
+                    ?? current.Health?.Resolution;
+                // Match Windows: MeasuredBitrate so video-info and /health share one number.
+                var bitrateKbps = MeasuredBitrate.ResolveKbps(
+                    current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
+                    amsBitsPerSecond: 0,
+                    _transferMeter.BitrateKbps);
                 return new PlayerOverlayInfo
                 {
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
                     Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
-                    BitrateKbps = _transferMeter.BitrateKbps ?? current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                    Resolution = _videoWidth is > 0 && _videoHeight is > 0
-                        ? $"{_videoWidth}x{_videoHeight}"
-                        : current.Stream?.Resolution ?? current.Health?.Resolution,
+                    BitrateKbps = bitrateKbps,
+                    Resolution = resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
                     BufferPercent = ReadPlaybackBufferPercent(),
                     FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                     VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
                     AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
-                    AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                    AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution),
                     Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream)
                 };
             }

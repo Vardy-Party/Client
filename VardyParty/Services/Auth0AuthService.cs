@@ -39,8 +39,7 @@ public class Auth0AuthService : Auth0TokenSession
         // BuildBrowserCallbackHtml (same as Linux) and brings the app forward.
         Logger.LogInformation("[Auth0] Windows — using loopback browser PKCE");
         return await LoginViaLoopbackPkceAsync(cancellationToken);
-#endif
-
+#else
         try
         {
             var client = BuildAuth0Client(Settings);
@@ -110,6 +109,7 @@ public class Auth0AuthService : Auth0TokenSession
             Logger.LogError(ex, "[Auth0] Interactive login failed");
             return new AuthLoginResult(false, null, ex.Message);
         }
+#endif
     }
 
     private static bool LooksLikeRedirectionCheckFailure(string? message) =>

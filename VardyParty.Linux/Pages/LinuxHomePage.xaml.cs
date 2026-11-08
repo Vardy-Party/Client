@@ -739,25 +739,34 @@ public partial class LinuxHomePage : ContentPage
 
         try
         {
-            // Prefer system-browser PKCE (loopback) whenever a browser can open —
-            // including when shared secrets still use the MAUI vardyparty:// scheme.
-            // Device-code + QR is the fallback for headless / no-browser hosts.
-            ShowBrowserSignInWaiting();
-            var interactive = await _authLogin.LoginInteractiveAsync(_authCts.Token);
-            if (interactive.IsSuccess && !string.IsNullOrWhiteSpace(interactive.AccessToken))
+            // Prefer system-browser PKCE (loopback) on native Linux with a real
+            // browser. WSL and headless hosts use device-code + QR — a Windows
+            // browser cannot complete the distro loopback callback.
+            AuthLoginResult? interactive = null;
+            if (!LinuxPlatformProbe.IsWsl)
             {
-                OnSignedIn();
-                return;
+                ShowBrowserSignInWaiting();
+                interactive = await _authLogin.LoginInteractiveAsync(_authCts.Token);
+                if (interactive.IsSuccess && !string.IsNullOrWhiteSpace(interactive.AccessToken))
+                {
+                    OnSignedIn();
+                    return;
+                }
+
+                if (!string.Equals(interactive.Error, LinuxAuthService.BrowserUnavailableError, StringComparison.Ordinal))
+                {
+                    if (!string.IsNullOrWhiteSpace(interactive.Error))
+                        SetAuthStatus(interactive.Error);
+                    return;
+                }
+
+                _logger.LogInformation("[LinuxHome] Browser unavailable; falling back to device-code sign-in");
+            }
+            else
+            {
+                _logger.LogInformation("[LinuxHome] WSL — device-code + QR sign-in (no loopback browser PKCE)");
             }
 
-            if (!string.Equals(interactive.Error, LinuxAuthService.BrowserUnavailableError, StringComparison.Ordinal))
-            {
-                if (!string.IsNullOrWhiteSpace(interactive.Error))
-                    SetAuthStatus(interactive.Error);
-                return;
-            }
-
-            _logger.LogInformation("[LinuxHome] Browser unavailable; falling back to device-code sign-in");
             SetAuthStatus("No browser available — use the code below on another device.");
 
             var deviceLogin = await _authLogin.StartDeviceLoginAsync(_authCts.Token);

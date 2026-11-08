@@ -338,11 +338,43 @@ public partial class LinuxHomePage
             return null;
         }
 
-        return PlayerOverlayFormatter.BuildOverlayInfo(
+        var info = PlayerOverlayFormatter.BuildOverlayInfo(
             current,
             _switching.GetCurrentStreamIndex(),
             _switching.GetHealthyStreams().Count,
             current.Referer);
+        if (info is null)
+            return null;
+
+        // Same as Android/Windows: prefer live player metrics over find-phase health.
+        var linux = _videoPlayer as LinuxVideoPlayerService;
+        var metrics = linux?.GetCurrentMetrics();
+        if (metrics is null)
+            return info;
+
+        var resolution = metrics.Resolution is { } size
+            ? $"{size.Width}x{size.Height}"
+            : info.Resolution;
+        var bitrateKbps = MeasuredBitrate.ResolveKbps(
+            info.BitrateKbps,
+            amsBitsPerSecond: 0,
+            metrics.BitrateKbps);
+        return new PlayerOverlayInfo
+        {
+            Index = info.Index,
+            Total = info.Total,
+            Channel = info.Channel,
+            BitrateKbps = bitrateKbps,
+            Resolution = resolution,
+            FrameRate = metrics.Framerate ?? info.FrameRate,
+            VideoCodec = metrics.VideoCodec ?? info.VideoCodec,
+            AudioCodec = metrics.AudioCodec ?? info.AudioCodec,
+            AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution) ?? info.AspectRatio,
+            BufferPercent = linux?.BufferPercent ?? info.BufferPercent,
+            M3u8Url = info.M3u8Url,
+            RefererUrl = info.RefererUrl,
+            Title = info.Title
+        };
     }
 
     private void RefreshScoresTickerText()
