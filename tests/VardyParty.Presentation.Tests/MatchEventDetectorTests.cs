@@ -40,6 +40,19 @@ public class MatchEventDetectorTests
         return game;
     }
 
+    /// <summary>
+    /// BBC-style shoot-out: FT chip / finished flag with a separate Penalties N-N line.
+    /// </summary>
+    private static Game FinishedWithPens(
+        string home, string away, int homeScore, int awayScore, int penHome, int penAway)
+    {
+        var game = FinishedGame(home, away, homeScore, awayScore);
+        game.StatusText = "FT";
+        game.PenaltyHomeScore = penHome;
+        game.PenaltyAwayScore = penAway;
+        return game;
+    }
+
     [Fact]
     public void Observe_FirstLoad_NeverRaises()
     {
@@ -66,6 +79,7 @@ public class MatchEventDetectorTests
         // Assert
         var goal = Assert.Single(events);
         Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.False(goal.IsPenaltyGoal);
         Assert.Equal("Home United", goal.Game.Home);
         Assert.Equal(1, goal.HomeScore);
         Assert.Equal(0, goal.AwayScore);
@@ -432,5 +446,98 @@ public class MatchEventDetectorTests
 
         // Assert
         Assert.Empty(events);
+    }
+
+    [Fact]
+    public void Observe_PenaltyScoreIncreaseOnFinishedGame_RaisesGoalHome()
+    {
+        // Arrange: FT 2-2 with Penalties 0-0 already seen; home converts.
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 0, 0) });
+
+        // Act
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 1, 0) });
+
+        // Assert
+        var goal = Assert.Single(events);
+        Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.True(goal.IsPenaltyGoal);
+        Assert.Equal(GoalSide.Home, goal.ScoringSide);
+        Assert.Equal(1, goal.HomeScore);
+        Assert.Equal(0, goal.AwayScore);
+    }
+
+    [Fact]
+    public void Observe_PenaltyScoreIncreaseOnFinishedGame_RaisesGoalAway()
+    {
+        // Arrange: home already scored from the spot; away equalises.
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 1, 0) });
+
+        // Act
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 1, 1) });
+
+        // Assert
+        var goal = Assert.Single(events);
+        Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.True(goal.IsPenaltyGoal);
+        Assert.Equal(GoalSide.Away, goal.ScoringSide);
+        Assert.Equal(1, goal.HomeScore);
+        Assert.Equal(1, goal.AwayScore);
+    }
+
+    [Fact]
+    public void Observe_FirstSightAlreadyInPenalties_DoesNotRaise()
+    {
+        // Arrange & Act: app opens mid-shoot-out at Penalties 2-1.
+        var sut = new MatchEventDetector();
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 1, 1, 2, 1) });
+
+        // Assert
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void Observe_PenaltyScoreCorrectionDownwards_DoesNotRaise()
+    {
+        // Arrange: a retake or board correction drops a pen.
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 2, 1) });
+
+        // Act
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 1, 1) });
+
+        // Assert
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public void Observe_FirstAppearanceOfPenScoreline_DoesNotRaise()
+    {
+        // Arrange: game was tracked through ET; first pen scoreline arrives already 1-0.
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { ExtraTimeGame("Home United", "Away City", 2, 2) });
+
+        // Act
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 2, 2, 1, 0) });
+
+        // Assert: establish baseline only — no goal until a later increase.
+        Assert.DoesNotContain(events, e => e.Kind == MatchEventKind.Goal);
+    }
+
+    [Fact]
+    public void Observe_BothPenaltyScoresMoveInOneGap_ReportsBothSides()
+    {
+        // Arrange
+        var sut = new MatchEventDetector();
+        sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 1, 1, 0, 0) });
+
+        // Act
+        var events = sut.Observe(new[] { FinishedWithPens("Home United", "Away City", 1, 1, 1, 1) });
+
+        // Assert
+        var goal = Assert.Single(events);
+        Assert.Equal(MatchEventKind.Goal, goal.Kind);
+        Assert.Equal(GoalSide.Both, goal.ScoringSide);
     }
 }

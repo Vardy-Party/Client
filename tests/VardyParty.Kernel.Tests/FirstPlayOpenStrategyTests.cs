@@ -33,8 +33,8 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanStart_MpHarvestProbeReady_UseExisting_NoPartnerWarm()
     {
-        // Arrange — /mp already streamed playlist + rewritten segments to the client.
-        var mp = MpHarvest("Channel MP Alpha", "http://oak-lane.m3u8");
+        // Arrange — /mp already streamed playlist + rewritten segments; token still comfortable.
+        var mp = MpHarvest("Channel MP Alpha", M3u8TokenExpiryTests.UzhiUrl);
         var fb = Soak("Channel East");
 
         // Act
@@ -43,6 +43,21 @@ public class FirstPlayOpenStrategyTests
         // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.UseExisting, plan.Kind);
         Assert.Null(plan.PartnerToWarm);
+    }
+
+    [Fact]
+    public void PlanStart_MpHarvestUnreadableExpiry_ResolveRecommendedOpenFirst()
+    {
+        // Arrange — unreadable /mp harvest without UnusedResolvedUrl must not AttachCached forever.
+        var mp = MpHarvest("Channel MP Alpha", "http://oak-lane.m3u8");
+        var fb = Soak("Channel East");
+
+        // Act
+        var plan = FirstPlayOpenStrategy.PlanStart(mp, [mp, fb], Now);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
+        Assert.Same(fb, plan.PartnerToWarm);
     }
 
     [Fact]
@@ -249,14 +264,27 @@ public class FirstPlayOpenStrategyTests
     [Fact]
     public void PlanNextPrepare_MpHarvestCanReuse_AttachAsIs()
     {
-        // Arrange
-        var next = MpHarvest("Channel MP Beta", "http://oak-lane.m3u8");
+        // Arrange — long-lived harvest URL still has MinComfortableLife.
+        var next = MpHarvest("Channel MP Beta", M3u8TokenExpiryTests.UzhiUrl);
 
         // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
 
         // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
+    }
+
+    [Fact]
+    public void PlanNextPrepare_MpHarvestUnreadableExpiry_ClearAndResolveFresh()
+    {
+        // Arrange — unreadable harvest without UnusedResolvedUrl forces a fresh /play.
+        var next = MpHarvest("Channel MP Beta", "http://oak-lane.m3u8");
+
+        // Act
+        var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ClearAndResolveFresh, kind);
     }
 
     [Fact]

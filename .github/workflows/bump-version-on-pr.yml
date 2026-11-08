@@ -17,12 +17,27 @@ permissions:
   pull-requests: read
 
 jobs:
+  # When every job is skipped, GitHub marks the workflow run failed (red X on
+  # Actions). Automation / version-bump PRs must still report success.
+  skip-automation:
+    name: Skip ApplicationVersion sync
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name != github.repository
+          || github.event.pull_request.user.login == 'github-actions[bot]'
+          || startsWith(github.head_ref, 'ci/increment-application-version-')
+          || startsWith(github.head_ref, 'ci/bump-display-version-')
+          || startsWith(github.event.pull_request.title, 'ci:') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No ApplicationVersion sync for fork / bot / ci:* automation PRs."
+
   bump:
     name: Set ApplicationVersion on feature branch
     if: >-
       ${{ github.event.pull_request.head.repo.full_name == github.repository
           && github.event.pull_request.user.login != 'github-actions[bot]'
           && !startsWith(github.head_ref, 'ci/increment-application-version-')
+          && !startsWith(github.head_ref, 'ci/bump-display-version-')
           && !startsWith(github.event.pull_request.title, 'ci:') }}
     runs-on: ubuntu-latest
     steps:

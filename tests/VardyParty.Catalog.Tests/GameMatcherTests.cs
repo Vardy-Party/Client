@@ -433,7 +433,12 @@ namespace VardyParty.Catalog.Tests
                     AfterExtraTime = false,
                     PenaltyWinner = string.Empty,
                     PenaltyWinnerGoals = null,
-                    PenaltyLoserGoals = null
+                    PenaltyLoserGoals = null,
+                    // Explicit: AutoFixture otherwise invents random pen totals on
+                    // BbcFixture, which Enrich would pass through when winner prose
+                    // is absent (live-pens path).
+                    PenaltyHomeScore = null,
+                    PenaltyAwayScore = null
                 }
             };
             var matcher = _fixture.Create<GameMatcher>();
@@ -860,7 +865,9 @@ namespace VardyParty.Catalog.Tests
                     PenaltyWinnerGoals = null,
                     PenaltyLoserGoals = null,
                     AggregateHomeScore = 5,
-                    AggregateAwayScore = 3
+                    AggregateAwayScore = 3,
+                    PenaltyHomeScore = 4,
+                    PenaltyAwayScore = 3
                 }
             };
             var matcher = _fixture.Create<GameMatcher>();
@@ -872,6 +879,8 @@ namespace VardyParty.Catalog.Tests
             var g = games.First();
             Assert.Equal(5, g.AggregateHomeScore);
             Assert.Equal(3, g.AggregateAwayScore);
+            Assert.Equal(4, g.PenaltyHomeScore);
+            Assert.Equal(3, g.PenaltyAwayScore);
             Assert.Equal(1, g.HomeScore);
             Assert.Equal(0, g.AwayScore);
         }

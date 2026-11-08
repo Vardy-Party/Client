@@ -8,6 +8,9 @@ using System.Net;
 using System.Text;
 using VardyParty.Auth;
 using VardyParty.Hosting;
+#if WINDOWS
+using VardyParty.Platforms.Windows;
+#endif
 
 namespace VardyParty;
 
@@ -30,12 +33,13 @@ public class Auth0AuthService : Auth0TokenSession
         await EnsureTokenReadyAsync(cancellationToken, forceRefresh: false);
         if (HasValidToken) return new AuthLoginResult(true, AccessToken, null);
 
-        if (!MauiProgram.IsWindowsPackaged)
-        {
-            Logger.LogInformation("[Auth0] Unpackaged Windows — using loopback browser PKCE");
-            return await LoginViaLoopbackPkceAsync(cancellationToken);
-        }
-
+#if WINDOWS
+        // Packaged WebAuthenticator uses vardyparty:// — Auth0 never navigates to a page we
+        // control, so the browser stays on the consent screen. Loopback PKCE serves
+        // BuildBrowserCallbackHtml (same as Linux) and brings the app forward.
+        Logger.LogInformation("[Auth0] Windows — using loopback browser PKCE");
+        return await LoginViaLoopbackPkceAsync(cancellationToken);
+#else
         try
         {
             var client = BuildAuth0Client(Settings);
@@ -45,19 +49,6 @@ public class Auth0AuthService : Auth0TokenSession
             try
             {
                 Logger.LogInformation("[Auth0] Calling LoginAsync with audience: {Audience}", Settings.Audience);
-#if WINDOWS
-                // LoginAsync uses Auth0's Windows WebAuthenticator, which throws if this
-                // was not recorded for THIS process. Call it again immediately before
-                // the browser opens (Launch activations return false; the flag is set).
-                try
-                {
-                    _ = Auth0.OidcClient.Platforms.Windows.Activator.Default.CheckRedirectionActivation();
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "[Auth0] CheckRedirectionActivation before LoginAsync failed");
-                }
-#endif
                 loginResult = await client.LoginAsync(new { audience = Settings.Audience }, cancellationToken);
                 Logger.LogInformation("[Auth0] LoginAsync returned. IsError: {IsError}, Error: {Error}",
                     loginResult.IsError, loginResult.Error);
@@ -80,7 +71,7 @@ public class Auth0AuthService : Auth0TokenSession
                 if (LooksLikeRedirectionCheckFailure(loginResult.Error))
                 {
                     Logger.LogWarning(
-                        "[Auth0] Packaged WebAuthenticator redirection check failed — falling back to loopback browser PKCE");
+                        "[Auth0] WebAuthenticator redirection check failed — falling back to loopback browser PKCE");
                     return await LoginViaLoopbackPkceAsync(cancellationToken);
                 }
 
@@ -104,12 +95,13 @@ public class Auth0AuthService : Auth0TokenSession
             Logger.LogInformation("[Auth0] Setting token with {ExpiresIn}s expiry", expiresIn);
             await ApplyTokensAsync(loginResult.AccessToken, expiresIn, loginResult.RefreshToken);
             Logger.LogInformation("[Auth0] Token set successfully");
+            BringAppToFrontAfterBrowserLogin();
             return new AuthLoginResult(true, AccessToken, null);
         }
         catch (Exception ex) when (LooksLikeRedirectionCheckFailure(ex.Message))
         {
             Logger.LogWarning(ex,
-                "[Auth0] Packaged WebAuthenticator failed redirection check — falling back to loopback browser PKCE");
+                "[Auth0] WebAuthenticator failed redirection check — falling back to loopback browser PKCE");
             return await LoginViaLoopbackPkceAsync(cancellationToken);
         }
         catch (Exception ex)
@@ -117,6 +109,7 @@ public class Auth0AuthService : Auth0TokenSession
             Logger.LogError(ex, "[Auth0] Interactive login failed");
             return new AuthLoginResult(false, null, ex.Message);
         }
+#endif
     }
 
     private static bool LooksLikeRedirectionCheckFailure(string? message) =>
@@ -219,14 +212,24 @@ public class Auth0AuthService : Auth0TokenSession
             if (callbackFailure != null)
                 return new AuthLoginResult(false, null, callbackFailure);
 
-            return await CompleteAuthorizationCodeAsync(
+            var result = await CompleteAuthorizationCodeAsync(
                 callback.Code!, redirectUri.ToString(), pkce.CodeVerifier, cancellationToken);
+            if (result.IsSuccess)
+                BringAppToFrontAfterBrowserLogin();
+            return result;
         }
         catch (HttpListenerException ex)
         {
             Logger.LogWarning(ex, "[Auth0] Loopback listener failed at {Redirect}", redirectUri);
             return new AuthLoginResult(false, null, "Could not open a browser for Auth0 login.");
         }
+    }
+
+    private static void BringAppToFrontAfterBrowserLogin()
+    {
+#if WINDOWS
+        WindowsAppForeground.BringMainWindowToFront();
+#endif
     }
 
     private static bool OpenSystemBrowser(string url)
@@ -267,16 +270,19 @@ public class Auth0AuthService : Auth0TokenSession
 
             var context = await getContextTask;
             var query = context.Request.QueryString;
-            var html = string.IsNullOrWhiteSpace(query["error"])
-                ? "<html><body><h2>Login complete</h2><p>You can close this tab and return to VardyParty.</p></body></html>"
-                : "<html><body><h2>Login failed</h2><p>You can close this tab and return to VardyParty.</p></body></html>";
+            var success = string.IsNullOrWhiteSpace(query["error"]);
+            var html = Auth0Pkce.BuildBrowserCallbackHtml(success);
 
             var responseBuffer = Encoding.UTF8.GetBytes(html);
-            context.Response.StatusCode = string.IsNullOrWhiteSpace(query["error"]) ? 200 : 400;
+            context.Response.StatusCode = success ? 200 : 400;
             context.Response.ContentType = "text/html; charset=utf-8";
             context.Response.ContentLength64 = responseBuffer.Length;
             await context.Response.OutputStream.WriteAsync(responseBuffer, cancellationToken);
             context.Response.OutputStream.Close();
+
+            // Focus as soon as Auth0 hits the callback — don't wait for token exchange.
+            if (success)
+                BringAppToFrontAfterBrowserLogin();
 
             return new LoopbackCallback(query["code"], query["state"], query["error"], query["error_description"]);
         }

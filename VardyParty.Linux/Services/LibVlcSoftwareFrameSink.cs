@@ -46,6 +46,21 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
         _cleanup = OnCleanup;
     }
 
+    /// <summary>
+    /// Latest software-present size (may be WSL-capped). Prefer Media track
+    /// geometry for health / video-info when available.
+    /// </summary>
+    public (int Width, int Height)? LastFrameSize
+    {
+        get
+        {
+            lock (_bufferGate)
+            {
+                return _width > 0 && _height > 0 ? (_width, _height) : null;
+            }
+        }
+    }
+
     public void Attach(MediaPlayer player)
     {
         ArgumentNullException.ThrowIfNull(player);

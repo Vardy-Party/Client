@@ -52,6 +52,15 @@ public class LinuxAuthService : Auth0TokenSession
         if (string.IsNullOrWhiteSpace(Settings.ClientId) || string.IsNullOrWhiteSpace(Settings.Domain))
             return new AuthLoginResult(false, null, DescribeMissingAuth0DeviceConfig());
 
+        // WSL: xdg-open / wslview may "succeed" but Auth0's callback is loopback inside
+        // the distro — a Windows browser cannot complete PKCE. Device-code + QR instead.
+        if (LinuxPlatformProbe.IsWsl)
+        {
+            Logger.LogInformation(
+                "[Auth0/Linux] WSL detected — skipping browser loopback PKCE (use device-code + QR)");
+            return new AuthLoginResult(false, null, BrowserUnavailableError);
+        }
+
         var redirectUri = Auth0Pkce.ResolveLinuxBrowserRedirectUri(
             Settings.RedirectUri,
             Settings.LoopbackRedirectUri);
@@ -278,6 +287,12 @@ public class LinuxAuthService : Auth0TokenSession
 
     private bool OpenBrowser(string url)
     {
+        if (LinuxPlatformProbe.IsWsl)
+        {
+            Logger.LogInformation("[Auth0/Linux] Refusing browser launch under WSL (loopback PKCE unreachable)");
+            return false;
+        }
+
         if (OperatingSystem.IsWindows())
         {
             try
@@ -338,12 +353,11 @@ public class LinuxAuthService : Auth0TokenSession
 
             var context = await getContextTask;
             var query = context.Request.QueryString;
-            var html = string.IsNullOrWhiteSpace(query["error"])
-                ? "<html><body><h2>Login complete</h2><p>You can close this tab and return to VardyParty.</p></body></html>"
-                : "<html><body><h2>Login failed</h2><p>You can close this tab and return to VardyParty.</p></body></html>";
+            var success = string.IsNullOrWhiteSpace(query["error"]);
+            var html = Auth0Pkce.BuildBrowserCallbackHtml(success);
 
             var responseBuffer = Encoding.UTF8.GetBytes(html);
-            context.Response.StatusCode = string.IsNullOrWhiteSpace(query["error"]) ? 200 : 400;
+            context.Response.StatusCode = success ? 200 : 400;
             context.Response.ContentType = "text/html; charset=utf-8";
             context.Response.ContentLength64 = responseBuffer.Length;
             await context.Response.OutputStream.WriteAsync(responseBuffer);

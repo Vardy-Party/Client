@@ -15,6 +15,7 @@ using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 using System.Text.RegularExpressions;
 
@@ -68,28 +69,44 @@ namespace VardyParty.Platforms.Windows
 
         private PlaybackMetrics? _currentMetrics;
         private MediaPlaybackItem? _currentPlaybackItem;
+        /// <summary>
+        /// Active session's transfer meter — AMS <c>CurrentDownloadBitrate</c> is often 0 when
+        /// segments are fetched via DownloadRequested; health needs the measured rate like Android.
+        /// </summary>
+        private PlaybackTransferMeter? _activeTransferMeter;
+
+        /// <summary>Declared encoding bitrate of the current item; the last-resort bitrate source.</summary>
+        private int? _encodingBitrateKbps;
+
+        internal void BindTransferMeter(PlaybackTransferMeter meter) => _activeTransferMeter = meter;
+
+        /// <summary>
+        /// Unbind only when <paramref name="meter"/> is still bound, so a closing session's cleanup
+        /// does not drop a newer session's meter.
+        /// </summary>
+        internal void UnbindTransferMeter(PlaybackTransferMeter meter)
+        {
+            if (ReferenceEquals(_activeTransferMeter, meter))
+                _activeTransferMeter = null;
+        }
 
         public PlaybackMetrics? GetCurrentMetrics()
         {
-            // Refresh bitrate from adaptive source before returning
+            // Refresh bitrate (transfer meter, AMS, encoding) before health/orchestrator samples.
             try
             {
-                if (_currentPlaybackItem != null)
-                {
-                    _logger.LogInformation($"GetCurrentMetrics: Refreshing bitrate from adaptive source...");
-                    UpdateBitrateFromAdaptiveSource(_currentPlaybackItem);
-                }
-                else
-                {
-                    _logger.LogInformation($"GetCurrentMetrics: No current playback item available");
-                }
+                UpdateBitrateFromAdaptiveSource(_currentPlaybackItem);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "GetCurrentMetrics: Failed to update bitrate");
             }
 
-            _logger.LogInformation($"GetCurrentMetrics returning: Resolution={_currentMetrics?.Resolution}, Bitrate={_currentMetrics?.BitrateKbps}, Framerate={_currentMetrics?.Framerate}");
+            _logger.LogInformation(
+                "GetCurrentMetrics returning: Resolution={Resolution}, Bitrate={Bitrate}, Framerate={Framerate}",
+                _currentMetrics?.Resolution,
+                _currentMetrics?.BitrateKbps,
+                _currentMetrics?.Framerate);
             return _currentMetrics;
         }
 

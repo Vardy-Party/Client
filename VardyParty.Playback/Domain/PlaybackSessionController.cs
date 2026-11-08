@@ -635,6 +635,19 @@ public sealed class PlaybackSessionController
         if (_hasEstablishedPlayback
             && (_recovering || _state is PlaybackSessionState.Playing or PlaybackSessionState.Buffering))
         {
+            // Non-HLS body (Hadcrack / Matchix decoy, expired playlist HTML): a
+            // same-URL reload is useless, and a fresh /play wait is a black screen
+            // (Bravia 8 Nov 2026 — closed to home after the wait). When another
+            // pool row is available, cut over now via AdvanceToNext (host uses the
+            // make-before-break Next path / AttachCached when prewarmed).
+            RefreshHealthyStreamCount();
+            if (PlaybackPolicy.IsMalformedPlaylistBody(reason)
+                && _healthyStreamCount > 1
+                && HasUntriedStream())
+            {
+                return KeepUnresolvedPlayAndMoveOn(reason);
+            }
+
             return TryRecoverSameStream(reason, kind) ?? FailEstablishedOrAdvance(reason);
         }
 

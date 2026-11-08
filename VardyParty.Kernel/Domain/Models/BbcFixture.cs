@@ -20,4 +20,6 @@ public record BbcFixture(
     int? PenaltyWinnerGoals = null,
     int? PenaltyLoserGoals = null,
     int? AggregateHomeScore = null,
-    int? AggregateAwayScore = null);
+    int? AggregateAwayScore = null,
+    int? PenaltyHomeScore = null,
+    int? PenaltyAwayScore = null);

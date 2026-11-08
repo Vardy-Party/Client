@@ -87,7 +87,13 @@ namespace VardyParty.Platforms.Windows
             private Microsoft.UI.Xaml.Controls.TextBlock reportStatusText = null!;
             private Microsoft.UI.Xaml.Controls.Border dismissSurface = null!;
             private Microsoft.UI.Xaml.Controls.Grid infoPanel = null!;
-            private Microsoft.UI.Xaml.Controls.TextBlock infoText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoGameTitleText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoStatusText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoStreamIndexText = null!;
+            private Microsoft.UI.Xaml.Controls.Border infoSourceBadge = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoSourceBadgeText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoQualityText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoDetailText = null!;
             private WinButton infoCloseButton = null!;
             private Microsoft.UI.Xaml.Controls.StackPanel streamInfoPanel = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock streamCountText = null!;
@@ -128,6 +134,11 @@ namespace VardyParty.Platforms.Windows
             private readonly List<CancellationTokenSource> retiredPlaybackDownloads = new();
             private CancellationTokenSource playbackDownloadsCts = new();
             private TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowClosingEventArgs>? appWindowClosingHandler;
+            /// <summary>Window bounds before entering AppWindow FullScreen — restored on the next double-click.</summary>
+            private global::Windows.Graphics.RectInt32? preFullScreenBounds;
+            /// <summary>True when the window was maximized before entering FullScreen — re-maximized on exit.</summary>
+            private bool wasMaximizedBeforeFullScreen;
+            private readonly PlaybackTransferMeter transferMeter = new();
             private bool isClosingPlayer;
             /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
             private int liveHlsRecoveries;
@@ -173,6 +184,9 @@ namespace VardyParty.Platforms.Windows
                         return;
                     }
 
+                    // Health / GetCurrentMetrics reads this for bitrate when AMS download rate is 0.
+                    _host.BindTransferMeter(transferMeter);
+
                     originalContent = nativeWindow.Content as Microsoft.UI.Xaml.UIElement;
                     playerOverlayAttached = false;
 
@@ -205,6 +219,8 @@ namespace VardyParty.Platforms.Windows
                     }
 
                     // Double-click on video surface toggles fullscreen/windowed.
+                    // AppWindow FullScreen does not remember prior size — save bounds, exit via Default
+                    // (not a fresh Overlapped presenter), then MoveAndResize after the presenter settles.
                     mediaPlayerElement.DoubleTapped += (_, e) =>
                     {
                         try
@@ -215,10 +231,64 @@ namespace VardyParty.Platforms.Windows
                             if (appWindow == null) return;
 
                             var isFullScreen = appWindow.Presenter?.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
-                            appWindow.SetPresenter(
-                                isFullScreen
-                                    ? Microsoft.UI.Windowing.AppWindowPresenterKind.Overlapped
-                                    : Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+                            if (isFullScreen)
+                            {
+                                var boundsToRestore = preFullScreenBounds;
+                                var maximizeAfterRestore = wasMaximizedBeforeFullScreen;
+                                preFullScreenBounds = null;
+                                wasMaximizedBeforeFullScreen = false;
+                                // Default re-applies the window's original OverlappedPresenter.
+                                appWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.Default);
+                                var hasBounds = boundsToRestore is { Width: > 0, Height: > 0 };
+                                if (hasBounds || maximizeAfterRestore)
+                                {
+                                    // MoveAndResize during the presenter switch is often ignored —
+                                    // apply once Default has taken effect.
+                                    var queue = nativeWindow.DispatcherQueue
+                                        ?? Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+                                    queue?.TryEnqueue(
+                                        Microsoft.UI.Dispatching.DispatcherQueuePriority.Normal,
+                                        () =>
+                                        {
+                                            try
+                                            {
+                                                if (appWindow.Presenter?.Kind
+                                                    == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen)
+                                                    return;
+                                                // Restored bounds first, so un-maximizing later returns to them.
+                                                if (boundsToRestore is { Width: > 0, Height: > 0 } bounds)
+                                                    appWindow.MoveAndResize(bounds);
+                                                if (maximizeAfterRestore)
+                                                    (appWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.Maximize();
+                                            }
+                                            catch (Exception resizeEx)
+                                            {
+                                                _host.LogIgnored("RestoreFullScreenBounds", resizeEx);
+                                            }
+                                        });
+                                }
+                            }
+                            else
+                            {
+                                // If maximized, restore first so Position/Size are the real windowed bounds.
+                                wasMaximizedBeforeFullScreen = false;
+                                if (appWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter overlapped
+                                    && overlapped.State == Microsoft.UI.Windowing.OverlappedPresenterState.Maximized)
+                                {
+                                    wasMaximizedBeforeFullScreen = true;
+                                    overlapped.Restore();
+                                }
+
+                                var pos = appWindow.Position;
+                                var size = appWindow.Size;
+                                if (size.Width > 0 && size.Height > 0)
+                                {
+                                    preFullScreenBounds = new global::Windows.Graphics.RectInt32(
+                                        pos.X, pos.Y, size.Width, size.Height);
+                                }
+
+                                appWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+                            }
                         }
                         catch (Exception ex) { _host.LogIgnored("ToggleFullScreen", ex); }
                     };
@@ -430,35 +500,37 @@ namespace VardyParty.Platforms.Windows
                     };
 
                     // Info overlay — top-right so broadcaster score bugs (usually top-left) stay visible.
+                    // Same look as Android: #99000000 panel, game title as header, sans-serif body,
+                    // smaller muted detail (status → stream → badge → quality → detail).
                     infoPanel = new Microsoft.UI.Xaml.Controls.Grid
                     {
                         HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Top,
-                        Margin = new WinThickness(0, 48, 10, 0),
-                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.85 },
-                        Padding = new WinThickness(10),
+                        Margin = new WinThickness(0, 48, 20, 0),
+                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            global::Windows.UI.Color.FromArgb(0x99, 0x00, 0x00, 0x00)),
+                        Padding = new WinThickness(8),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                        CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4),
-                        BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray),
-                        BorderThickness = new WinThickness(1),
                         MaxWidth = 420
                     };
                     infoPanel.RowDefinitions.Add(new Microsoft.UI.Xaml.Controls.RowDefinition { Height = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
                     infoPanel.RowDefinitions.Add(new Microsoft.UI.Xaml.Controls.RowDefinition { Height = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
 
-                    var infoHeader = new WinGrid { Margin = new WinThickness(0, 0, 0, 8) };
+                    // Game title is the header (Android _titleView); close sits on that row.
+                    var infoHeader = new WinGrid { Margin = new WinThickness(0, 0, 0, 2) };
                     infoHeader.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
                     infoHeader.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
 
-                    var infoTitle = new Microsoft.UI.Xaml.Controls.TextBlock
+                    infoGameTitleText = new Microsoft.UI.Xaml.Controls.TextBlock
                     {
-                        Text = "Video Info",
                         Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                        FontSize = 13,
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                        FontSize = 16,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
-                    WinGrid.SetColumn(infoTitle, 0);
+                    WinGrid.SetColumn(infoGameTitleText, 0);
 
                     infoCloseButton = new WinButton
                     {
@@ -473,20 +545,59 @@ namespace VardyParty.Platforms.Windows
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
                     WinGrid.SetColumn(infoCloseButton, 1);
-                    infoHeader.Children.Add(infoTitle);
+                    infoHeader.Children.Add(infoGameTitleText);
                     infoHeader.Children.Add(infoCloseButton);
                     WinGrid.SetRow(infoHeader, 0);
                     infoPanel.Children.Add(infoHeader);
 
-                    infoText = new Microsoft.UI.Xaml.Controls.TextBlock
+                    var infoBody = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
-                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-                        FontSize = 12
+                        Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
+                        Spacing = 0
                     };
-                    WinGrid.SetRow(infoText, 1);
-                    infoPanel.Children.Add(infoText);
+
+                    // Android uses default sans-serif (not monospace) for all video-info lines.
+                    static Microsoft.UI.Xaml.Controls.TextBlock CreateInfoLine(double fontSize, bool muted = false)
+                    {
+                        return new Microsoft.UI.Xaml.Controls.TextBlock
+                        {
+                            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                muted ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.White),
+                            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                            FontSize = fontSize,
+                            FontWeight = Microsoft.UI.Text.FontWeights.Normal
+                        };
+                    }
+
+                    infoStatusText = CreateInfoLine(12);
+                    infoStreamIndexText = CreateInfoLine(12);
+                    infoSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock
+                    {
+                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                        FontSize = 10,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                        VerticalAlignment = WinVerticalAlignment.Center
+                    };
+                    infoSourceBadge = new Microsoft.UI.Xaml.Controls.Border
+                    {
+                        Child = infoSourceBadgeText,
+                        Padding = new WinThickness(6, 1, 6, 1),
+                        CornerRadius = new Microsoft.UI.Xaml.CornerRadius(2),
+                        HorizontalAlignment = WinHorizontalAlignment.Left,
+                        Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+                        Margin = new WinThickness(0, 2, 0, 2)
+                    };
+                    infoQualityText = CreateInfoLine(12);
+                    infoDetailText = CreateInfoLine(10, muted: true);
+
+                    infoBody.Children.Add(infoStatusText);
+                    infoBody.Children.Add(infoStreamIndexText);
+                    infoBody.Children.Add(infoSourceBadge);
+                    infoBody.Children.Add(infoQualityText);
+                    infoBody.Children.Add(infoDetailText);
+                    WinGrid.SetRow(infoBody, 1);
+                    infoPanel.Children.Add(infoBody);
 
 
 
@@ -541,10 +652,13 @@ namespace VardyParty.Platforms.Windows
                             if (TryRecoverLiveHlsFailure(e))
                                 return;
 
-                            var errMsg = e?.ErrorMessage ?? "Unknown media error";
+                            var errMsg = e?.ErrorMessage;
                             var ext = string.Empty;
                             try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch (Exception ex) { _host._logger.LogWarning(ex, "Failed to read extended media error"); }
-                            var detail = $"Media failed: {errMsg}\n{ext}";
+                            var detail = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+                                isSourceNotSupported: e?.Error == MediaPlayerError.SourceNotSupported,
+                                errorMessage: errMsg,
+                                extendedMessage: ext);
                             engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, detail));
                         }
                         catch (Exception ex)
@@ -560,6 +674,7 @@ namespace VardyParty.Platforms.Windows
                         var isBuffering = playbackSession.PlaybackState == MediaPlaybackState.Buffering;
                         _host.BufferingStateChanged?.Invoke(_host, isBuffering);
                         engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, isBuffering));
+                        MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     };
 
                     mediaPlayer.PlaybackSession.PlaybackStateChanged += playbackStateChangedHandler;
@@ -659,11 +774,13 @@ namespace VardyParty.Platforms.Windows
                     streamSourceBadge.Child = streamSourceBadgeText;
                     streamInfoPanel.Children.Add(streamSourceBadge);
 
-                    // Next stream button host (button + x/y hint directly beneath)
+                    // Next stream button host (button + x/y hint directly beneath).
+                    // Right-aligned inside the hot zone so a wide hover strip does not
+                    // centre the chrome mid-window when the player is narrow.
                     nextButtonContainer = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
                         Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
-                        HorizontalAlignment = WinHorizontalAlignment.Center,
+                        HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center,
                         Spacing = 4,
                         Visibility = Microsoft.UI.Xaml.Visibility.Visible,
@@ -676,14 +793,15 @@ namespace VardyParty.Platforms.Windows
                     {
                         HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center,
-                        Width = 200,
+                        Width = 160,
                         MinHeight = 260,
-                        Padding = new WinThickness(0, 32, 48, 32),
+                        // Small right inset; keep left padding as the hover approach lane.
+                        Padding = new WinThickness(48, 32, 8, 32),
                         Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                     };
 
-                    // Next stream button — floating right-centre, inset from edge
+                    // Next stream button — flush to the right edge of the player.
                     nextButton = new WinButton
                     {
                         Content = "⏭",
@@ -694,7 +812,7 @@ namespace VardyParty.Platforms.Windows
                         BorderThickness = new WinThickness(1),
                         Padding = new WinThickness(14, 10, 14, 10),
                         CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
-                        HorizontalAlignment = WinHorizontalAlignment.Center,
+                        HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
 

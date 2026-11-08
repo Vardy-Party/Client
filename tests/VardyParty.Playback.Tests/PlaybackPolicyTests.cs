@@ -360,6 +360,8 @@ public class PlaybackPolicyTests
     [InlineData(1002, "Source error", null, true)]
     [InlineData(null, "Source error", "HlsPlaylistTracker$PlaylistStuckException", true)]
     [InlineData(2001, "Decoder init failed", null, false)]
+    [InlineData(1002, "Source error", "HTTP 442", false)]
+    [InlineData(1002, "BehindLiveWindowException HTTP 403", null, false)]
     public void IsRecoverableExoLiveHlsStall_CoversBehindLiveWindowAndPlaylistStuck(
         int? errorCode,
         string? message,
@@ -381,6 +383,7 @@ public class PlaybackPolicyTests
     [InlineData(false, false, false, false, true, null, false)]
     [InlineData(true, false, false, false, false, "HTTP 403", false)]
     [InlineData(true, false, false, false, false, "401 unauthorized", false)]
+    [InlineData(true, false, false, false, false, "HTTP 442", false)]
     [InlineData(true, true, false, false, false, null, true)]
     [InlineData(false, false, true, false, false, "format not supported", false)]
     public void IsRecoverableLiveHlsMediaFailure_MatchesWindowsSignals(
@@ -408,7 +411,7 @@ public class PlaybackPolicyTests
         Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
         Assert.Equal(30_000, PlaybackPolicy.AndroidMinBufferMs);
         Assert.Equal(60_000, PlaybackPolicy.AndroidMaxBufferMs);
-        Assert.Equal(2_500, PlaybackPolicy.AndroidBufferForPlaybackMs);
+        Assert.Equal(5_000, PlaybackPolicy.AndroidBufferForPlaybackMs);
         Assert.Equal(8_000, PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs);
     }
 }

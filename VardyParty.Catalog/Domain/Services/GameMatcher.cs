@@ -283,7 +283,19 @@ public class GameMatcher(ILogger<GameMatcher> logger) : IGameMatcher
 
         g.AggregateHomeScore = bbc.AggregateHomeScore;
         g.AggregateAwayScore = bbc.AggregateAwayScore;
-        ApplyPenaltyScores(g, bbc);
+        // Winner/loser shoot-out prose maps to home/away; otherwise pass through
+        // BBC's already-oriented PenaltyHome/Away (live pens scoreline).
+        if (bbc.PenaltyWinnerGoals is not null
+            && bbc.PenaltyLoserGoals is not null
+            && !string.IsNullOrWhiteSpace(bbc.PenaltyWinner))
+        {
+            ApplyPenaltyScores(g, bbc);
+        }
+        else
+        {
+            g.PenaltyHomeScore = bbc.PenaltyHomeScore;
+            g.PenaltyAwayScore = bbc.PenaltyAwayScore;
+        }
 
         if (!bbc.HasProgress)
         {

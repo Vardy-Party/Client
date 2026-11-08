@@ -16,11 +16,13 @@ public static class MatchEventPresenter
         $"{Kind(matchEvent)} — {Fixture(matchEvent)}";
 
     /// <summary>
-    /// "GOAL" / "EXTRA TIME" / "PENALTIES" / "FULL TIME"; a neutral "MATCH" for
-    /// any kind added later, so a new event can never masquerade as an existing one.
+    /// "GOAL" / "PENALTY" / "EXTRA TIME" / "PENALTIES" / "FULL TIME"; a neutral
+    /// "MATCH" for any kind added later, so a new event can never masquerade as
+    /// an existing one.
     /// </summary>
     public static string Kind(MatchEvent matchEvent) => matchEvent.Kind switch
     {
+        MatchEventKind.Goal when matchEvent.IsPenaltyGoal => "PENALTY",
         MatchEventKind.Goal => "GOAL",
         MatchEventKind.ExtraTime => "EXTRA TIME",
         MatchEventKind.Penalties => "PENALTIES",
@@ -48,12 +50,20 @@ public static class MatchEventPresenter
     /// <summary>
     /// "Home United 1–1 Away City" for EVERY kind - the in-player banners
     /// (Android, Windows) have always shown the score for extra time and
-    /// penalties too. Full time appends <c> (H–A pens)</c> when both shoot-out
-    /// scores are present. Home team first, away team last.
+    /// penalties too. Home team first, away team last. Penalty-shoot-out
+    /// goals keep the regulation score and append <c>(pens H–A)</c>. Full time
+    /// appends <c> (H–A pens)</c> when both shoot-out scores are present.
     /// </summary>
     public static string Scoreline(MatchEvent matchEvent)
     {
         var game = matchEvent.Game;
+        if (matchEvent.IsPenaltyGoal)
+        {
+            var regulationHome = game.HomeScore?.ToString() ?? "-";
+            var regulationAway = game.AwayScore?.ToString() ?? "-";
+            return $"{game.DisplayHome} {regulationHome}–{regulationAway} {game.DisplayAway} (pens {matchEvent.HomeScore}–{matchEvent.AwayScore})";
+        }
+
         var line = $"{game.DisplayHome} {matchEvent.HomeScore}–{matchEvent.AwayScore} {game.DisplayAway}";
         if (matchEvent.Kind == MatchEventKind.FullTime
             && game.PenaltyHomeScore is { } penHome

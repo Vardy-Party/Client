@@ -27,6 +27,8 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
     private static readonly Regex MinuteWordsRegex = new(@"(?<m>\d+)\s*minutes?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex StyledPeriodMinuteRegex = new(@"<div[^>]*>(\d+)(?:&#x27;|&#39;|')</div>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex PenaltiesWinRegex = new(@"(?<winner>[^<>\n]{1,100}?)\s+win\s+(?<w>\d+)\s*-\s*(?<l>\d+)\s+on\s+penalties", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PenaltiesScorelineRegex = new(@"Penalties\s+(?<h>\d+)\s*-\s*(?<a>\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PenaltiesHiddenScoreRegex = new(@"Penalties\s+[^0-9<>]{1,80}?(?<h>\d+)\s*,\s*[^0-9<>]{1,80}?(?<a>\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex OrdinalStatusRegex = new(@"\b\d+\s*(st|nd|rd|th)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Simple, robust regex-based parser. Keeps memory footprint low.
@@ -573,30 +575,38 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
             string penaltyWinner = string.Empty;
             int? penaltyWinnerGoals = null;
             int? penaltyLoserGoals = null;
+            int? penaltyHomeScore = null;
+            int? penaltyAwayScore = null;
 
-            // Special-state probes only when the card might contain them.
-            var maybeSpecial = !quickFt && !quickHt && hasProgressContainer && (
+            var hasPenaltiesKeyword = rangeLen > 0
+                && html.IndexOf("penalties", start, rangeLen, StringComparison.OrdinalIgnoreCase) >= 0;
+            var hasAetKeyword = rangeLen > 0
+                && html.IndexOf("After extra time", start, rangeLen, StringComparison.OrdinalIgnoreCase) >= 0;
+
+            // Special-state probes when the card might contain ET/AET/pens.
+            // Penalties must still be parsed when BBC also shows FT (shootout under a FT chip).
+            var maybeSpecial = hasProgressContainer && (
                 ContainerContains("penalt") ||
                 ContainerContains("extra time") ||
                 ContainerContains("AET") ||
                 ContainerContains(">ET<") ||
                 ProgressContains("ET") ||
                 ProgressContains("extra time") ||
-                ProgressContains("penalt"));
+                ProgressContains("penalt") ||
+                hasPenaltiesKeyword ||
+                hasAetKeyword);
 
-            if (maybeSpecial || (!quickFt && !quickHt && rangeLen > 0 &&
-                (html.IndexOf("penalties", start, rangeLen, StringComparison.OrdinalIgnoreCase) >= 0
-                 || html.IndexOf("After extra time", start, rangeLen, StringComparison.OrdinalIgnoreCase) >= 0)))
+            if (maybeSpecial || hasPenaltiesKeyword || hasAetKeyword)
             {
                 int aetIdx = html.IndexOf("After extra time", start, rangeLen, StringComparison.OrdinalIgnoreCase);
                 if (aetIdx < 0) aetIdx = html.IndexOf(">AET<", start, rangeLen, StringComparison.OrdinalIgnoreCase);
                 if (aetIdx < 0) aetIdx = html.IndexOf(">AET</", start, rangeLen, StringComparison.OrdinalIgnoreCase);
                 afterExtraTime = aetIdx >= 0;
 
-                inExtraTime = hasProgressContainer && !afterExtraTime && (ProgressContains("ET") || ProgressContains("extra time") || ContainerContains(">ET<"));
+                inExtraTime = hasProgressContainer && !afterExtraTime && !quickFt && !quickHt
+                    && (ProgressContains("ET") || ProgressContains("extra time") || ContainerContains(">ET<"));
 
-                int penIdx = html.IndexOf("penalties", start, rangeLen, StringComparison.OrdinalIgnoreCase);
-                if (penIdx >= 0)
+                if (hasPenaltiesKeyword)
                 {
                     int cappedRangeLen = Math.Min(rangeLen, 5000);
                     var blockSub = html.Substring(start, cappedRangeLen);
@@ -606,6 +616,9 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         penaltyWinner = DecodeIfNeeded(penMatch.Groups["winner"].Value.Trim());
                         penaltyWinnerGoals = TryParseInt(penMatch.Groups["w"].Value);
                         penaltyLoserGoals = TryParseInt(penMatch.Groups["l"].Value);
+                        MapPenaltyWinnerScores(
+                            home, away, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals,
+                            out penaltyHomeScore, out penaltyAwayScore);
 
                         isFinished = true;
                         isInProgress = false;
@@ -613,12 +626,19 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                         hasProgress = true;
                         status = "FT";
                     }
-                    else if (ProgressContains("penalties") || ContainerContains("penalties"))
+                    else
                     {
-                        isFinished = false;
-                        isInProgress = true;
-                        status = "Penalties";
-                        minute = null;
+                        TryParsePenaltyScoreline(
+                            progressInner, blockSub, out penaltyHomeScore, out penaltyAwayScore);
+
+                        if (ProgressContains("penalties") || ContainerContains("penalties")
+                            || penaltyHomeScore.HasValue || penaltyAwayScore.HasValue)
+                        {
+                            isFinished = false;
+                            isInProgress = true;
+                            status = "Penalties";
+                            minute = null;
+                        }
                     }
                 }
             }
@@ -721,8 +741,88 @@ public class BbcHtmlParser(ILogger<BbcHtmlParser> logger, IBbcJsonParser bbcJson
                 ? mappedKickoff
                 : DateTime.MinValue;
 
-            list.Add(new BbcFixture(home, away, kickoffUtc, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals, aggHomeScore, aggAwayScore));
+            list.Add(new BbcFixture(home, away, kickoffUtc, status, isFinished, isInProgress, isHalf, minute, homeScore, awayScore, homeBadge, awayBadge, currentLeague, hasProgress, afterExtraTime, penaltyWinner, penaltyWinnerGoals, penaltyLoserGoals, aggHomeScore, aggAwayScore, penaltyHomeScore, penaltyAwayScore));
         }
+    }
+
+    private static void TryParsePenaltyScoreline(
+        string progressInner,
+        string blockSub,
+        out int? home,
+        out int? away)
+    {
+        home = null;
+        away = null;
+
+        if (TryMatchPenaltyScoreline(progressInner, out home, out away))
+        {
+            return;
+        }
+
+        TryMatchPenaltyScoreline(blockSub, out home, out away);
+    }
+
+    private static bool TryMatchPenaltyScoreline(string text, out int? home, out int? away)
+    {
+        home = null;
+        away = null;
+        if (string.IsNullOrEmpty(text)) return false;
+
+        var scoreline = PenaltiesScorelineRegex.Match(text);
+        if (scoreline.Success)
+        {
+            home = TryParseInt(scoreline.Groups["h"].Value);
+            away = TryParseInt(scoreline.Groups["a"].Value);
+            return home.HasValue && away.HasValue;
+        }
+
+        var hidden = PenaltiesHiddenScoreRegex.Match(text);
+        if (hidden.Success)
+        {
+            home = TryParseInt(hidden.Groups["h"].Value);
+            away = TryParseInt(hidden.Groups["a"].Value);
+            return home.HasValue && away.HasValue;
+        }
+
+        return false;
+    }
+
+    private static void MapPenaltyWinnerScores(
+        string homeTeam,
+        string awayTeam,
+        string winner,
+        int? winnerGoals,
+        int? loserGoals,
+        out int? homeScore,
+        out int? awayScore)
+    {
+        homeScore = null;
+        awayScore = null;
+        if (!winnerGoals.HasValue || !loserGoals.HasValue || string.IsNullOrWhiteSpace(winner))
+        {
+            return;
+        }
+
+        if (TeamNamesMatch(winner, homeTeam))
+        {
+            homeScore = winnerGoals;
+            awayScore = loserGoals;
+        }
+        else if (TeamNamesMatch(winner, awayTeam))
+        {
+            homeScore = loserGoals;
+            awayScore = winnerGoals;
+        }
+    }
+
+    private static bool TeamNamesMatch(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+        var a = left.Trim();
+        var b = right.Trim();
+        return a.Equals(b, StringComparison.OrdinalIgnoreCase)
+               || a.Contains(b, StringComparison.OrdinalIgnoreCase)
+               || b.Contains(a, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ExtractBadges(string html, int start, int end, out string homeBadge, out string awayBadge)

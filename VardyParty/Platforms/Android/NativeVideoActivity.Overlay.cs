@@ -26,6 +26,49 @@ namespace VardyParty.Platforms.Android
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }
         }
 
+        /// <summary>
+        /// Live Media3 <c>BufferedPercentage</c> collapses toward 0% even with a healthy
+        /// live-edge backoff (same trap Windows hit with <c>BufferingProgress</c>). Report
+        /// buffered-ahead vs <see cref="PlaybackPolicy.DesiredLiveOffsetSeconds"/> instead.
+        /// </summary>
+        private int? ReadPlaybackBufferPercent()
+        {
+            var player = _player;
+            if (player is null)
+                return null;
+
+            try
+            {
+                var targetMs = (double)PlaybackPolicy.DesiredLiveOffsetSeconds * 1000.0;
+                if (targetMs <= 0)
+                    targetMs = 25_000;
+
+                long aheadMs = player.TotalBufferedDuration;
+                if (aheadMs < 0 || aheadMs == AndroidX.Media3.Common.C.TimeUnset)
+                {
+                    var buffered = player.BufferedPosition;
+                    var current = player.CurrentPosition;
+                    if (buffered >= 0 && current >= 0 && buffered != AndroidX.Media3.Common.C.TimeUnset
+                        && current != AndroidX.Media3.Common.C.TimeUnset && buffered >= current)
+                    {
+                        aheadMs = buffered - current;
+                    }
+                    else
+                    {
+                        return player.BufferedPercentage;
+                    }
+                }
+
+                return (int)Math.Clamp(Math.Round(100.0 * aheadMs / targetMs), 0, 100);
+            }
+            catch (Exception ex)
+            {
+                LogIgnored("ReadPlaybackBufferPercent", ex);
+                try { return player.BufferedPercentage; }
+                catch { return null; }
+            }
+        }
+
         private PlayerOverlayInfo? BuildOverlayInfoFromCurrentStream()
         {
             try
@@ -36,22 +79,34 @@ namespace VardyParty.Platforms.Android
                     return null;
                 }
 
+                var measuredResolution = _videoWidth is > 0 && _videoHeight is > 0
+                    ? $"{_videoWidth}x{_videoHeight}"
+                    : null;
+                var resolution = measuredResolution
+                    ?? current.Stream?.Resolution
+                    ?? current.Health?.Resolution;
+                // Match Windows: MeasuredBitrate so video-info and /health share one number.
+                var bitrateKbps = MeasuredBitrate.ResolveKbps(
+                    current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
+                    amsBitsPerSecond: 0,
+                    _transferMeter.BitrateKbps);
                 return new PlayerOverlayInfo
                 {
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
                     Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
-                    BitrateKbps = _transferMeter.BitrateKbps ?? current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
-                    Resolution = _videoWidth is > 0 && _videoHeight is > 0
-                        ? $"{_videoWidth}x{_videoHeight}"
-                        : current.Stream?.Resolution ?? current.Health?.Resolution,
+                    BitrateKbps = bitrateKbps,
+                    Resolution = resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
-                    BufferPercent = _player?.BufferedPercentage,
+                    BufferPercent = ReadPlaybackBufferPercent(),
                     FrameRate = current.Health?.FrameRate != null ? (double?)current.Health.FrameRate : null,
                     VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.VideoCodec),
                     AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(current.Health?.AudioCodec),
-                    AspectRatio = PlayerOverlayFormatter.BuildAspect(current.Stream?.Resolution ?? current.Health?.Resolution),
+                    AspectRatio = PlayerOverlayFormatter.BuildAspect(
+                        _videoWidth is > 0 && _videoHeight is > 0
+                            ? $"{_videoWidth}x{_videoHeight}"
+                            : resolution ?? current.Stream?.Resolution ?? current.Health?.Resolution),
                     Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream)
                 };
             }
@@ -97,69 +152,25 @@ namespace VardyParty.Platforms.Android
 
             _lastOverlayInfo = info;
 
-            // Top line should be game title (Home vs Away) when provided
-            var chip = info.Channel;
-            var channelFallback = chip ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
-            var statusText = _streamSwitchInProgress ? "Switching" : _playbackStateText;
-            var statusLine = $"{VardyParty.Resources.Strings.Resources.StatusLabel}: {statusText}";
-            var indexLine = info.Total > 0 ? string.Format(VardyParty.Resources.Strings.Resources.StreamIndexFormat, info.Index, info.Total) : string.Empty;
+            var channelFallback = info.Channel ?? VardyParty.Resources.Strings.Resources.UnknownChannel;
+            var current = _switching?.GetCurrentStream();
+            var model = PlayerChromeText.FromPlayback(
+                info,
+                current,
+                playbackState: _playbackStateText,
+                title: BuildOverlayGameTitle(channelFallback),
+                sourceUrl: info.M3u8Url,
+                refererUrl: info.RefererUrl,
+                bufferPercent: info.BufferPercent);
 
-            // During a switch, omit measured telemetry and URLs (previous stream would flash).
-            string qualityLabel = string.Empty;
-            if (!_streamSwitchInProgress)
-            {
-                try
-                {
-                    var current = _switching?.GetCurrentStream();
-                    if (current != null)
-                    {
-                        qualityLabel = PlayerChromeText.FormatMeasuredQuality(
-                            info.Resolution,
-                            info.BitrateKbps,
-                            current.GetQualityDisplay());
-                    }
-                }
-                catch (Exception ex) { LogIgnored("GetQualityDisplay", ex); }
-            }
-
-            var aspectRatio = _streamSwitchInProgress ? string.Empty : (info.AspectRatio ?? string.Empty);
-            var buf = !_streamSwitchInProgress && info.BufferPercent.HasValue
-                ? $"Buffer {info.BufferPercent}%"
-                : string.Empty;
-            var m3u8 = string.Empty;
-            var referer = string.Empty;
-            if (!_streamSwitchInProgress)
-            {
-                m3u8 = info.M3u8Url ?? string.Empty;
-                referer = info.RefererUrl ?? string.Empty;
-                if (!string.IsNullOrEmpty(m3u8)) m3u8 = $"Source: {PlayerOverlayFormatter.StripQuery(m3u8)}";
-                if (!string.IsNullOrEmpty(referer)) referer = $"Referer: {PlayerOverlayFormatter.RefererHost(referer)}";
-            }
-
-            if (_titleView != null) _titleView.Text = BuildOverlayGameTitle(channelFallback);
-            if (_statusView != null) _statusView.Text = statusLine;
-            if (_indexView != null) _indexView.Text = indexLine;
-            ApplySourceBadge(_switching?.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel);
-            if (_qualityView != null) _qualityView.Text = qualityLabel;
-            // Build lines: chip, then (when settled) aspect / buffer / codecs / URLs
-            var lines = new List<string>();
-            if (!string.IsNullOrWhiteSpace(chip))
-                lines.Add($"Channel: {chip}");
-            if (!string.IsNullOrEmpty(aspectRatio)) lines.Add($"Aspect ratio: {aspectRatio}");
-            if (!string.IsNullOrEmpty(buf)) lines.Add(buf);
-
-            if (!_streamSwitchInProgress)
-            {
-                var codecLineParts = new List<string>();
-                if (!string.IsNullOrEmpty(info.VideoCodec)) codecLineParts.Add($"Video: {info.VideoCodec}");
-                if (!string.IsNullOrEmpty(info.AudioCodec)) codecLineParts.Add($"Audio: {info.AudioCodec}");
-                if (codecLineParts.Count > 0) lines.Add(string.Join(" / ", codecLineParts));
-
-                if (!string.IsNullOrEmpty(m3u8)) lines.Add(m3u8);
-                if (!string.IsNullOrEmpty(referer)) lines.Add(referer);
-            }
-
-            if (_resBrView != null) _resBrView.Text = string.Join("\n", lines);
+            if (_titleView != null) _titleView.Text = model.Title ?? string.Empty;
+            if (_statusView != null) _statusView.Text = PlayerChromeText.FormatStatusLine(model, _streamSwitchInProgress);
+            if (_indexView != null) _indexView.Text = PlayerChromeText.FormatStreamIndexLine(model);
+            ApplySourceBadge(current?.Stream?.CatalogSourceBadgeLabel);
+            if (_qualityView != null)
+                _qualityView.Text = _streamSwitchInProgress ? string.Empty : (model.Quality ?? string.Empty);
+            if (_resBrView != null)
+                _resBrView.Text = PlayerChromeText.FormatVideoInfoDetail(model, _streamSwitchInProgress);
 
             // Control whether updating overlay should show it. If suppressed (e.g. switching via Right while overlay hidden),
             // update texts but do not reveal the overlay.

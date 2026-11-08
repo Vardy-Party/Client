@@ -218,6 +218,115 @@ public class ScoresTickerTextTests
         Assert.Equal("In-play games", title);
     }
 
+    [Fact]
+    public void Build_AllLeaguesInPlay_IncludesPensSuffixAndPenaltyPhaseGame()
+    {
+        // Arrange — IsFinished true (BBC quirk) but status still Penalties
+        var pens = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "League Alpha")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.HomeScore, 2)
+            .With(g => g.AwayScore, 2)
+            .With(g => g.AggregateHomeScore, (int?)null)
+            .With(g => g.AggregateAwayScore, (int?)null)
+            .With(g => g.PenaltyHomeScore, 1)
+            .With(g => g.PenaltyAwayScore, 1)
+            .With(g => g.StatusText, "Penalties")
+            .Create();
+
+        // Act
+        var snapshot = ScoresTickerText.Build(
+            ScoresTickerMode.AllLeaguesInPlay,
+            new[] { pens },
+            watchedLeague: null,
+            watchedHome: null,
+            watchedAway: null);
+
+        // Assert
+        Assert.Contains("2-2 pens 1-1", snapshot.FullText, StringComparison.Ordinal);
+        Assert.Contains("Home United", snapshot.FullText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_Finished_IncludesPensSuffixAfterShootout()
+    {
+        // Arrange
+        var finished = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "League Alpha")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.HomeScore, 1)
+            .With(g => g.AwayScore, 1)
+            .With(g => g.AggregateHomeScore, (int?)null)
+            .With(g => g.AggregateAwayScore, (int?)null)
+            .With(g => g.PenaltyHomeScore, 5)
+            .With(g => g.PenaltyAwayScore, 4)
+            .With(g => g.StatusText, "FT")
+            .Create();
+
+        // Act
+        var snapshot = ScoresTickerText.Build(
+            ScoresTickerMode.AllFinished,
+            new[] { finished },
+            watchedLeague: null,
+            watchedHome: null,
+            watchedAway: null);
+
+        // Assert
+        Assert.Contains("1-1 pens 5-4", snapshot.FullText, StringComparison.Ordinal);
+        Assert.Contains("(FT)", snapshot.FullText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_SameLeagueInPlay_IncludesPenaltyPhaseWhenFinishedFlagSet()
+    {
+        // Arrange
+        var pens = _fixture.Build<Game>()
+            .With(g => g.Home, "North Rovers")
+            .With(g => g.Away, "South Wanderers")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCLeague, "League Alpha")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.IsFinished, true)
+            .With(g => g.IsInProgress, false)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)null)
+            .With(g => g.HomeScore, 0)
+            .With(g => g.AwayScore, 0)
+            .With(g => g.AggregateHomeScore, (int?)null)
+            .With(g => g.AggregateAwayScore, (int?)null)
+            .With(g => g.PenaltyHomeScore, 2)
+            .With(g => g.PenaltyAwayScore, 1)
+            .With(g => g.StatusText, "Penalties")
+            .Create();
+
+        // Act
+        var selected = ScoresTickerText.SelectGames(
+            ScoresTickerMode.SameLeagueInPlay,
+            new[] { pens },
+            "League Alpha",
+            watchedHome: "Home United",
+            watchedAway: "Away City");
+
+        // Assert
+        Assert.Contains(pens, selected);
+    }
+
     private Game LiveGame(string league, string home, string away, int homeScore, int awayScore, int minute)
     {
         return _fixture.Build<Game>()
@@ -233,6 +342,10 @@ public class ScoresTickerTextTests
             .With(g => g.Minute, minute)
             .With(g => g.HomeScore, homeScore)
             .With(g => g.AwayScore, awayScore)
+            .With(g => g.AggregateHomeScore, (int?)null)
+            .With(g => g.AggregateAwayScore, (int?)null)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             .With(g => g.StatusText, $"{minute}'")
             .Create();
     }
@@ -251,6 +364,10 @@ public class ScoresTickerTextTests
             .With(g => g.IsHalfTime, false)
             .With(g => g.HomeScore, homeScore)
             .With(g => g.AwayScore, awayScore)
+            .With(g => g.AggregateHomeScore, (int?)null)
+            .With(g => g.AggregateAwayScore, (int?)null)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             .With(g => g.StatusText, "FT")
             .Create();
     }

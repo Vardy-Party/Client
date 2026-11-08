@@ -23,6 +23,8 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
 
         services.TryAddSingleton<LocalServiceConnection>();
         services.TryAddSingleton<IDnsPreferencesStore, InMemoryDnsPreferencesStore>();
+        services.TryAddSingleton<IStreamHealthDataCollectionPreferencesStore, InMemoryStreamHealthDataCollectionPreferencesStore>();
+        services.TryAddSingleton<IStreamHealthClientEnvironment, NullStreamHealthClientEnvironment>();
         services.TryAddSingleton<IRemoteComputePreferences, InMemoryRemoteComputePreferences>();
         services.TryAddSingleton<IRemoteComputeKeepAlive, NoopRemoteComputeKeepAlive>();
         services.AddSingleton<IRemoteComputePlay, RemoteComputePlayClient>();

@@ -225,6 +225,11 @@ public class BbcHtmlParserTests
         Assert.True(f.HasProgress);
         Assert.Contains("home-united.svg", f.HomeBadgeUrl);
         Assert.Contains("away-city.svg", f.AwayBadgeUrl);
+        Assert.Equal("Away City", f.PenaltyWinner);
+        Assert.Equal(4, f.PenaltyWinnerGoals);
+        Assert.Equal(3, f.PenaltyLoserGoals);
+        Assert.Equal(3, f.PenaltyHomeScore);
+        Assert.Equal(4, f.PenaltyAwayScore);
     }
 
     [Fact]
@@ -414,6 +419,8 @@ public class BbcHtmlParserTests
 
         Assert.Equal(2, f.HomeScore);
         Assert.Equal(2, f.AwayScore);
+        Assert.Equal(3, f.PenaltyHomeScore);
+        Assert.Equal(2, f.PenaltyAwayScore);
     }
 
     [Fact]
@@ -624,6 +631,9 @@ public class BbcHtmlParserTests
         Assert.Equal(4, f.PenaltyWinnerGoals);
         Assert.Equal(2, f.PenaltyLoserGoals);
         Assert.False(string.IsNullOrWhiteSpace(f.PenaltyWinner));
+        Assert.True(f.PenaltyHomeScore.HasValue);
+        Assert.True(f.PenaltyAwayScore.HasValue);
+        Assert.Equal(f.PenaltyWinnerGoals + f.PenaltyLoserGoals, f.PenaltyHomeScore + f.PenaltyAwayScore);
     }
 
     [Fact]
@@ -826,6 +836,8 @@ public class BbcHtmlParserTests
 
         Assert.Contains("Penalties", pen.Status, StringComparison.OrdinalIgnoreCase);
         Assert.True(pen.IsInProgress);
+        Assert.Equal(5, pen.PenaltyHomeScore);
+        Assert.Equal(4, pen.PenaltyAwayScore);
     }
 
     [Fact]

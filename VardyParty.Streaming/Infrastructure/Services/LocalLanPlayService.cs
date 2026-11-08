@@ -44,7 +44,11 @@ public class LocalLanPlayService(
     IDnsOverHttpsEndpoint? dnsEndpoint = null,
     IRemoteComputePlay? remoteCompute = null,
     LocalServiceConnection? connection = null,
-    ResolverRaceThrottle? raceThrottle = null) : ILocalLanPlayService
+    ResolverRaceThrottle? raceThrottle = null,
+    IStreamHealthDataCollectionPreferencesStore? streamHealthDataCollection = null,
+    IOptions<APISettings>? apiSettings = null,
+    SelectionState? selectionState = null,
+    IStreamHealthClientEnvironment? clientEnvironment = null) : ILocalLanPlayService
 {
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -424,6 +428,13 @@ public class LocalLanPlayService(
     /// <summary>Test seam: mark a resolve key slow, as our own <c>/play</c> timeout does.</summary>
     internal void MarkSlowForTests(string key) => _slowStreams[key] = DateTimeOffset.UtcNow;
 
+    /// <summary>Test seam: seed discovery capabilities without hitting <c>/health</c>.</summary>
+    internal void SetCapabilitiesForTests(params string[] capabilities)
+    {
+        _cachedCapabilities = capabilities ?? [];
+        _capabilitiesCachedAt = DateTimeOffset.UtcNow;
+    }
+
     /// <summary>
     /// The <c>/play</c> timeout for a resolve key: the base (at least 65s), or
     /// double it (capped at 120s) for a stream that hit our timeout in the last
@@ -779,6 +790,7 @@ public class LocalLanPlayService(
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
             ApplyDohHeaders(request);
+            ApplyScrapeHealthHeaders(request);
             request.Headers.TryAddWithoutValidation(MpNdjson.RequestHeaderName, "1");
             request.Headers.Accept.ParseAdd(MpNdjson.ContentType);
             logger.LogInformation(
@@ -1020,6 +1032,7 @@ public class LocalLanPlayService(
                 url, callTimeout.TotalSeconds);
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             ApplyDohHeaders(request);
+            ApplyScrapeHealthHeaders(request);
             var response = await httpClient.SendAsync(request, cts.Token);
             RecordServiceResponded();
             _slowStreams.TryRemove(resolveKey, out _);
@@ -1190,6 +1203,45 @@ public class LocalLanPlayService(
         var resolver = dnsEndpoint?.Address?.ToString();
         if (!string.IsNullOrWhiteSpace(resolver))
             request.Headers.TryAddWithoutValidation("X-Vardy-Doh-Resolver", resolver);
+    }
+
+    /// <summary>
+    /// Opt-in scrape-health context for LocalService. Skipped when the user has not
+    /// enabled data collection, when LS lacks <c>scrape.health</c>, or when match
+    /// / API context is missing.
+    /// </summary>
+    private void ApplyScrapeHealthHeaders(HttpRequestMessage request)
+    {
+        if (streamHealthDataCollection?.LoadStreamHealthDataCollectionEnabled() != true)
+            return;
+
+        if (!_cachedCapabilities.Any(c =>
+                string.Equals(c, "scrape.health", StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        var game = selectionState?.CurrentGame;
+        var apiBase = apiSettings?.Value.HeadlessBaseUrl?.Trim().TrimEnd('/');
+        if (game is null
+            || string.IsNullOrWhiteSpace(apiBase)
+            || string.IsNullOrWhiteSpace(game.ApiLeague)
+            || string.IsNullOrWhiteSpace(game.Home)
+            || string.IsNullOrWhiteSpace(game.Away))
+        {
+            return;
+        }
+
+        request.Headers.TryAddWithoutValidation("X-VP-Api-Base-Url", apiBase);
+        request.Headers.TryAddWithoutValidation("X-VP-League", game.ApiLeague.Trim());
+        request.Headers.TryAddWithoutValidation("X-VP-Home", game.Home.Trim());
+        request.Headers.TryAddWithoutValidation("X-VP-Away", game.Away.Trim());
+
+        var clientOs = clientEnvironment?.ClientOs;
+        if (!string.IsNullOrWhiteSpace(clientOs))
+            request.Headers.TryAddWithoutValidation("X-VP-Client-Os", clientOs);
+
+        var clientVersion = clientEnvironment?.ClientVersion;
+        if (!string.IsNullOrWhiteSpace(clientVersion))
+            request.Headers.TryAddWithoutValidation("X-VP-Client-Version", clientVersion);
     }
 
     /// <summary>

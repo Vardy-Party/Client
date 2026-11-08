@@ -360,6 +360,18 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>Settings: share anonymous stream/scrape health (opt-in, default off).</summary>
+    public bool StreamHealthDataCollectionEnabled
+    {
+        get => _menu.StreamHealthDataCollectionEnabled;
+        set
+        {
+            if (_menu.StreamHealthDataCollectionEnabled == value) return;
+            _menu.ToggleStreamHealthDataCollection();
+            Raise(nameof(StreamHealthDataCollectionEnabled));
+        }
+    }
+
     private string _remoteGuestCode = "";
     private bool _useOtherLocalService;
     private bool _localServiceFound;
