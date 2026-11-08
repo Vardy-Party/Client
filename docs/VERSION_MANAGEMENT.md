@@ -42,7 +42,8 @@ product merge that should package, or follow
 ### Build counter
 
 - On PRs: **ApplicationVersion on PR** keeps the branch counter ahead of
-  published `-bN` releases.
+  published `-bN` releases. Its Version.props commit uses `[skip ci]` so it does
+  not cancel or restart the product CI already running for that synchronize.
 - On `main` after green CI: **Increment Build Version** dispatches CD with the
   packaging `ApplicationVersion`.
 - Release **name**: `VardyParty v{display}-b{build}`  
