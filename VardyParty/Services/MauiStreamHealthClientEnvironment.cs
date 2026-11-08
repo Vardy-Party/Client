@@ -1,14 +1,19 @@
+using Microsoft.Extensions.DependencyInjection;
 using VardyParty.Ports;
 using VardyParty.Streaming;
 
 namespace VardyParty.MauiServices;
 
-/// <summary>MAUI AppInfo version plus discovered LocalService version for health reports.</summary>
-public sealed class MauiStreamHealthClientEnvironment(ILocalLanPlayService? localLanPlay = null)
+/// <summary>
+/// MAUI AppInfo version plus discovered LocalService version for health reports.
+/// Resolves <see cref="ILocalLanPlayService"/> lazily so DI does not cycle with
+/// LocalLanPlayService → IStreamHealthClientEnvironment → this type.
+/// </summary>
+public sealed class MauiStreamHealthClientEnvironment(IServiceProvider services)
     : IStreamHealthClientEnvironment
 {
     private readonly RuntimeStreamHealthClientEnvironment _runtime = new(
-        localServiceVersion: () => localLanPlay?.DiscoveredServiceVersion);
+        localServiceVersion: () => services.GetService<ILocalLanPlayService>()?.DiscoveredServiceVersion);
 
     public string? ClientOs =>
 #if ANDROID
