@@ -82,11 +82,15 @@ public class StalledFirstPlayBusinessRulesTests
         ResolverYields(ct => YieldThenBlock([first, second], blocked, ct));
         FreshPlay(first, () => Task.FromResult<M3U8Response?>(null));
 
+        // Hold the play session open until after the "testing continues" assert —
+        // an immediate UserClosed return races StartAsync completion on CI.
+        var holdPlay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var player = Player((url, _) =>
+        var player = Player(async (url, _) =>
         {
             played.TrySetResult(url);
-            return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+            await holdPlay.Task;
+            return PlaybackResult.Completed(PlaybackCloseReasons.UserClosed);
         });
 
         using var cts = new CancellationTokenSource();
@@ -96,9 +100,11 @@ public class StalledFirstPlayBusinessRulesTests
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(second.ResolvedM3U8Url, url);
-        Assert.False(blocked.Task.IsCompleted && start.IsCompleted);
+        Assert.True(blocked.Task.IsCompleted); // resolver entered hang = testing still running
+        Assert.False(start.IsCompleted); // StartAsync must not finish until play ends
         VerifyReported(first, "failed", Times.Once());
         Assert.DoesNotContain(first, _switching.GetHealthyStreams());
+        holdPlay.TrySetResult();
         await start.WaitAsync(TimeSpan.FromSeconds(5));
     }
 

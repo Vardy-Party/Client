@@ -105,11 +105,16 @@ namespace VardyParty.Platforms.Windows
                     {
                         _logger.LogInformation("Bitrate not in encoding properties (will use transfer meter / AdaptiveMediaSource)");
                     }
+
+                    metrics.VideoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(videoProps.Subtype)
+                        ?? videoProps.Subtype;
                 }
 
                 if (mediaItem.AudioTracks.Count > 0)
                 {
-                    _ = mediaItem.AudioTracks[0].GetEncodingProperties();
+                    var audioProps = mediaItem.AudioTracks[0].GetEncodingProperties();
+                    metrics.AudioCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(audioProps.Subtype)
+                        ?? audioProps.Subtype;
                 }
 
                 _currentMetrics = metrics;
@@ -142,7 +147,6 @@ namespace VardyParty.Platforms.Windows
                 _encodingBitrateKbps,
                 ams?.CurrentDownloadBitrate ?? 0,
                 meter?.BitrateKbps);
-
 
         private const string PlaybackUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
