@@ -166,7 +166,9 @@ public partial class HomeView : ContentView
         // without a later Loaded. The catalog must still be able to drain.
         // The interaction pause must not outlive its cooldown timer, or
         // staged appends could stick paused across a handler reconnect.
-        StopTvHomescreenClock();
+        // Same Unload-without-Loaded gap: do NOT StopTvHomescreenClock here —
+        // MatchCardView likewise never permanently unwires on Unloaded. The
+        // TV minute looper keeps ticking across that reconnect (HomeView.Tv).
         _stripInteractionCooldown?.Stop();
         ViewModel?.ResumeStagedStripAppends();
 #if WINDOWS

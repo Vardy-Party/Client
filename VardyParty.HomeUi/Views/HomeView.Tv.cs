@@ -619,6 +619,10 @@ public partial class HomeView
                 return;
             }
 
+            // Always refresh + reschedule: after Unload-without-Loaded,
+            // IsLoaded stays false while the view is still on screen, so an
+            // IsLoaded paint guard would freeze the clock. OnUnloaded must not
+            // StopTvHomescreenClock (same gap as MatchCardView / WorkQueued).
             RefreshHomescreenClockText();
             ScheduleHomescreenClockTick(generation);
         });
@@ -653,9 +657,12 @@ public partial class HomeView
 
         var now = DateTime.Now;
         var delayMs = ((60 - now.Second) * 1000) - now.Millisecond;
-        if (delayMs < 250)
+        // Near-boundary: keep the small positive delay so the imminent minute
+        // still fires. Only non-positive delays need a full-minute coerce —
+        // the old <250 → +=60s guard skipped that boundary (e.g. :59.800).
+        if (delayMs <= 0)
         {
-            delayMs += 60_000;
+            delayMs = 60_000;
         }
 
         _homescreenClockHandler.PostDelayed(_homescreenClockTick, delayMs);

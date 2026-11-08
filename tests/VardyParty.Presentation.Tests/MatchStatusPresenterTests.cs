@@ -145,13 +145,17 @@ public class MatchStatusPresenterTests
     [Fact]
     public void FormatLocalClock_MatchesSameDayKickoffShape()
     {
+        // Arrange: pin culture so "tt" renders the same on every runner.
         System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         var local = new DateTime(2026, 8, 26, 17, 30, 0, DateTimeKind.Local);
 
-        Assert.Equal("5:30 PM", MatchStatusPresenter.FormatLocalClock(local));
-        Assert.Equal(
-            MatchStatusPresenter.FormatLocalClock(local),
-            MatchStatusPresenter.FormatStartTime(local, local.Date.AddHours(9)));
+        // Act
+        var clock = MatchStatusPresenter.FormatLocalClock(local);
+        var sameDayKickoff = MatchStatusPresenter.FormatStartTime(local, local.Date.AddHours(9));
+
+        // Assert
+        Assert.Equal("5:30 PM", clock);
+        Assert.Equal(clock, sameDayKickoff);
     }
 
     [Fact]
