@@ -305,7 +305,7 @@ public class Auth0AuthService : Auth0TokenSession
             ClientId = settings.ClientId,
             RedirectUri = settings.RedirectUri,
             PostLogoutRedirectUri = settings.PostLogoutRedirectUri,
-            Scope = AuthTokenScopes.EnsureOfflineAccess(settings.Scope),
+            Scope = AuthTokenLifetime.EnsureOfflineAccess(settings.Scope),
             BackchannelHandler = new NonDisposingDelegatingHandler(
                 _handlerFactory.CreateHandler(Auth0HttpClients.Name))
         };
