@@ -185,21 +185,30 @@
                         </Border>
                     </Grid>
 
-                    <Label Grid.Row="0" Grid.Column="1" Grid.RowSpan="2"
-                           x:Name="ScoreLabel"
-                           Text="{Binding ScoreText}"
-                           Margin="12,0"
-                           FontSize="{Binding Layout.ScoreFontSize}"
-                           FontAttributes="Bold"
-                           TextColor="White"
-                           HorizontalTextAlignment="Center"
-                           VerticalOptions="Center">
-                        <Label.Triggers>
-                            <DataTrigger TargetType="Label" Binding="{Binding ScoreIsDim}" Value="True">
-                                <Setter Property="TextColor" Value="#8A93A6" />
-                            </DataTrigger>
-                        </Label.Triggers>
-                    </Label>
+                    <VerticalStackLayout Grid.Row="0" Grid.Column="1" Grid.RowSpan="2"
+                                         Margin="12,0"
+                                         Spacing="2"
+                                         VerticalOptions="Center"
+                                         HorizontalOptions="Center">
+                        <Label x:Name="ScoreLabel"
+                               Text="{Binding ScoreText}"
+                               FontSize="{Binding Layout.ScoreFontSize}"
+                               FontAttributes="Bold"
+                               TextColor="White"
+                               HorizontalTextAlignment="Center"
+                               VerticalOptions="Center">
+                            <Label.Triggers>
+                                <DataTrigger TargetType="Label" Binding="{Binding ScoreIsDim}" Value="True">
+                                    <Setter Property="TextColor" Value="#8A93A6" />
+                                </DataTrigger>
+                            </Label.Triggers>
+                        </Label>
+                        <Label Text="{Binding PenaltyText}"
+                               FontSize="{Binding Layout.AggregateFontSize}"
+                               TextColor="#5EEAD4"
+                               HorizontalTextAlignment="Center"
+                               IsVisible="{Binding HasPenalty}" />
+                    </VerticalStackLayout>
 
                     <Grid Grid.Row="0" Grid.Column="2"
                           WidthRequest="{Binding Layout.BadgeSize}"

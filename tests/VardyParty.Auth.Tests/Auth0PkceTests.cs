@@ -146,6 +146,25 @@ public class Auth0PkceTests
         Assert.Null(ok);
     }
 
+    [Theory]
+    [InlineData(true, "Login complete", "window.close")]
+    [InlineData(false, "Login failed", "window.close")]
+    public void BuildBrowserCallbackHtml_TriesToCloseTab(bool success, string title, string closeCall)
+    {
+        // Arrange / Act
+        var html = Auth0Pkce.BuildBrowserCallbackHtml(success);
+
+        // Assert
+        Assert.Contains(title, html, StringComparison.Ordinal);
+        Assert.Contains(closeCall, html, StringComparison.Ordinal);
+        Assert.Contains("fallback", html, StringComparison.Ordinal);
+        // API installers homepage tokens (public/installers.css)
+        Assert.Contains("#003090", html, StringComparison.Ordinal);
+        Assert.Contains("#eef2f8", html, StringComparison.Ordinal);
+        Assert.Contains("VardyParty", html, StringComparison.Ordinal);
+        Assert.Contains("class=\"card\"", html, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CompleteAuthorizationCodeAsync_WhenAccessTokenLacksRole_DoesNotPersist()
     {

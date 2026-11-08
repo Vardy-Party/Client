@@ -20,8 +20,9 @@ public readonly record struct PlaybackSwitchPlan(PlaybackSwitchKind Kind, string
 /// One-shot rows (<see cref="RequiresFreshM3u8ForPlayback"/>: soak headers or rewritten media)
 /// historically re-/played on every attach. A row may reuse its cached URL when
 /// <see cref="EnrichedStream.UnusedResolvedUrl"/> (just resolved for playback / warm take),
-/// when LocalService <c>/mp</c> already streamed a probe-ready playlist to the client
-/// (<see cref="MpRewrittenSegment.HasProbeReady"/>), or when the token expiry is readable,
+/// when LocalService <c>/mp</c> already streamed a probe-ready playlist whose token still
+/// has <see cref="MinComfortableLife"/> (or <see cref="EnrichedStream.UnusedResolvedUrl"/>
+/// for a first-use harvest with unreadable expiry), or when the token expiry is readable,
 /// more than <see cref="MinComfortableLife"/> remains, and the row is not
 /// <see cref="IsKnownSingleUse"/> (Cookie-bound FB session or a registered single-use host).
 /// Unreadable FB find-phase expiry stays on the fresh path.
@@ -164,9 +165,10 @@ public static class PlaybackUrlReusePolicy
         if (stream.UnusedResolvedUrl)
             return true;
 
-        // /mp harvest already delivered playlist + rewritten media for client playback.
+        // /mp harvest: only reuse while the token still has comfortable life. Unreadable
+        // expiry needs UnusedResolvedUrl (handled above) so stale harvests do not AttachCached forever.
         if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
-            return true;
+            return HasComfortableLife(stream.ResolvedM3U8Url, now);
 
         return !IsKnownSingleUse(stream) && HasComfortableLife(stream.ResolvedM3U8Url, now);
     }
@@ -197,10 +199,11 @@ public static class PlaybackUrlReusePolicy
 
             if (MpRewrittenSegment.HasProbeReady(current.RewrittenSegments))
             {
+                var mpLeft = M3u8TokenExpiry.RemainingLife(url, now)!.Value;
                 return new PlaybackSwitchPlan(
                     PlaybackSwitchKind.AttachCached,
                     url,
-                    "mp harvest streamed to client");
+                    $"mp harvest streamed to client ({(int)mpLeft.TotalSeconds}s left)");
             }
 
             var left = M3u8TokenExpiry.RemainingLife(url, now)!.Value;
@@ -210,10 +213,18 @@ public static class PlaybackUrlReusePolicy
                 $"token has {(int)left.TotalSeconds}s left");
         }
 
+        var mpStale = MpRewrittenSegment.HasProbeReady(current.RewrittenSegments)
+            && M3u8TokenExpiry.RemainingLife(url, now) is not null
+            && !HasComfortableLife(url, now);
+
         return new PlaybackSwitchPlan(
             PlaybackSwitchKind.ResolveFresh,
             null,
-            IsKnownSingleUse(current) ? "known single-use token" : "token expiry unknown or too close");
+            IsKnownSingleUse(current)
+                ? "known single-use token"
+                : mpStale
+                    ? "mp harvest token expired or too close"
+                    : "token expiry unknown or too close");
     }
 
     /// <summary>

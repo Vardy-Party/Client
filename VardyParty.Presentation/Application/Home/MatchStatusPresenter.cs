@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VardyParty.Catalog;
 using VardyParty.Kernel;
 
 namespace VardyParty.Presentation;
@@ -18,7 +19,7 @@ public enum MatchPhase
 /// <summary>
 /// Turns a <see cref="Game"/> into display strings for the homepage card:
 /// status chip (minutes / injury time / HT / FT / extra time / penalties),
-/// kick-off time, score and aggregate. Pure and unit-testable.
+/// kick-off time, score, aggregate and penalty shootout. Pure and unit-testable.
 /// </summary>
 public static partial class MatchStatusPresenter
 {
@@ -28,10 +29,15 @@ public static partial class MatchStatusPresenter
     public static MatchPhase GetPhase(Game game)
     {
         if (game.IsPostponed) return MatchPhase.Postponed;
+
+        // BBC often leaves IsFinished true while a shootout is still live — same
+        // quirk as ScoresTickerPolicy: pens-in-progress wins over FT.
+        if (ScoresTickerPolicy.IsPenaltyShootoutInProgress(game))
+            return MatchPhase.Penalties;
+
         if (game.IsFinished) return MatchPhase.FullTime;
 
         var status = game.StatusText ?? string.Empty;
-        if (status.Contains("pen", StringComparison.OrdinalIgnoreCase)) return MatchPhase.Penalties;
         if (status.Contains("extra time", StringComparison.OrdinalIgnoreCase) || ExtraTimeToken().IsMatch(status))
         {
             return MatchPhase.ExtraTime;
@@ -79,9 +85,21 @@ public static partial class MatchStatusPresenter
 
         var local = start.Kind == DateTimeKind.Local ? start : start.ToLocalTime();
         var today = (nowLocal ?? DateTime.Now).Date;
-        if (local.Date == today) return local.ToString("h:mm tt");
-        if (local.Date == today.AddDays(1)) return $"Tomorrow {local:h:mm tt}";
-        return local.ToString("MMM dd, h:mm tt");
+        if (local.Date == today) return FormatLocalClock(local);
+        if (local.Date == today.AddDays(1)) return $"Tomorrow {FormatLocalClock(local)}";
+        return $"{local:MMM dd}, {FormatLocalClock(local)}";
+    }
+
+    /// <summary>
+    /// Local wall-clock / same-day kick-off time: <c>h:mm tt</c> (e.g. "5:30 PM").
+    /// Used by match cards and the Android TV homescreen clock.
+    /// </summary>
+    public static string FormatLocalClock(DateTime? nowLocal = null)
+    {
+        var local = nowLocal ?? DateTime.Now;
+        if (local.Kind == DateTimeKind.Utc)
+            local = local.ToLocalTime();
+        return local.ToString("h:mm tt");
     }
 
     public static bool HasScore(Game game) => game.HomeScore.HasValue || game.AwayScore.HasValue;
@@ -92,5 +110,10 @@ public static partial class MatchStatusPresenter
     public static string? GetAggregateText(Game game) =>
         game.AggregateHomeScore.HasValue && game.AggregateAwayScore.HasValue
             ? $"Agg {game.AggregateHomeScore}-{game.AggregateAwayScore}"
+            : null;
+
+    public static string? GetPenaltyText(Game game) =>
+        game.PenaltyHomeScore.HasValue && game.PenaltyAwayScore.HasValue
+            ? $"Penalties {game.PenaltyHomeScore}-{game.PenaltyAwayScore}"
             : null;
 }

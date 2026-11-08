@@ -63,6 +63,14 @@ public static class MauiProgram
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "VardyParty",
                 "dns-preferences.json")));
+        builder.Services.AddSingleton<VardyParty.Ports.IStreamHealthDataCollectionPreferencesStore>(_ =>
+            new VardyParty.Ports.FileStreamHealthDataCollectionPreferencesStore(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "VardyParty",
+                "stream-health-data-collection.json")));
+        builder.Services.AddSingleton<VardyParty.Ports.IStreamHealthClientEnvironment>(sp =>
+            new VardyParty.Ports.RuntimeStreamHealthClientEnvironment(
+                localServiceVersion: () => sp.GetService<VardyParty.Streaming.ILocalLanPlayService>()?.DiscoveredServiceVersion));
         builder.Services.AddSingleton<VardyParty.Ports.IRemoteComputePreferences>(_ =>
             new VardyParty.Ports.FileRemoteComputePreferences(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

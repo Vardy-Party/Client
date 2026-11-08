@@ -54,6 +54,25 @@ public class MatchStatusPresenterTests
     }
 
     [Fact]
+    public void GetPhase_FinishedWithPenaltiesStatus_IsPensNotFullTime()
+    {
+        // Arrange — BBC quirk: IsFinished stays true while shootout status reads "Penalties".
+        var game = new Game
+        {
+            IsFinished = true,
+            StatusText = "Penalties",
+            HomeScore = 1,
+            AwayScore = 1,
+            PenaltyHomeScore = 2,
+            PenaltyAwayScore = 1,
+        };
+
+        // Act & Assert
+        Assert.Equal(MatchPhase.Penalties, MatchStatusPresenter.GetPhase(game));
+        Assert.Equal("Pens", MatchStatusPresenter.GetStatusText(game));
+    }
+
+    [Fact]
     public void GetPhase_ExtraTime_ShowsStatusText()
     {
         // Arrange
@@ -124,6 +143,22 @@ public class MatchStatusPresenterTests
     }
 
     [Fact]
+    public void FormatLocalClock_MatchesSameDayKickoffShape()
+    {
+        // Arrange: pin culture so "tt" renders the same on every runner.
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        var local = new DateTime(2026, 8, 26, 17, 30, 0, DateTimeKind.Local);
+
+        // Act
+        var clock = MatchStatusPresenter.FormatLocalClock(local);
+        var sameDayKickoff = MatchStatusPresenter.FormatStartTime(local, local.Date.AddHours(9));
+
+        // Assert
+        Assert.Equal("5:30 PM", clock);
+        Assert.Equal(clock, sameDayKickoff);
+    }
+
+    [Fact]
     public void FormatStartTime_UnspecifiedKind_IsTreatedAsUtc()
     {
         // Arrange: ingestion normalizes to UTC, so any leaked Unspecified value
@@ -191,5 +226,17 @@ public class MatchStatusPresenterTests
         // Act & Assert
         Assert.Equal("Agg 1-1", MatchStatusPresenter.GetAggregateText(both));
         Assert.Null(MatchStatusPresenter.GetAggregateText(one));
+    }
+
+    [Fact]
+    public void GetPenaltyText_RequiresBothSides()
+    {
+        // Arrange
+        var both = new Game { PenaltyHomeScore = 1, PenaltyAwayScore = 1 };
+        var one = new Game { PenaltyHomeScore = 3 };
+
+        // Act & Assert
+        Assert.Equal("Penalties 1-1", MatchStatusPresenter.GetPenaltyText(both));
+        Assert.Null(MatchStatusPresenter.GetPenaltyText(one));
     }
 }

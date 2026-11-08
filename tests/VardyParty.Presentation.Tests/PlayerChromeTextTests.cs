@@ -116,7 +116,7 @@ public class PlayerChromeTextTests
             VideoCodec = "H.264",
             AudioCodec = "AAC",
             Title = "Home United vs Away City",
-            Buffer = "100%",
+            Buffer = "Buffer 100%",
             SourceUrl = "https://streams.example.com/live.m3u8",
             RefererHost = "referer.example.com"
         };
@@ -124,19 +124,20 @@ public class PlayerChromeTextTests
         // Act
         var text = PlayerChromeText.FormatVideoInfo(model);
 
-        // Assert
+        // Assert — Android panel order: title, status, stream, source badge, quality, detail
+        Assert.StartsWith("Home United vs Away City", text);
         Assert.Contains("Status: Playing", text);
         Assert.Contains("Stream: 2/5", text);
-        Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Source: V1", text);
-        Assert.Contains("Quality: 1080p 60fps", text);
-        Assert.Contains("Resolution: 1920x1080 @ 60 fps", text);
+        Assert.Contains("1080p 60fps", text);
+        Assert.DoesNotContain("Quality:", text);
+        Assert.DoesNotContain("Resolution:", text);
+        Assert.DoesNotContain("Bitrate:", text);
+        Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Aspect ratio: 16:9", text);
-        Assert.Contains("Bitrate: 4500 kbps", text);
-        Assert.Contains("Video Codec: H.264", text);
-        Assert.Contains("Audio Codec: AAC", text);
-        Assert.Contains("Home United vs Away City", text);
-        Assert.Contains("Buffer: 100%", text);
+        Assert.Contains("Video: H.264", text);
+        Assert.Contains("Audio: AAC", text);
+        Assert.Contains("Buffer 100%", text);
         Assert.Contains("Source: https://streams.example.com/live.m3u8", text);
         Assert.Contains("Referer: referer.example.com", text);
     }
@@ -175,13 +176,143 @@ public class PlayerChromeTextTests
         Assert.Contains("Channel: Channel North", text);
         Assert.Contains("Source: V1", text);
         Assert.Contains("Home United vs Away City", text);
-        Assert.DoesNotContain("Quality:", text);
-        Assert.DoesNotContain("Resolution:", text);
-        Assert.DoesNotContain("Bitrate:", text);
-        Assert.DoesNotContain("Video Codec:", text);
+        Assert.DoesNotContain("540p 1.8 Mbps", text);
+        Assert.DoesNotContain("Aspect ratio:", text);
+        Assert.DoesNotContain("Video:", text);
         Assert.DoesNotContain("https://streams.example.com", text);
         Assert.DoesNotContain("Referer:", text);
-        Assert.DoesNotContain("Buffer:", text);
+        Assert.DoesNotContain("Buffer ", text);
+    }
+
+    [Fact]
+    public void FormatVideoInfoDetail_KeepsBufferLineWhenZeroPercent()
+    {
+        // Arrange — 0% must still occupy a row (Windows used to omit null/empty and reflow).
+        var model = new VideoInfoPanelModel
+        {
+            Channel = "1X EN",
+            AspectRatio = "16:9",
+            Buffer = "Buffer 0%",
+            VideoCodec = "H.264",
+            AudioCodec = "AAC"
+        };
+
+        // Act
+        var detail = PlayerChromeText.FormatVideoInfoDetail(model);
+
+        // Assert
+        Assert.Contains("Buffer 0%", detail);
+        var lines = detail.Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("Aspect ratio: 16:9", lines[1]);
+        Assert.Equal("Buffer 0%", lines[2]);
+    }
+
+    [Fact]
+    public void FromPlayback_BufferZeroPercent_FormatsBufferLine()
+    {
+        // Arrange
+        var model = PlayerChromeText.FromPlayback(
+            overlay: null,
+            current: null,
+            playbackState: "Playing",
+            title: "Home vs Away",
+            sourceUrl: null,
+            refererUrl: null,
+            bufferPercent: 0);
+
+        // Assert
+        Assert.Equal("Buffer 0%", model.Buffer);
+    }
+
+    [Theory]
+    [InlineData("Channel North", "Channel: Channel North")]
+    [InlineData(null, "")]
+    [InlineData("  ", "")]
+    public void FormatVideoInfoDetail_WhileSwitching_ReturnsOnlyChannel(string? channel, string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel
+        {
+            Channel = channel,
+            AspectRatio = "16:9",
+            Buffer = "Buffer 80%",
+            VideoCodec = "H.264",
+            AudioCodec = "AAC",
+            SourceUrl = "https://streams.example.com/live.m3u8",
+            RefererHost = "referer.example.com"
+        };
+
+        // Act
+        var detail = PlayerChromeText.FormatVideoInfoDetail(model, whileSwitching: true);
+
+        // Assert
+        Assert.Equal(expected, detail);
+    }
+
+    [Theory]
+    [InlineData(2, 5, "Stream: 2/5")]
+    [InlineData(0, 0, "")]
+    [InlineData(3, 0, "")]
+    public void FormatStreamIndexLine_IsEmptyWithoutHealthyStreams(int index, int total, string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { StreamIndex = index, StreamTotal = total };
+
+        // Act
+        var line = PlayerChromeText.FormatStreamIndexLine(model);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Theory]
+    [InlineData("Playing", false, "Status: Playing")]
+    [InlineData("Playing", true, "Status: Switching")]
+    [InlineData(null, false, "Status: unknown")]
+    [InlineData(" ", false, "Status: unknown")]
+    public void FormatStatusLine_SwitchingOverridesStateAndBlankIsUnknown(
+        string? playbackState,
+        bool whileSwitching,
+        string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { PlaybackState = playbackState };
+
+        // Act
+        var line = PlayerChromeText.FormatStatusLine(model, whileSwitching);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Fact]
+    public void FromPlayback_WithoutOverlayCodecs_UsesHealthCodecs()
+    {
+        // Arrange
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.VideoCodec, "avc1.64001f")
+            .With(h => h.AudioCodec, "mp4a.40.2")
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(s => s.Health, health)
+            .Create();
+        var overlay = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.VideoCodec, (string?)null)
+            .With(i => i.AudioCodec, (string?)null)
+            .Create();
+
+        // Act
+        var model = PlayerChromeText.FromPlayback(
+            overlay,
+            enriched,
+            playbackState: "Playing",
+            title: "Home United vs Away City",
+            sourceUrl: null,
+            refererUrl: null);
+
+        // Assert
+        Assert.Equal("H.264", model.VideoCodec);
+        Assert.Equal("AAC", model.AudioCodec);
     }
 
     [Fact]
@@ -275,7 +406,7 @@ public class PlayerChromeTextTests
         Assert.Equal("BE ID", model.Channel);
         Assert.Equal("V2", model.SourceLabel);
         Assert.Equal("Home United vs Away City", model.Title);
-        Assert.Equal("72%", model.Buffer);
+        Assert.Equal("Buffer 72%", model.Buffer);
         Assert.DoesNotContain("V2", model.Channel);
     }
 

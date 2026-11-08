@@ -72,22 +72,40 @@ public class PlaybackUrlReusePolicyTests
     }
 
     [Fact]
-    public void CanReuseCached_MpHarvestProbeReady_PlaysWithoutSecondMp()
+    public void CanReuseCached_MpHarvestProbeReady_RequiresComfortableLifeOrUnused()
     {
-        // Arrange
-        var harvested = Row(
+        // Arrange — long-lived harvest may AttachCached; unreadable expiry only on first use.
+        var longLived = Row(
+            M3u8TokenExpiryTests.UzhiUrl,
+            rewritten: ["https://cdn.example.com/seg.exe?_s2=1"]);
+        var unreadable = Row(
             "http://oak-lane.m3u8",
             rewritten: ["https://cdn.example.com/seg.exe?_s2=1"]);
+        var unreadableUnused = Row(
+            "http://oak-lane.m3u8",
+            rewritten: ["https://cdn.example.com/seg.png?_s2=1"]);
+        unreadableUnused.UnusedResolvedUrl = true;
+        var stale = Row(
+            M3u8TokenExpiryTests.CowedUrl,
+            rewritten: ["https://cdn.example.com/seg.png?_s2=1"]);
 
-        // Act
-        var canReuse = PlaybackUrlReusePolicy.CanReuseCached(harvested, Now);
-        var plan = PlaybackUrlReusePolicy.PlanSwitch(harvested, Now);
+        // Act / Assert
+        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(longLived, Now));
+        var longPlan = PlaybackUrlReusePolicy.PlanSwitch(longLived, Now);
+        Assert.Equal(PlaybackSwitchKind.AttachCached, longPlan.Kind);
+        Assert.Contains("mp harvest", longPlan.Reason);
+        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(longLived));
 
-        // Assert
-        Assert.True(canReuse);
-        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
-        Assert.Contains("mp harvest", plan.Reason);
-        Assert.False(PlaybackUrlReusePolicy.ShouldPrewarm(harvested));
+        Assert.False(PlaybackUrlReusePolicy.CanReuseCached(unreadable, Now));
+        Assert.Equal(PlaybackSwitchKind.ResolveFresh, PlaybackUrlReusePolicy.PlanSwitch(unreadable, Now).Kind);
+
+        Assert.True(PlaybackUrlReusePolicy.CanReuseCached(unreadableUnused, Now));
+        Assert.Equal(PlaybackSwitchKind.AttachCached, PlaybackUrlReusePolicy.PlanSwitch(unreadableUnused, Now).Kind);
+
+        Assert.False(PlaybackUrlReusePolicy.CanReuseCached(stale, Now.AddSeconds(20)));
+        var stalePlan = PlaybackUrlReusePolicy.PlanSwitch(stale, Now.AddSeconds(20));
+        Assert.Equal(PlaybackSwitchKind.ResolveFresh, stalePlan.Kind);
+        Assert.Contains("mp harvest token", stalePlan.Reason);
     }
 
     [Fact]

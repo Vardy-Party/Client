@@ -227,7 +227,7 @@ public class PlaybackUnificationRulesTests
         Assert.Equal(25, PlaybackPolicy.DesiredLiveOffsetSeconds);
         Assert.Equal(30_000, PlaybackPolicy.AndroidMinBufferMs);
         Assert.Equal(60_000, PlaybackPolicy.AndroidMaxBufferMs);
-        Assert.Equal(2_500, PlaybackPolicy.AndroidBufferForPlaybackMs);
+        Assert.Equal(5_000, PlaybackPolicy.AndroidBufferForPlaybackMs);
         Assert.Equal(8_000, PlaybackPolicy.AndroidBufferForPlaybackAfterRebufferMs);
         Assert.Equal(1002, PlaybackPolicy.ExoPlayerErrorCodeBehindLiveWindow);
         Assert.True(androidSignal);

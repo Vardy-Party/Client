@@ -533,4 +533,22 @@
         </ItemGroup>
     </Target>
 
+    <!-- Incremental MauiAsset copies can leave a stale empty assets/appsettings.json
+         from a prior build even after the source was patched. Force the intermediate
+         asset to match the patched source so the signed APK Auth0 assert passes. -->
+    <Target Name="SyncPatchedAppSettingsMauiAsset"
+            AfterTargets="ProcessMauiAssets"
+            Condition="'$(PatchAppSettings)' == 'true' AND '$(TargetFramework)' == 'net11.0-android'">
+        <PropertyGroup>
+            <_PatchedAppSettings>$(MSBuildProjectDirectory)\appsettings.json</_PatchedAppSettings>
+            <_MauiAssetAppSettings>$(IntermediateOutputPath)assets\appsettings.json</_MauiAssetAppSettings>
+        </PropertyGroup>
+        <Copy SourceFiles="$(_PatchedAppSettings)"
+              DestinationFiles="$(_MauiAssetAppSettings)"
+              SkipUnchangedFiles="false"
+              OverwriteReadOnlyFiles="true"
+              Condition="Exists('$(_PatchedAppSettings)')" />
+        <Message Text="[LOCAL BUILD] Synced patched appsettings.json into $(_MauiAssetAppSettings)" Importance="high" />
+    </Target>
+
 </Project>

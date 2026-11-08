@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
 using VardyParty.Playback;
 using VardyParty.Ports;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 
 namespace VardyParty.Linux.Services;
@@ -88,11 +89,20 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// the session command path already owns Attach (same as Windows/Android).
     /// </summary>
     private bool _suppressIndexDrivenSwitch;
+    private bool _playbackFailed;
+
+    /// <summary>Session snapshot for chrome content-state sync (Opening / Recovering / Playing).</summary>
+    public PlaybackSessionSnapshot SessionSnapshot => _session.Snapshot;
+
+    /// <summary>True after an engine Error until the next Ready / fresh attach.</summary>
+    public bool PlaybackFailed => _playbackFailed;
 
     public event EventHandler<bool>? BufferingStateChanged;
     public event EventHandler<bool>? PlaybackVisibilityChanged;
     /// <summary>Raised when <see cref="StreamSwitchInProgress"/> flips so chrome can refresh immediately.</summary>
     public event EventHandler? StreamSwitchChromeChanged;
+    /// <summary>Raised when attach / ready / error / recover flags change for chrome SetContentState.</summary>
+    public event EventHandler? PlaybackLifecycleChanged;
 
     public PlaybackResult? LastPlaybackResult { get; private set; }
 
@@ -350,6 +360,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         StreamSwitchInProgress = value;
         try { StreamSwitchChromeChanged?.Invoke(this, EventArgs.Empty); }
         catch (Exception ex) { _logger.LogDebug(ex, "[LinuxVideoPlayerService] StreamSwitchChromeChanged failed"); }
+        RaisePlaybackLifecycleChanged();
+    }
+
+    private void RaisePlaybackLifecycleChanged()
+    {
+        try { PlaybackLifecycleChanged?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex) { _logger.LogDebug(ex, "[LinuxVideoPlayerService] PlaybackLifecycleChanged failed"); }
     }
 
     private async Task TrySwitchToCurrentStreamAsync(bool force)
@@ -856,6 +873,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.Handle(engineEvent)));
+            if (engineEvent.Kind == MediaEngineEventKind.Error)
+                _playbackFailed = true;
+            else if (engineEvent.Kind == MediaEngineEventKind.Ready)
+                _playbackFailed = false;
             // Cached switch leaves StreamSwitchInProgress set across AttachViaSession;
             // end scrub when the attach settles or fails so video-info is not stuck.
             if (StreamSwitchInProgress
@@ -863,6 +884,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     || engineEvent.Kind == MediaEngineEventKind.Error))
             {
                 SetStreamSwitchInProgress(false);
+            }
+            else
+            {
+                RaisePlaybackLifecycleChanged();
             }
         }
         catch (Exception ex)
@@ -890,6 +915,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
     {
         _session.SetHealthyStreamCount(_switching.GetHealthyStreams().Count);
+        _playbackFailed = false;
         var effects = _session.BeginAttach(url, usedCachedUrl, force);
         if (effects.Count > 0 && effects[0].Kind == PlaybackEffectKind.None)
         {
@@ -901,6 +927,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         ApplyPlaybackCommand(PlaybackCommand.FromEffects(effects));
+        RaisePlaybackLifecycleChanged();
     }
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
@@ -1307,26 +1334,71 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         try
         {
-            var media = vlc.Player.Media;
+            var media = vlc.Player.Media ?? _currentMedia;
             if (media == null)
             {
                 return null;
             }
 
-            var videoTrack = vlc.Player.VideoTrack;
-            if (videoTrack <= 0)
+            (int Width, int Height)? resolution = null;
+            int? framerate = null;
+            int? trackBitrateKbps = null;
+            string? videoCodec = null;
+
+            foreach (var track in media.Tracks)
             {
-                return null;
+                if (track.TrackType != TrackType.Video)
+                    continue;
+
+                var video = track.Data.Video;
+                if (video.Width > 0 && video.Height > 0)
+                    resolution = ((int)video.Width, (int)video.Height);
+
+                if (video.FrameRateNum > 0 && video.FrameRateDen > 0)
+                    framerate = (int)Math.Round(video.FrameRateNum / (double)video.FrameRateDen);
+
+                if (track.Bitrate > 0)
+                    trackBitrateKbps = (int)(track.Bitrate / 1000);
+
+                videoCodec = FourccToFriendlyName(track.Codec) ?? videoCodec;
+                break;
             }
 
-            // LibVLC doesn't directly expose resolution/framerate during playback.
+            // Soft-present size is a fallback (WSL may cap width); prefer track geometry.
+            if (resolution is null)
+            {
+                var frame = vlc.FrameSink?.LastFrameSize;
+                if (frame is { Width: > 0, Height: > 0 })
+                    resolution = frame;
+            }
+
+            // LibVLC media stats report demux/input rates in bytes/s.
+            int? demuxKbps = null;
+            try
+            {
+                var stats = media.Statistics;
+                var bytesPerSec = stats.DemuxBitrate > 0 ? stats.DemuxBitrate : stats.InputBitrate;
+                if (bytesPerSec > 0)
+                    demuxKbps = (int)Math.Round(bytesPerSec * 8.0 / 1000.0);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Media.Statistics unavailable");
+            }
+
+            var bitrateKbps = MeasuredBitrate.ResolveKbps(
+                trackBitrateKbps,
+                amsBitsPerSecond: 0,
+                demuxKbps);
+
             return new PlaybackMetrics
             {
-                Resolution = null,
-                Framerate = null,
-                VideoCodec = "H.264",
+                Resolution = resolution,
+                Framerate = framerate,
+                VideoCodec = videoCodec ?? "H.264",
                 AudioCodec = null,
-                BitrateKbps = null
+                BitrateKbps = bitrateKbps,
+                IsBuffering = _isBuffering
             };
         }
         catch (Exception ex)
@@ -1334,6 +1406,27 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _logger.LogWarning(ex, "[LinuxVideoPlayerService] Error getting playback metrics");
             return null;
         }
+    }
+
+    private static string? FourccToFriendlyName(uint fourcc)
+    {
+        if (fourcc == 0)
+            return null;
+
+        Span<char> chars = stackalloc char[4];
+        chars[0] = (char)(fourcc & 0xff);
+        chars[1] = (char)((fourcc >> 8) & 0xff);
+        chars[2] = (char)((fourcc >> 16) & 0xff);
+        chars[3] = (char)((fourcc >> 24) & 0xff);
+        var tag = new string(chars).Trim('\0', ' ').ToLowerInvariant();
+        return tag switch
+        {
+            "h264" or "avc1" or "x264" => "H.264",
+            "h265" or "hev1" or "hevc" => "H.265",
+            "vp09" or "vp9" => "VP9",
+            "av01" => "AV1",
+            _ => string.IsNullOrWhiteSpace(tag) ? null : tag.ToUpperInvariant()
+        };
     }
 
     private void StartMetricsLoop()
@@ -1344,6 +1437,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             try
             {
                 var metrics = GetCurrentMetrics();
+                if (metrics != null)
+                {
+                    _ = _healthReporter.ReportPlaybackMetricsAsync(
+                        CurrentHealthReportUrl(),
+                        _refererUrl,
+                        CurrentHealthStreamName(),
+                        metrics: metrics);
+                }
+
                 _engine.Raise(MediaEngineEvent.Metrics(
                     _session.Snapshot.AttachGeneration,
                     metrics?.BitrateKbps,

@@ -14,7 +14,7 @@ public enum PlaybackErrorKind
     Transient,
 
     /// <summary>
-    /// The token was rejected: 401/403. Reloading the same URL cannot help, so go
+    /// The token was rejected: 401/403/442. Reloading the same URL cannot help, so go
     /// straight to a fresh <c>/play</c>. A playlist body that is not HLS
     /// ("Input does not start with the #EXTM3U header", parsing manifest
     /// malformed) is the same: the bytes are not a playlist, so reload is waste.
@@ -79,6 +79,9 @@ public static partial class PlaybackPolicy
     [
         "no m3u8",
         "decoy",
+        // Windows MediaPlayerError.SourceNotSupported / AdaptiveMediaSource
+        // "Unsupported…" statuses — before token/CDN so format death switches now.
+        "source not supported",
         "not supported",
         "unsupported",
         "decoder init",
@@ -89,6 +92,7 @@ public static partial class PlaybackPolicy
     [
         "401",
         "403",
+        "442",
         "forbidden",
         "unauthorized",
         "invalid http content type"
@@ -128,6 +132,14 @@ public static partial class PlaybackPolicy
         if (VardyParty.Kernel.CdnReachabilityPolicy.MentionsHostNotResolved(text))
             return PlaybackErrorKind.ConfirmedDead;
 
+        // Auth before "source not supported": Windows often stamps SourceNotSupported
+        // for HTTP 403 (0x80190193 Forbidden) — that is a token reject, not format death.
+        foreach (var marker in TokenMarkers)
+        {
+            if (marker.All(char.IsDigit) ? ContainsStatus(text, marker) : text.Contains(marker, StringComparison.Ordinal))
+                return PlaybackErrorKind.TokenOrPlaylistInvalid;
+        }
+
         foreach (var marker in ConfirmedDeadMarkers)
         {
             if (text.Contains(marker, StringComparison.Ordinal))
@@ -148,12 +160,6 @@ public static partial class PlaybackPolicy
             || ContainsStatus(text, "504"))
         {
             return PlaybackErrorKind.CdnUnreachable;
-        }
-
-        foreach (var marker in TokenMarkers)
-        {
-            if (marker.All(char.IsDigit) ? ContainsStatus(text, marker) : text.Contains(marker, StringComparison.Ordinal))
-                return PlaybackErrorKind.TokenOrPlaylistInvalid;
         }
 
         // Non-HLS body (gateway HTML, empty, wrong content-type bytes). Reloading

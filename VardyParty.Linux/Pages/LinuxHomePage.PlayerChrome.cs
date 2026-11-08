@@ -38,7 +38,10 @@ public partial class LinuxHomePage
             RememberGamesSnapshot(dict)));
         _videoPlayer.BufferingStateChanged += OnPlayerBufferingStateChanged;
         if (_videoPlayer is LinuxVideoPlayerService linuxPlayer)
+        {
             linuxPlayer.StreamSwitchChromeChanged += OnStreamSwitchChromeChanged;
+            linuxPlayer.PlaybackLifecycleChanged += OnPlaybackLifecycleChanged;
+        }
 
         var hover = new PointerGestureRecognizer();
         hover.PointerEntered += (_, _) => ApplyCloseChip(_closeChip.OnHoverEnter());
@@ -72,6 +75,7 @@ public partial class LinuxHomePage
     {
         try
         {
+            SyncChromeContentStateFromPlayback();
             PushOverlayInfoFromSwitching();
             ApplyPlayerChromeVisuals();
             if (_playbackChrome?.IsVideoInfoVisible == true)
@@ -107,15 +111,77 @@ public partial class LinuxHomePage
     {
         Dispatcher.Dispatch(() =>
         {
+            SyncChromeContentStateFromPlayback();
             if (_playbackChrome?.IsVideoInfoVisible == true)
                 RefreshVideoInfoText();
+            ApplyPlayerChromeVisuals();
         });
+    }
+
+    private void OnPlaybackLifecycleChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.Dispatch(() =>
+        {
+            SyncChromeContentStateFromPlayback();
+            ApplyPlayerChromeVisuals();
+        });
+    }
+
+    /// <summary>
+    /// Drive shared chrome ContentState so IsNextForcedVisible / hold-toast work
+    /// on Linux (mirrors Windows SyncChromeContentStateFromPlayback).
+    /// </summary>
+    private void SyncChromeContentStateFromPlayback()
+    {
+        if (_playbackChrome is null)
+            return;
+
+        var linux = _videoPlayer as LinuxVideoPlayerService;
+        if (linux is null)
+            return;
+
+        var previous = _playbackChrome.ContentState;
+        var snapshot = linux.SessionSnapshot;
+        PlaybackChromeContentState proposed;
+        if (linux.StreamSwitchInProgress)
+        {
+            proposed = PlaybackChromeContentState.Switching;
+        }
+        else if (snapshot.IsRecovering || snapshot.IsRecoveringSwitch)
+        {
+            proposed = PlaybackChromeContentState.Recovering;
+        }
+        else if (linux.PlaybackFailed)
+        {
+            proposed = PlaybackChromeContentState.Error;
+        }
+        else if (snapshot.IsPreparing)
+        {
+            proposed = PlaybackChromeContentState.Opening;
+        }
+        else
+        {
+            proposed = PlaybackChromeContentState.Playing;
+        }
+
+        var next = PlaybackChromePresenter.ResolveFromPlayback(
+            previous,
+            proposed,
+            snapshot.HasEstablishedPlayback);
+        _playbackChrome.SetContentState(next);
     }
 
     private void ApplyStreamToastTimer(bool start)
     {
         if (start)
         {
+            // Hold switch feedback for the whole Opening / Switching / Error attempt.
+            if (_playbackChrome?.ShouldHoldStreamToast == true)
+            {
+                _streamToastHideTimer?.Stop();
+                return;
+            }
+
             _streamToastHideTimer ??= CreateStreamToastHideTimer();
             _streamToastHideTimer.Stop();
             _streamToastHideTimer.Start();
@@ -179,7 +245,9 @@ public partial class LinuxHomePage
         PlaybackBufferingIndicator.IsVisible = _isPlaybackBuffering;
         PlaybackBufferingIndicator.IsRunning = _isPlaybackBuffering;
 
-        var canSwitch = chromeRevealed && chrome?.CanGoNext == true;
+        // Force Next while Opening / Recovering / Switching / Error (shared chrome policy).
+        var canSwitch = chrome?.CanGoNext == true
+            && (chromeRevealed || chrome.IsNextForcedVisible);
         PreviousStreamButton.IsVisible = canSwitch;
         NextStreamCluster.IsVisible = canSwitch;
         NextStreamHintLabel.Text = toast is null
@@ -270,11 +338,43 @@ public partial class LinuxHomePage
             return null;
         }
 
-        return PlayerOverlayFormatter.BuildOverlayInfo(
+        var info = PlayerOverlayFormatter.BuildOverlayInfo(
             current,
             _switching.GetCurrentStreamIndex(),
             _switching.GetHealthyStreams().Count,
             current.Referer);
+        if (info is null)
+            return null;
+
+        // Same as Android/Windows: prefer live player metrics over find-phase health.
+        var linux = _videoPlayer as LinuxVideoPlayerService;
+        var metrics = linux?.GetCurrentMetrics();
+        if (metrics is null)
+            return info;
+
+        var resolution = metrics.Resolution is { } size
+            ? $"{size.Width}x{size.Height}"
+            : info.Resolution;
+        var bitrateKbps = MeasuredBitrate.ResolveKbps(
+            info.BitrateKbps,
+            amsBitsPerSecond: 0,
+            metrics.BitrateKbps);
+        return new PlayerOverlayInfo
+        {
+            Index = info.Index,
+            Total = info.Total,
+            Channel = info.Channel,
+            BitrateKbps = bitrateKbps,
+            Resolution = resolution,
+            FrameRate = metrics.Framerate ?? info.FrameRate,
+            VideoCodec = metrics.VideoCodec ?? info.VideoCodec,
+            AudioCodec = metrics.AudioCodec ?? info.AudioCodec,
+            AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution) ?? info.AspectRatio,
+            BufferPercent = linux?.BufferPercent ?? info.BufferPercent,
+            M3u8Url = info.M3u8Url,
+            RefererUrl = info.RefererUrl,
+            Title = info.Title
+        };
     }
 
     private void RefreshScoresTickerText()

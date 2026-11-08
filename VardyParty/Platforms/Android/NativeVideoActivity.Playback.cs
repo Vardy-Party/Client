@@ -255,23 +255,40 @@ namespace VardyParty.Platforms.Android
                 return false;
             }
 
-            if (_player == null)
+            if (_player == null || string.IsNullOrWhiteSpace(_m3u8Url))
                 return false;
 
             _behindLiveWindowRecoveries++;
             PlayedSegmentMemory.ArmTrimOnce();
-            _logger?.LogWarning(
-                "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
-                _behindLiveWindowRecoveries,
-                PlaybackPolicy.MaxLiveHlsRecoveries);
+
+            var stuckPlaylist = PlaybackPolicy.IsStuckLivePlaylistFailure(
+                error.Message,
+                DescribeCauses(error));
 
             try
             {
-                // The live-edge seek is a position discontinuity and a new prepare: forget position history and let
-                // the tracker derive Buffering (and the Started signal) from the player instead of latching it by hand.
+                // Position discontinuity / new prepare: forget history and let the tracker
+                // derive Buffering (and Started) from the player instead of latching by hand.
                 _isPreparing = true;
                 _playerFaulted = false;
                 _statusTracker.Reset();
+
+                if (stuckPlaylist)
+                {
+                    // Seek alone cannot unstick a frozen media playlist — rebuild the
+                    // MediaSource so ExoPlayer reloads it (same attach generation / budget).
+                    _logger?.LogWarning(
+                        "[NativeVideoActivity] Live HLS stall — reloading playlist (attempt {Attempt}/{Max})",
+                        _behindLiveWindowRecoveries,
+                        PlaybackPolicy.MaxLiveHlsRecoveries);
+                    AttachEngine(_m3u8Url);
+                    return true;
+                }
+
+                _logger?.LogWarning(
+                    "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
+                    _behindLiveWindowRecoveries,
+                    PlaybackPolicy.MaxLiveHlsRecoveries);
 
                 _player.SeekToDefaultPosition();
                 _player.Prepare();
@@ -428,6 +445,25 @@ namespace VardyParty.Platforms.Android
             });
         }
 
+        /// <summary>
+        /// Sit behind the live edge so ExoPlayer can actually fill a buffer. LoadControl
+        /// only loads around the playhead; on live HLS there is nothing ahead of the edge,
+        /// so without this target offset brief stalls become BehindLiveWindow. Matches
+        /// Windows <c>DesiredLiveOffset</c>. Target prefers
+        /// <see cref="PlaybackPolicy.DesiredLiveOffsetSeconds"/>; min stays low (3s) so
+        /// short CDN sliding windows remain playable instead of thrashing BehindLiveWindow.
+        /// </summary>
+        private static void ApplyLiveBackoff(AndroidX.Media3.Common.MediaItem.Builder builder)
+        {
+            var targetMs = PlaybackPolicy.DesiredLiveOffsetSeconds * 1000L;
+            var live = new AndroidX.Media3.Common.MediaItem.LiveConfiguration.Builder()
+                .SetTargetOffsetMs(targetMs)!
+                .SetMinOffsetMs(3_000L)!
+                .SetMaxOffsetMs(targetMs + 15_000L)!
+                .Build();
+            builder.SetLiveConfiguration(live);
+        }
+
         /// <summary>ExoPlayer attach only — policy decisions go through <see cref="AttachViaSession"/>.</summary>
         private void AttachEngine(string m3u8Url)
         {
@@ -512,6 +548,7 @@ namespace VardyParty.Platforms.Android
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
                             headerBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                            ApplyLiveBackoff(headerBuilder);
                             var headerItem = headerBuilder.Build()
                                 ?? throw new InvalidOperationException("MediaItem.Build returned null.");
                             var headerSource = mediaSourceFactory.CreateMediaSource(headerItem)
@@ -528,8 +565,9 @@ namespace VardyParty.Platforms.Android
                             }
 
                             _logger?.LogInformation(
-                                "[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory)",
-                                m3u8Url);
+                                "[NativeVideoActivity] Requested player to switch to {Url} (with header-injecting factory, liveOffset={Offset}s)",
+                                m3u8Url,
+                                PlaybackPolicy.DesiredLiveOffsetSeconds);
                             return;
                         }
                         catch (Exception ex)
@@ -551,6 +589,7 @@ namespace VardyParty.Platforms.Android
                         var fallbackBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                         fallbackBuilder.SetUri(m3u8Url);
                         fallbackBuilder.SetMimeType(AndroidX.Media3.Common.MimeTypes.ApplicationM3u8);
+                        ApplyLiveBackoff(fallbackBuilder);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
                         var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter))

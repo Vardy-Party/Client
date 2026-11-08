@@ -188,6 +188,13 @@ public static class ScoresTickerText
             score += $" agg {aggregateHome}-{aggregateAway}";
         }
 
+        if (game.PenaltyHomeScore.HasValue || game.PenaltyAwayScore.HasValue)
+        {
+            var penaltyHome = game.PenaltyHomeScore?.ToString() ?? "-";
+            var penaltyAway = game.PenaltyAwayScore?.ToString() ?? "-";
+            score += $" pens {penaltyHome}-{penaltyAway}";
+        }
+
         return score;
     }
 

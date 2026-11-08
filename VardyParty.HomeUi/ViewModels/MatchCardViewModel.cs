@@ -28,6 +28,7 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
     private bool _hasScore;
     private string _scoreText = string.Empty;
     private string _aggregateText = string.Empty;
+    private string _penaltyText = string.Empty;
     private Brush _homeAccent = new SolidColorBrush(Colors.Transparent);
     private Brush _awayAccent = new SolidColorBrush(Colors.Transparent);
     private Brush _cardBackground = new SolidColorBrush(Colors.Transparent);
@@ -138,7 +139,24 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
         }
     }
 
+    public string PenaltyText
+    {
+        get => _penaltyText;
+        private set
+        {
+            if (_penaltyText == value) return;
+            var hadPenalty = HasPenalty;
+            _penaltyText = value;
+            Raise(nameof(PenaltyText));
+            if (hadPenalty != HasPenalty)
+            {
+                Raise(nameof(HasPenalty));
+            }
+        }
+    }
+
     public bool HasAggregate => _aggregateText.Length > 0;
+    public bool HasPenalty => _penaltyText.Length > 0;
     public bool ScoreIsDim => !HasScore;
 
     public Brush HomeAccent
@@ -268,6 +286,7 @@ public sealed class MatchCardViewModel : INotifyPropertyChanged
         HasScore = MatchStatusPresenter.HasScore(game);
         ScoreText = MatchStatusPresenter.GetScoreText(game);
         AggregateText = MatchStatusPresenter.GetAggregateText(game) ?? string.Empty;
+        PenaltyText = MatchStatusPresenter.GetPenaltyText(game) ?? string.Empty;
 
         if (teamsChanged)
         {

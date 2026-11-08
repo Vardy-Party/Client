@@ -518,6 +518,10 @@ public partial class HomeHostPage : ContentPage
         SetAuthStatus(null);
         StartGamesFeed();
         SetAuthOverlayVisible(false);
+#if WINDOWS
+        // Browser login leaves the Auth0 tab focused; reclaim the main window.
+        Platforms.Windows.WindowsAppForeground.BringMainWindowToFront();
+#endif
     }
 
     private void CancelSignIn()

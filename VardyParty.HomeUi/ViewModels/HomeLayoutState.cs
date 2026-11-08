@@ -18,6 +18,13 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
 
     public bool IsTv => Class == HomeLayoutClass.Tv;
 
+    /// <summary>
+    /// On-screen menu ✕. Hidden on TV — Back already closes the flyout, and
+    /// the close control was overlapping the first action when the leagues
+    /// row was crushed to zero height.
+    /// </summary>
+    public bool ShowMenuCloseButton => !IsTv;
+
     public double CardWidth => _metrics.CardWidth;
     public double CardHeight => _metrics.CardHeight;
     public double CardCornerRadius => _metrics.CardCornerRadius;
@@ -105,7 +112,7 @@ public sealed class HomeLayoutState : INotifyPropertyChanged
 
     private static readonly string[] ChangedNames =
     [
-        nameof(Class), nameof(IsTv),
+        nameof(Class), nameof(IsTv), nameof(ShowMenuCloseButton),
         nameof(CardWidth), nameof(CardHeight), nameof(CardCornerRadius), nameof(BadgeSize),
         nameof(TeamFontSize), nameof(ScoreFontSize), nameof(StatusFontSize), nameof(AggregateFontSize),
         nameof(LeagueTitleFontSize), nameof(LeagueIconSize), nameof(PageTitleFontSize), nameof(PageSubtitleFontSize),

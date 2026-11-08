@@ -99,14 +99,16 @@ public static partial class PlaybackPolicy
     public const int MaxLiveHlsRecoveries = 5;
 
     /// <summary>
-    /// WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c> backoff from the live edge (seconds).
-    /// Larger = more tolerant of brief rebuffers (pairs with Android LoadControl buffers).
+    /// Live-edge backoff (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
+    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>. Larger = more
+    /// media held behind the edge (the only place a live buffer can exist).
     /// </summary>
     public const int DesiredLiveOffsetSeconds = 25;
 
     /// <summary>
-    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms). Pairs with
-    /// <see cref="DesiredLiveOffsetSeconds"/> / Linux <c>--network-caching</c>.
+    /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms) — how much to keep
+    /// loaded around the playhead. Not a live-edge backoff; see
+    /// <see cref="DesiredLiveOffsetSeconds"/>.
     /// </summary>
     public const int AndroidMinBufferMs = 30_000;
 
@@ -114,7 +116,7 @@ public static partial class PlaybackPolicy
     public const int AndroidMaxBufferMs = 60_000;
 
     /// <summary>Android Media3 buffer required before first play (ms).</summary>
-    public const int AndroidBufferForPlaybackMs = 2_500;
+    public const int AndroidBufferForPlaybackMs = 5_000;
 
     /// <summary>Android Media3 buffer required after a rebuffer (ms).</summary>
     public const int AndroidBufferForPlaybackAfterRebufferMs = 8_000;
@@ -160,8 +162,18 @@ public static partial class PlaybackPolicy
     /// live edge can clear. Other source errors still escalate.
     /// </summary>
     public static bool IsRecoverableExoLiveHlsStall(int? errorCode, string? message, string? causeSummary = null)
-        => IsBehindLiveWindowFailure(errorCode, message, causeSummary)
-           || IsStuckLivePlaylistFailure(message, causeSummary);
+    {
+        // Token reject (401/403/442) must escalate to FreshResolve — soft BLW seek
+        // only burns MaxLiveHlsRecoveries on a dying URL (Bravia 8 Nov 2026).
+        if (IsPermanentLiveHlsAuthOrUnsupported(message)
+            || IsPermanentLiveHlsAuthOrUnsupported(causeSummary))
+        {
+            return false;
+        }
+
+        return IsBehindLiveWindowFailure(errorCode, message, causeSummary)
+               || IsStuckLivePlaylistFailure(message, causeSummary);
+    }
 
     /// <summary>
     /// Windows MediaPlayer failure classification for live HLS soft-recover.
@@ -203,9 +215,65 @@ public static partial class PlaybackPolicy
             return false;
 
         var detail = detailMessage.ToLowerInvariant();
-        return detail.Contains("403")
-               || detail.Contains("401")
-               || detail.Contains("not supported", StringComparison.Ordinal);
+        return ContainsHttpAuthStatus(detail)
+               || detail.Contains("forbidden", StringComparison.Ordinal)
+               || detail.Contains("unauthorized", StringComparison.Ordinal)
+               || detail.Contains("source not supported", StringComparison.Ordinal)
+               || detail.Contains("not supported", StringComparison.Ordinal)
+               || detail.Contains("unsupported", StringComparison.Ordinal);
+    }
+
+    /// <summary>HTTP 401 / 403 / 442 (CDN token reject) as whole status tokens.</summary>
+    private static bool ContainsHttpAuthStatus(string detailLower)
+        => ContainsStatusToken(detailLower, "401")
+           || ContainsStatusToken(detailLower, "403")
+           || ContainsStatusToken(detailLower, "442");
+
+    private static bool ContainsStatusToken(string text, string code)
+    {
+        var index = text.IndexOf(code, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var before = index == 0 || !char.IsDigit(text[index - 1]);
+            var afterIndex = index + code.Length;
+            var after = afterIndex >= text.Length || !char.IsDigit(text[afterIndex]);
+            if (before && after)
+                return true;
+            index = text.IndexOf(code, index + 1, StringComparison.Ordinal);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Windows <c>MediaFailed</c> → session Error text. When the OS reports
+    /// <c>SourceNotSupported</c>, the ErrorMessage is often a bare HRESULT with
+    /// no "unsupported" words — stamp the marker so <see cref="ClassifyPlaybackError"/>
+    /// returns <see cref="PlaybackErrorKind.ConfirmedDead"/> and the pool advances.
+    /// Auth rejects (403 Forbidden / 0x80190193) must not get that stamp — they are
+    /// <see cref="PlaybackErrorKind.TokenOrPlaylistInvalid"/>.
+    /// </summary>
+    public static string FormatWindowsMediaFailedMessage(
+        bool isSourceNotSupported,
+        string? errorMessage,
+        string? extendedMessage = null)
+    {
+        var errMsg = string.IsNullOrWhiteSpace(errorMessage) ? "Unknown media error" : errorMessage.Trim();
+        var ext = string.IsNullOrWhiteSpace(extendedMessage) ? string.Empty : extendedMessage.Trim();
+        var detail = string.IsNullOrEmpty(ext) ? errMsg : $"{errMsg} {ext}";
+        // WinRT maps HTTP 403 to SourceNotSupported + Forbidden — do not label that as format death.
+        if (isSourceNotSupported
+            && (ContainsHttpAuthStatus(detail.ToLowerInvariant())
+                || detail.Contains("forbidden", StringComparison.OrdinalIgnoreCase)
+                || detail.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)))
+        {
+            isSourceNotSupported = false;
+        }
+
+        var head = isSourceNotSupported
+            ? $"Media failed (source not supported): {errMsg}"
+            : $"Media failed: {errMsg}";
+        return string.IsNullOrEmpty(ext) ? head : $"{head}\n{ext}";
     }
 
     private static bool ContainsLiveWindowMarker(string? text)

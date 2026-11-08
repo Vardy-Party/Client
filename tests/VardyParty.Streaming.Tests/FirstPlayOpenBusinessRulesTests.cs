@@ -187,8 +187,11 @@ public class FirstPlayOpenBusinessRulesTests
     [Fact]
     public async Task Rule_MpHarvestProbeReady_OpensWithoutFreshPlay()
     {
-        // Arrange — /mp streamed playlist + rewritten segments; no second /mp for open.
-        var mp = MpHealthy("Channel MP Alpha", "http://oak-lane.m3u8");
+        // Arrange — /mp streamed playlist + rewritten segments; token still has MinComfortableLife
+        // vs orchestrator UtcNow (frozen fixture UzhiUrl is already past wall-clock).
+        var harvestUrl =
+            $"https://cdn.example.com/mp-harvest.m3u8?e={DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()}";
+        var mp = MpHealthy("Channel MP Alpha", harvestUrl);
         Candidates(mp);
         ResolverYields(_ => Yield(mp));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -204,7 +207,7 @@ public class FirstPlayOpenBusinessRulesTests
         var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Assert
-        Assert.Equal("http://oak-lane.m3u8", url);
+        Assert.Equal(harvestUrl, url);
         _fixture.GetMock<IApiService>().Verify(
             a => a.GetM3U8UrlAsync(
                 mp.Stream.Url,
@@ -436,6 +439,7 @@ public class FirstPlayOpenBusinessRulesTests
             .With(e => e.Stream, stream)
             .With(e => e.ResolvedM3U8Url, url)
             .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.UnusedResolvedUrl, false)
             .With(e => e.RewrittenSegments, new List<string> { "https://cdn.example.com/seg.exe?_s2=1" })
             .Without(e => e.RequestHeaders)
             .Create();
