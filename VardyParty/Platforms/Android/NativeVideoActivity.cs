@@ -345,8 +345,9 @@ namespace VardyParty.Platforms.Android
             _currentAwayTeam = Intent?.GetStringExtra("AWAY_TEAM") ?? string.Empty;
 
             // Basic UI: PlayerView with overlay.
-            // Larger buffers reduce BehindLiveWindow on flaky live HLS (Linux LibVLC uses network-caching + reconnect).
-            // Durations live in PlaybackPolicy next to DesiredLiveOffsetSeconds for cross-OS parity tests.
+            // LoadControl sizes the download window around the playhead. Live backoff
+            // (sitting ~DesiredLiveOffsetSeconds behind the edge) is set per MediaItem
+            // in AttachEngine — without that, BufferedPercentage sits near 0% on live HLS.
             var loadControl = new DefaultLoadControl.Builder()
                 .SetBufferDurationsMs(
                     PlaybackPolicy.AndroidMinBufferMs,
@@ -1038,7 +1039,7 @@ namespace VardyParty.Platforms.Android
                         "[NativeVideoActivity] Switching player to fresh one-shot URL {Url} Referer={Referer}",
                         url,
                         _refererUrl ?? "(none)");
-                    // Scrub ends on video confirm (NoteVideoSeen) or player error.
+                    // Scrub ends on READY / video confirm / player error / 15s timeout.
                     AttachViaSession(url, usedCachedUrl: false);
                 });
             }
@@ -1054,20 +1055,65 @@ namespace VardyParty.Platforms.Android
             }
         }
 
+        private Java.Lang.IRunnable? _streamSwitchScrubTimeout;
+
         private void BeginStreamSwitchOverlayScrub()
         {
             if (_streamSwitchInProgress)
                 return;
             _streamSwitchInProgress = true;
+            ScheduleStreamSwitchScrubTimeout();
             RunOnUiThread(UpdateOverlayFromCurrentStream);
         }
 
         private void EndStreamSwitchOverlayScrub()
         {
+            CancelStreamSwitchScrubTimeout();
             if (!_streamSwitchInProgress)
                 return;
             _streamSwitchInProgress = false;
             RunOnUiThread(UpdateOverlayFromCurrentStream);
+        }
+
+        /// <summary>
+        /// AttachCached can sit in BUFFERING with no READY/first-frame; without a
+        /// deadline the overlay stays on "Switching" and hides Buffer % forever.
+        /// </summary>
+        private void ScheduleStreamSwitchScrubTimeout()
+        {
+            try
+            {
+                CancelStreamSwitchScrubTimeout();
+                var handler = _overlayHandler;
+                if (handler is null)
+                    return;
+                _streamSwitchScrubTimeout = new Java.Lang.Runnable(() =>
+                {
+                    try
+                    {
+                        if (!_streamSwitchInProgress)
+                            return;
+                        _logger?.LogWarning(
+                            "[NativeVideoActivity] Switch overlay scrub timed out — clearing Switching status");
+                        EndStreamSwitchOverlayScrub();
+                    }
+                    catch (Exception ex) { LogIgnored("StreamSwitchScrubTimeout", ex); }
+                });
+                handler.PostDelayed(_streamSwitchScrubTimeout, 15_000);
+            }
+            catch (Exception ex) { LogIgnored("ScheduleStreamSwitchScrubTimeout", ex); }
+        }
+
+        private void CancelStreamSwitchScrubTimeout()
+        {
+            try
+            {
+                var runnable = _streamSwitchScrubTimeout;
+                _streamSwitchScrubTimeout = null;
+                if (runnable != null)
+                    RemoveCallback(_overlayHandler, runnable);
+            }
+            catch (Exception ex) { LogIgnored("CancelStreamSwitchScrubTimeout", ex); }
         }
 
         private CancellationToken ReplaceAttachLifetimeToken()
@@ -1446,22 +1492,17 @@ namespace VardyParty.Platforms.Android
             try
             {
                 var format = _player?.VideoFormat;
-                if (format != null && format.Bitrate > 0)
-                {
-                    metrics.BitrateKbps = format.Bitrate / 1000;
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps (format)");
-                }
-                else if (_transferMeter.BitrateKbps is int measuredKbps && measuredKbps > 0)
-                {
-                    // HLS often leaves Format.Bitrate as -1; the transfer meter is what the
-                    // overlay already shows, and health/recommendations need the same value.
-                    metrics.BitrateKbps = measuredKbps;
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {metrics.BitrateKbps} kbps (transfer meter)");
-                }
+                // Same precedence as Windows video-info + health: transfer meter first,
+                // then declared format bitrate (HLS often leaves Format.Bitrate unset / -1).
+                int? encodingKbps = format is { Bitrate: > 0 } ? format.Bitrate / 1000 : null;
+                metrics.BitrateKbps = MeasuredBitrate.ResolveKbps(
+                    encodingKbps,
+                    amsBitsPerSecond: 0,
+                    _transferMeter.BitrateKbps);
+                if (metrics.BitrateKbps is int kbps)
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate: {kbps} kbps (format={encodingKbps?.ToString() ?? "n/a"} meter={_transferMeter.BitrateKbps?.ToString() ?? "n/a"})");
                 else
-                {
-                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0}, transfer meter unset)");
-                }
+                    global::Android.Util.Log.Debug("VardyParty", $"[Android] Bitrate not available (Format bitrate: {format?.Bitrate ?? 0}, meter: n/a)");
 
                 // Extract codec information from video format
                 if (format != null)
@@ -1656,11 +1697,30 @@ namespace VardyParty.Platforms.Android
                 // STATE_READY = 3
                 if (playbackState == PlayerStateReady)
                 {
-                    // Successful decode after a live-edge recover — allow a fresh budget if this attach fails again later.
-                    if (_activity._behindLiveWindowRecoveryGeneration == _activity.CurrentAttachGeneration)
-                        _activity._behindLiveWindowRecoveries = 0;
+                    // Do NOT zero _behindLiveWindowRecoveries here. Soft live-edge
+                    // recover always returns to READY; resetting on READY made every
+                    // BehindLiveWindow look like attempt 1/5 forever (Bravia stop/start
+                    // thrash). Budget resets only on a new attach generation — same as
+                    // Windows soft-reattach (see PlaybackPolicy.MaxLiveHlsRecoveries).
                     _activity._anticipatingToken = false;
-                    _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
+                    // Scrub ("Status: Switching") must not wait for first frame — AttachCached
+                    // can buffer forever with no picture, leaving the overlay stuck on Switching
+                    // and hiding Buffer %. Video-confirmed still reports via NoteVideoSeen.
+                    _activity.EndStreamSwitchOverlayScrub();
+                    try
+                    {
+                        var ahead = _activity._player?.TotalBufferedDuration ?? -1;
+                        var pct = _activity.ReadPlaybackBufferPercent();
+                        _activity._logger?.LogInformation(
+                            "[NativeVideoActivity] Player ready (bufferAhead={AheadMs}ms bufferPct={Pct} liveOffset={Offset}s)",
+                            ahead,
+                            pct,
+                            PlaybackPolicy.DesiredLiveOffsetSeconds);
+                    }
+                    catch
+                    {
+                        _activity._logger?.LogInformation("[NativeVideoActivity] Player ready");
+                    }
                     _activity._engine.Raise(MediaEngineEvent.Ready(_activity.CurrentAttachGeneration));
                     // Ready is not "working" on Android until a picture shows (audio-only HLS is READY too).
                     _activity.ProbeVideo();

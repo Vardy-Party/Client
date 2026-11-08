@@ -52,7 +52,8 @@ public sealed class HomeViewModelTests : IDisposable
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         _notifications = new MatchEventNotificationPolicy(preferences);
         var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
-        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns);
+        var health = new StreamHealthDataCollectionPreference(new InMemoryStreamHealthDataCollectionPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, _notifications, dns, health);
         _sut = new HomeViewModel(
             _filter.Object,
             menu,
@@ -802,7 +803,8 @@ public sealed class HomeViewModelTests : IDisposable
         var sounds = new UiSoundService(new NullUiSoundPlayer(), preferences);
         var notifications = new MatchEventNotificationPolicy(preferences);
         var dns = new DnsOverHttpsPreference(new InMemoryDnsPreferencesStore());
-        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns);
+        var health = new StreamHealthDataCollectionPreference(new InMemoryStreamHealthDataCollectionPreferencesStore());
+        var menu = new MenuViewModel(_filter.Object, sounds, notifications, dns, health);
         return new HomeViewModel(
             _filter.Object,
             menu,
@@ -875,6 +877,10 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)minute)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)awayScore)
+            // AutoFixture otherwise invents random pen totals; MatchEventDetector
+            // then emits spurious IsPenaltyGoal events beside regulation goals.
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             // Fixed kickoff: the event detector keys on Home|Away|Start, so
             // refreshes of the same fixture must carry the same Start.
             .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
@@ -905,6 +911,8 @@ public sealed class HomeViewModelTests : IDisposable
             .With(g => g.Minute, (int?)20)
             .With(g => g.HomeScore, (int?)homeScore)
             .With(g => g.AwayScore, (int?)0)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
             .With(g => g.Start, kickoff)
             .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
             .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")

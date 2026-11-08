@@ -44,6 +44,14 @@ public partial class HomeView : ContentView
     partial void RestoreTvCardFocus();
 
     /// <summary>
+    /// Android TV only: minute-aligned wall clock beside Menu. No-op elsewhere.
+    /// </summary>
+    partial void StartTvHomescreenClock();
+
+    /// <summary>Android TV only: tear down the homescreen clock tick.</summary>
+    partial void StopTvHomescreenClock();
+
+    /// <summary>
     /// After the finding-streams overlay closes, return D-pad focus to the
     /// card that opened it (not the Menu button).
     /// </summary>
@@ -149,6 +157,7 @@ public partial class HomeView : ContentView
     {
         WireViewModel(ViewModel);
         DrainIfPending();
+        StartTvHomescreenClock();
     }
 
     private void OnUnloaded(object? sender, EventArgs e)
@@ -157,6 +166,9 @@ public partial class HomeView : ContentView
         // without a later Loaded. The catalog must still be able to drain.
         // The interaction pause must not outlive its cooldown timer, or
         // staged appends could stick paused across a handler reconnect.
+        // Same Unload-without-Loaded gap: do NOT StopTvHomescreenClock here —
+        // MatchCardView likewise never permanently unwires on Unloaded. The
+        // TV minute looper keeps ticking across that reconnect (HomeView.Tv).
         _stripInteractionCooldown?.Stop();
         ViewModel?.ResumeStagedStripAppends();
 #if WINDOWS

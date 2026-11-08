@@ -115,6 +115,31 @@ Restore-DomainGraph
 Invoke-Dotnet (@('restore', './VardyParty/VardyParty.csproj', '--ignore-failed-sources', '-p:TargetFrameworks=net11.0-android') + $modeProps)
 Restore-DomainGraph
 
+# Patch source appsettings BEFORE the Android build so MauiAsset staging cannot
+# copy the empty git template from a stale obj/.../assets/appsettings.json.
+# (A mid-build git restore / incremental asset skip left Auth0 EMPTY in the APK
+# even when the MSBuild PatchAppSettings target logged a successful patch.)
+$userSecretsId = '543d9e88-b60c-4397-bc9d-c4614b8b1dcb'
+$appsettingsPath = Join-Path $PSScriptRoot 'VardyParty/appsettings.json'
+$patchArgs = @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', (Join-Path $PSScriptRoot 'scripts/patch-appsettings.ps1'),
+    '-AppSettingsPath', $appsettingsPath,
+    '-UserSecretsId', $userSecretsId
+)
+if ($Api) {
+    $patchArgs += @('-ApiTarget', $Api)
+}
+& powershell @patchArgs
+if ($LASTEXITCODE -ne 0) {
+    throw 'Pre-build appsettings patch failed (user-secrets Auth0/Api).'
+}
+Get-ChildItem -Path (Join-Path $PSScriptRoot 'VardyParty/obj') -Recurse -Filter 'appsettings.json' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed stale $($_.FullName)"
+    }
+
 # -m:1: trimming two/three RIDs on parallel MSBuild nodes has crashed ILLink
 # from memory pressure on real Windows boxes; one node halves peak memory.
 $buildArgs = @(

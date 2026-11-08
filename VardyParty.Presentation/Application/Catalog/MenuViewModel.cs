@@ -12,18 +12,22 @@ public sealed class MenuViewModel
     private readonly UiSoundService _uiSounds;
     private readonly MatchEventNotificationPolicy _notifications;
     private readonly DnsOverHttpsPreference _dnsOverHttps;
+    private readonly StreamHealthDataCollectionPreference _streamHealthDataCollection;
     private List<string> _knownLeagues = new();
 
     public MenuViewModel(
         ILeagueFilterService leagueFilter,
         UiSoundService uiSounds,
         MatchEventNotificationPolicy notifications,
-        DnsOverHttpsPreference dnsOverHttps)
+        DnsOverHttpsPreference dnsOverHttps,
+        StreamHealthDataCollectionPreference streamHealthDataCollection)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _uiSounds = uiSounds ?? throw new ArgumentNullException(nameof(uiSounds));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _dnsOverHttps = dnsOverHttps ?? throw new ArgumentNullException(nameof(dnsOverHttps));
+        _streamHealthDataCollection = streamHealthDataCollection
+            ?? throw new ArgumentNullException(nameof(streamHealthDataCollection));
     }
 
     public IReadOnlyList<string> KnownLeagues => _knownLeagues;
@@ -61,4 +65,13 @@ public sealed class MenuViewModel
     /// <summary>Flips the DoH fallback switch.</summary>
     public void ToggleDnsOverHttpsFallback() =>
         _dnsOverHttps.SetEnabled(!_dnsOverHttps.Enabled);
+
+    /// <summary>
+    /// Settings: anonymous stream/scrape health reporting (default OFF — opt-in).
+    /// </summary>
+    public bool StreamHealthDataCollectionEnabled => _streamHealthDataCollection.Enabled;
+
+    /// <summary>Flips the stream health data-collection opt-in.</summary>
+    public void ToggleStreamHealthDataCollection() =>
+        _streamHealthDataCollection.SetEnabled(!_streamHealthDataCollection.Enabled);
 }

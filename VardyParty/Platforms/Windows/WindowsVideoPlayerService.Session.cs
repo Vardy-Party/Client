@@ -500,36 +500,37 @@ namespace VardyParty.Platforms.Windows
                     };
 
                     // Info overlay — top-right so broadcaster score bugs (usually top-left) stay visible.
-                    // Layout mirrors Android: title, status, stream, source badge, quality, detail.
+                    // Same look as Android: #99000000 panel, game title as header, sans-serif body,
+                    // smaller muted detail (status → stream → badge → quality → detail).
                     infoPanel = new Microsoft.UI.Xaml.Controls.Grid
                     {
                         HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Top,
-                        Margin = new WinThickness(0, 48, 10, 0),
-                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = 0.85 },
-                        Padding = new WinThickness(10),
+                        Margin = new WinThickness(0, 48, 20, 0),
+                        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                            global::Windows.UI.Color.FromArgb(0x99, 0x00, 0x00, 0x00)),
+                        Padding = new WinThickness(8),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                        CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4),
-                        BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray),
-                        BorderThickness = new WinThickness(1),
                         MaxWidth = 420
                     };
                     infoPanel.RowDefinitions.Add(new Microsoft.UI.Xaml.Controls.RowDefinition { Height = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
                     infoPanel.RowDefinitions.Add(new Microsoft.UI.Xaml.Controls.RowDefinition { Height = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
 
-                    var infoHeader = new WinGrid { Margin = new WinThickness(0, 0, 0, 8) };
+                    // Game title is the header (Android _titleView); close sits on that row.
+                    var infoHeader = new WinGrid { Margin = new WinThickness(0, 0, 0, 2) };
                     infoHeader.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
                     infoHeader.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
 
-                    var infoHeaderLabel = new Microsoft.UI.Xaml.Controls.TextBlock
+                    infoGameTitleText = new Microsoft.UI.Xaml.Controls.TextBlock
                     {
-                        Text = "Video Info",
                         Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                        FontSize = 13,
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                        FontSize = 16,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
-                    WinGrid.SetColumn(infoHeaderLabel, 0);
+                    WinGrid.SetColumn(infoGameTitleText, 0);
 
                     infoCloseButton = new WinButton
                     {
@@ -544,7 +545,7 @@ namespace VardyParty.Platforms.Windows
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
                     WinGrid.SetColumn(infoCloseButton, 1);
-                    infoHeader.Children.Add(infoHeaderLabel);
+                    infoHeader.Children.Add(infoGameTitleText);
                     infoHeader.Children.Add(infoCloseButton);
                     WinGrid.SetRow(infoHeader, 0);
                     infoPanel.Children.Add(infoHeader);
@@ -552,31 +553,30 @@ namespace VardyParty.Platforms.Windows
                     var infoBody = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
                         Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
-                        Spacing = 2
+                        Spacing = 0
                     };
 
-                    static Microsoft.UI.Xaml.Controls.TextBlock CreateInfoLine(double fontSize, bool bold = false, bool muted = false)
+                    // Android uses default sans-serif (not monospace) for all video-info lines.
+                    static Microsoft.UI.Xaml.Controls.TextBlock CreateInfoLine(double fontSize, bool muted = false)
                     {
                         return new Microsoft.UI.Xaml.Controls.TextBlock
                         {
                             Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
                                 muted ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.White),
                             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
                             FontSize = fontSize,
-                            FontWeight = bold
-                                ? Microsoft.UI.Text.FontWeights.SemiBold
-                                : Microsoft.UI.Text.FontWeights.Normal
+                            FontWeight = Microsoft.UI.Text.FontWeights.Normal
                         };
                     }
 
-                    infoGameTitleText = CreateInfoLine(13, bold: true);
                     infoStatusText = CreateInfoLine(12);
                     infoStreamIndexText = CreateInfoLine(12);
                     infoSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock
                     {
-                        FontSize = 11,
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                        FontSize = 10,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
                     infoSourceBadge = new Microsoft.UI.Xaml.Controls.Border
@@ -589,9 +589,8 @@ namespace VardyParty.Platforms.Windows
                         Margin = new WinThickness(0, 2, 0, 2)
                     };
                     infoQualityText = CreateInfoLine(12);
-                    infoDetailText = CreateInfoLine(11, muted: true);
+                    infoDetailText = CreateInfoLine(10, muted: true);
 
-                    infoBody.Children.Add(infoGameTitleText);
                     infoBody.Children.Add(infoStatusText);
                     infoBody.Children.Add(infoStreamIndexText);
                     infoBody.Children.Add(infoSourceBadge);
@@ -653,10 +652,13 @@ namespace VardyParty.Platforms.Windows
                             if (TryRecoverLiveHlsFailure(e))
                                 return;
 
-                            var errMsg = e?.ErrorMessage ?? "Unknown media error";
+                            var errMsg = e?.ErrorMessage;
                             var ext = string.Empty;
                             try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch (Exception ex) { _host._logger.LogWarning(ex, "Failed to read extended media error"); }
-                            var detail = $"Media failed: {errMsg}\n{ext}";
+                            var detail = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+                                isSourceNotSupported: e?.Error == MediaPlayerError.SourceNotSupported,
+                                errorMessage: errMsg,
+                                extendedMessage: ext);
                             engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, detail));
                         }
                         catch (Exception ex)
@@ -672,6 +674,7 @@ namespace VardyParty.Platforms.Windows
                         var isBuffering = playbackSession.PlaybackState == MediaPlaybackState.Buffering;
                         _host.BufferingStateChanged?.Invoke(_host, isBuffering);
                         engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, isBuffering));
+                        MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     };
 
                     mediaPlayer.PlaybackSession.PlaybackStateChanged += playbackStateChangedHandler;
@@ -771,11 +774,13 @@ namespace VardyParty.Platforms.Windows
                     streamSourceBadge.Child = streamSourceBadgeText;
                     streamInfoPanel.Children.Add(streamSourceBadge);
 
-                    // Next stream button host (button + x/y hint directly beneath)
+                    // Next stream button host (button + x/y hint directly beneath).
+                    // Right-aligned inside the hot zone so a wide hover strip does not
+                    // centre the chrome mid-window when the player is narrow.
                     nextButtonContainer = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
                         Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
-                        HorizontalAlignment = WinHorizontalAlignment.Center,
+                        HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center,
                         Spacing = 4,
                         Visibility = Microsoft.UI.Xaml.Visibility.Visible,
@@ -788,14 +793,15 @@ namespace VardyParty.Platforms.Windows
                     {
                         HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center,
-                        Width = 200,
+                        Width = 160,
                         MinHeight = 260,
-                        Padding = new WinThickness(0, 32, 48, 32),
+                        // Small right inset; keep left padding as the hover approach lane.
+                        Padding = new WinThickness(48, 32, 8, 32),
                         Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                     };
 
-                    // Next stream button — floating right-centre, inset from edge
+                    // Next stream button — flush to the right edge of the player.
                     nextButton = new WinButton
                     {
                         Content = "⏭",
@@ -806,7 +812,7 @@ namespace VardyParty.Platforms.Windows
                         BorderThickness = new WinThickness(1),
                         Padding = new WinThickness(14, 10, 14, 10),
                         CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
-                        HorizontalAlignment = WinHorizontalAlignment.Center,
+                        HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Center
                     };
 

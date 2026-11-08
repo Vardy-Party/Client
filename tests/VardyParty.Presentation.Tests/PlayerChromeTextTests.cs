@@ -184,6 +184,46 @@ public class PlayerChromeTextTests
         Assert.DoesNotContain("Buffer ", text);
     }
 
+    [Fact]
+    public void FormatVideoInfoDetail_KeepsBufferLineWhenZeroPercent()
+    {
+        // Arrange — 0% must still occupy a row (Windows used to omit null/empty and reflow).
+        var model = new VideoInfoPanelModel
+        {
+            Channel = "1X EN",
+            AspectRatio = "16:9",
+            Buffer = "Buffer 0%",
+            VideoCodec = "H.264",
+            AudioCodec = "AAC"
+        };
+
+        // Act
+        var detail = PlayerChromeText.FormatVideoInfoDetail(model);
+
+        // Assert
+        Assert.Contains("Buffer 0%", detail);
+        var lines = detail.Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("Aspect ratio: 16:9", lines[1]);
+        Assert.Equal("Buffer 0%", lines[2]);
+    }
+
+    [Fact]
+    public void FromPlayback_BufferZeroPercent_FormatsBufferLine()
+    {
+        // Arrange
+        var model = PlayerChromeText.FromPlayback(
+            overlay: null,
+            current: null,
+            playbackState: "Playing",
+            title: "Home vs Away",
+            sourceUrl: null,
+            refererUrl: null,
+            bufferPercent: 0);
+
+        // Assert
+        Assert.Equal("Buffer 0%", model.Buffer);
+    }
+
     [Theory]
     [InlineData("Channel North", "Channel: Channel North")]
     [InlineData(null, "")]

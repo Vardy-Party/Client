@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using VardyParty.Kernel;
+using VardyParty.Playback;
 using VardyParty.Presentation;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -44,10 +45,6 @@ namespace VardyParty.Platforms.Windows
                     }
                     catch (Exception ex) { _host.LogIgnored("ReadCurrentStreamOverlay", ex); }
 
-                    double bufferingProgress = 0;
-                    try { bufferingProgress = session.BufferingProgress; }
-                    catch (Exception ex) { _host.LogIgnored("ReadBufferingProgress", ex); }
-
                     var bitrateKbps = _host.ResolveBitrateKbps(ams, transferMeter);
 
                     var metrics = _host.GetCurrentMetrics();
@@ -66,7 +63,8 @@ namespace VardyParty.Platforms.Windows
                         AspectRatio = width > 0 && height > 0
                             ? PlayerOverlayFormatter.BuildAspect(width, height)
                             : null,
-                        BufferPercent = (int)(bufferingProgress * 100),
+                        // Live HLS leaves BufferingProgress at 0 while playing — use ranges.
+                        BufferPercent = ReadPlaybackBufferPercent(session),
                         M3u8Url = currentPlaybackUrl,
                         RefererUrl = _refererUrl
                     };
@@ -134,6 +132,7 @@ namespace VardyParty.Platforms.Windows
                 {
                     try
                     {
+                        chrome.SetContentState(PlaybackChromeContentState.Error);
                         infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                         infoGameTitleText.Text = string.Empty;
                         infoStatusText.Text = message;
@@ -144,6 +143,8 @@ namespace VardyParty.Platforms.Windows
                         infoQualityText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoDetailText.Text = string.Empty;
                         infoDetailText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        ApplyNextButtonChrome();
+                        ApplyStreamToastHoldVisuals();
                     }
                     catch (Exception ex) { _host.LogIgnored("ShowStreamError", ex); }
                 });
@@ -188,6 +189,98 @@ namespace VardyParty.Platforms.Windows
             {
                 infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 RefreshDismissSurface();
+                // UpdateStreamInfo used to no-op while video-info was open; refresh Next now.
+                UpdateStreamInfo();
+            }
+
+            /// <summary>
+            /// Buffer fill for the video-info panel. <see cref="MediaPlaybackSession.BufferingProgress"/>
+            /// is only useful while the session is actively buffering; for live HLS it stays 0
+            /// once Playing. Prefer buffered/seekable time ahead of <see cref="MediaPlaybackSession.Position"/>
+            /// relative to <see cref="PlaybackPolicy.DesiredLiveOffsetSeconds"/> (same target as AMS).
+            /// </summary>
+            private static int? ReadPlaybackBufferPercent(MediaPlaybackSession session)
+            {
+                try
+                {
+                    if (session.PlaybackState == MediaPlaybackState.Buffering
+                        && session.BufferingProgress > 0)
+                    {
+                        return (int)Math.Clamp(Math.Round(session.BufferingProgress * 100), 0, 100);
+                    }
+
+                    var position = session.Position;
+                    var targetSeconds = (double)PlaybackPolicy.DesiredLiveOffsetSeconds;
+                    if (targetSeconds <= 0)
+                        targetSeconds = 25;
+
+                    var aheadSeconds = TryBufferedAheadSeconds(session, position)
+                        ?? TrySeekableAheadSeconds(session, position);
+                    if (aheadSeconds is double ahead && ahead >= 0)
+                        return (int)Math.Clamp(Math.Round(100.0 * ahead / targetSeconds), 0, 100);
+
+                    if (session.BufferingProgress > 0)
+                        return (int)Math.Clamp(Math.Round(session.BufferingProgress * 100), 0, 100);
+
+                    // Keep the Buffer line stable (Android always shows BufferedPercentage,
+                    // including 0%). Returning null drops the row and shifts detail up.
+                    return 0;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+
+            private static double? TryBufferedAheadSeconds(MediaPlaybackSession session, TimeSpan position)
+            {
+                try
+                {
+                    var ranges = session.GetBufferedRanges();
+                    if (ranges == null || ranges.Count == 0)
+                        return null;
+
+                    TimeSpan? end = null;
+                    foreach (var range in ranges)
+                    {
+                        if (range.End <= position)
+                            continue;
+                        // Range covering the playhead, or the nearest ahead chunk.
+                        if (range.Start <= position)
+                            end = range.End;
+                        else if (end is null || range.End > end)
+                            end = range.End;
+                    }
+
+                    return end is { } bufferedEnd
+                        ? Math.Max(0, (bufferedEnd - position).TotalSeconds)
+                        : null;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static double? TrySeekableAheadSeconds(MediaPlaybackSession session, TimeSpan position)
+            {
+                try
+                {
+                    // Live: seekable end is the available edge; distance from Position ≈ buffer depth.
+                    var ranges = session.GetSeekableRanges();
+                    if (ranges == null || ranges.Count == 0)
+                        return null;
+
+                    var liveEdge = ranges[ranges.Count - 1].End;
+                    if (liveEdge <= position)
+                        return 0;
+
+                    return (liveEdge - position).TotalSeconds;
+                }
+                catch
+                {
+                    return null;
+                }
             }
 
             private void ShowVideoInfoPanel()
@@ -211,8 +304,10 @@ namespace VardyParty.Platforms.Windows
                     if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible)
                         ShowVideoInfoPanel();
                 }
-                else if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                else if (infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                    && chrome.ContentState != PlaybackChromeContentState.Error)
                 {
+                    // Error feedback uses infoPanel without chrome.IsVideoInfoVisible.
                     HideVideoInfoPanel();
                 }
 
@@ -226,18 +321,158 @@ namespace VardyParty.Platforms.Windows
                     reportStatusText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                 }
 
+                ApplyNextButtonChrome();
+                ApplyStreamToastHoldVisuals();
                 SyncScoresTickerFromChrome();
                 RefreshDismissSurface();
+            }
+
+            private void SyncChromeContentStateFromPlayback()
+            {
+                var previous = chrome.ContentState;
+                PlaybackChromeContentState proposed;
+                if (streamSwitchInProgress)
+                {
+                    proposed = PlaybackChromeContentState.Switching;
+                }
+                else if (liveHlsSoftRecoverInFlight
+                    || session.Snapshot.IsRecovering
+                    || session.Snapshot.IsRecoveringSwitch)
+                {
+                    proposed = PlaybackChromeContentState.Recovering;
+                }
+                else
+                {
+                    MediaPlaybackState playbackState;
+                    try { playbackState = mediaPlayer.PlaybackSession.PlaybackState; }
+                    catch { playbackState = MediaPlaybackState.None; }
+
+                    proposed = playbackState switch
+                    {
+                        MediaPlaybackState.Opening => PlaybackChromeContentState.Opening,
+                        MediaPlaybackState.None => PlaybackChromeContentState.Opening,
+                        _ => PlaybackChromeContentState.Playing
+                    };
+                }
+
+                var next = PlaybackChromePresenter.ResolveFromPlayback(
+                    previous,
+                    proposed,
+                    session.Snapshot.HasEstablishedPlayback);
+                chrome.SetContentState(next);
+
+                // Error uses infoPanel without chrome video-info; clear only when
+                // leaving Error deliberately (ResolveFromPlayback cleared it).
+                if (previous == PlaybackChromeContentState.Error
+                    && chrome.ContentState != PlaybackChromeContentState.Error
+                    && !chrome.IsVideoInfoVisible
+                    && infoPanel.Visibility == Microsoft.UI.Xaml.Visibility.Visible)
+                {
+                    infoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    RefreshDismissSurface();
+                }
+
+                ApplyNextButtonChrome();
+                ApplyStreamToastHoldVisuals();
+            }
+
+            /// <summary>
+            /// Next sits at z70 while playing (hover-near fade). While awaiting a playable
+            /// stream it must stay opaque and above video-info (z100) so it stays tappable.
+            /// </summary>
+            private void ApplyNextButtonChrome()
+            {
+                if (nextButtonHotZone is null || nextButtonContainer is null) return;
+
+                var canSwitchToAnother = chrome.CanGoNext && _onNextStreamRequested != null;
+                nextButtonHotZone.Visibility = canSwitchToAnother
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                var forced = chrome.IsNextForcedVisible;
+                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(nextButtonHotZone, forced ? 120 : 70);
+
+                if (!canSwitchToAnother)
+                {
+                    isPointerNearNextButton = false;
+                    nextButtonContainer.Opacity = 0;
+                    nextButtonHintText.Text = string.Empty;
+                    nextButtonHintText.Opacity = 0;
+                    return;
+                }
+
+                if (chrome.StreamToast is { } toast)
+                    nextButtonHintText.Text = $"{toast.Index}/{toast.Total}";
+
+                nextButtonContainer.Opacity = forced || isPointerNearNextButton ? 1 : 0;
+                nextButtonHintText.Opacity = forced || isPointerNearNextButton ? 1 : 0;
+            }
+
+            private void ApplyStreamToastHoldVisuals()
+            {
+                if (streamInfoPanel is null) return;
+                if (chrome.IsVideoInfoVisible)
+                {
+                    streamInfoHideTimer?.Stop();
+                    streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    return;
+                }
+
+                if (!chrome.IsStreamToastVisible)
+                {
+                    if (!chrome.ShouldHoldStreamToast)
+                        streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    return;
+                }
+
+                streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                if (chrome.ShouldHoldStreamToast)
+                {
+                    streamInfoHideTimer?.Stop();
+                    return;
+                }
+
+                EnsureStreamInfoHideTimer();
+                streamInfoHideTimer!.Stop();
+                streamInfoHideTimer.Start();
+            }
+
+            private void EnsureStreamInfoHideTimer()
+            {
+                streamInfoHideTimer ??= streamInfoPanel.DispatcherQueue.CreateTimer();
+                streamInfoHideTimer.Interval = PlaybackChromePresenter.StreamToastAutoHide;
+                if (streamInfoHideHandler != null) return;
+
+                streamInfoHideHandler = (_, __) =>
+                {
+                    streamInfoHideTimer?.Stop();
+                    chrome.DismissStreamToast();
+                    if (!chrome.IsStreamToastVisible)
+                        streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                };
+                streamInfoHideTimer.Tick += streamInfoHideHandler;
             }
 
             private void ShowNextButtonChrome()
             {
                 if (nextButtonHotZone.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
                 nextButtonContainer.Opacity = 1;
+                if (!string.IsNullOrWhiteSpace(nextButtonHintText.Text))
+                    nextButtonHintText.Opacity = 1;
             }
 
             private void HideNextButtonChrome()
             {
+                // Hover-near fade is only for actively playing content.
+                if (chrome.IsNextForcedVisible)
+                {
+                    nextButton.Background = nextBgNormal;
+                    nextButtonContainer.Opacity = 1;
+                    if (!string.IsNullOrWhiteSpace(nextButtonHintText.Text))
+                        nextButtonHintText.Opacity = 1;
+                    return;
+                }
+
                 nextButtonContainer.Opacity = 0;
                 nextButton.Background = nextBgNormal;
                 nextButtonHintText.Opacity = 0;
@@ -271,17 +506,18 @@ namespace VardyParty.Platforms.Windows
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
                     lastStreamTotal = total;
                     lastStreamIndex = index;
+                    var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
+                        ApplyNextButtonChrome();
+
+                        // Toast / badge stay hidden under the video-info panel.
                         if (chrome.IsVideoInfoVisible)
-                        {
                             return;
-                        }
 
                         streamCountText.Text = chrome.StreamToast?.Text
                             ?? PlayerOverlayFormatter.FormatStreamToast(index, total, null);
 
-                        var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                         var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
                         if (badgeStyle is { } style && !string.IsNullOrWhiteSpace(sourceLabel))
                         {
@@ -297,42 +533,9 @@ namespace VardyParty.Platforms.Windows
                             streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         }
 
-                        var canSwitchToAnother = chrome.CanGoNext && _onNextStreamRequested != null;
-                        nextButtonHotZone.Visibility = canSwitchToAnother
-                            ? Microsoft.UI.Xaml.Visibility.Visible
-                            : Microsoft.UI.Xaml.Visibility.Collapsed;
-                        if (!canSwitchToAnother)
-                        {
-                            isPointerNearNextButton = false;
-                            nextButtonContainer.Opacity = 0;
-                            nextButtonHintText.Text = string.Empty;
-                            nextButtonHintText.Opacity = 0;
-                        }
-                        else
-                        {
-                            nextButtonHintText.Text = $"{index}/{total}";
-                            nextButtonContainer.Opacity = isPointerNearNextButton ? 1 : 0;
-                        }
-
-                        // Index/total only — match presenter + Android; do not re-flash on measured size.
-                        var shouldShowStreamOverlay = total > 0 && hasChanged;
-                        if (shouldShowStreamOverlay)
-                        {
-                            streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                            streamInfoHideTimer ??= streamInfoPanel.DispatcherQueue.CreateTimer();
-                            streamInfoHideTimer.Interval = TimeSpan.FromSeconds(10);
-                            streamInfoHideTimer.Stop();
-                            if (streamInfoHideHandler == null)
-                            {
-                                streamInfoHideHandler = (_, __) =>
-                                {
-                                    streamInfoHideTimer?.Stop();
-                                    streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                                };
-                                streamInfoHideTimer.Tick += streamInfoHideHandler;
-                            }
-                            streamInfoHideTimer.Start();
-                        }
+                        // Index/total change or durable hold while awaiting playable content.
+                        if (total > 0 && (hasChanged || chrome.ShouldHoldStreamToast || chrome.IsStreamToastVisible))
+                            ApplyStreamToastHoldVisuals();
                     });
                 }
                 catch (Exception ex) { _host.LogIgnored("UpdateStreamInfo", ex); }

@@ -3,6 +3,7 @@ using System.Threading;
 using VardyParty.Hosting;
 using VardyParty.Kernel;
 using VardyParty.Playback;
+using VardyParty.Presentation;
 using VardyParty.Streaming;
 using Windows.Foundation;
 using Windows.Media.Core;
@@ -252,6 +253,7 @@ namespace VardyParty.Platforms.Windows
                 var url = currentPlaybackUrl;
                 liveHlsRecoveries++;
                 liveHlsSoftRecoverInFlight = true;
+                MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                 var errMsg = args?.ErrorMessage ?? "unknown";
                 _host._logger.LogWarning(
                     "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
@@ -286,6 +288,7 @@ namespace VardyParty.Platforms.Windows
                 finally
                 {
                     liveHlsSoftRecoverInFlight = false;
+                    MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                 }
             }
 
@@ -723,7 +726,14 @@ namespace VardyParty.Platforms.Windows
                 {
                     try
                     {
+                        chrome.SetContentState(PlaybackChromeContentState.Switching);
                         streamCountText.Text = message;
+                        if (!chrome.IsVideoInfoVisible)
+                        {
+                            streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                            streamInfoHideTimer?.Stop();
+                        }
+                        ApplyNextButtonChrome();
                         UpdateInfo();
                     }
                     catch (Exception ex) { _host.LogIgnored("ShowSwitchStatus", ex); }
@@ -748,6 +758,7 @@ namespace VardyParty.Platforms.Windows
 
                     streamSwitchInProgress = true;
                     transferMeter.Reset();
+                    MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     UpdateInfo();
 
                     // Make-before-break: the playing stream keeps playing while a one-shot
@@ -770,6 +781,7 @@ namespace VardyParty.Platforms.Windows
                 finally
                 {
                     streamSwitchInProgress = false;
+                    MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     UpdateInfo();
                 }
             }

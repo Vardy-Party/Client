@@ -235,6 +235,8 @@ public static class PlayerChromeText
             lines.Add($"Channel: {model.Channel}");
         if (!string.IsNullOrWhiteSpace(model.AspectRatio))
             lines.Add($"Aspect ratio: {model.AspectRatio}");
+        // Always keep the Buffer row when known (including "Buffer 0%") so the panel
+        // does not reflow when fill drops to empty.
         if (!string.IsNullOrWhiteSpace(model.Buffer))
             lines.Add(model.Buffer);
 

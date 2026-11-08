@@ -1,11 +1,13 @@
 ﻿using VardyParty.Kernel;
+using VardyParty.Ports;
 
 namespace VardyParty.Streaming;
 
 public class StreamHealthReporter(
     IStreamHealthService streamHealthService,
     ISessionIdProvider sessionIdProvider,
-    SelectionState selectionState) : IStreamHealthReporter
+    SelectionState selectionState,
+    IStreamHealthClientEnvironment clientEnvironment) : IStreamHealthReporter
 {
     /// <summary>
     /// The orchestrator's 30s tick and the native player's 30s timer both report
@@ -113,7 +115,11 @@ public class StreamHealthReporter(
             VideoCodec = includeMetadata ? metrics?.VideoCodec : null,
             AudioCodec = includeMetadata ? metrics?.AudioCodec : null,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            SessionId = sessionIdProvider.SessionId
+            SessionId = sessionIdProvider.SessionId,
+            ClientOs = clientEnvironment.ClientOs,
+            ClientVersion = clientEnvironment.ClientVersion,
+            LocalServiceOs = clientEnvironment.LocalServiceOs,
+            LocalServiceVersion = clientEnvironment.LocalServiceVersion
         };
 
         await streamHealthService.ReportHealthAsync(

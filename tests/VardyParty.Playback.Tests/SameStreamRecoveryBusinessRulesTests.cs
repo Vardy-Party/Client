@@ -40,9 +40,15 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("No m3u8 URL returned", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("[decoder init failed] MediaCodecVideoDecoderException", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Unsupported video type / format", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Media failed (source not supported): Exception from HRESULT: 0xC00D36C4", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("Adaptive source failed: UnsupportedManifestContentType", PlaybackErrorKind.ConfirmedDead)]
+    [InlineData("format not supported", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("ParserException: Input does not start with the #EXTM3U header", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("Response code: 403", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 401 Unauthorized", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("HTTP 442", PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData("Media failed (source not supported): Unknown media error Forbidden (403). (0x80190193)", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
@@ -123,12 +129,14 @@ public class SameStreamRecoveryBusinessRulesTests
     [Fact]
     public void MalformedPlaylist_GoesStraightToFreshPlay()
     {
-        var session = Established();
+        // Sole healthy row: still one fresh /play (multi-row cuts over immediately).
+        var session = Established(healthy: 1);
 
         var effects = Error(session, "ParserException: Input does not start with the #EXTM3U header");
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.Attach);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
     }
 
     [Fact]
@@ -151,6 +159,54 @@ public class SameStreamRecoveryBusinessRulesTests
 
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportFailed);
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Equal(0, session.Snapshot.SameStreamRetries);
+    }
+
+    [Fact]
+    public void FormatWindowsMediaFailedMessage_StampsSourceNotSupportedMarker()
+    {
+        // Arrange
+        // Act
+        var stamped = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Exception from HRESULT: 0xC00D36C4",
+            extendedMessage: null);
+        var network = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: false,
+            errorMessage: "network blip",
+            extendedMessage: "ext");
+        var forbidden = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Unknown media error Forbidden (403). (0x80190193)");
+
+        // Assert
+        Assert.Equal("Media failed (source not supported): Exception from HRESULT: 0xC00D36C4", stamped);
+        Assert.Equal(PlaybackErrorKind.ConfirmedDead, PlaybackPolicy.ClassifyPlaybackError(stamped));
+        Assert.Equal("Media failed: network blip\next", network);
+        Assert.Equal(PlaybackErrorKind.Transient, PlaybackPolicy.ClassifyPlaybackError(network));
+        // WinRT maps HTTP 403 → SourceNotSupported; keep it as a token reject, not format death.
+        Assert.Equal("Media failed: Unknown media error Forbidden (403). (0x80190193)", forbidden);
+        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(forbidden));
+    }
+
+    [Fact]
+    public void UnsupportedSource_SwitchesImmediatelyWithoutSameStreamSoak()
+    {
+        // Arrange
+        var session = Established();
+        var reason = PlaybackPolicy.FormatWindowsMediaFailedMessage(
+            isSourceNotSupported: true,
+            errorMessage: "Exception from HRESULT: 0xC00D36C4");
+
+        // Act
+        var effects = Error(session, reason);
+
+        // Assert — SourceNotSupported is ConfirmedDead: report, remove, advance; no reload/fresh soak.
+        Assert.Equal(PlaybackErrorKind.ConfirmedDead, PlaybackPolicy.ClassifyPlaybackError(reason));
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ReportFailed);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RemoveCurrentFromPool);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.Attach or PlaybackEffectKind.RetryFreshResolve);
         Assert.Equal(0, session.Snapshot.SameStreamRetries);
     }
 
@@ -267,14 +323,47 @@ public class SameStreamRecoveryBusinessRulesTests
     }
 
     [Fact]
+    public void MalformedPlaylist_WithOtherStreams_AdvancesImmediately_NoFreshWait()
+    {
+        // Arrange — Bravia 8 Nov 2026: Hadcrack non-#EXTM3U closed to home after a
+        // late fresh /play; keep the player up and cut over when the pool has peers.
+        var session = Established(healthy: 3);
+        var effects = Error(
+            session,
+            "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
+
+        // Assert — seamless: no RetryFreshResolve black-screen wait, no Close
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.CloseSession);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
+    }
+
+    [Fact]
+    public void MalformedPlaylist_SoleStream_StillTriesOneFreshPlay()
+    {
+        var session = Established(healthy: 1);
+        var first = Error(
+            session,
+            "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
+
+        Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        Assert.DoesNotContain(first, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
+    }
+
+    [Fact]
     public void MalformedPlaylist_ThenEmptyFreshPlay_AdvancesImmediately()
     {
         // Arrange — TV black screen 4 Nov 2026: #EXTM3U then four ~20s /play NotFounds
-        var session = Established();
+        // Sole healthy row: still one fresh /play, then advance (no EmptyFreshPlay loop).
+        var session = Established(healthy: 1);
+        session.ConfigureCycleTracking(null, null, () => true);
         var first = Error(session, "Source error [parsing manifest malformed] ParserException: Input does not start with the #EXTM3U header");
 
         // Act
         Assert.Contains(first, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
+        session.SetHealthyStreamCount(3);
         var afterEmpty = session.NotifyFreshResolveUnavailable("Fresh M3U8 unavailable");
 
         // Assert — one scrape max; do not keep EmptyFreshPlay looping
