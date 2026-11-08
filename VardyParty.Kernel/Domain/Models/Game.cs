@@ -20,8 +20,19 @@ public class Game
     public int? AwayScore { get; set; }
     public int? AggregateHomeScore { get; set; }
     public int? AggregateAwayScore { get; set; }
+
+    /// <summary>
+    /// Penalty shoot-out goals for the home side when BBC reports a completed
+    /// shoot-out; null when the fixture did not go to pens (or pens are still live).
+    /// </summary>
     public int? PenaltyHomeScore { get; set; }
+
+    /// <summary>
+    /// Penalty shoot-out goals for the away side when BBC reports a completed
+    /// shoot-out; null when the fixture did not go to pens (or pens are still live).
+    /// </summary>
     public int? PenaltyAwayScore { get; set; }
+
     public bool IsFinished { get; set; }
     public bool IsInProgress { get; set; }
     public bool IsHalfTime { get; set; }

@@ -19,22 +19,26 @@ permissions:
 jobs:
   # When every job is skipped, GitHub marks the workflow run failed (red X on
   # Actions). Automation / version-bump PRs must still report success.
+  # Also skip when *this synchronize* was our own Version.props push — otherwise
+  # each bump re-enters this workflow and fans out a second CI on the same PR.
   skip-automation:
     name: Skip ApplicationVersion sync
     if: >-
       ${{ github.event.pull_request.head.repo.full_name != github.repository
+          || github.actor == 'github-actions[bot]'
           || github.event.pull_request.user.login == 'github-actions[bot]'
           || startsWith(github.head_ref, 'ci/increment-application-version-')
           || startsWith(github.head_ref, 'ci/bump-display-version-')
           || startsWith(github.event.pull_request.title, 'ci:') }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo "No ApplicationVersion sync for fork / bot / ci:* automation PRs."
+      - run: echo "No ApplicationVersion sync for fork / bot actor / ci:* automation PRs."
 
   bump:
     name: Set ApplicationVersion on feature branch
     if: >-
       ${{ github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'github-actions[bot]'
           && github.event.pull_request.user.login != 'github-actions[bot]'
           && !startsWith(github.head_ref, 'ci/increment-application-version-')
           && !startsWith(github.head_ref, 'ci/bump-display-version-')
@@ -83,6 +87,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add Version.props
-          git commit -m "ci: set ApplicationVersion to ${NEXT} for merge to main"
+          # [skip ci] so this Version.props-only push does not cancel/restart the
+          # in-flight product CI (same PR synchronize used to fan out a second build).
+          git commit -m "ci: set ApplicationVersion to ${NEXT} for merge to main [skip ci]"
           git push origin "HEAD:${GITHUB_HEAD_REF}"
           echo "::notice::Feature branch ApplicationVersion ${BEFORE} → ${NEXT}"

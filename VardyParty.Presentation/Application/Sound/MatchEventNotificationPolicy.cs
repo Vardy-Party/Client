@@ -4,7 +4,7 @@ using VardyParty.Ports;
 namespace VardyParty.Presentation;
 
 /// <summary>
-/// Decides how a detected match event (goal / extra time / penalties) is
+/// Decides how a detected match event (goal / extra time / penalties / full time) is
 /// delivered. The user-decided table (see the notification matrix in
 /// docs/architecture/homepage-maui-avalonia.md):
 ///

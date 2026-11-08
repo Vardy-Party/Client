@@ -46,10 +46,32 @@ public sealed class MatchEventPresenterTests
         Assert.Equal("PENALTIES — Jablonec v Rangers", MatchEventPresenter.Headline(matchEvent));
     }
 
+    [Fact]
+    public void Headline_FullTime_ShowsScoreline()
+    {
+        var matchEvent = Event(MatchEventKind.FullTime, homeScore: 2, awayScore: 1);
+
+        Assert.Equal("FULL TIME — Jablonec 2–1 Rangers", MatchEventPresenter.Headline(matchEvent));
+    }
+
+    [Fact]
+    public void Headline_FullTimeOnPenalties_AppendsShootout()
+    {
+        var matchEvent = Event(
+            MatchEventKind.FullTime,
+            homeScore: 2,
+            awayScore: 2,
+            penaltyHome: 5,
+            penaltyAway: 4);
+
+        Assert.Equal("FULL TIME — Jablonec 2–2 Rangers (5–4 pens)", MatchEventPresenter.Headline(matchEvent));
+    }
+
     [Theory]
     [InlineData(MatchEventKind.Goal, "GOAL")]
     [InlineData(MatchEventKind.ExtraTime, "EXTRA TIME")]
     [InlineData(MatchEventKind.Penalties, "PENALTIES")]
+    [InlineData(MatchEventKind.FullTime, "FULL TIME")]
     public void Kind_NamesTheEvent(MatchEventKind kind, string expected)
     {
         Assert.Equal(expected, MatchEventPresenter.Kind(Event(kind)));
@@ -89,6 +111,7 @@ public sealed class MatchEventPresenterTests
     [InlineData(MatchEventKind.Goal)]
     [InlineData(MatchEventKind.ExtraTime)]
     [InlineData(MatchEventKind.Penalties)]
+    [InlineData(MatchEventKind.FullTime)]
     [InlineData((MatchEventKind)99)]
     public void Scoreline_ShowsScoreForEveryKind_HomeFirstAwayLast(MatchEventKind kind)
     {
@@ -96,6 +119,19 @@ public sealed class MatchEventPresenterTests
         var line = MatchEventPresenter.Scoreline(Event(kind, homeScore: 1, awayScore: 1));
 
         Assert.Equal("Jablonec 1–1 Rangers", line);
+    }
+
+    [Fact]
+    public void Scoreline_FullTimeWithPens_AppendsShootout()
+    {
+        var line = MatchEventPresenter.Scoreline(Event(
+            MatchEventKind.FullTime,
+            homeScore: 1,
+            awayScore: 1,
+            penaltyHome: 4,
+            penaltyAway: 3));
+
+        Assert.Equal("Jablonec 1–1 Rangers (4–3 pens)", line);
     }
 
     [Fact]
@@ -122,7 +158,9 @@ public sealed class MatchEventPresenterTests
         MatchEventKind kind,
         int homeScore = 1,
         int awayScore = 1,
-        string league = "Cup Alpha")
+        string league = "Cup Alpha",
+        int? penaltyHome = null,
+        int? penaltyAway = null)
     {
         var game = new Game
         {
@@ -132,6 +170,8 @@ public sealed class MatchEventPresenterTests
             Start = new DateTime(2026, 8, 27, 19, 0, 0, DateTimeKind.Utc),
             HomeScore = homeScore,
             AwayScore = awayScore,
+            PenaltyHomeScore = penaltyHome,
+            PenaltyAwayScore = penaltyAway,
             IsInProgress = true,
         };
         return new MatchEvent(kind, game, homeScore, awayScore);

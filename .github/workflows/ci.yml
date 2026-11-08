@@ -49,12 +49,12 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
-# One run per head branch (or main ref). Duplicate PRs from the same branch
-# share this group and cancel each other instead of fan-out.
+# One run per PR number (or main ref). Same-PR synchronizes cancel each other
+# instead of stacking. Prefer PR number over head_ref so retargets stay stable.
 # Do not cancel in-progress runs on main: two fast merges would otherwise share
 # one CI Complete and one ApplicationVersion / GitHub Release.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

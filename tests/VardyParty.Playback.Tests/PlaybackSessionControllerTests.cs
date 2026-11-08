@@ -60,13 +60,23 @@ public class PlaybackSessionControllerTests
         // Act
         var effects = session.Handle(MediaEngineEvent.Error(gen, "403"));
 
-        // Assert
+        // Assert — start-error cache retry is chrome-only, not same-stream recovery.
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.RetryFreshResolve);
-        // Assert
         Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
-        // Assert
         Assert.DoesNotContain(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext);
         Assert.True(session.Snapshot.CacheRetryUsed);
+        Assert.True(session.Snapshot.IsAwaitingFreshResolve);
+        Assert.False(session.Snapshot.IsRecovering);
+        Assert.Equal(PlaybackSessionState.Starting, session.Snapshot.State);
+
+        // Act — re-attach after fresh /play must take the start path, not recovery Buffering.
+        var attach = session.BeginAttach("http://fresh.m3u8", usedCachedUrl: false, force: true);
+
+        // Assert
+        Assert.Contains(attach, e => e.Kind == PlaybackEffectKind.Attach);
+        Assert.Equal(PlaybackSessionState.Starting, session.Snapshot.State);
+        Assert.False(session.Snapshot.IsAwaitingFreshResolve);
+        Assert.False(session.Snapshot.IsRecovering);
     }
 
     [Fact]
