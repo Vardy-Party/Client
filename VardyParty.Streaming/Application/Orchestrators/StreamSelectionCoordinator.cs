@@ -91,8 +91,8 @@ public class StreamSelectionCoordinator(
                 logger.LogWarning(ex, "[StreamSelection] Failed to fetch recommendations, defaulting to discovery spread");
             }
 
-            // Catalog / chip order as-is (FB and MP both eligible). First healthy
-            // wins playback; no MP-before-FB / FB-before-MP reshuffle.
+            // Catalog / chip order as-is here. Try-order is set by
+            // StreamTestOrderPolicy: recommended first, then MP, then FB.
             var expandedStreams = StreamRecommendationPolicy.ApplyRecommendedChips(
                     V2StreamExpander.Expand(streamsResponse.Streams),
                     recommendations)

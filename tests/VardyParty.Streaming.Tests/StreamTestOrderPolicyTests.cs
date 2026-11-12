@@ -113,9 +113,9 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_NoRecommendations_PreservesCatalogIndexOrder()
+    public void Build_NoRecommendations_TriesMpFirstThenCatalogOrder()
     {
-        // Arrange — FB ahead of MP in the catalog; FCFS keeps that (salt 0).
+        // Arrange — FB ahead of MP in the catalog; MP is still tried first (salt 0).
         var streams = new[]
         {
             Fb("https://streams.example.com/north", "Channel North"),
@@ -131,11 +131,11 @@ public class StreamTestOrderPolicyTests
             index => streams[index]);
 
         // Assert
-        Assert.Equal([0, 1, 2], order);
+        Assert.Equal([1, 0, 2], order);
     }
 
     [Fact]
-    public void Build_UnmatchedRecommendation_FallsBackToCatalogIndexOrder()
+    public void Build_UnmatchedRecommendation_FallsBackToMpFirstDiscoveryOrder()
     {
         // Arrange
         var streams = new[]
@@ -160,8 +160,116 @@ public class StreamTestOrderPolicyTests
             (_, _) => -1,
             index => streams[index]);
 
-        // Assert — unmatched recs → same as empty: catalog indexes, salt 0
-        Assert.Equal([0, 1], order);
+        // Assert — unmatched recs → same as empty: MP first, then FB (salt 0)
+        Assert.Equal([1, 0], order);
+    }
+
+    [Fact]
+    public void Build_RecommendedFirst_ThenMpRemainder_ThenFbRemainder()
+    {
+        // Arrange — a slow serial FB sweep must not bury the MP page behind it.
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/alpha", "Channel Alpha"),
+            Fb("https://streams.example.com/bravo", "Channel Bravo"),
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
+            Fb("https://streams.example.com/northgate", "Channel North")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.Low,
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.Low));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([3, 2, 0, 1], order);
+    }
+
+    [Fact]
+    public void Build_SeveralMpRemainderRows_KeepCatalogOrderAheadOfFb()
+    {
+        // Arrange
+        var streams = new[]
+        {
+            Mp("https://mpoutqn.example.com/west", "Channel West"),
+            Fb("https://streams.example.com/alpha", "Channel Alpha"),
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
+            Fb("https://streams.example.com/northgate", "Channel North")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.High,
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.High));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([3, 0, 2, 1], order);
+    }
+
+    [Fact]
+    public void Build_UnlabeledMpPageRow_IsTriedRightAfterRecommended()
+    {
+        // Arrange — catalog MP page with no chip labels yet (empty channel name).
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/alpha", "Channel Alpha"),
+            UnlabeledMp("https://mpoutqn.example.com/match"),
+            Fb("https://streams.example.com/northgate", "Channel North")
+        };
+        var recommendations = Recs(
+            RecommendationConfidence.Medium,
+            RecItem("https://streams.example.com/northgate", RecommendationConfidence.Medium));
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations,
+            streams.Length,
+            (url, _) => Array.FindIndex(streams, s => s.Url == url),
+            index => streams[index]);
+
+        // Assert
+        Assert.Equal([2, 1, 0], order);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(7)]
+    [InlineData(-5)]
+    public void Build_NoRecommendations_MpStaysFirstForEverySalt(int salt)
+    {
+        // Arrange
+        var streams = new[]
+        {
+            Fb("https://streams.example.com/alpha", "Channel Alpha"),
+            Fb("https://streams.example.com/bravo", "Channel Bravo"),
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
+            Fb("https://streams.example.com/charlie", "Channel Charlie"),
+            Mp("https://mpoutqn.example.com/west", "Channel West")
+        };
+
+        // Act
+        var order = StreamTestOrderPolicy.Build(
+            recommendations: null,
+            streams.Length,
+            (_, _) => -1,
+            index => streams[index],
+            salt);
+
+        // Assert — MP in catalog order, then every FB row exactly once
+        Assert.Equal([2, 4], order.Take(2));
+        Assert.Equal([0, 1, 3], order.Skip(2).OrderBy(i => i));
     }
 
     [Fact]
@@ -336,6 +444,18 @@ public class StreamTestOrderPolicyTests
             .With(s => s.PlayerStream, string.Empty)
             .With(s => s.StreamStatus, string.Empty)
             .Create();
+
+    private static Stream UnlabeledMp(string url) =>
+        new()
+        {
+            Url = url,
+            Channel = string.Empty,
+            Source = "mp",
+            ResolutionStrategy = "v2",
+            PlayerStream = string.Empty,
+            PlayerStreams = [],
+            StreamStatus = string.Empty
+        };
 
     private Stream Mp(string url, string channel) =>
         _fixture.Build<Stream>()

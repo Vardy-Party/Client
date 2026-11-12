@@ -82,7 +82,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 | Phase | Shared Core | Android / Windows / Linux | Notes |
 |-------|-------------|---------------------------|-------|
-| **Select / order** | Recommendations + catalog FCFS (FB and MP) | Uses Core | Keep in Core |
+| **Select / order** | Recommendations, then MP, then FB (catalog order; FB salted when no recs) | Uses Core | Keep in Core |
 | **Pre-play probe** | `StreamHealthChecker` | Uses Core | Keep in Core |
 | **Skip countdown** | `StreamResolver` skips `IsCountdown` | — | Keep |
 | **Start first healthy** | First healthy → `PlayVideoAsync`; continue testing | Attaches ExoPlayer / AdaptiveMediaSource / LibVLC | Keep |
@@ -106,7 +106,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 ### 1. Selection & pre-play (Core — keep)
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
-2. Expand V2 chips; keep catalog order (FB and MP both eligible — first healthy wins).
+2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. First healthy still wins.
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
