@@ -107,6 +107,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
 2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. First healthy still wins.
+   - MP never holds first play: a healthy row waits for earlier rows to yield, except MP rows still in `/mp` (single-flight, up to the harvest timeout). A later healthy FB opens first; the MP joins the pool afterwards (appended, so channel numbers stay stable). Rule: `StreamResolutionOrchestratorTests.StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`.
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.

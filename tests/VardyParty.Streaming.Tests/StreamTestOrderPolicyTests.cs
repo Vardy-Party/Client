@@ -445,17 +445,16 @@ public class StreamTestOrderPolicyTests
             .With(s => s.StreamStatus, string.Empty)
             .Create();
 
-    private static Stream UnlabeledMp(string url) =>
-        new()
-        {
-            Url = url,
-            Channel = string.Empty,
-            Source = "mp",
-            ResolutionStrategy = "v2",
-            PlayerStream = string.Empty,
-            PlayerStreams = [],
-            StreamStatus = string.Empty
-        };
+    private Stream UnlabeledMp(string url) =>
+        _fixture.Build<Stream>()
+            .With(s => s.Url, url)
+            .With(s => s.Channel, string.Empty)
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.PlayerStreams, new List<string>())
+            .With(s => s.Source, "mp")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
 
     private Stream Mp(string url, string channel) =>
         _fixture.Build<Stream>()

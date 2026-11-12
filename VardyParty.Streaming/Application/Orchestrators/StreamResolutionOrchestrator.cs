@@ -209,12 +209,16 @@ public class StreamResolutionOrchestrator(
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
         var orderedStreams = orderedCandidates.Select(c => c.Stream).ToList();
-        // First play follows catalog order. FillWindow may finish a later FB
-        // while an earlier /mp is still in flight; hold that FB until every
-        // lower index has yielded so playback still starts on the earlier row.
+        // First play follows try-order: a healthy row is held until every lower
+        // index has yielded, so playback starts on the earlier row. MP rows are
+        // the exception - MP is tried early (StreamTestOrderPolicy) but /mp is
+        // single-flight with a long harvest timeout, so an MP row that has not
+        // yielded never holds a later healthy row. It joins the pool (appended,
+        // stable numbering) when it turns healthy.
         var catalogIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < orderedStreams.Count; i++)
             catalogIndex[orderedStreams[i]] = i;
+        var mpCatalog = orderedStreams.Select(StreamRecommendationPolicy.IsMpLike).ToArray();
         var resolvedCatalog = new HashSet<int>();
         var heldHealthy = new SortedDictionary<int, EnrichedStream>();
         var nextExtraIndex = orderedStreams.Count;
@@ -255,7 +259,8 @@ public class StreamResolutionOrchestrator(
         void FlushReadyForPlayback()
         {
             var frontier = 0;
-            while (frontier < orderedStreams.Count && resolvedCatalog.Contains(frontier))
+            while (frontier < orderedStreams.Count
+                   && (resolvedCatalog.Contains(frontier) || mpCatalog[frontier]))
                 frontier++;
 
             // Catalog rows stay held until the frontier passes (first play follows

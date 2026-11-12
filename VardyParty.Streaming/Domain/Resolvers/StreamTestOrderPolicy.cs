@@ -6,9 +6,11 @@ namespace VardyParty.Streaming;
 /// <summary>
 /// Playback try-order: crowd-recommended streams first (high confidence
 /// before low), then remaining MP (V2) rows, then remaining FB rows - each
-/// group in catalog order. Few streams are ever recommended and FB rows are
-/// resolved one at a time (~20s each), so MP must not wait behind the FB
-/// catalog (regression from e5444f7, #152). The control panel badges a stream as
+/// group in catalog order. Few streams are ever recommended, and most FB rows
+/// are dead and take ~20s each to fail (two in flight; only /mp is
+/// single-flight), so a catalog-order sweep buries the MP page (regression
+/// from e5444f7, #152). An MP row still in /mp never holds first play
+/// (StreamResolutionOrchestrator). The control panel badges a stream as
 /// recommended whenever it is in the recommended list; confidence ranks
 /// that list instead of discarding it.
 /// </summary>
