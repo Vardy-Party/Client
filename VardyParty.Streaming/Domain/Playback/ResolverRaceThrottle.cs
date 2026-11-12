@@ -19,6 +19,12 @@ public sealed class ResolverRaceThrottle
         VardyParty.Kernel.FirstPlayOpenStrategy.PlaybackPriorityTimeout;
 
     private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
+
+    /// <summary>
+    /// Slots held right now by <c>/play</c>, <c>/mp</c> or a race leg. Read-only seam for the
+    /// probe timeline harness (docs/PROBE_SCHEDULING_RULES.md); scheduling never reads it.
+    /// </summary>
+    internal int SlotsInUse => MaxConcurrent - _slots.CurrentCount;
     private readonly object _gate = new();
     private int _races;
     private int _othersHeld;
