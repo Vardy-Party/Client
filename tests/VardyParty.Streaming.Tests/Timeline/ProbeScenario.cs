@@ -179,7 +179,8 @@ internal sealed class MpScript
     private static string Quote(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 }
 
-internal sealed record RowSpec(string Id, PlayScript? Play, MpScript? Mp, int Run = 1)
+/// <param name="Retry">What LocalService does with the row's second and later <c>/play</c> (a re-queue pass); null repeats <paramref name="Play"/>.</param>
+internal sealed record RowSpec(string Id, PlayScript? Play, MpScript? Mp, int Run = 1, PlayScript? Retry = null)
 {
     public bool IsMp => Mp is not null;
 }
@@ -229,9 +230,10 @@ internal sealed class ProbeScenario
         return this;
     }
 
-    public ProbeScenario Fb(string id, PlayScript script)
+    /// <summary>An FB row; <paramref name="retry"/> answers its later <c>/play</c>s (e.g. a re-queue pass).</summary>
+    public ProbeScenario Fb(string id, PlayScript script, PlayScript? retry = null)
     {
-        _rows.Add(new RowSpec(id, script, null, Run));
+        _rows.Add(new RowSpec(id, script, null, Run, retry));
         return this;
     }
 
@@ -252,6 +254,20 @@ internal sealed class ProbeScenario
     public ProbeScenario Recommend(string id, RecommendationConfidence confidence = RecommendationConfidence.High)
     {
         _recommended.Add((id, confidence));
+        return this;
+    }
+
+    /// <summary>
+    /// When set, the orchestrator's re-queue pass is modelled: this many seconds after run 1
+    /// ends, every row that ended Deferred is resolved again (same rows, same session, so the
+    /// tiers and the Medium cap still apply, but no head start). The orchestrator waits 5s/15s
+    /// for a LocalService outage and 2 min for a CDN-unreachable row.
+    /// </summary>
+    public double? ReResolveDeferredAfter { get; private set; }
+
+    public ProbeScenario ThenReResolveDeferredAfter(double seconds)
+    {
+        ReResolveDeferredAfter = seconds;
         return this;
     }
 

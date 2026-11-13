@@ -215,6 +215,37 @@ internal static class ProbeSchedulingScenarios
         .DeadFb("d1")
         .Recommend("h1").Recommend("mp");
 
+    /// <summary>
+    /// Rule 1, "Medium limited to one slot always": three Medium rows, the first two dead
+    /// (20s). When m1 and f1 both fail at 20s (after the 12s head start) only one Medium row
+    /// takes a slot; finding takes the other.
+    /// </summary>
+    public static ProbeScenario MediumCapAfterHeadStart() => ProbeScenario.Named("Three Medium rows past the head start: one at a time")
+        .Fb("m1", Play.Dead())
+        .Fb("m2", Play.Dead())
+        .Fb("m3", Play.HealthyAt(5))
+        .Fb("f1", Play.Dead())
+        .Fb("f2", Play.HealthyAt(6))
+        .DeadFb("d1")
+        .Recommend("m1", RecommendationConfidence.Medium)
+        .Recommend("m2", RecommendationConfidence.Medium)
+        .Recommend("m3", RecommendationConfidence.Medium);
+
+    /// <summary>
+    /// Rule 1, "Medium limited to one slot always", in a re-queue pass: m1, m2 and f1 are CDN
+    /// unreachable at first and healthy when the orchestrator tries them again (2 min after
+    /// run 1 ends at 33s). No head start then, but the session's tiers still hold m2 until m1
+    /// yields at 158s; without the cap m2 would start at 155s, beside m1's /play.
+    /// </summary>
+    public static ProbeScenario MediumCapInReQueuePass() => ProbeScenario.Named("Two Medium rows re-queued after CDN unreachable: one at a time")
+        .Fb("m1", Play.CdnUnreachableAt(2), retry: Play.HealthyAt(4))
+        .Fb("m2", Play.CdnUnreachableAt(2), retry: Play.HealthyAt(4))
+        .Fb("f1", Play.CdnUnreachableAt(2), retry: Play.HealthyAt(1))
+        .Fb("f2", Play.HealthyAt(30))
+        .Recommend("m1", RecommendationConfidence.Medium)
+        .Recommend("m2", RecommendationConfidence.Medium)
+        .ThenReResolveDeferredAfter(120);
+
     /// <summary><see cref="TwoHighHealthy"/> with no recommendations: no head start, behaviour unchanged.</summary>
     public static ProbeScenario NoRecs() => ProbeScenario.Named("No recommendations (TwoHighHealthy rows)")
         .Mp("mp", MpScript.Normal(["A", "B"]))
@@ -367,6 +398,8 @@ internal static class ProbeSchedulingScenarios
         (nameof(EarlyFbBeforeLateMedium), EarlyFbBeforeLateMedium),
         (nameof(DeadHighSlotToMedium), DeadHighSlotToMedium),
         (nameof(HighMpChips), HighMpChips),
+        (nameof(MediumCapAfterHeadStart), MediumCapAfterHeadStart),
+        (nameof(MediumCapInReQueuePass), MediumCapInReQueuePass),
     ];
 
     // ---- the table ----
@@ -692,6 +725,26 @@ internal static class ProbeSchedulingScenarios
             PostStartsBetween("mp", 5, 5.001),
             BackupIs("mp"),
             TopTierHeadStartHeld()),
+
+        new("R1 Medium is limited to one slot after the head start too: m2 and f2 take the slots m1 and f1 free at 20s", "R1",
+            MediumCapAfterHeadStart,
+            TopTierIs(), MediumTierIs("m1", "m2", "m3"),
+            StartsBy("m1", 0.001), StartsBy("f1", 0.001),
+            StartsBy("m2", 20.001), StartsBy("f2", 20.001),
+            StartsNotBefore("m3", 40),
+            MediumRunningNeverExceeds(1),
+            FirstPlayOn("f2")),
+
+        new("R1 Medium is limited to one slot in a re-queue pass: m2 waits for m1, finding fills the other slot", "R1 R11 R13",
+            MediumCapInReQueuePass,
+            MediumTierIs("m1", "m2"),
+            RowEnds("m1", StreamResolutionStatus.Deferred, 2, 2.001),
+            FirstPlayOn("f2"),
+            NthCallStartsBetween("m1", 2, 153, 153.001), NthCallStartsBetween("f1", 2, 153, 153.001),
+            NthCallStartsBetween("m2", 2, 158, 158.001),
+            MediumRunningNeverExceeds(1),
+            PoolOrder("f2", "f1", "m1", "m2"),
+            BackupReplaced("f1", "m1")),
 
         new("R11 an early FB row is the backup only until the second High row is playable", "R1 R11",
             EarlyFbBeforeLateHigh,

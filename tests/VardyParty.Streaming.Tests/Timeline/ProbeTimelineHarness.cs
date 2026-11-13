@@ -34,8 +34,8 @@ namespace VardyParty.Streaming.Tests.Timeline;
 /// Modelled like the orchestrator: the top-tier head start around run 1; the start
 /// <c>/play</c> when the probed link cannot be reused (with the backup warmed beside it);
 /// a prewarmer that warms upcoming rows that need it, one at a time, from first play; and
-/// the rule-6 priority window. Not modelled: the orchestrator's deferred re-queue passes,
-/// the player itself (first play = the moment the player would open) and the real-time
+/// the rule-6 priority window; optionally the orchestrator's re-queue pass of the Deferred
+/// rows (<see cref="ProbeScenario.ThenReResolveDeferredAfter"/>). Not modelled: the player itself (first play = the moment the player would open) and the real-time
 /// <c>/play</c> timeout. The <c>/mp</c> harvest timeout and the 30s seed/chip deadlines run
 /// on this clock (<see cref="LocalLanPlayService.Time"/>).
 /// Between milestones the harness waits for the thread pool to go quiet. If it does
@@ -97,6 +97,10 @@ internal static class ProbeTimelineHarness
         private int _plays;
         private int _mpOpen;
         private int _healthOpen;
+        // Rows that ended Deferred in run 1 (the orchestrator's re-queue list), and /play calls per row.
+        private readonly List<StreamModel> _deferred = new();
+        private readonly Dictionary<string, int> _playCalls = new(StringComparer.OrdinalIgnoreCase);
+        private List<string> _lastPool = new();
 
         public Run(ProbeScenario scenario)
         {
@@ -219,10 +223,35 @@ internal static class ProbeTimelineHarness
                 catch (OperationCanceledException) when (_switchCts.IsCancellationRequested)
                 {
                     Note("run 1 cancelled (match switch)");
+                    return;
                 }
                 finally
                 {
                     _headStart?.Dispose();
+                }
+
+                // The orchestrator's re-queue pass: the Deferred rows again, same session (the
+                // tiers and the Medium cap still apply), no head start.
+                if (_scenario.ReResolveDeferredAfter is not { } after)
+                    return;
+                List<StreamModel> retry;
+                lock (_gate)
+                {
+                    retry = _deferred.ToList();
+                    _deferred.Clear();
+                }
+
+                if (retry.Count == 0)
+                    return;
+                await Task.Delay(TimeSpan.FromSeconds(after), _clock, _cts.Token).ConfigureAwait(false);
+                Note($"re-queue pass: {string.Join(", ", retry.Select(KeyOf))}");
+                Interlocked.Add(ref _mpTotal, retry.Count(MpPageUrl.IsV2Stream));
+                Interlocked.Add(ref _fbTotal, retry.Count(r => !MpPageUrl.IsV2Stream(r)));
+                await foreach (var row in resolver
+                                   .ResolveStreamsIncrementallyAsync(retry, 2, _cts.Token)
+                                   .ConfigureAwait(false))
+                {
+                    Accept(row);
                 }
             });
 
@@ -400,7 +429,7 @@ internal static class ProbeTimelineHarness
                     Volatile.Read(ref _mpStarted) - Volatile.Read(ref _mpDone),
                     _throttle.RaceInFlight,
                     inFlight,
-                    _throttle.CurrentHeadStart?.FindingHeld == true);
+                    _throttle.CurrentHeadStart?.FindingHeld == true || _throttle.CurrentTiers?.RowsHeld == true);
                 if (_tl.Snapshots.Count > 0 && Math.Abs(_tl.Snapshots[^1].At - snap.At) < 1e-9)
                     _tl.Snapshots[^1] = snap;
                 else
@@ -422,6 +451,8 @@ internal static class ProbeTimelineHarness
                 Interlocked.Increment(ref MpPageUrl.IsV2Stream(row.Stream) ? ref _mpDone : ref _fbDone);
                 if (row.Status == StreamResolutionStatus.Healthy)
                     JoinPool(row);
+                else if (row.Status == StreamResolutionStatus.Deferred)
+                    _deferred.Add(row.Stream);
             }
         }
 
@@ -429,6 +460,15 @@ internal static class ProbeTimelineHarness
         {
             _pool.AddHealthyStream(row);
             var key = KeyOf(row.Stream);
+            // Channel numbers: the pool before this row must be a prefix of the pool after it.
+            var pool = _pool.GetHealthyStreams().Select(e => KeyOf(e.Stream)).ToList();
+            if (!pool.Take(_lastPool.Count).SequenceEqual(_lastPool))
+            {
+                _tl.Renumbered++;
+                Note($"RENUMBERED: {string.Join(", ", _lastPool)} -> {string.Join(", ", pool)}");
+            }
+
+            _lastPool = pool;
             Note($"pool +{key} (#{_pool.GetHealthyStreams().Count})");
             if (_hasPlayed)
             {
@@ -528,7 +568,16 @@ internal static class ProbeTimelineHarness
         // The backup can change: a better-tier row that turns playable later replaces it.
         private void TrackBackup()
         {
-            if (!ReferenceEquals(_pool.GetCurrentStream(), _playing) || CurrentBackup() is not { } backup)
+            if (!ReferenceEquals(_pool.GetCurrentStream(), _playing))
+            {
+                // Nobody presses Next in the harness: a change of the playing row is the scheduler's.
+                _tl.Switches++;
+                Note($"SWITCH: playing {KeyOf(_pool.GetCurrentStream()?.Stream ?? _playing!.Stream)}, expected {KeyOf(_playing!.Stream)}");
+                _playing = _pool.GetCurrentStream();
+                return;
+            }
+
+            if (CurrentBackup() is not { } backup)
                 return;
             var key = KeyOf(backup.Stream);
             if (_tl.Backup?.Key != key)
@@ -542,6 +591,7 @@ internal static class ProbeTimelineHarness
             if (_tl.BackupReadyAt is null && !NeedsWarm(backup))
             {
                 _tl.BackupReadyAt = T;
+                _tl.FirstBackupReadyAt ??= T;
                 Note($"backup {key} ready");
             }
         }
@@ -747,7 +797,10 @@ internal static class ProbeTimelineHarness
                 var q = rest.IndexOf('?');
                 var page = Uri.UnescapeDataString(q < 0 ? rest : rest[..q]);
                 var row = run.RowFor(page);
-                var script = row.Play ?? throw new InvalidOperationException($"{row.Id} is not an FB row");
+                int call;
+                lock (run._playCalls)
+                    call = run._playCalls[row.Id] = run._playCalls.GetValueOrDefault(row.Id) + 1;
+                var script = (call > 1 ? row.Retry : null) ?? row.Play ?? throw new InvalidOperationException($"{row.Id} is not an FB row");
                 Interlocked.Increment(ref run._plays);
                 run.LocalServiceEvent(row.Id, "GET /play");
                 try

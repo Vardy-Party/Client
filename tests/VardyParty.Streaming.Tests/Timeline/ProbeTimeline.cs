@@ -40,7 +40,7 @@ internal sealed record Snapshot(
     int MpActive,
     bool PriorityHold,
     IReadOnlyList<string> InFlight,
-    bool HeadStartHold = false)
+    bool TierHold = false)
 {
     public int Unstarted => UnstartedFb + UnstartedMp;
 
@@ -101,6 +101,30 @@ internal sealed class ProbeTimeline
     /// <summary>When that backup was ready to switch to (needs no warm, or its warm <c>/play</c> answered).</summary>
     public double? BackupReadyAt { get; set; }
 
+    /// <summary>
+    /// Backup time: when a backup was first ready to switch to (any backup; a later better-tier
+    /// replacement does not reset it). Null when there never was one.
+    /// </summary>
+    public double? FirstBackupReadyAt { get; set; }
+
+    /// <summary>Picture time: when the first playable stream would be on screen (first play).</summary>
+    public double? PictureAt => FirstPlay?.At;
+
+    /// <summary>Times the playing stream changed without the viewer asking (the scheduler never switches it).</summary>
+    public int Switches { get; set; }
+
+    /// <summary>Times a pool row's channel number changed (rows are only ever appended).</summary>
+    public int Renumbered { get; set; }
+
+    /// <summary>The Nth (1-based) distinct row to end Healthy, and when.</summary>
+    public (string Key, double At)? NthHealthy(int n) =>
+        Results.Where(r => r.Status == StreamResolutionStatus.Healthy)
+            .GroupBy(r => r.Key).Select(g => g.First())
+            .OrderBy(r => r.At)
+            .Skip(n - 1)
+            .Select(r => ((string, double)?)(r.Key, r.At))
+            .FirstOrDefault();
+
     /// <summary>Every backup in turn (a better-tier row that turns playable later replaces it).</summary>
     public List<(double At, string Key)> Backups { get; } = new();
 
@@ -154,6 +178,7 @@ internal sealed class ProbeTimeline
             sb.AppendLine($"Head start: {Fmt(hs.From)}-{Fmt(hs.To)} High {string.Join(", ", hs.TopTier)}; Medium {string.Join(", ", hs.Medium)}");
         if (FreshStartPlay is { } fsp)
             sb.AppendLine($"Fresh start /play: {Fmt(fsp.From)}-{Fmt(fsp.To)}");
+        sb.AppendLine($"UX: picture {(PictureAt is { } pa ? Fmt(pa) : "never")}, backup {(FirstBackupReadyAt is { } ba ? Fmt(ba) : "never")}, switches {Switches}, renumbered {Renumbered}");
         sb.AppendLine($"Backup: {(Backup is { } b ? $"{b.Key} chosen {Fmt(b.At)}, ready {(BackupReadyAt is { } r ? Fmt(r) : "never")}" : "none")}");
         if (Backups.Count > 1)
             sb.AppendLine($"Backups in turn: {string.Join(" -> ", Backups.Select(x => $"{x.Key}@{Fmt(x.At)}"))}");
@@ -164,7 +189,7 @@ internal sealed class ProbeTimeline
         sb.AppendLine($"Harness: {SettleCount} settles, {SettleTotalMs:0} ms total, slowest {SettleMaxMs:0} ms");
         sb.AppendLine("Milestones (play slots / plays at LS / mp open / health / FB active+queued / MP active+queued / hold | in flight):");
         foreach (var s in Snapshots)
-            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : s.HeadStartHold ? "HEAD" : "-")} | {string.Join(", ", s.InFlight)}");
+            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : s.TierHold ? "TIER" : "-")} | {string.Join(", ", s.InFlight)}");
         sb.AppendLine("Events:");
         foreach (var (at, line) in Log.OrderBy(l => l.At))
             sb.AppendLine($"  {Fmt(at)}  {line}");

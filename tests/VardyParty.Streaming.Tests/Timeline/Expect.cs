@@ -13,13 +13,17 @@ internal sealed record Expectation(string Description, Func<ProbeTimeline, strin
 }
 
 /// <summary>
-/// Proposed acceptance numbers (docs/PROBE_SCHEDULING_RULES.md "Acceptance").
+/// Acceptance numbers (docs/PROBE_SCHEDULING_RULES.md "Acceptance"): the user-experience
+/// targets (picture, backup, switches, channel numbers) and the supporting A2-A5.
 /// PROPOSED - Jon to set.
 /// </summary>
 internal static class ProbeAcceptance
 {
+    /// <summary>Backup time: a backup ready within this many seconds of the second healthy verdict (or first play, if later), plus a warm /play.</summary>
+    public const double BackupAfterSecondHealthySeconds = 2;
+
     /// <summary>
-    /// A1: first play within this many seconds of the first healthy verdict (plus the
+    /// A1 (picture time): first play within this many seconds of the first healthy verdict (plus the
     /// fresh start <c>/play</c> when the probed link could not be reused).
     /// </summary>
     public const double FirstPlayAfterHealthySeconds = 2;
@@ -241,6 +245,13 @@ internal static class Expect
         $"{key} probe starts by t+{by}s",
         t => t.FirstCall(key) is { } c && c.Start <= by + Eps ? null : $"started {(t.FirstCall(key) is { } x ? Fmt(x.Start) : "never")}");
 
+    /// <summary>The <paramref name="n"/>th (1-based) call for <paramref name="key"/> starts in this window (a re-queue pass asks again).</summary>
+    public static Expectation NthCallStartsBetween(string key, int n, double from, double to) => new(
+        $"{key} call #{n} starts between t+{from}s and t+{to}s",
+        t => t.Calls.Where(c => c.Key == key).Skip(n - 1).FirstOrDefault() is { } c
+            ? c.Start >= from - Eps && c.Start <= to + Eps ? null : $"started {Fmt(c.Start)}"
+            : $"{key} has fewer than {n} calls");
+
     public static Expectation StartsNotBefore(string key, double notBefore) => new(
         $"{key} probe does not start before t+{notBefore}s",
         t => t.FirstCall(key) is { } c
@@ -357,6 +368,38 @@ internal static class Expect
         });
 
     /// <summary>
+    /// Backup time: once a second row is healthy, a backup is ready within
+    /// <see cref="ProbeAcceptance.BackupAfterSecondHealthySeconds"/> of the later of first play and
+    /// that verdict, plus any warm <c>/play</c> the prewarmer ran in between (a soak link).
+    /// </summary>
+    public static Expectation BackupReadyWithinOfSecondHealthy(double seconds = ProbeAcceptance.BackupAfterSecondHealthySeconds) => new(
+        $"backup ready within {seconds}s of the second healthy verdict (or first play, if later), plus its warm /play",
+        t =>
+        {
+            if (t.NthHealthy(2) is not { } second)
+                return null;
+            if (t.PictureAt is not { } picture)
+                return "no first play";
+            if (t.FirstBackupReadyAt is not { } ready)
+                return $"second healthy {second.Key} at {Fmt(second.At)}, no backup ever ready";
+            var from = Math.Max(picture, second.At);
+            var warming = t.Warms.Where(w => w.To > from + Eps && w.To <= ready + Eps).Sum(w => w.To - Math.Max(w.From, from));
+            return ready - from <= seconds + warming + Eps
+                ? null
+                : $"second healthy {second.Key} at {Fmt(second.At)}, picture {Fmt(picture)}, backup ready {Fmt(ready)} (warming {warming:0.###}s)";
+        });
+
+    /// <summary>Needless switches: zero. The playing stream never changes unless the viewer asks (retry before switch, rule 14).</summary>
+    public static Expectation NoNeedlessSwitch() => new(
+        "no needless switch (the playing stream never changes on its own)",
+        t => t.Switches == 0 ? null : $"{t.Switches} switch(es)");
+
+    /// <summary>Channel numbers: zero renumbering (rows are only appended, rule 10).</summary>
+    public static Expectation ChannelNumbersStable() => new(
+        "channel numbers never change",
+        t => t.Renumbered == 0 ? null : $"renumbered {t.Renumbered} time(s)");
+
+    /// <summary>
     /// A5 (rule 1): during the head start finding only fills gaps. No finding probe
     /// (FB /play or MP /mp) starts before every High row has started, nor before a Medium
     /// row has started (when there is one). Finding beside them is expected: High may use
@@ -391,11 +434,11 @@ internal static class Expect
         });
 
     public static Expectation NoIdleSlotWhileQueued(double toleranceSeconds = ProbeAcceptance.IdleSlotToleranceSeconds) => new(
-        $"A3 no lane place idle while a candidate is queued (tolerance {toleranceSeconds}s, priority holds and the head start excluded)",
+        $"A3 no lane place idle while a candidate is queued (tolerance {toleranceSeconds}s, priority holds and tier holds excluded)",
         t =>
         {
             var idle = t.Intervals()
-                .Where(i => i.Snap.IdleWithWork(ResolverRaceThrottle.MaxConcurrent) && !i.Snap.PriorityHold && !i.Snap.HeadStartHold)
+                .Where(i => i.Snap.IdleWithWork(ResolverRaceThrottle.MaxConcurrent) && !i.Snap.PriorityHold && !i.Snap.TierHold)
                 .ToList();
             var total = idle.Sum(i => i.Until - i.Snap.At);
             return total <= toleranceSeconds + Eps
