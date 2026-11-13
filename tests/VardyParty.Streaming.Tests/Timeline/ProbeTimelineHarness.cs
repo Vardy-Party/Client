@@ -25,8 +25,8 @@ namespace VardyParty.Streaming.Tests.Timeline;
 /// Runs a <see cref="ProbeScenario"/> against the REAL scheduling code - StreamResolver
 /// (FB window, MP lane, seed re-queue, sibling queueing), LocalLanPlayService (throttle slots,
 /// <c>/mp</c> NDJSON harvest, MpHarvestSession seed rules), ResolverRaceThrottle,
-/// StreamTestOrderPolicy (try-order), FirstPlayHoldPolicy (first-play hold) and
-/// StreamSwitchingService (channel numbers). Only LocalService (HTTP) and the CDN
+/// StreamTestOrderPolicy (try-order) and StreamSwitchingService (channel numbers;
+/// first come, first served, as in the orchestrator). Only LocalService (HTTP) and the CDN
 /// health check are scripted, on a <see cref="MilestoneClock"/>: the run jumps from
 /// one milestone to the next, so a 111s harvest runs in milliseconds.
 /// Not modelled: the orchestrator's deferred re-queue passes, the prewarmer and its
@@ -66,13 +66,8 @@ internal static class ProbeTimelineHarness
         private ITimer? _switchTimer;
         private readonly Dictionary<string, RowSpec> _rowsById = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<StreamModel, string> _keyByRef = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<StreamModel, int> _catalogIndex = new(ReferenceEqualityComparer.Instance);
-        private readonly HashSet<int> _resolved = new();
-        private readonly SortedDictionary<int, EnrichedStream> _held = new();
         private readonly object _gate = new();
         private List<StreamModel> _ordered = new();
-        private bool[] _mpCatalog = [];
-        private int _nextExtra;
         private bool _hasPlayed;
         private IDisposable? _priorityHold;
         private ITimer? _priorityTimer;
@@ -85,7 +80,6 @@ internal static class ProbeTimelineHarness
         private int _mpStarted;
         private int _fbDone;
         private int _mpDone;
-        private string?[] _catalogUrls = [];
         private int _plays;
         private int _mpOpen;
         private int _healthOpen;
@@ -146,11 +140,6 @@ internal static class ProbeTimelineHarness
                 i => catalog[i],
                 sessionSalt: 0);
             _ordered = order.Select(i => catalog[i]).ToList();
-            for (var i = 0; i < _ordered.Count; i++)
-                _catalogIndex[_ordered[i]] = i;
-            _mpCatalog = _ordered.Select(StreamRecommendationPolicy.IsMpLike).ToArray();
-            _catalogUrls = _ordered.Select(s => (string?)s.Url).ToArray();
-            _nextExtra = _ordered.Count;
             _mpTotal = _ordered.Count(MpPageUrl.IsV2Stream);
             _fbTotal = _ordered.Count - _mpTotal;
             Note("try-order: " + string.Join(", ", _ordered.Select(s => _keyByRef[s])));
@@ -368,7 +357,7 @@ internal static class ProbeTimelineHarness
             }
         }
 
-        // ---- the orchestrator's Accept/Flush, using the production first-play hold ----
+        // ---- the orchestrator's Accept/JoinPool: first come, first served (rule 9) ----
 
         private void Accept(EnrichedStream row)
         {
@@ -380,60 +369,44 @@ internal static class ProbeTimelineHarness
                 Note($"yield {key}: {row.Status}{(row.ErrorMessage is { } e ? $" ({e})" : "")}");
 
                 Interlocked.Increment(ref MpPageUrl.IsV2Stream(row.Stream) ? ref _mpDone : ref _fbDone);
-                var index = _catalogIndex.TryGetValue(row.Stream, out var known) ? known : _nextExtra++;
-                _resolved.Add(index);
                 if (row.Status == StreamResolutionStatus.Healthy)
-                    _held[index] = row;
-                Flush();
+                    JoinPool(row);
             }
         }
 
-        private void Flush()
+        private void JoinPool(EnrichedStream row)
         {
-            var frontier = FirstPlayHoldPolicy.Frontier(_mpCatalog, _resolved);
-            var ready = _held
-                .Select(p => (Index: p.Key, Hold: FirstPlayHoldPolicy.HoldPosition(p.Key, p.Value.Stream?.Url, _catalogUrls, _mpCatalog)))
-                .Where(r => FirstPlayHoldPolicy.IsReleasable(r.Index, r.Hold, _mpCatalog, frontier, _hasPlayed))
-                .OrderBy(r => r.Hold)
-                .ThenBy(r => r.Index)
-                .Select(r => r.Index)
-                .ToList();
-            foreach (var index in ready)
+            _pool.AddHealthyStream(row);
+            var key = KeyOf(row.Stream);
+            Note($"pool +{key} (#{_pool.GetHealthyStreams().Count})");
+            if (_hasPlayed)
+                return;
+
+            _hasPlayed = true;
+            _tl.FirstPlay = (T, key);
+            Note($"FIRST PLAY on {key}");
+            if (_scenario.PriorityWindowAfterFirstPlay)
             {
-                var row = _held[index];
-                _held.Remove(index);
-                _pool.AddHealthyStream(row);
-                var key = KeyOf(row.Stream);
-                Note($"pool +{key} (#{_pool.GetHealthyStreams().Count})");
-                if (_hasPlayed)
-                    continue;
-
-                _hasPlayed = true;
-                _tl.FirstPlay = (T, key);
-                Note($"FIRST PLAY on {key}");
-                if (_scenario.PriorityWindowAfterFirstPlay)
+                _priorityHold = _throttle.BeginPlaybackPriority();
+                _tl.PriorityWindow = (T, T + ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds);
+                Note($"priority window starts ({ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds}s)");
+                _priorityTimer = _clock.CreateTimer(_ =>
                 {
-                    _priorityHold = _throttle.BeginPlaybackPriority();
-                    _tl.PriorityWindow = (T, T + ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds);
-                    Note($"priority window starts ({ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds}s)");
-                    _priorityTimer = _clock.CreateTimer(_ =>
-                    {
-                        _priorityHold?.Dispose();
-                        Note("priority window ends");
-                    }, null, ResolverRaceThrottle.PlaybackPriorityTimeout, Timeout.InfiniteTimeSpan);
-                }
+                    _priorityHold?.Dispose();
+                    Note("priority window ends");
+                }, null, ResolverRaceThrottle.PlaybackPriorityTimeout, Timeout.InfiniteTimeSpan);
+            }
 
-                if (_scenario.StartupRaceDrain)
+            if (_scenario.StartupRaceDrain)
+            {
+                _ = Task.Run(async () =>
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        using var race = _throttle.BeginRace();
-                        Note("startup race: DrainOthersAsync");
-                        await _throttle.DrainOthersAsync(_cts.Token).ConfigureAwait(false);
-                        _tl.DrainedAt = T;
-                        Note("startup race: drained");
-                    });
-                }
+                    using var race = _throttle.BeginRace();
+                    Note("startup race: DrainOthersAsync");
+                    await _throttle.DrainOthersAsync(_cts.Token).ConfigureAwait(false);
+                    _tl.DrainedAt = T;
+                    Note("startup race: drained");
+                });
             }
         }
 

@@ -135,11 +135,16 @@ public sealed class MpHarvestSession
     }
 
     /// <summary>
-    /// A labeled wait for <paramref name="label"/> would answer now, without asking
-    /// LocalService for anything: a probe-ready playlist, a miss, a playlist-only chip
-    /// past its deadline, a stalled harvest (the wait throws at once), or a finished
-    /// harvest. The resolver starts an MP chip row only when this is true while its
-    /// page's harvest runs (rule 7), and may do so in the priority window (rule 11).
+    /// A labeled wait for <paramref name="label"/> would answer now with something to
+    /// probe or a verdict: a probe-ready playlist, a miss, a playlist-only chip past its
+    /// deadline, or a finished harvest. The resolver starts an MP chip row only when
+    /// this is true while its page's harvest runs (rule 7), and may do so in the
+    /// priority window (rule 11). A listed chip LocalService has not sent is not ready
+    /// even once the harvest has been silent for <see cref="ProbeReadyWait"/>: the row
+    /// stays queued (outside the MP lane) and is woken by <see cref="Changed"/> when the
+    /// chip arrives or the harvest ends, instead of being Deferred by the stall deadline
+    /// and missing a chip that arrives later. The stall deadline still bounds a caller
+    /// that waits directly (<see cref="WaitForAsync"/> throws).
     /// </summary>
     public bool IsChipReady(string? label)
     {
@@ -150,7 +155,7 @@ public sealed class MpHarvestSession
         var key = label.Trim();
         if (_byLabel.TryGetValue(key, out var cached))
             return IsReadyForWaiter(cached) || PlaylistWaitOver(key);
-        return StallWaitOver();
+        return false;
     }
 
     public void Apply(MpPlayEvent ev)
@@ -500,9 +505,6 @@ public sealed class MpHarvestSession
     private bool PlaylistWaitOver(string key) =>
         _chipListSeed
         && _cachedAt.TryGetValue(key, out var at) && _time.GetUtcNow() - at >= ProbeReadyWait;
-
-    private bool StallWaitOver() =>
-        _chipListSeed && _time.GetUtcNow() - LastProgressAt >= ProbeReadyWait;
 
     /// <summary>
     /// Seed deadline passed with nothing listed while the harvest still runs: we know

@@ -106,8 +106,8 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 ### 1. Selection & pre-play (Core — keep)
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
-2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. First healthy still wins.
-   - MP never holds first play: a healthy row waits for earlier rows to yield, except MP rows still in `/mp` (single-flight, up to the harvest timeout). A later healthy FB opens first; the MP joins the pool afterwards (appended, so channel numbers stay stable). Rule: `StreamResolutionOrchestratorTests.StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`.
+2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. Try-order only decides what is probed first.
+   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play. The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R9 first come first served" (docs/PROBE_SCHEDULING_RULES.md rule 9).
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
@@ -170,7 +170,7 @@ flowchart TD
 
 ### 6. Orchestrator start failure: the playback chain (Streaming)
 
-The first healthy row to clear the catalog frontier starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
+The first healthy row (first come, first served) starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
 
 1. Local service unavailable (no verdict): no report, nothing removed; the chain parks and the next row to join the pool starts playback.
 2. Otherwise report health `failed` once for the row that failed (the row tried if the player never opened, else the pool's current row) and remove it.
@@ -586,7 +586,7 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
 ### Resolver and orchestrator
 
 - `StreamResolver` retries `LocalServiceUnavailableException` after 2s and 5s; then the row is `StreamResolutionStatus.Deferred` ("Waiting for local service...") with no siblings.
-- `StreamResolutionOrchestrator` never reports a Deferred row. It counts as done for the first-play frontier, and is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
+- `StreamResolutionOrchestrator` never reports a Deferred row and never waits on it for first play; it is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
 - Healthy rows are reported `working` (was `unknown`).
 
 ### `/mp` harvest (`LocalLanPlayService`, `MpHarvestSession`)

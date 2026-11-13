@@ -8,6 +8,8 @@ Facts the rules rely on (Jon, 12 Nov 2026):
 
 Decided (Jon, 13 Nov 2026): "/mp holds a slot only until the channel list arrives." A new harvest counts as one of LocalService's 2 sessions while the page loads, then gives the slot back and carries on in the background on the single `/mp` gate (rules 2, 4, 5).
 
+Decided (Jon, 13 Nov 2026): "first come first served on playable streams." No row holds first play: the first row to get a healthy, playable verdict plays first (rule 9).
+
 Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harness" below). The case names are in brackets.
 
 ## Rules
@@ -24,14 +26,14 @@ Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harn
    CURRENT: the seed answers with the chip list (`MpHarvestSession.WaitForAsync`, `SeedFallback`, `ChipList`); the resolver re-queues the seed row as its first chip (`StreamResolver.ChipListSeed`, re-queue in `ResolveStreamsIncrementallyAsync`); the slot comes back in `LocalLanPlayService.ReleaseSlotWhenListedAsync` (`MpHarvestSession.Listed`). Before: the place was held until a probe-ready chip or the end of the harvest, 111s for Czechia v Spain. [R5 slow ten-chip page; R3/R6 normal MP]
 6. **Chips are rows.** Every chip LocalService lists becomes its own queued row, even when the seed has no probe-ready playlist. The catalog MP row becomes the first chip (it keeps its catalog place); the other chips are new rows, appended to the pool as they turn healthy. A finished harvest answers its chips from what it saw, so one page is POSTed once.
    CURRENT: `StreamResolver.ChipListSeed` and the re-queue in `ResolveStreamsIncrementallyAsync`; chips listed later on a yield (`EnqueueMpSiblingsNext`); a finished harvest with chips hands over the list, not null (`MpHarvestSession.SeedFallback`); a finished, fault-free harvest is reused for its page for `MpHarvestSession.VerdictMemory` (60s) so each chip reads its verdict instead of re-POSTing (`MpHarvestSession.CanReuseFor`). Before: a seed with no probe-ready chip returned null and Czechia v Spain's 10 chips were dropped; a page whose chips all missed was POSTed again per chip. [R6 slow ten-chip page; R6 every chip a miss; R9 all FB dead]
-7. **Deadlines.** No MP row waits more than 30s (`MpHarvestSession.ProbeReadyWait`) for LocalService to say something new. The seed gives up 30s after `POST /mp` with nothing listed. A chip that only has a playlist is handed over as is 30s after its playlist line (or when the harvest ends). A chip that is listed but not sent waits only while the harvest keeps making progress: once 30s pass with no new chip line, the wait fails as infrastructure. Either failure is retried (2s, 5s), then Deferred and re-queued, never Failed.
-   CURRENT: `MpHarvestSession.DefaultProbeReadyWait` (per session, set in the constructor); seed deadline in `MpHarvestSession.WaitForAsync` (`SeedTimedOut`); playlist-only deadline in `PlaylistWaitOver`, woken by a timer (`ScheduleWake`); stall deadline in `StallWaitOver` (`ChipTimedOut`, restarted by `Progress`); `StreamResolver.NextMp` only starts a chip the harvest can answer (`IMpHarvestProbe.CanStartMp`), so a waiting chip never holds the MP lane; harvest timeout on the same clock (`LocalLanPlayService.MpHarvestTimeout`, 330s). [R7 seed gives up; R7 a playlist-only chip; R7 playlist-only chips; R9 slow MP; R4 two FB at once beside a listed /mp harvest]
+7. **Deadlines.** Nothing waits in a slot or the MP lane for LocalService. The seed gives up 30s (`MpHarvestSession.ProbeReadyWait`) after `POST /mp` with nothing listed; that is retried (2s, 5s), then Deferred and re-queued, never Failed. A chip that only has a playlist is handed over as is 30s after its playlist line (or when the harvest ends). A chip that is listed but not sent waits in the queue, outside the MP lane, until LocalService sends it or the harvest ends, however long the harvest is silent, so a chip sent late is still probed; a direct caller that waits for it (not the resolver) fails as infrastructure after 30s with no new chip line.
+   CURRENT: `MpHarvestSession.DefaultProbeReadyWait` (per session, set in the constructor); seed deadline in `MpHarvestSession.WaitForAsync` (`SeedTimedOut`); playlist-only deadline in `PlaylistWaitOver`, woken by a timer (`ScheduleWake`); `StreamResolver.NextMp` only starts a chip the harvest can answer (`IMpHarvestProbe.CanStartMp`, `MpHarvestSession.IsChipReady`) and otherwise waits for `WaitForMpHarvestChangeAsync`, so a waiting chip never holds the MP lane; direct-wait stall deadline in `MpHarvestSession.WaitForAsync` (`ChipTimedOut`, restarted by `Progress`); harvest timeout on the same clock (`LocalLanPlayService.MpHarvestTimeout`, 330s). [R7 seed gives up; R7 a playlist-only chip; R7 playlist-only chips; R7 a chip sent 50s after the chip list; R9 slow MP; R4 two FB at once beside a listed /mp harvest]
 8. **Dead FB is a verdict.** A dead FB link fails in about 20s, frees its slot, and is not retried by the client.
    CURRENT: a null answer is the stream's verdict (`LocalLanPlayService.CallPlayEndpointAsync`) and the row is Failed in `StreamResolver.ResolveAndTestStreamInternalAsync`. [R2 two dead FB]
-9. **First play never waits on `/mp`.** A healthy row is held only by earlier non-MP rows that are still probing. An MP row still in `/mp` never holds it. An MP chip holds at its page's catalog place, so when every FB row is dead a healthy chip plays.
-   CURRENT: `FirstPlayHoldPolicy.Frontier`, `IsReleasable` and `HoldPosition`, used by `StreamResolutionOrchestrator.ResolveAsync` (#162). [R9 slow MP; R9 slow ten-chip page; R9 all FB dead; R9 chip A dead]
-10. **Stable channel numbers.** A row takes the next channel number when it joins the pool and keeps it (append only). MP rows (the catalog MP row, now its first chip, and its siblings) are appended as they turn healthy after first play.
-    CURRENT: `StreamSwitchingService.AddHealthyStream`; `FirstPlayHoldPolicy.IsReleasable`. [R3/R6 normal MP, pool order; fast MP]
+9. **First come, first served.** The first row to get a healthy, playable verdict plays first, recommended or not, MP or FB. No row holds it behind an earlier row that is still probing; try-order (rule 1) only decides which rows are probed first.
+   CURRENT: every healthy row joins the pool the moment its verdict lands (`StreamResolutionOrchestrator.ResolveAsync`, `JoinPool`). Before #162: a healthy row was held until every earlier non-MP row had yielded (`FirstPlayHoldPolicy`, now removed). [R9 first come first served (both cases); R9 slow MP; R9 slow ten-chip page; R9 all FB dead; R9 chip A dead]
+10. **Stable channel numbers.** A row takes the next channel number when it joins the pool and keeps it (append only), so channel numbers follow verdict order.
+    CURRENT: `StreamSwitchingService.AddHealthyStream`, called from `StreamResolutionOrchestrator.ResolveAsync` (`JoinPool`). [R3/R6 normal MP, pool order; fast MP; R9 first come first served]
 11. **Priority window.** After first play, no new browser probe (`/play` or a new `/mp`) starts for up to 30s (or until prewarm depth is warm); probes already in flight finish. MP chips the running harvest already holds need nothing from LocalService and are probed during the window.
     CURRENT: `StreamResolutionOrchestrator.BeginPlaybackPriorityWindow`, `ReleasePlaybackPriorityWhenReadyAsync`, `EndPlaybackPriorityWindow`; `FirstPlayOpenStrategy.PlaybackPrioritySatisfied`; only ready chips during a race (`StreamResolver.NextMp(readyOnly)`), woken by the race end or a harvest change (`WakeAsync`, which waits only on what the loop is blocked by); readiness from `IMpHarvestProbe.IsMpChipReady` (`MpHarvestSession.IsChipReady`). [R11; R11 harvested MP chips]
 12. **Prewarm and race slots.** The prewarmer and the startup race may take slots during the hold, and a startup race never waits on a `/mp` whose chips are listed.
@@ -45,7 +47,7 @@ Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harn
 
 These are measured on the timeline by `Expect.*` in the harness. The constants are in `ProbeAcceptance`.
 
-- **A1.** First play comes within **2s** of the first healthy verdict, unless an earlier non-MP row is still probing (rule 9). `FirstPlayWithinOfFirstHealthy`
+- **A1.** First play comes within **2s** of the first healthy verdict, with no exception (rule 9). `FirstPlayWithinOfFirstHealthy`
 - **A2.** MP chips are queued as rows within **2s** of LocalService listing them. `ChipsVisibleWithin`
 - **A3.** No slot sits idle while a candidate is queued, outside the priority window: **1s** total tolerance. `NoIdleSlotWhileQueued`
 - **A4.** A seed with no probe-ready chip gives up within **30s** of `POST /mp`. `SeedReleasesSlotBy`
@@ -64,8 +66,7 @@ Results per scenario are printed by `ProbeSchedulingRulesTests.Acceptance` (run 
 - `StreamResolver`
 - `LocalLanPlayService`, including the `/mp` NDJSON harvest and `MpHarvestSession`
 - `ResolverRaceThrottle`
-- `FirstPlayHoldPolicy`
-- `StreamSwitchingService`
+- `StreamSwitchingService` (rows join the pool on their verdict, as in `StreamResolutionOrchestrator`)
 
 Only LocalService (HTTP) and the CDN health check are scripted. They run on `MilestoneClock`, a `TimeProvider` that jumps straight to the next due timer, so a 111s harvest runs in milliseconds. Between milestones the harness waits for the thread pool to go quiet (`SpinWait`, not a hot spin); if it does not within 5s the run fails with the timeline so far instead of advancing the clock early.
 
@@ -97,5 +98,4 @@ What the harness does not model:
 Known limits of the MP rules:
 - Labels LocalService reveals only after the seed handed over its list are added when a chip row yields; a label that first appears after the last chip row yielded is not added.
 - A different MP page waits for the running harvest to end (`_mpPostGate`): LocalService is single-threaded for `/mp`. Its rows wait in the queue, not in the MP lane.
-- A chip Deferred by the stall deadline is picked up again only by the orchestrator's re-queue (5s, 15s), which the harness does not model.
-- The recommended MP row holding first play (thread on #162) is not decided; behaviour is unchanged.
+- A listed chip LocalService never sends keeps the resolver run open (queued, holding no slot or lane) until the harvest ends, at most `LocalLanPlayService.MpHarvestTimeout` (330s).

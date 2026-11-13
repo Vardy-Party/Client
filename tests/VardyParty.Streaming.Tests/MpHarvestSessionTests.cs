@@ -327,8 +327,9 @@ public sealed class MpHarvestSessionTests
     [Fact]
     public async Task WaitForAsync_NamedChip_NotSent_ThrowsRetryableOnceTheHarvestStalls()
     {
-        // Arrange - rule 7: a listed chip LocalService has not sent, while the harvest
-        // sends nothing for 30s, is infrastructure (Deferred), never a 330s wait.
+        // Arrange - rule 7: a direct wait for a listed chip LocalService has not sent,
+        // while the harvest sends nothing for 30s, fails as infrastructure (never a 330s
+        // wait). The resolver does not start the row (not ready): it stays queued.
         var clock = new Timeline.MilestoneClock(Start);
         var harvest = new MpHarvestSession(clock);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
@@ -343,6 +344,28 @@ public sealed class MpHarvestSessionTests
         Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
         Assert.True(ex.IsRetryable);
         Assert.Equal(harvest.ProbeReadyWait.TotalSeconds, clock.T, 3);
+        Assert.False(harvest.IsChipReady("Chip B"));
+    }
+
+    [Fact]
+    public async Task IsChipReady_ChipSentLongAfterAStall_TurnsReadyAndSignalsChanged()
+    {
+        // Arrange - rule 7: a chip LocalService sends 50s after the chip list, with
+        // nothing in between, is picked up when it arrives (the resolver waits on Changed).
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        using var stall = clock.CreateTimer(_ => { }, null, TimeSpan.FromSeconds(45), Timeout.InfiniteTimeSpan);
+        while (clock.T < 45 && clock.NextDue is not null)
+            clock.AdvanceToNext();
+        Assert.False(harvest.IsChipReady("Chip B"));
+        var changed = harvest.Changed;
+
+        // Act
+        harvest.Apply(ProbeReady("Chip B"));
+        await changed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
         Assert.True(harvest.IsChipReady("Chip B"));
     }
 

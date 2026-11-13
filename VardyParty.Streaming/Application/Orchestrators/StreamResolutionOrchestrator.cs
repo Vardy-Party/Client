@@ -209,20 +209,11 @@ public class StreamResolutionOrchestrator(
         await selectionCoordinator.InitializeAsync(game, cancellationToken);
         var orderedCandidates = selectionCoordinator.GetOrderedCandidates();
         var orderedStreams = orderedCandidates.Select(c => c.Stream).ToList();
-        // First play follows try-order: a healthy row is held until every lower
-        // index has yielded, so playback starts on the earlier row. MP rows are
-        // the exception - MP is tried early (StreamTestOrderPolicy) but /mp is
-        // single-flight with a long harvest timeout, so an MP row that has not
-        // yielded never holds a later healthy row. It joins the pool (appended,
-        // stable numbering) when it turns healthy.
-        var catalogIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < orderedStreams.Count; i++)
-            catalogIndex[orderedStreams[i]] = i;
-        var mpCatalog = orderedStreams.Select(StreamRecommendationPolicy.IsMpLike).ToArray();
-        var catalogUrls = orderedStreams.Select(s => (string?)s.Url).ToArray();
-        var resolvedCatalog = new HashSet<int>();
-        var heldHealthy = new SortedDictionary<int, EnrichedStream>();
-        var nextExtraIndex = orderedStreams.Count;
+        // First come, first served (rule 9): try-order decides only which rows are
+        // probed first. The first row - recommended or not, MP or FB - to get a
+        // healthy, playable verdict plays first; no row holds it behind an earlier
+        // row that is still probing. Every healthy row joins the pool the moment its
+        // verdict lands, so channel numbers follow verdict order and stay stable.
 
         // Candidate testing must stop the moment the user closes the player. Without this the loop below
         // only noticed the close when the resolver next yielded a stream, so after Back the homepage kept
@@ -257,58 +248,37 @@ public class StreamResolutionOrchestrator(
             _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
         }
 
-        void FlushReadyForPlayback()
+        void JoinPool(EnrichedStream readyStream)
         {
-            var frontier = FirstPlayHoldPolicy.Frontier(mpCatalog, resolvedCatalog);
-
-            // Catalog rows stay held until the frontier passes (first play follows
-            // catalog order). MP chip siblings use nextExtraIndex (>= catalog
-            // count) and hold at their MP page's catalog place, so a healthy chip
-            // can start playback when every earlier non-MP row is dead; after
-            // first play they join at once (holding them until every catalog row
-            // finished left the UI on one V2 stream while /mp had harvested the rest).
-            var ready = heldHealthy
-                .Select(pair => (Index: pair.Key,
-                    Hold: FirstPlayHoldPolicy.HoldPosition(pair.Key, pair.Value.Stream?.Url, catalogUrls, mpCatalog)))
-                .Where(row => FirstPlayHoldPolicy.IsReleasable(
-                    row.Index, row.Hold, mpCatalog, frontier, hasPlayedFirstStream))
-                .OrderBy(row => row.Hold)
-                .ThenBy(row => row.Index)
-                .Select(row => row.Index)
-                .ToList();
-            foreach (var index in ready)
+            EnrichedStream? startOn = null;
+            lock (playbackLock)
             {
-                var readyStream = heldHealthy[index];
-                heldHealthy.Remove(index);
-                EnrichedStream? startOn = null;
-                lock (playbackLock)
+                streamSwitchingService.AddHealthyStream(readyStream);
+                if (!hasPlayedFirstStream)
                 {
-                    streamSwitchingService.AddHealthyStream(readyStream);
-                    if (!hasPlayedFirstStream)
-                    {
-                        hasPlayedFirstStream = true;
-                        startOn = readyStream;
-                    }
-                    else if (awaitingPlayableRow)
-                    {
-                        // Every earlier row failed and the pool ran dry: play the row
-                        // that now holds the pool index (the one just added, unless it
-                        // merged into an existing entry as a fallback).
-                        awaitingPlayableRow = false;
-                        startOn = streamSwitchingService.GetCurrentStream() ?? readyStream;
-                    }
+                    hasPlayedFirstStream = true;
+                    startOn = readyStream;
                 }
-
-                _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
-                firstPlayDiag.MarkHealthyCount(
-                    _healthyStreamCount,
-                    readyStream.Stream?.Channel,
-                    logger);
-                PublishProgress();
-
-                if (startOn != null)
-                    StartPlaybackChain(startOn);
+                else if (awaitingPlayableRow)
+                {
+                    // Every earlier row failed and the pool ran dry: play the row
+                    // that now holds the pool index (the one just added, unless it
+                    // merged into an existing entry as a fallback).
+                    awaitingPlayableRow = false;
+                    startOn = streamSwitchingService.GetCurrentStream() ?? readyStream;
+                }
             }
+
+            _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+            firstPlayDiag.MarkHealthyCount(
+                _healthyStreamCount,
+                readyStream.Stream?.Channel,
+                logger);
+            PublishProgress();
+
+            // Start playback without awaiting so stream testing can continue.
+            if (startOn != null)
+                StartPlaybackChain(startOn);
         }
 
         if (orderedStreams.Count == 0)
@@ -331,7 +301,6 @@ public class StreamResolutionOrchestrator(
         {
             var deferred = new List<StreamModel>();
             var cdnDeferred = new List<StreamModel>();
-            var deferredIndex = new Dictionary<StreamModel, int>(ReferenceEqualityComparer.Instance);
 
             // Returns true when the viewer has left and the outcome is final.
             async Task<bool> ViewerLeftAsync()
@@ -357,19 +326,6 @@ public class StreamResolutionOrchestrator(
                     PublishProgress();
                 }
 
-                int index;
-                if (deferredIndex.Remove(enrichedStream.Stream, out var earlier))
-                    index = earlier;
-                else if (catalogIndex.TryGetValue(enrichedStream.Stream, out var known))
-                    index = known;
-                else
-                    index = nextExtraIndex++;
-
-                // A deferred row still counts as "done" for the first-play
-                // frontier, so one unreachable /play can't hold back a healthy
-                // later row.
-                resolvedCatalog.Add(index);
-
                 switch (enrichedStream.Status)
                 {
                     case StreamResolutionStatus.Failed:
@@ -381,23 +337,19 @@ public class StreamResolutionOrchestrator(
                         // send "unknown", which looked like no verdict.
                         _ = ReportHealthAsync(game, enrichedStream.Stream, "working", null, enrichedStream.Health,
                             cancellationToken);
-                        heldHealthy[index] = enrichedStream;
+                        JoinPool(enrichedStream);
                         break;
                     case StreamResolutionStatus.Deferred:
                         // An infrastructure failure: nothing about the stream is
                         // known. Don't report it and don't drop it; re-queue it.
                         // A CDN-unreachable row waits minutes, not seconds: it goes to
                         // the CDN recheck (CdnReachabilityPolicy), not the 5s/15s passes.
-                        deferredIndex[enrichedStream.Stream] = index;
                         if (enrichedStream.DeferReason == StreamDeferReason.CdnUnreachable)
                             cdnDeferred.Add(enrichedStream.Stream);
                         else
                             deferred.Add(enrichedStream.Stream);
                         break;
                 }
-
-                // Start playback without awaiting so stream testing can continue.
-                FlushReadyForPlayback();
             }
 
             await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
@@ -416,8 +368,6 @@ public class StreamResolutionOrchestrator(
 
                 Accept(enrichedStream, requeued: false);
             }
-
-            FlushReadyForPlayback();
 
             for (var pass = 0; pass < DeferredRequeueDelays.Length && deferred.Count > 0; pass++)
             {
@@ -439,8 +389,6 @@ public class StreamResolutionOrchestrator(
 
                     Accept(enrichedStream, requeued: true);
                 }
-
-                FlushReadyForPlayback();
             }
 
             outcome.DeferredStreamCount = deferred.Count;

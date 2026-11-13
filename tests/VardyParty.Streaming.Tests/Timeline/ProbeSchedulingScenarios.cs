@@ -112,6 +112,26 @@ internal static class ProbeSchedulingScenarios
             .Done(12.5))
         .DeadFb("d1", "d2", "d3", "d4");
 
+    /// <summary>A listed chip LocalService sends 50s after the chip list, with no other line in between.</summary>
+    public static ProbeScenario ChipLateAfterListing() => ProbeScenario.Named("Chip B sent 50s after the chip list, nothing in between")
+        .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(58, "B").Done(59))
+        .DeadFb("d1", "d2");
+
+    /// <summary>A recommended FB row is slow; the recommended MP page behind it is playable first.</summary>
+    public static ProbeScenario RecommendedMpBeforeSlowFb() => ProbeScenario.Named("Recommended MP playable at 11s, recommended FB ahead of it at 26s")
+        .Fb("north", Play.HealthyAt(25))
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .DeadFb("d1")
+        .Recommend("north")
+        .Recommend("mp", RecommendationConfidence.Medium);
+
+    /// <summary>The recommended row is slow; a later FB row is playable first.</summary>
+    public static ProbeScenario FbBeforeSlowRecommended() => ProbeScenario.Named("FB playable at 6s, recommended row at 16s")
+        .Fb("rec", Play.HealthyAt(15))
+        .Fb("south", Play.HealthyAt(5))
+        .DeadFb("d1")
+        .Recommend("rec");
+
     /// <summary>Jon's normal MP (10s, then 1s per chip) with six chips, no healthy FB.</summary>
     public static ProbeScenario FastMp() => ProbeScenario.Named("Fast MP: six chips, 10s then 1s each")
         .Mp("mp", MpScript.Normal(["A", "B", "C", "D", "E", "F"]))
@@ -188,6 +208,9 @@ internal static class ProbeSchedulingScenarios
         (nameof(TwoMpPages), TwoMpPages),
         (nameof(HarvestFaultsMidway), HarvestFaultsMidway),
         (nameof(MpErrorsBeforeListing), MpErrorsBeforeListing),
+        (nameof(ChipLateAfterListing), ChipLateAfterListing),
+        (nameof(RecommendedMpBeforeSlowFb), RecommendedMpBeforeSlowFb),
+        (nameof(FbBeforeSlowRecommended), FbBeforeSlowRecommended),
     ];
 
     // ---- the table ----
@@ -228,15 +251,37 @@ internal static class ProbeSchedulingScenarios
             MpPostCount("mp", 1),
             NoIdleSlotWhileQueued()),
 
-        new("R9 slow MP never holds a healthy FB first play; a chip stalled 30s is Deferred", "R7 R9 R13",
+        new("R9 slow MP never holds a healthy FB first play; a chip sent late still joins", "R7 R9 R10",
             SlowMpHealthyFb,
             FirstPlayOn("south"), FirstPlayBy(6.001),
             FirstPlayWithinOfFirstHealthy(),
-            // Listed at 8s, nothing more until 60s: the stall deadline (8 + 30) then
-            // the 2s and 5s retries, so Deferred at 45s, not held until 60s.
-            RowEnds("mp", StreamResolutionStatus.Deferred, 44.9, 45.1),
+            // Listed at 8s, nothing more until 60s: the chip row waits in the queue
+            // (not the MP lane) and is probed when the chip arrives.
+            RowEnds("mp", StreamResolutionStatus.Healthy, 60.9, 61.1),
+            NoRowOfPageEnds("mp", StreamResolutionStatus.Deferred),
+            PoolOrder("south", "mp")),
+
+        new("R7 a chip sent 50s after the chip list is still probed (no stall Deferred)", "R7 R13",
+            ChipLateAfterListing,
+            RowEnds("mp", StreamResolutionStatus.Healthy, 9.9, 10.1),
+            RowEnds("mp:B", StreamResolutionStatus.Healthy, 58.9, 59.1),
+            NoRowOfPageEnds("mp", StreamResolutionStatus.Deferred),
             NoRowOfPageEnds("mp", StreamResolutionStatus.Failed),
-            PoolOrder("south")),
+            MpPostCount("mp", 1),
+            NoIdleSlotWhileQueued(),
+            NoSlotHeldAtEnd()),
+
+        new("R9 first come first served: a recommended MP playable first plays before a slower recommended FB", "R9 R10",
+            RecommendedMpBeforeSlowFb,
+            FirstPlayOn("mp"), FirstPlayBy(11.001),
+            FirstPlayWithinOfFirstHealthy(0.001),
+            PoolOrder("mp", "mp:B", "north")),
+
+        new("R9 first come first served: an FB playable first plays before a slower recommended row", "R9 R10",
+            FbBeforeSlowRecommended,
+            FirstPlayOn("south"), FirstPlayBy(6.001),
+            FirstPlayWithinOfFirstHealthy(0.001),
+            PoolOrder("south", "rec")),
 
         new("R11 after first play no new probe starts for 30s", "R11",
             PriorityWindow,
@@ -278,13 +323,13 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp-north:Juliet", StreamResolutionStatus.Healthy),
             MpPostCount("mp-north", 1)),
 
-        new("R4 two FB at once beside a listed /mp harvest; the MP lane is not held past the stall deadline", "R4 R7 R13",
+        new("R4 two FB at once beside a listed /mp harvest; the waiting chip never holds the MP lane", "R4 R7",
             MpPendingDeadFbs,
             PlaysBesideHarvestAtLeast(2),
             // d2 starts at 8s (the chip list frees /mp's slot), so six 20s dead FB end at 68s.
             RowEnds("d6", StreamResolutionStatus.Failed, 67.9, 68.1),
-            RowEnds("mp", StreamResolutionStatus.Deferred, 44.9, 45.1),
-            NoRowOfPageEnds("mp", StreamResolutionStatus.Failed),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 100.9, 101.1),
+            NoRowOfPageEnds("mp", StreamResolutionStatus.Deferred),
             NoIdleSlotWhileQueued()),
 
         new("R7 seed gives up after 30s with nothing listed; the retry queues the chips", "R2 R7 R13",
@@ -296,12 +341,14 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp", StreamResolutionStatus.Healthy, 37.9, 38.1),
             RowEnds("mp:B", StreamResolutionStatus.Healthy, 38.9, 39.1)),
 
-        new("R7 a playlist-only chip is handed over 30s after its playlist line; a stalled chip is Deferred", "R5 R7 R13",
+        new("R7 a playlist-only chip is handed over 30s after its playlist line; a chip never sent waits in the queue", "R5 R7",
             SeedNeverProbeReady,
             SeedReturns("mp", 7.9, 8.1),
             ChipsQueued("mp", 2, by: 8.001),
             RowEnds("mp", StreamResolutionStatus.Healthy, 39.9, 40.1),
-            RowEnds("mp:B", StreamResolutionStatus.Deferred, 46.9, 47.1),
+            // B is never sent: its row waits in the queue (not the MP lane) and reads
+            // the finished harvest's verdict when it ends at 300s.
+            RowEnds("mp:B", StreamResolutionStatus.Failed, 299.9, 300.1),
             MpPostCount("mp", 1)),
 
         new("R12 the startup race never waits on a listed /mp (slow ten-chip page)", "R2 R12",

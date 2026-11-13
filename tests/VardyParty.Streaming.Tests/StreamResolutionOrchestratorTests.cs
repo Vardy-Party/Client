@@ -837,9 +837,11 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
-    public async Task StartAsync_FasterLaterCandidate_PlaysEarlierCatalogIndex()
+    public async Task StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed()
     {
-        // Arrange
+        // Arrange - rule 9 (Jon, 13 Nov 2026: "first come first served on playable
+        // streams"): the later catalog row turns healthy first, so it plays first and
+        // the earlier row never opens.
         const string earlierUrl = "https://cdn.example.com/live/north.m3u8";
         const string laterUrl = "https://cdn.example.com/live/south.m3u8";
         const string pageUrl = "https://streams.example.com/match.html";
@@ -917,10 +919,10 @@ public class StreamResolutionOrchestratorTests
 
         // Assert
         Assert.True(outcome.PlaybackResult?.Success);
-        Assert.Equal(earlierUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
+        Assert.Equal(laterUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
         player.Verify(
             p => p.PlayVideoAsync(
-                earlierUrl,
+                laterUrl,
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<Func<Task>?>(),
@@ -931,7 +933,7 @@ public class StreamResolutionOrchestratorTests
             Times.Once);
         player.Verify(
             p => p.PlayVideoAsync(
-                laterUrl,
+                earlierUrl,
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<Func<Task>?>(),
