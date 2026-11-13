@@ -107,7 +107,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
 2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. Try-order only decides what is probed first.
-   - Recommended tiers first (Jon, 13 Nov 2026: "highly recommended streams come before finding", "Top tier is High confidence only", "Option B, head start then overlap", "medium-confidence should NOT be disregarded"): on the first pass High-confidence recommended rows get both LocalService slots alone for 12s (`TopTierHeadStart.Duration`); Medium-confidence rows come next, before any finding (Low recommendations, MP, FB), and take a slot during the 12s only when every High row has a verdict or there are fewer than two. After the 12s a slot not used by High goes to Medium, then finding (MP lane first). No High or Medium recommendation: unchanged. Details: docs/PROBE_SCHEDULING_RULES.md rule 1.
+   - Recommended tiers first (Jon, 13 Nov 2026: "highly recommended streams come before finding", "Top tier is High confidence only", "Option B, head start then overlap", "medium-confidence should NOT be disregarded", "high can occupy 2 slots on local-service / medium only one / then fit in v1 and v2 into gaps"): for the first pass's 12s head start (`TopTierHeadStart.Duration`) High-confidence recommended rows may use both LocalService slots, Medium-confidence rows at most one, and finding (Low recommendations, MP `/mp`, FB `/play`; MP lane first) fills every slot they leave from the first second. A slot a dead High row frees goes to the next High row, else to a Medium row. Chips of a High (Medium) MP page are High (Medium). After the 12s, first come, first served in try-order. No High or Medium recommendation: unchanged. Details: docs/PROBE_SCHEDULING_RULES.md rule 1.
    - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play. The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R1 R9" (docs/PROBE_SCHEDULING_RULES.md rule 9).
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
@@ -413,6 +413,7 @@ A channel number is the row's position in `StreamSwitchingService.GetHealthyStre
 5. **Wraparound:** Next on the last channel goes to channel 1; Previous on channel 1 goes to the last. Wraparound force-refreshes recommendations (chips and first pick) but does not jump to a "preferred recommended" stream and does not reorder. The old "switch to the preferred recommended stream on wraparound" behaviour was removed: it made Next land on an unexpected number.
 6. **Recommendations may jump** (chip selection selects the matching row) but never reorder.
 7. A switch that fails and reverts keeps the target in place (see "Failed switch: retry the target, keep it").
+8. **Next from the start row goes to the backup** (13 Nov 2026): while the first row to play is playing, Next and auto-advance go to the best-tier other row (second High, then first Medium, then first finding; docs/PROBE_SCHEDULING_RULES.md rule 11), which may not be the next number. Nothing is renumbered, and from any other row Next walks the numbers as in rule 1 (`BackupPreferenceBusinessRulesTests`).
 
 ## Switch speed: reuse, pre-resolve, make-before-break
 
@@ -491,11 +492,12 @@ other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
    `StartPlaybackChain` pauses new finding starts at once (`NeedsFreshStart`,
    `ResolverRaceThrottle.BeginRace`) so this `/play` takes the next free slot; nothing is drained
    (`DrainOthersAsync` is no longer called).
-3. **Backup warms for Next.** On the fresh path, if the next switch-order row also needs a
+3. **Backup warms for Next.** On the fresh path, if the backup (rule below) also needs a
    fresh `/play`, it runs on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not**
    awaited for first picture. Immediate Next applies that warm as `UnusedResolvedUrl`
    (`PlanNextPrepare`) so every platform's `PlanSwitch` can `AttachCached`. After first play the
-   prewarmer keeps the next `PrewarmDepth` rows warm.
+   prewarmer keeps the next `PrewarmDepth` rows warm, backup first
+   (`IStreamSwitchingService.GetUpcoming`).
 4. **Start empty / audio-only.** Report/remove as before. Prefer another pooled row that
    can play from cache; else await the partner warm leg and open that.
 5. **Start infrastructure is terminal.** After `InfrastructureRetryPolicy` retries on the
@@ -513,10 +515,13 @@ other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
    a partner warm.
 8. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
 
-The backup is the next channel in switch order (append-only numbering). With the tier head
-start that is usually the second playable High row, then the first playable Medium row, then the
-first playable finding row; a finding row that turns healthy earlier takes the next channel and
-is the backup.
+The backup is chosen by tier, not channel number (Jon, 13 Nov 2026): while the start row (the
+first to play) plays, Next, auto-advance and the prewarmer go first to the second playable High
+row, then the first playable Medium row, then the first playable finding row (lowest channel
+number within a tier). A better-tier row that turns playable later replaces a finding backup.
+Channel numbers stay append-only; from any other row Next walks them as before
+(`StreamSwitchingService.SetBackupPreference`, `PlaybackUrlReusePolicy.UpcomingInBackupOrder`;
+docs/PROBE_SCHEDULING_RULES.md rule 11).
 
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
