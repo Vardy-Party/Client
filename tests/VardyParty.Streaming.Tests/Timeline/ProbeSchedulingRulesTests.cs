@@ -31,7 +31,24 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(CurrentCases))]
-    public Task Current(string name) => RunCase(name);
+    public async Task Current(string name)
+    {
+        // Arrange
+        var probeCase = ProbeSchedulingScenarios.Find(name);
+
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(probeCase.Scenario());
+
+        // Assert
+        output.WriteLine($"{name}: {timeline.SettleCount} settles, {timeline.SettleTotalMs:0} ms, slowest {timeline.SettleMaxMs:0} ms");
+        var failures = probeCase.Expect
+            .Select(e => (e, Why: e.Check(timeline)))
+            .Where(x => x.Why is not null)
+            .Select(x => $"  - {x.e.Description}: {x.Why}")
+            .ToList();
+        Assert.True(failures.Count == 0,
+            $"{name} [{probeCase.Rules}]\n{string.Join("\n", failures)}\n\n{timeline.Render()}");
+    }
 
     /// <summary>
     /// A1-A5 for every scenario, written to the test output (run with a detailed
@@ -43,11 +60,15 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
     [MemberData(nameof(AllScenarios))]
     public async Task Acceptance(string scenario)
     {
+        // Arrange
         var make = ProbeSchedulingScenarios.All.Single(s => s.Name == scenario).Scenario;
-        var timeline = await ProbeTimelineHarness.RunAsync(make());
-        var drained = await ProbeTimelineHarness.RunAsync(make().WithStartupRaceDrain());
         var mpIds = make().Rows.Where(r => r.IsMp).Select(r => r.Id).ToList();
 
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(make());
+        var drained = await ProbeTimelineHarness.RunAsync(make().WithStartupRaceDrain());
+
+        // Assert
         var rows = new List<(string Measure, string? Why, bool Applies)>
         {
             ("A1", Expect.FirstPlayWithinOfFirstHealthy().Check(timeline),
@@ -57,7 +78,8 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
         };
         foreach (var id in mpIds)
         {
-            rows.Add(($"A2 {id}", Expect.ChipsVisibleWithin(id).Check(timeline), true));
+            var listed = timeline.ListedAt(id) is not null;
+            rows.Add(($"A2 {id}", Expect.ChipsVisibleWithin(id).Check(timeline), listed));
             rows.Add(($"A4 {id}", Expect.SeedReleasesSlotBy(id, ProbeAcceptance.SeedGiveUpSeconds + 0.001).Check(timeline), true));
         }
 
@@ -88,18 +110,15 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void NoOpenGaps() => Assert.Empty(ProbeSchedulingScenarios.Gaps);
-
-    private static async Task RunCase(string name)
+    public void NoOpenGaps()
     {
-        var probeCase = ProbeSchedulingScenarios.Find(name);
-        var timeline = await ProbeTimelineHarness.RunAsync(probeCase.Scenario());
-        var failures = probeCase.Expect
-            .Select(e => (e, Why: e.Check(timeline)))
-            .Where(x => x.Why is not null)
-            .Select(x => $"  - {x.e.Description}: {x.Why}")
-            .ToList();
-        Assert.True(failures.Count == 0,
-            $"{name} [{probeCase.Rules}]\n{string.Join("\n", failures)}\n\n{timeline.Render()}");
+        // Arrange
+        var gaps = ProbeSchedulingScenarios.Gaps;
+
+        // Act
+        var open = gaps.Select(g => g.Name).ToList();
+
+        // Assert
+        Assert.Empty(open);
     }
 }

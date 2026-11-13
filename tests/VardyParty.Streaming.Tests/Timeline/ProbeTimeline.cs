@@ -43,12 +43,16 @@ internal sealed record Snapshot(
 {
     public int Unstarted => UnstartedFb + UnstartedMp;
 
+    /// <summary>Chromium sessions at LocalService: <c>/play</c> calls plus open <c>/mp</c> harvests.</summary>
+    public int LocalServiceSessions => PlaysAtLocalService + MpOpen;
+
     /// <summary>
     /// A lane is idle with work queued: the FB window has a free place and an FB row
-    /// waits, or the MP lane is empty and an MP row waits (rules 2-4).
+    /// waits, or the MP lane is empty and an MP row waits while no harvest runs at
+    /// LocalService (rules 2-4, 7: queued chips of a running harvest wait on it by design).
     /// </summary>
     public bool IdleWithWork(int fbWindow) =>
-        (FbActive < fbWindow && UnstartedFb > 0) || (MpActive == 0 && UnstartedMp > 0);
+        (FbActive < fbWindow && UnstartedFb > 0) || (MpActive == 0 && UnstartedMp > 0 && MpOpen == 0);
 }
 
 internal sealed record RowResult(string Key, double At, StreamResolutionStatus Status, string? Error);
@@ -74,6 +78,23 @@ internal sealed class ProbeTimeline
     /// <summary>When the startup race's DrainOthersAsync returned (see <see cref="ProbeScenario.WithStartupRaceDrain"/>).</summary>
     public double? DrainedAt { get; set; }
 
+    /// <summary>Harness settles (one per milestone) and the wall-clock they took, so slow or flaky runs show up.</summary>
+    public int SettleCount { get; set; }
+
+    public double SettleTotalMs { get; set; }
+
+    public double SettleMaxMs { get; set; }
+
+    /// <summary>When LocalService first listed chips (or sent a chip) for <paramref name="rowId"/>'s Nth <c>POST /mp</c>.</summary>
+    public double? ListedAt(string rowId) =>
+        LocalServiceEvents
+            .Where(e => e.RowId == rowId && (e.What.StartsWith("/mp chips", StringComparison.Ordinal) || e.What.StartsWith("/mp chip ", StringComparison.Ordinal)))
+            .Select(e => (double?)e.At)
+            .Min();
+
+    public IEnumerable<double> PostsAt(string rowId) =>
+        LocalServiceEvents.Where(e => e.RowId == rowId && e.What.StartsWith("POST /mp", StringComparison.Ordinal)).Select(e => e.At);
+
     public RowResult? Result(string key) => Results.FirstOrDefault(r => r.Key == key);
 
     public ProbeCall? FirstCall(string key) => Calls.FirstOrDefault(c => c.Key == key);
@@ -94,6 +115,7 @@ internal sealed class ProbeTimeline
         sb.AppendLine($"Scenario: {Scenario.Name}");
         sb.AppendLine($"First play: {(FirstPlay is { } fp ? $"{Fmt(fp.At)} on {fp.Key}" : "none")}");
         sb.AppendLine($"Pool (channel order): {string.Join(", ", Pool.Select((k, i) => $"#{i + 1} {k}"))}");
+        sb.AppendLine($"Harness: {SettleCount} settles, {SettleTotalMs:0} ms total, slowest {SettleMaxMs:0} ms");
         sb.AppendLine("Milestones (play slots / plays at LS / mp open / health / FB active+queued / MP active+queued / hold | in flight):");
         foreach (var s in Snapshots)
             sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : "-")} | {string.Join(", ", s.InFlight)}");

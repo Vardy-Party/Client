@@ -107,6 +107,15 @@ internal sealed class MpScript
         return this;
     }
 
+    /// <summary>An NDJSON <c>error</c> line that ends the harvest (5xx: LocalService's own failure, infrastructure).</summary>
+    public MpScript Error(double seconds, int statusCode = 500)
+    {
+        _lines.Add(new MpLine(seconds,
+            "{\"type\":\"error\",\"statusCode\":" + statusCode + ",\"error\":\"mp play execution failed\"}",
+            $"error {statusCode}"));
+        return this;
+    }
+
     /// <summary>A normal harvest: chip list and first chip at ~10s, then one chip per ~1s.</summary>
     public static MpScript Normal(
         IReadOnlyList<string> labels,
@@ -121,7 +130,7 @@ internal sealed class MpScript
     }
 
     /// <summary>
-    /// The Czechia v Spain Windows run (12 Nov 2026, 20:12:25-20:14:25 UK time):
+    /// A slow page from a real Windows run (12 Nov 2026, see docs/PROBE_SCHEDULING_RULES.md):
     /// headers at 8.4s, ten chips listed, each takes ~10s and none ever carries
     /// probe-ready segments, done at ~111s.
     /// </summary>
@@ -140,7 +149,7 @@ internal sealed class MpScript
         // The URL is filled in per row by the harness ({row} placeholder).
         var url = kind == ChipKind.Miss ? "" : "{chipUrl:" + label + "}";
         var segments = kind == ChipKind.Playable
-            ? ",\"rewrittenSegments\":[\"https://seg.kdns.fr/live/" + Uri.EscapeDataString(label) + "/1.ts?_s2=a\"]"
+            ? ",\"rewrittenSegments\":[\"https://seg.example.test/live/" + Uri.EscapeDataString(label) + "/1.ts?_s2=a\"]"
             : "";
         return "{\"type\":\"chip\",\"label\":" + Quote(label) + ",\"url\":\"" + url + "\"" + segments + "}";
     }
@@ -148,7 +157,7 @@ internal sealed class MpScript
     private static string Quote(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 }
 
-internal sealed record RowSpec(string Id, PlayScript? Play, MpScript? Mp)
+internal sealed record RowSpec(string Id, PlayScript? Play, MpScript? Mp, int Run = 1)
 {
     public bool IsMp => Mp is not null;
 }
@@ -182,9 +191,24 @@ internal sealed class ProbeScenario
 
     public static ProbeScenario Named(string name) => new(name);
 
+    /// <summary>
+    /// When set, the run is cancelled at this many seconds (a match switch) and a second
+    /// resolver run starts on the same LocalLanPlayService and throttle with the rows
+    /// added after <see cref="ThenSwitchAt"/>.
+    /// </summary>
+    public double? SwitchAt { get; private set; }
+
+    private int Run => SwitchAt is null ? 1 : 2;
+
+    public ProbeScenario ThenSwitchAt(double seconds)
+    {
+        SwitchAt = seconds;
+        return this;
+    }
+
     public ProbeScenario Fb(string id, PlayScript script)
     {
-        _rows.Add(new RowSpec(id, script, null));
+        _rows.Add(new RowSpec(id, script, null, Run));
         return this;
     }
 
@@ -198,7 +222,7 @@ internal sealed class ProbeScenario
     /// <summary>An unlabeled catalog MP row (V2 page; LocalService discovers the chips).</summary>
     public ProbeScenario Mp(string id, MpScript script)
     {
-        _rows.Add(new RowSpec(id, null, script));
+        _rows.Add(new RowSpec(id, null, script, Run));
         return this;
     }
 
@@ -216,7 +240,7 @@ internal sealed class ProbeScenario
 
     /// <summary>
     /// At first play, also run the startup race's <c>BeginRace</c> + <c>DrainOthersAsync</c>
-    /// (StreamResolutionOrchestrator.cs:1380-1382) and record when the drain finished.
+    /// (as <c>StreamResolutionOrchestrator</c> does before the race) and record when the drain finished.
     /// </summary>
     public bool StartupRaceDrain { get; private set; }
 

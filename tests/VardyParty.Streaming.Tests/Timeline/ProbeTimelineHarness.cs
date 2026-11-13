@@ -33,6 +33,9 @@ namespace VardyParty.Streaming.Tests.Timeline;
 /// early release of the priority window, and the real-time <c>/play</c> timeout. The
 /// <c>/mp</c> harvest timeout and the 30s seed/chip deadlines run on this clock
 /// (<see cref="LocalLanPlayService.Time"/>).
+/// Between milestones the harness waits for the thread pool to go quiet. If it does
+/// not within <c>MaxSettle</c> the run fails (with the timeline so far) rather than
+/// advance the clock early and pass or fail for the wrong reason.
 /// </summary>
 internal static class ProbeTimelineHarness
 {
@@ -50,7 +53,7 @@ internal static class ProbeTimelineHarness
     {
         private const string Endpoint = "http://192.168.1.251:5019";
         private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(10);
-        private static readonly TimeSpan MaxSettle = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan MaxSettle = TimeSpan.FromSeconds(5);
 
         private readonly ProbeScenario _scenario;
         private readonly MilestoneClock _clock = new(Start);
@@ -58,6 +61,9 @@ internal static class ProbeTimelineHarness
         private readonly ResolverRaceThrottle _throttle = new();
         private readonly StreamSwitchingService _pool = new();
         private readonly CancellationTokenSource _cts = new();
+        private readonly CancellationTokenSource _switchCts = new();
+        private Task? _consumeAfterSwitch;
+        private ITimer? _switchTimer;
         private readonly Dictionary<string, RowSpec> _rowsById = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<StreamModel, string> _keyByRef = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<StreamModel, int> _catalogIndex = new(ReferenceEqualityComparer.Instance);
@@ -112,15 +118,17 @@ internal static class ProbeTimelineHarness
             // then pass while the resolver is still starting its first probes.
             _idleWorkers = int.MaxValue;
             var sample = Stopwatch.StartNew();
+            var sampleSpin = new SpinWait();
             while (sample.ElapsedMilliseconds < 30)
             {
-                Thread.Sleep(0);
+                sampleSpin.SpinOnce(sleep1Threshold: 10);
                 _idleWorkers = Math.Min(_idleWorkers, BusyWorkers());
             }
 
-            var catalog = _scenario.Rows.Select(BuildStream).ToList();
+            var firstRun = _scenario.Rows.Where(r => r.Run == 1).ToList();
+            var catalog = firstRun.Select(BuildStream).ToList();
             for (var i = 0; i < catalog.Count; i++)
-                _keyByRef[catalog[i]] = _scenario.Rows[i].Id;
+                _keyByRef[catalog[i]] = firstRun[i].Id;
 
             var recommendations = _scenario.Recommended.Count == 0
                 ? null
@@ -175,29 +183,66 @@ internal static class ProbeTimelineHarness
                 DelayAsync = (d, ct) => Task.Delay(d, _clock, ct)
             };
 
+            var firstToken = _scenario.SwitchAt is null
+                ? _cts.Token
+                : CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, _switchCts.Token).Token;
             var consume = Task.Run(async () =>
             {
-                await foreach (var row in resolver
-                                   .ResolveStreamsIncrementallyAsync(_ordered, 2, _cts.Token)
-                                   .ConfigureAwait(false))
+                try
                 {
-                    Accept(row);
+                    await foreach (var row in resolver
+                                       .ResolveStreamsIncrementallyAsync(_ordered, 2, firstToken)
+                                       .ConfigureAwait(false))
+                    {
+                        Accept(row);
+                    }
+                }
+                catch (OperationCanceledException) when (_switchCts.IsCancellationRequested)
+                {
+                    Note("run 1 cancelled (match switch)");
                 }
             });
+
+            if (_scenario.SwitchAt is { } switchAt)
+            {
+                // A match switch: cancel run 1, then start run 2 on the same LocalLanPlayService
+                // and throttle with the rows added after SwitchAt.
+                var second = _scenario.Rows.Where(r => r.Run == 2).ToList();
+                var secondStreams = second.Select(BuildStream).ToList();
+                for (var i = 0; i < secondStreams.Count; i++)
+                    _keyByRef[secondStreams[i]] = second[i].Id;
+                _switchTimer = _clock.CreateTimer(_ =>
+                {
+                    Note("match switch: cancel run 1, start run 2");
+                    _switchCts.Cancel();
+                    _consumeAfterSwitch = Task.Run(async () =>
+                    {
+                        await foreach (var row in resolver
+                                           .ResolveStreamsIncrementallyAsync(secondStreams, 2, _cts.Token)
+                                           .ConfigureAwait(false))
+                        {
+                            Accept(row);
+                        }
+                    });
+                }, null, TimeSpan.FromSeconds(switchAt), Timeout.InfiniteTimeSpan);
+            }
+
+            bool AllDone() => consume.IsCompleted
+                              && (_scenario.SwitchAt is null || _consumeAfterSwitch is { IsCompleted: true });
 
             var horizonHit = false;
             while (true)
             {
                 Settle();
                 TakeSnapshot();
-                if (consume.IsCompleted)
+                if (AllDone())
                     break;
 
                 var next = _clock.NextDue;
                 if (next is null)
                 {
                     Settle(TimeSpan.FromMilliseconds(50));
-                    if (consume.IsCompleted)
+                    if (AllDone())
                         break;
                     if (_clock.NextDue is null)
                         throw new InvalidOperationException(
@@ -219,6 +264,8 @@ internal static class ProbeTimelineHarness
             try
             {
                 await consume.ConfigureAwait(false);
+                if (_consumeAfterSwitch is not null)
+                    await _consumeAfterSwitch.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (horizonHit)
             {
@@ -229,6 +276,7 @@ internal static class ProbeTimelineHarness
             }
 
             _priorityTimer?.Dispose();
+            _switchTimer?.Dispose();
             _priorityHold?.Dispose();
             lock (_gate)
             {
@@ -244,16 +292,21 @@ internal static class ProbeTimelineHarness
         /// queued thread-pool work, no more busy workers than the idle baseline, and no new harness
         /// activity, for <see cref="Quiet"/>. (Counting busy workers matters: a first
         /// call can spend tens of ms in JIT with nothing queued and nothing logged.)
+        /// Polls with <see cref="SpinWait"/> (yields, then 1ms sleeps), not a hot spin, so
+        /// a parallel test assembly is not starved of CPU. Fails the run when the pool
+        /// does not go quiet within <see cref="MaxSettle"/>: advancing the clock then
+        /// could fire the next milestone before earlier continuations ran.
         /// </summary>
         private void Settle(TimeSpan? quiet = null)
         {
             var window = quiet ?? Quiet;
             var sw = Stopwatch.StartNew();
+            var spin = new SpinWait();
             var last = Interlocked.Read(ref _activity);
             var quietFrom = sw.Elapsed;
             while (sw.Elapsed < MaxSettle)
             {
-                Thread.Sleep(0);
+                spin.SpinOnce(sleep1Threshold: 10);
                 var now = Interlocked.Read(ref _activity);
                 var busy = BusyWorkers();
 
@@ -265,14 +318,23 @@ internal static class ProbeTimelineHarness
                 {
                     last = now;
                     quietFrom = sw.Elapsed;
+                    spin.Reset();
                     continue;
                 }
 
                 if (sw.Elapsed - quietFrom >= window)
+                {
+                    _tl.SettleCount++;
+                    _tl.SettleTotalMs += sw.Elapsed.TotalMilliseconds;
+                    _tl.SettleMaxMs = Math.Max(_tl.SettleMaxMs, sw.Elapsed.TotalMilliseconds);
                     return;
+                }
             }
 
-            Note($"(harness: settle gave up after {MaxSettle.TotalSeconds:0}s; busy workers {BusyWorkers()}, idle bar {_idleWorkers})");
+            throw new InvalidOperationException(
+                $"Harness settle timed out after {MaxSettle.TotalSeconds:0}s at {ProbeTimeline.Fmt(T)} " +
+                $"(busy workers {BusyWorkers()}, idle bar {_idleWorkers}, queued work items {ThreadPool.PendingWorkItemCount}). " +
+                $"Advancing the clock now would make the timeline nondeterministic.\n{_tl.Render()}");
         }
 
         private static int BusyWorkers()
@@ -536,17 +598,22 @@ internal static class ProbeTimelineHarness
                 run.LocalServiceEvent(row.Id, label is null ? "POST /mp" : $"POST /mp (stream={label})");
                 _ = Task.Run(async () =>
                 {
+                    // The client hanging up (cancel before headers, or disposing the body
+                    // mid-harvest) closes the connection, and LocalService stops this /mp.
+                    using var hangUp = CancellationTokenSource.CreateLinkedTokenSource(ct, feed.Aborted);
                     try
                     {
                         foreach (var line in script.Lines.OrderBy(l => l.At))
                         {
                             var wait = startedAt + line.At - run.T;
                             if (wait > 0)
-                                await Task.Delay(TimeSpan.FromSeconds(wait), run._clock, ct).ConfigureAwait(false);
+                                await Task.Delay(TimeSpan.FromSeconds(wait), run._clock, hangUp.Token).ConfigureAwait(false);
+                            if (hangUp.IsCancellationRequested)
+                                break;
                             var json = ChipUrl.Replace(line.Json, m => ChipPlaylist(row.Id, m.Groups[1].Value));
                             feed.Write(json + "\n");
                             run.LocalServiceEvent(row.Id, "/mp " + line.What);
-                            if (line.What == "done")
+                            if (line.What == "done" || line.What.StartsWith("error", StringComparison.Ordinal))
                                 break;
                         }
                     }
@@ -556,6 +623,8 @@ internal static class ProbeTimelineHarness
                     finally
                     {
                         feed.Complete();
+                        if (hangUp.IsCancellationRequested)
+                            run.LocalServiceEvent(row.Id, "/mp closed by the client");
                         Interlocked.Decrement(ref run._mpOpen);
                         run.Bump();
                     }
@@ -576,8 +645,19 @@ internal static class ProbeTimelineHarness
         private sealed class LineFeedStream : System.IO.Stream
         {
             private readonly Channel<byte[]> _lines = Channel.CreateUnbounded<byte[]>();
+            private readonly CancellationTokenSource _aborted = new();
             private byte[]? _current;
             private int _pos;
+
+            /// <summary>Cancelled when the client disposes the body (the connection closes).</summary>
+            public CancellationToken Aborted => _aborted.Token;
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && !_aborted.IsCancellationRequested)
+                    _aborted.Cancel();
+                base.Dispose(disposing);
+            }
 
             public void Write(string text) => _lines.Writer.TryWrite(Encoding.UTF8.GetBytes(text));
 
@@ -674,6 +754,10 @@ internal static class ProbeTimelineHarness
             private ILocalLanPlayService Inner => inner;
 
             public bool IsMpChipReady(string pageUrl, string? chip) => inner.IsMpChipReady(pageUrl, chip);
+
+            public bool CanStartMp(string pageUrl, string? chip) => inner.CanStartMp(pageUrl, chip);
+
+            public IDisposable WantMpPage(string pageUrl, CancellationToken runToken) => inner.WantMpPage(pageUrl, runToken);
 
             public Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken) => inner.WaitForMpHarvestChangeAsync(cancellationToken);
 

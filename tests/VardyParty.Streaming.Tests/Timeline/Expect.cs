@@ -165,6 +165,96 @@ internal static class Expect
         $"startup race drain waits until t+{at}s (documents today)",
         t => t.DrainedAt is { } d && d >= at - Eps ? null : $"drained {(t.DrainedAt is { } x ? Fmt(x) : "never")}");
 
+    // ---- LocalService load (rules 2-3) ----
+
+    /// <summary>Rule 3: LocalService never runs more than <paramref name="n"/> <c>POST /mp</c> at once.</summary>
+    public static Expectation MpPostsAtOnceNeverExceed(int n) => new(
+        $"never more than {n} POST /mp open at LocalService",
+        t => t.Snapshots.Max(s => s.MpOpen) is var m && m <= n ? null : $"saw {m}");
+
+    /// <summary>Rule 2: <c>/play</c> calls plus open harvests at LocalService.</summary>
+    public static Expectation LocalServiceSessionsNeverExceed(int n) => new(
+        $"never more than {n} LocalService sessions (/play + /mp)",
+        t => t.Snapshots.Max(s => s.LocalServiceSessions) is var m && m <= n
+            ? null
+            : $"saw {m} at {Fmt(t.Snapshots.First(s => s.LocalServiceSessions == m).At)}");
+
+    /// <summary>
+    /// Rule 2: from <paramref name="mpId"/>'s first <c>POST /mp</c> until LocalService lists
+    /// its chips (or the seed gives up after 30s), LocalService runs at most
+    /// <paramref name="n"/> sessions: the harvest holds a /play slot until then.
+    /// </summary>
+    public static Expectation SessionsAtMostUntilListed(string mpId, int n = ResolverRaceThrottle.MaxConcurrent) => new(
+        $"at most {n} LocalService sessions from {mpId}'s POST /mp until its chips are listed",
+        t =>
+        {
+            if (!t.PostsAt(mpId).Any())
+                return $"{mpId} never POSTed";
+            var from = t.PostsAt(mpId).Min();
+            var until = Math.Min(t.ListedAt(mpId) ?? double.MaxValue, from + ProbeAcceptance.SeedGiveUpSeconds);
+            var over = t.Intervals()
+                .Where(i => i.Snap.At >= from - Eps && i.Snap.At < until - Eps && i.Snap.LocalServiceSessions > n)
+                .ToList();
+            return over.Count == 0
+                ? null
+                : $"{string.Join(", ", over.Take(3).Select(i => $"{i.Snap.LocalServiceSessions} at {Fmt(i.Snap.At)}"))} (listed {(t.ListedAt(mpId) is { } l ? Fmt(l) : "never")})";
+        });
+
+    /// <summary>Rule 2: no /mp holds a /play slot from <paramref name="at"/> on (slots in use never exceed /play calls).</summary>
+    public static Expectation MpHoldsNoSlotFrom(double at) => new(
+        $"no /mp holds a /play slot from t+{at}s on",
+        t =>
+        {
+            var held = t.Snapshots.Where(s => s.At >= at - Eps && s.SlotsInUse > s.PlaysAtLocalService).ToList();
+            return held.Count == 0
+                ? null
+                : $"{string.Join(", ", held.Take(3).Select(s => $"{s.SlotsInUse} slots / {s.PlaysAtLocalService} plays at {Fmt(s.At)}"))}";
+        });
+
+    /// <summary>Every slot is free when the run ends (released on every path).</summary>
+    public static Expectation NoSlotHeldAtEnd() => new(
+        "no /play slot held when the run ends",
+        t => t.Snapshots.Count > 0 && t.Snapshots[^1].SlotsInUse == 0 ? null : $"{t.Snapshots.LastOrDefault()?.SlotsInUse} still held");
+
+    /// <summary>Rule 4: once the slot is back, two FB /play run beside the background harvest.</summary>
+    public static Expectation PlaysBesideHarvestAtLeast(int n) => new(
+        $"{n} /play at LocalService beside an open /mp harvest",
+        t => t.Snapshots.Where(s => s.MpOpen > 0).Select(s => s.PlaysAtLocalService).DefaultIfEmpty(0).Max() is var m && m >= n
+            ? null
+            : $"never more than {m}");
+
+    /// <summary>Rule 6: the page is POSTed exactly <paramref name="n"/> times (no re-POST per chip).</summary>
+    public static Expectation MpPostCount(string mpId, int n) => new(
+        $"exactly {n} POST /mp for {mpId}",
+        t => t.PostsAt(mpId).ToList() is var posts && posts.Count == n
+            ? null
+            : $"{posts.Count} POSTs at {string.Join(", ", posts.Select(Fmt))}");
+
+    public static Expectation PostStartsBetween(string mpId, double from, double to) => new(
+        $"{mpId} POST /mp starts between t+{from}s and t+{to}s",
+        t => t.PostsAt(mpId).Select(p => (double?)p).Min() is { } first
+            ? first >= from - Eps && first <= to + Eps ? null : $"first POST at {Fmt(first)}"
+            : $"{mpId} never POSTed");
+
+    /// <summary>Rule 13: no row of this page (the page row or any of its chips) ends with <paramref name="status"/>.</summary>
+    public static Expectation NoRowOfPageEnds(string mpId, StreamResolutionStatus status) => new(
+        $"no row of {mpId} ends {status}",
+        t =>
+        {
+            var bad = t.Results.Where(r => (r.Key == mpId || r.Key.StartsWith(mpId + ":", StringComparison.Ordinal)) && r.Status == status).ToList();
+            return bad.Count == 0 ? null : string.Join(", ", bad.Select(r => $"{r.Key}@{Fmt(r.At)}"));
+        });
+
+    public static Expectation RowsEnd(StreamResolutionStatus status, params string[] keys) => new(
+        $"{string.Join(", ", keys)} end {status}",
+        t =>
+        {
+            var bad = keys.Where(k => t.Result(k)?.Status != status)
+                .Select(k => t.Result(k) is { } r ? $"{k} {r.Status}@{Fmt(r.At)}" : $"{k} never yielded")
+                .ToList();
+            return bad.Count == 0 ? null : string.Join(", ", bad);
+        });
+
     // ---- acceptance (numbers PROPOSED, see ProbeAcceptance) ----
 
     public static Expectation FirstPlayWithinOfFirstHealthy(double seconds = ProbeAcceptance.FirstPlayAfterHealthySeconds) => new(

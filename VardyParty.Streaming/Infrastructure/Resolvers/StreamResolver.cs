@@ -69,6 +69,10 @@ public class StreamResolver(
         var activeFb = 0;
         var pauseLogged = false;
         var harvestProbe = localLanPlayService as IMpHarvestProbe;
+        // MP pages this run has touched: while the run lives it wants their harvest; a
+        // cancelled run lets go, so LocalService's single /mp is not held for nobody.
+        var wantedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pageWants = new List<IDisposable>();
 
         async Task<ResolveOutcome> StartFbAsync(Stream stream)
         {
@@ -101,9 +105,15 @@ public class StreamResolver(
 
             var stream = pending[index];
             if (isMp)
+            {
                 activeMp++;
+                if (harvestProbe is not null && wantedPages.Add(stream.Url))
+                    pageWants.Add(harvestProbe.WantMpPage(stream.Url, cancellationToken));
+            }
             else
+            {
                 activeFb++;
+            }
 
             logger.LogInformation(
                 "[StreamResolver] Starting resolve {Index}/{Count} for {Channel} ({Kind})",
@@ -146,8 +156,10 @@ public class StreamResolver(
 
         // The MP lane takes a chip the harvest already holds first, so one chip
         // still soaking (up to MpHarvestSession.ProbeReadyWait) does not hold up
-        // the ready ones; otherwise the next MP row in queue order. During a race
-        // only ready chips may start.
+        // the ready ones; otherwise the next MP row in queue order that will not just
+        // wait on a running harvest (rule 7: a chip the harvest has not answered yet,
+        // or another page's row, stays queued and is woken by the harvest). During a
+        // race only ready chips may start.
         int? NextMp(bool readyOnly)
         {
             int? firstMp = null;
@@ -155,143 +167,173 @@ public class StreamResolver(
             {
                 if (started.Contains(i) || !MpPageUrl.IsV2Stream(pending[i]))
                     continue;
-                if (harvestProbe?.IsMpChipReady(pending[i].Url, GetPlayerStreamName(pending[i])) == true)
+                var chip = GetPlayerStreamName(pending[i]);
+                if (harvestProbe?.IsMpChipReady(pending[i].Url, chip) == true)
                     return i;
-                firstMp ??= i;
+                if (firstMp is null && (harvestProbe is null || harvestProbe.CanStartMp(pending[i].Url, chip)))
+                    firstMp = i;
             }
 
             return readyOnly ? null : firstMp;
         }
 
-        async Task WakeAsync(CancellationToken token)
+        // The MP lane is empty but MP rows are queued: they wait on the running harvest.
+        bool MpWaitingOnHarvest()
         {
-            // Race end, or a harvest change that may have made a chip ready.
+            if (harvestProbe is null || activeMp > 0)
+                return false;
+            for (var i = 0; i < pending.Count; i++)
+            {
+                if (!started.Contains(i) && MpPageUrl.IsV2Stream(pending[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
+        async Task WakeAsync(bool onRace, bool onHarvest, CancellationToken token)
+        {
+            // Race end, or a harvest change that may have made a chip ready. Only what
+            // the loop is actually waiting on: a race wait with no race in flight
+            // completes at once and would spin this loop.
             try
             {
-                var waits = new List<Task> { raceThrottle!.WaitUntilRaceEndsAsync(token) };
-                if (harvestProbe is not null)
+                var waits = new List<Task>();
+                if (onRace && raceThrottle is not null)
+                    waits.Add(raceThrottle.WaitUntilRaceEndsAsync(token));
+                if (onHarvest && harvestProbe is not null)
                     waits.Add(harvestProbe.WaitForMpHarvestChangeAsync(token));
-                await Task.WhenAny(waits).ConfigureAwait(false);
+                if (waits.Count > 0)
+                    await Task.WhenAny(waits).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
             }
         }
 
-        FillWindow();
-
-        while (true)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var waitingOnRace = raceThrottle?.RaceInFlight == true && HasUnstarted();
-            if (!waitingOnRace)
-                pauseLogged = false;
+            FillWindow();
 
-            if (inFlight.Count == 0 && !waitingOnRace)
-                break;
-
-            Task<ResolveOutcome>? completedTask;
-            if (waitingOnRace)
+            while (true)
             {
-                if (inFlight.Count == 0 && !pauseLogged)
+                cancellationToken.ThrowIfCancellationRequested();
+                var waitingOnRace = raceThrottle?.RaceInFlight == true && HasUnstarted();
+                if (!waitingOnRace)
+                    pauseLogged = false;
+                var waitingOnHarvest = MpWaitingOnHarvest();
+
+                if (inFlight.Count == 0 && !waitingOnRace && !waitingOnHarvest)
+                    break;
+
+                Task<ResolveOutcome>? completedTask;
+                if (waitingOnRace || waitingOnHarvest)
                 {
-                    pauseLogged = true;
-                    logger.LogInformation(
-                        "[StreamResolver] Pausing candidate testing while a playback race holds the local-service cap");
+                    if (waitingOnRace && inFlight.Count == 0 && !pauseLogged)
+                    {
+                        pauseLogged = true;
+                        logger.LogInformation(
+                            "[StreamResolver] Pausing candidate testing while a playback race holds the local-service cap");
+                    }
+
+                    using var wakeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    // Arm the wake first, then look again: a chip that turned ready (or a
+                    // race that ended) after the last FillWindow cannot be missed.
+                    var wake = WakeAsync(waitingOnRace, waitingOnHarvest, wakeCts.Token);
+                    FillWindow();
+                    var first = await Task.WhenAny(inFlight.Select(x => (Task)x.Task).Append(wake)).ConfigureAwait(false);
+                    wakeCts.Cancel();
+                    await wake.ConfigureAwait(false);
+                    if (ReferenceEquals(first, wake))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        FillWindow();
+                        continue;
+                    }
+
+                    completedTask = (Task<ResolveOutcome>)first;
+                }
+                else
+                {
+                    completedTask = await Task.WhenAny(inFlight.Select(x => x.Task)).ConfigureAwait(false);
                 }
 
-                using var wakeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                // Arm the wake first, then look again: a chip that turned ready (or a
-                // race that ended) after the last FillWindow cannot be missed.
-                var wake = WakeAsync(wakeCts.Token);
-                FillWindow();
-                var first = await Task.WhenAny(inFlight.Select(x => (Task)x.Task).Append(wake)).ConfigureAwait(false);
-                wakeCts.Cancel();
-                await wake.ConfigureAwait(false);
-                if (ReferenceEquals(first, wake))
+                var index = inFlight.FindIndex(x => ReferenceEquals(x.Task, completedTask));
+                var entry = inFlight[index];
+                inFlight.RemoveAt(index);
+                if (entry.IsMp)
+                    activeMp--;
+                else
+                    activeFb--;
+
+                var outcome = await entry.Task.ConfigureAwait(false);
+
+                if (outcome.RequeueAsChip)
                 {
+                    // Rules 5-6: the seed only listed chips. It goes back in the queue as
+                    // its first chip (same object, so the orchestrator keeps its catalog
+                    // place) with every other chip beside it; the harvest carries on.
+                    var seed = outcome.Enriched.Stream;
+                    var seedIndex = pending.FindIndex(s => ReferenceEquals(s, seed));
+                    if (seedIndex >= 0)
+                    {
+                        pending.RemoveAt(seedIndex);
+                        started.Remove(seedIndex);
+                        ShiftStarted(started, seedIndex + 1, -1);
+                    }
+
+                    seen.Add(CandidateKey(seed));
+                    var rows = new List<Stream> { seed };
+                    rows.AddRange(outcome.Siblings.Where(s => seen.Add(CandidateKey(s))));
+                    InsertUnstarted(pending, started, rows);
+                    nextIndex = FirstUnstarted(pending, started);
+                    onTotalStreamsKnown?.Invoke(pending.Count);
+                    logger.LogInformation(
+                        "[StreamResolver] MP page {Url} listed {Extra} chips ({Chips}); queued as rows; total now {Total}",
+                        seed.Url,
+                        rows.Count,
+                        string.Join(", ", rows.Select(s => s.PlayerStream)),
+                        pending.Count);
+
                     cancellationToken.ThrowIfCancellationRequested();
                     FillWindow();
                     continue;
                 }
 
-                completedTask = (Task<ResolveOutcome>)first;
-            }
-            else
-            {
-                completedTask = await Task.WhenAny(inFlight.Select(x => x.Task)).ConfigureAwait(false);
-            }
+                seen.Add(CandidateKey(outcome.Enriched.Stream));
 
-            var index = inFlight.FindIndex(x => ReferenceEquals(x.Task, completedTask));
-            var entry = inFlight[index];
-            inFlight.RemoveAt(index);
-            if (entry.IsMp)
-                activeMp--;
-            else
-                activeFb--;
+                var added = outcome.Siblings.Count > 0
+                    ? EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
+                    : [];
 
-            var outcome = await entry.Task.ConfigureAwait(false);
-
-            if (outcome.RequeueAsChip)
-            {
-                // Rules 5-6: the seed only listed chips. It goes back in the queue as
-                // its first chip (same object, so the orchestrator keeps its catalog
-                // place) with every other chip beside it; the harvest carries on.
-                var seed = outcome.Enriched.Stream;
-                var seedIndex = pending.FindIndex(s => ReferenceEquals(s, seed));
-                if (seedIndex >= 0)
+                // Publish total once MP chip inventory is known (siblings and/or sole chip).
+                if (entry.IsMp || outcome.Siblings.Count > 0)
                 {
-                    pending.RemoveAt(seedIndex);
-                    started.Remove(seedIndex);
-                    ShiftStarted(started, seedIndex + 1, -1);
+                    onTotalStreamsKnown?.Invoke(pending.Count);
                 }
 
-                seen.Add(CandidateKey(seed));
-                var rows = new List<Stream> { seed };
-                rows.AddRange(outcome.Siblings.Where(s => seen.Add(CandidateKey(s))));
-                InsertUnstarted(pending, started, rows);
-                nextIndex = FirstUnstarted(pending, started);
-                onTotalStreamsKnown?.Invoke(pending.Count);
-                logger.LogInformation(
-                    "[StreamResolver] MP page {Url} listed {Extra} chips ({Chips}); queued as rows; total now {Total}",
-                    seed.Url,
-                    rows.Count,
-                    string.Join(", ", rows.Select(s => s.PlayerStream)),
-                    pending.Count);
+                if (added.Count > 0)
+                {
+                    logger.LogInformation(
+                        "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
+                        added.Count,
+                        string.Join(", ", added.Select(s => s.PlayerStream)),
+                        outcome.Enriched.Stream.Url,
+                        pending.Count);
+                }
+
+                logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
+                    outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
+                yield return outcome.Enriched;
 
                 cancellationToken.ThrowIfCancellationRequested();
                 FillWindow();
-                continue;
             }
-
-            seen.Add(CandidateKey(outcome.Enriched.Stream));
-
-            var added = outcome.Siblings.Count > 0
-                ? EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
-                : [];
-
-            // Publish total once MP chip inventory is known (siblings and/or sole chip).
-            if (entry.IsMp || outcome.Siblings.Count > 0)
-            {
-                onTotalStreamsKnown?.Invoke(pending.Count);
-            }
-
-            if (added.Count > 0)
-            {
-                logger.LogInformation(
-                    "[StreamResolver] LocalService listed {Extra} more MP chips ({Chips}) for {Url}; total now {Total}",
-                    added.Count,
-                    string.Join(", ", added.Select(s => s.PlayerStream)),
-                    outcome.Enriched.Stream.Url,
-                    pending.Count);
-            }
-
-            logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
-                outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
-            yield return outcome.Enriched;
-
-            cancellationToken.ThrowIfCancellationRequested();
-            FillWindow();
+        }
+        finally
+        {
+            foreach (var want in pageWants)
+                want.Dispose();
         }
 
         logger.LogInformation("[StreamResolver] Completed incremental resolution of all streams");
@@ -723,6 +765,15 @@ public class StreamResolver(
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Not our cancel (e.g. a shared /mp harvest cancelled under another caller):
+            // that says nothing about the stream. Infrastructure, so retried/Deferred,
+            // never Failed (rule 13).
+            throw new LocalServiceUnavailableException(
+                LocalServiceUnavailableReason.CallTimeout,
+                $"Resolve for {stream.Url} was cancelled by another caller", ex);
         }
         catch (LocalServiceUnavailableException)
         {
