@@ -34,8 +34,8 @@ internal static class ProbeAcceptance
     public const double SeedGiveUpSeconds = 30;
 
     /// <summary>
-    /// A5: with High or Medium recommendations, no finding probe starts before this many
-    /// seconds (the head start) unless every High and Medium row already has a verdict.
+    /// A5: the head start (rule 1): High rows may use both LocalService slots, Medium rows
+    /// one, and finding fills the rest; no finding probe starts ahead of them.
     /// </summary>
     public static double HeadStartSeconds => TopTierHeadStart.Duration.TotalSeconds;
 }
@@ -186,6 +186,49 @@ internal static class Expect
         $"the backup is {key}",
         t => t.Backup?.Key == key ? null : $"backup was {t.Backup?.Key ?? "none"}");
 
+    /// <summary>Rule 11: the backup was <paramref name="first"/> and was then replaced by <paramref name="then"/> (a better tier).</summary>
+    public static Expectation BackupReplaced(string first, string then) => new(
+        $"the backup {first} is replaced by {then}",
+        t =>
+        {
+            var keys = t.Backups.Select(b => b.Key).ToList();
+            var i = keys.IndexOf(first);
+            return i >= 0 && keys.Skip(i + 1).Contains(then)
+                ? null
+                : $"backups in turn: {(keys.Count == 0 ? "none" : string.Join(" -> ", keys))}";
+        });
+
+    /// <summary>Rule 11: <paramref name="key"/> was never the backup.</summary>
+    public static Expectation NeverBackup(string key) => new(
+        $"{key} is never the backup",
+        t => t.Backups.Any(b => b.Key == key) ? $"backups in turn: {string.Join(" -> ", t.Backups.Select(b => b.Key))}" : null);
+
+    /// <summary>Rule 1: these rows (chips of a High page included) are High at the end of the run.</summary>
+    public static Expectation HighTierIncludes(params string[] keys) => new(
+        $"High tier includes {string.Join(", ", keys)}",
+        t => keys.Where(k => !t.HighAtEnd.Contains(k)).ToList() is { Count: 0 }
+            ? null
+            : $"High tier at end is {string.Join(", ", t.HighAtEnd)}");
+
+    /// <summary>
+    /// Rule 1: never more than <paramref name="n"/> Medium probes running at once
+    /// (Medium uses at most one LocalService slot).
+    /// </summary>
+    public static Expectation MediumRunningNeverExceeds(int n = 1) => new(
+        $"never more than {n} Medium probe running at once",
+        t =>
+        {
+            var medium = t.Calls.Where(c => t.MediumAtEnd.Contains(c.Key)).ToList();
+            foreach (var c in medium)
+            {
+                var open = medium.Count(o => o.Start <= c.Start + Eps && (o.End ?? double.MaxValue) > c.Start + Eps);
+                if (open > n)
+                    return $"{open} Medium probes open at {Fmt(c.Start)}";
+            }
+
+            return null;
+        });
+
     public static Expectation NoBackup() => new(
         "no backup",
         t => t.Backup is null ? null : $"backup {t.Backup.Value.Key} at {Fmt(t.Backup.Value.At)}");
@@ -314,18 +357,21 @@ internal static class Expect
         });
 
     /// <summary>
-    /// A5 (rule 1): with recommended tiers, no finding probe starts during the head start
-    /// while a High or Medium row has no verdict.
+    /// A5 (rule 1): during the head start finding only fills gaps. No finding probe
+    /// (FB /play or MP /mp) starts before every High row has started, nor before a Medium
+    /// row has started (when there is one). Finding beside them is expected: High may use
+    /// both slots, Medium one, and finding fills the rest.
     /// </summary>
     public static Expectation TopTierHeadStartHeld() => new(
-        $"A5 no finding probe during the {ProbeAcceptance.HeadStartSeconds}s head start while a High or Medium row has no verdict",
+        $"A5 during the {ProbeAcceptance.HeadStartSeconds}s head start no finding probe starts ahead of a High or the first Medium row",
         t =>
         {
             if (t.HeadStart is not { } hs)
                 return null;
-            var tiers = hs.TopTier.Concat(hs.Medium).ToList();
-            var verdicts = tiers.Select(k => t.Result(k)?.At ?? double.MaxValue).ToList();
-            var bound = Math.Min(hs.To, verdicts.Max());
+            double StartOf(string key) => t.FirstCall(key)?.Start ?? t.Result(key)?.At ?? double.MaxValue;
+            var highStart = hs.TopTier.Select(StartOf).DefaultIfEmpty(0).Max();
+            var mediumStart = hs.Medium.Select(StartOf).DefaultIfEmpty(0).Min();
+            var bound = Math.Min(hs.To, Math.Max(highStart, mediumStart));
             var early = t.Calls.Where(c => !t.TierCallKeys.Contains(c.Key) && c.Start < bound - Eps).ToList();
             return early.Count == 0 ? null : $"finding started before t+{bound:0.###}s: {string.Join(", ", early.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
         });

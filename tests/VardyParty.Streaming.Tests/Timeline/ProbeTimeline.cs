@@ -101,6 +101,14 @@ internal sealed class ProbeTimeline
     /// <summary>When that backup was ready to switch to (needs no warm, or its warm <c>/play</c> answered).</summary>
     public double? BackupReadyAt { get; set; }
 
+    /// <summary>Every backup in turn (a better-tier row that turns playable later replaces it).</summary>
+    public List<(double At, string Key)> Backups { get; } = new();
+
+    /// <summary>High and Medium rows at the end of the run, chips that inherited their page's tier included.</summary>
+    public List<string> HighAtEnd { get; } = new();
+
+    public List<string> MediumAtEnd { get; } = new();
+
     /// <summary>Warm <c>/play</c>s for backups (prewarmer and the fresh start's partner): key, from, to.</summary>
     public List<(string Key, double From, double To)> Warms { get; } = new();
 
@@ -147,6 +155,10 @@ internal sealed class ProbeTimeline
         if (FreshStartPlay is { } fsp)
             sb.AppendLine($"Fresh start /play: {Fmt(fsp.From)}-{Fmt(fsp.To)}");
         sb.AppendLine($"Backup: {(Backup is { } b ? $"{b.Key} chosen {Fmt(b.At)}, ready {(BackupReadyAt is { } r ? Fmt(r) : "never")}" : "none")}");
+        if (Backups.Count > 1)
+            sb.AppendLine($"Backups in turn: {string.Join(" -> ", Backups.Select(x => $"{x.Key}@{Fmt(x.At)}"))}");
+        if (HighAtEnd.Count + MediumAtEnd.Count > 0)
+            sb.AppendLine($"Tiers at end: High {string.Join(", ", HighAtEnd)}; Medium {string.Join(", ", MediumAtEnd)}");
         sb.AppendLine($"Priority holds: {(PriorityHolds.Count == 0 ? "none" : string.Join(", ", PriorityHolds.Select(h => $"{Fmt(h.From)}-{Fmt(h.To)}")))}");
         sb.AppendLine($"Pool (channel order): {string.Join(", ", Pool.Select((k, i) => $"#{i + 1} {k}"))}");
         sb.AppendLine($"Harness: {SettleCount} settles, {SettleTotalMs:0} ms total, slowest {SettleMaxMs:0} ms");

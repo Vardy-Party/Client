@@ -80,6 +80,7 @@ internal static class ProbeTimelineHarness
         private bool _windowOpen;
         private LocalLanPlayService? _lan;
         private TopTierHeadStart? _headStart;
+        private Func<EnrichedStream, StreamTier>? TierOf => _headStart?.Tiers is { } tiers ? tiers.TierOf : null;
         // The warm cache, as the prewarmer fills it: row -> when its warm /play answered.
         private readonly Dictionary<EnrichedStream, double> _warm = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<EnrichedStream> _warmInFlight = new(ReferenceEqualityComparer.Instance);
@@ -304,9 +305,13 @@ internal static class ProbeTimelineHarness
             _headStart?.Dispose();
             if (_headStart is { } hs)
             {
-                foreach (var row in _ordered.Where(r => hs.IsTopTier(r) || hs.IsMedium(r)))
+                // Rows the tiers hold at the end: the recommended rows plus the chips that
+                // inherited their page's tier (rule 1).
+                foreach (var (row, high) in hs.Tiers.HighRows.Select(r => (r, true)).Concat(hs.Tiers.MediumRows.Select(r => (r, false))))
                 {
-                    _tl.TierCallKeys.Add(_keyByRef[row]);
+                    var key = KeyOf(row);
+                    (high ? _tl.HighAtEnd : _tl.MediumAtEnd).Add(key);
+                    _tl.TierCallKeys.Add(key);
                     if (!string.IsNullOrWhiteSpace(row.PlayerStream))
                         _tl.TierCallKeys.Add($"{RowIdOf(row.Url)}:{row.PlayerStream.Trim()}");
                 }
@@ -434,6 +439,9 @@ internal static class ProbeTimelineHarness
             // StartPlaybackChain: the priority window begins, then RaceStartAsync plans the open.
             _hasPlayed = true;
             _playing = row;
+            // Rule 11: while the start row plays, the backup is the best-tier other row.
+            if (TierOf is { } tierOf)
+                _pool.SetBackupPreference(row, tierOf);
             if (_scenario.PriorityWindowAfterFirstPlay)
             {
                 _windowOpen = true;
@@ -453,7 +461,8 @@ internal static class ProbeTimelineHarness
 
             var plan = FirstPlayOpenStrategy.PlanStart(
                 row, _pool.GetHealthyStreams(), _clock.GetUtcNow(),
-                r => _warm.ContainsKey(r) || _warmInFlight.Contains(r));
+                r => _warm.ContainsKey(r) || _warmInFlight.Contains(r),
+                TierOf);
             _tl.FirstPlayKind = plan.Kind;
             if (plan.Kind != FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst)
             {
@@ -510,26 +519,30 @@ internal static class ProbeTimelineHarness
             UpdatePriorityHold();
         }
 
-        private EnrichedStream? CurrentBackup() =>
-            PlaybackUrlReusePolicy.UpcomingInSwitchOrder(_pool.GetHealthyStreams(), _playing, 1).FirstOrDefault();
+        // Where Next would go from the start row: the pool's backup order (rule 11).
+        private EnrichedStream? CurrentBackup() => _pool.GetUpcoming(1).FirstOrDefault();
 
         private bool NeedsWarm(EnrichedStream row) =>
             PlaybackUrlReusePolicy.ShouldPrewarm(row) && !_warm.ContainsKey(row);
 
+        // The backup can change: a better-tier row that turns playable later replaces it.
         private void TrackBackup()
         {
-            if (_tl.BackupReadyAt is not null || CurrentBackup() is not { } backup)
+            if (!ReferenceEquals(_pool.GetCurrentStream(), _playing) || CurrentBackup() is not { } backup)
                 return;
-            if (_tl.Backup is null)
+            var key = KeyOf(backup.Stream);
+            if (_tl.Backup?.Key != key)
             {
-                _tl.Backup = (T, KeyOf(backup.Stream));
-                Note($"backup: {KeyOf(backup.Stream)}");
+                Note(_tl.Backup is { } was ? $"backup: {key} (replaces {was.Key})" : $"backup: {key}");
+                _tl.Backup = (T, key);
+                _tl.Backups.Add((T, key));
+                _tl.BackupReadyAt = null;
             }
 
-            if (_tl.Backup?.Key == KeyOf(backup.Stream) && !NeedsWarm(backup))
+            if (_tl.BackupReadyAt is null && !NeedsWarm(backup))
             {
                 _tl.BackupReadyAt = T;
-                Note($"backup {KeyOf(backup.Stream)} ready");
+                Note($"backup {key} ready");
             }
         }
 
@@ -538,9 +551,7 @@ internal static class ProbeTimelineHarness
         {
             if (_warmInFlight.Count > 0)
                 return;
-            var target = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
-                    _pool.GetHealthyStreams(), _playing, PlaybackUrlReusePolicy.PrewarmDepth)
-                .FirstOrDefault(NeedsWarm);
+            var target = _pool.GetUpcoming(PlaybackUrlReusePolicy.PrewarmDepth).FirstOrDefault(NeedsWarm);
             if (target is not null)
                 StartWarm(target);
         }
@@ -586,7 +597,7 @@ internal static class ProbeTimelineHarness
             var now = _clock.GetUtcNow();
             var wanted = FirstPlayOpenStrategy.PlaybackPriorityHolds(
                 FirstPlayOpenStrategy.CountBackupsNeedingWarm(
-                    _pool.GetHealthyStreams(), _playing, now,
+                    _pool.GetUpcoming(PlaybackUrlReusePolicy.PrewarmDepth), now,
                     r => _warm.TryGetValue(r, out var at) ? (now + TimeSpan.FromMinutes(10), _clock.Start + TimeSpan.FromSeconds(at)) : null,
                     _ => false));
             if (wanted && _priorityHold is null)
