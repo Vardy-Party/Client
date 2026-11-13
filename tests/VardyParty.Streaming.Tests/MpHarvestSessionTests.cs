@@ -98,21 +98,30 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
-    public async Task WaitForAsync_FirstChip_WaitsForRewrittenAfterPlaylistOnlyRelease()
+    public async Task WaitForAsync_Seed_ReturnsChipListOnChipsEvent_NamedChipStillWaitsForRewritten()
     {
-        // Arrange — seed WaitForAsync(null) must not complete on playlist-only.
+        // Rule 5: the chip list releases the seed (no URL, every label) so the
+        // resolver can queue each chip; a named wait still holds out for
+        // probe-ready segments after a playlist-only line.
         var harvest = new MpHarvestSession();
-        var waiting = harvest.WaitForAsync(null, CancellationToken.None);
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+
+        var list = await seed;
+        Assert.Equal("", list?.Url);
+        Assert.Equal(["Chip A", "Chip B"], list?.Streams);
+        Assert.False(harvest.IsCompleted);
+
         harvest.Apply(new MpPlayEvent
         {
             Type = "chip",
             Label = "Chip A",
             Url = "https://stream.example.test/a.m3u8"
         });
-        Assert.False(waiting.IsCompleted);
+        var named = harvest.WaitForAsync("Chip A", CancellationToken.None);
+        Assert.False(named.IsCompleted);
+        Assert.False(harvest.IsChipReady("Chip A"));
 
-        // Act
         harvest.Apply(new MpPlayEvent
         {
             Type = "chip",
@@ -120,19 +129,93 @@ public sealed class MpHarvestSessionTests
             Url = "https://stream.example.test/a.m3u8",
             RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
         });
-        var first = await waiting;
+        var chip = await named;
 
-        // Assert
-        Assert.Equal("https://stream.example.test/a.m3u8", first?.Url);
-        Assert.Equal(["https://cdn.example.test/a.exe?_s2=1"], first?.RewrittenSegments);
+        Assert.Equal("https://stream.example.test/a.m3u8", chip?.Url);
+        Assert.Equal(["https://cdn.example.test/a.exe?_s2=1"], chip?.RewrittenSegments);
+        Assert.True(harvest.IsChipReady("Chip A"));
     }
 
     [Fact]
-    public async Task WaitForAsync_FirstChip_OtherLabelMiss_DoesNotFinishSeed()
+    public async Task WaitForAsync_Seed_FirstChipWithoutList_ReturnsThatChipAsAList()
     {
-        // Arrange — Chip A playlist-only, then Chip B miss must not complete seed.
+        // Rule 5: with no chips event, the first chip releases the seed.
         var harvest = new MpHarvestSession();
-        var waiting = harvest.WaitForAsync(null, CancellationToken.None);
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip A",
+            Url = "https://stream.example.test/a.m3u8"
+        });
+
+        var list = await seed;
+
+        Assert.Equal("", list?.Url);
+        Assert.Equal(["Chip A"], list?.Streams);
+        Assert.Equal("Chip A", list?.SelectedStream);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Seed_OtherLabelMiss_StillListsEveryChip()
+    {
+        // Rule 6: a miss on one label never turns the seed into a verdict.
+        var harvest = new MpHarvestSession();
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new MpPlayEvent { Type = "chip", Label = "Chip B", Url = "" });
+
+        var list = await harvest.WaitForAsync(null, CancellationToken.None);
+
+        Assert.Equal("", list?.Url);
+        Assert.Equal(["Chip A", "Chip B"], list?.Streams);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Seed_HarvestDoneWithChips_ReturnsTheListNotNull()
+    {
+        // Rule 6: a harvest that ends with no probe-ready chip still hands over
+        // its chips, led by one that has a playlist.
+        var harvest = new MpHarvestSession();
+        harvest.ApplyLegacy(new M3U8Response { Url = "", Streams = ["Chip A", "Chip B"] });
+
+        var list = await harvest.WaitForAsync(null, CancellationToken.None);
+
+        Assert.Equal("", list?.Url);
+        Assert.Equal(["Chip A", "Chip B"], list?.Streams);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Seed_GivesUpAfterProbeReadyWait()
+    {
+        // Rule 7: no chip list and no chip in 30s: the seed stops waiting. Nothing is
+        // known about the page yet, so it is infrastructure (retry, then Deferred),
+        // never a miss; the next ask on the same harvest gets the list.
+        var clock = new Timeline.MilestoneClock(new DateTimeOffset(2026, 11, 12, 20, 12, 25, TimeSpan.Zero));
+        var harvest = new MpHarvestSession(clock);
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+        await Task.Delay(20);
+        Assert.False(seed.IsCompleted);
+
+        clock.AdvanceToNext();
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
+
+        Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
+        Assert.True(ex.IsRetryable);
+        Assert.Equal(MpHarvestSession.ProbeReadyWait.TotalSeconds, clock.T, 3);
+        Assert.False(harvest.IsCompleted);
+
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        var list = await harvest.WaitForAsync(null, CancellationToken.None);
+        Assert.Equal(["Chip A"], list?.Streams);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_NamedChip_PlaylistOnly_GivesUpAfterProbeReadyWait()
+    {
+        // Rule 7: a chip whose playlist never gets probe-ready segments is handed
+        // over as is 30s after its playlist-only line, not at the end of the harvest.
+        var clock = new Timeline.MilestoneClock(new DateTimeOffset(2026, 11, 12, 20, 12, 25, TimeSpan.Zero));
+        var harvest = new MpHarvestSession(clock);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(new MpPlayEvent
         {
@@ -140,29 +223,17 @@ public sealed class MpHarvestSessionTests
             Label = "Chip A",
             Url = "https://stream.example.test/a.m3u8"
         });
-        Assert.False(waiting.IsCompleted);
+        var named = harvest.WaitForAsync("Chip A", CancellationToken.None);
+        await Task.Delay(20);
+        Assert.False(named.IsCompleted);
 
-        // Act
-        harvest.Apply(new MpPlayEvent
-        {
-            Type = "chip",
-            Label = "Chip B",
-            Url = ""
-        });
+        clock.AdvanceToNext();
+        var chip = await named;
 
-        // Assert
-        Assert.False(waiting.IsCompleted);
-
-        harvest.Apply(new MpPlayEvent
-        {
-            Type = "chip",
-            Label = "Chip A",
-            Url = "https://stream.example.test/a.m3u8",
-            RewrittenSegments = ["https://cdn.example.test/a.exe?_s2=1"]
-        });
-        var first = await waiting;
-        Assert.Equal("https://stream.example.test/a.m3u8", first?.Url);
-        Assert.Equal("Chip A", first?.SelectedStream);
+        Assert.Equal("https://stream.example.test/a.m3u8", chip?.Url);
+        Assert.Equal(MpHarvestSession.ProbeReadyWait.TotalSeconds, clock.T, 3);
+        Assert.True(harvest.IsChipReady("Chip A"));
+        Assert.False(harvest.IsChipReady("Chip B"));
     }
 
     [Fact]
