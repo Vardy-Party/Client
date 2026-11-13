@@ -22,6 +22,9 @@ public class StreamResolver(
     /// <summary>Test seam for the infrastructure retry waits.</summary>
     internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; set; } = Task.Delay;
 
+    /// <summary>The session's <c>[probe-timing]</c> log (docs/PROBE_SCHEDULING_RULES.md).</summary>
+    private ProbeTimingLog Timing => raceThrottle?.Timing ?? ProbeTimingLog.Detached;
+
     public async IAsyncEnumerable<EnrichedStream> ResolveStreamsIncrementallyAsync(
         List<Stream> streams,
         int batchSize = 3,
@@ -84,6 +87,9 @@ public class StreamResolver(
         // two Highs" of rule 1; a dead High does not count, so its slot still goes to the
         // next High row.
         var highHealthy = 0;
+        // [probe-timing]: when each in-flight resolve took its place (ms since session start).
+        var grantedAt = new Dictionary<Task<ResolveOutcome>, long>();
+        string TierName(Stream row) => ProbeTimingLog.Tier(tiers, row);
 
         // Rule 1 (Jon, 13 Nov 2026: "high can occupy 2 slots on local-service, medium only
         // one, then fit in v1 and v2 into gaps"; then "Let a second Medium use a slot only
@@ -292,7 +298,19 @@ public class StreamResolver(
             logger.LogInformation(
                 "[StreamResolver] Starting resolve {Index}/{Count} for {Channel} ({Kind})",
                 index + 1, pending.Count, stream.Channel, isMp ? "MP" : "FB");
-            inFlight.Add((isMp ? ResolveAndTestStreamAsync(stream, cancellationToken) : StartFbAsync(stream), isMp));
+            // Logged before the resolve starts: it runs synchronously up to its first wait.
+            var grantMs = Timing.Ms;
+            Timing.Log(logger, "slot-grant",
+                ("lane", isMp ? "mp" : "fb"),
+                ("tier", TierName(stream)),
+                ("row", stream.Channel),
+                ("chip", GetPlayerStreamName(stream)),
+                ("page", ProbeTimingLog.Host(stream.Url)),
+                ("fb_active", activeFb),
+                ("mp_active", activeMp));
+            var task = isMp ? ResolveAndTestStreamAsync(stream, cancellationToken) : StartFbAsync(stream);
+            grantedAt[task] = grantMs;
+            inFlight.Add((task, isMp));
         }
 
         void FillWindow()
@@ -466,6 +484,23 @@ public class StreamResolver(
                     activeFb--;
 
                 var outcome = await entry.Task.ConfigureAwait(false);
+                var done = outcome.Enriched.Stream;
+                var doneChip = GetPlayerStreamName(done);
+                // Rule 7 early-chip retry (Jon, 13 Nov 2026): a playlist-only chip handed over
+                // early (no backup yet) that failed its health check is not dead yet; the
+                // harvest hands it over once more after the configured delay (10s by default).
+                var retryEarly = entry.IsMp && !outcome.RequeueAsChip
+                    && outcome.Enriched.Status == StreamResolutionStatus.Failed
+                    && outcome.Enriched.Health is not null
+                    && harvestProbe?.RetryEarlyMpChip(done.Url, doneChip) == true;
+                grantedAt.Remove(entry.Task, out var grantedMs);
+                Timing.Log(logger, "slot-release",
+                    ("lane", entry.IsMp ? "mp" : "fb"),
+                    ("tier", TierName(done)),
+                    ("row", done.Channel),
+                    ("chip", doneChip),
+                    ("held_ms", Timing.Ms - grantedMs),
+                    ("result", outcome.RequeueAsChip ? "chips-listed" : retryEarly ? "retry-queued" : outcome.Enriched.Status.ToString()));
 
                 if (outcome.RequeueAsChip)
                 {
@@ -525,8 +560,45 @@ public class StreamResolver(
                         pending.Count);
                 }
 
+                if (retryEarly)
+                {
+                    // Back in the queue, unstarted: it holds no lane and no LocalService slot
+                    // while it waits, and starts again when the harvest wakes the loop. Not
+                    // yielded, so the pool (and channel numbers) see one verdict only.
+                    var retryIndex = pending.FindIndex(s => ReferenceEquals(s, done));
+                    if (retryIndex >= 0)
+                    {
+                        started.Remove(retryIndex);
+                        nextIndex = FirstUnstarted(pending, started);
+                    }
+
+                    logger.LogInformation(
+                        "[StreamResolver] MP chip {Chip} on {Url} failed its early check ({Status}); one retry queued",
+                        doneChip, done.Url, outcome.Enriched.Health!.Status);
+                    Timing.Log(logger, "chip-retry-queued",
+                        ("row", done.Channel),
+                        ("chip", doneChip),
+                        ("tier", TierName(done)),
+                        ("page", ProbeTimingLog.Host(done.Url)),
+                        ("first_result", outcome.Enriched.Health.Status));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    FillWindow();
+                    continue;
+                }
+
                 logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
                     outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
+                var handover = entry.IsMp ? harvestProbe?.MpChipHandover(done.Url, doneChip) : null;
+                Timing.Log(logger, "verdict",
+                    ("row", done.Channel),
+                    ("chip", doneChip),
+                    ("tier", TierName(done)),
+                    ("lane", entry.IsMp ? "mp" : "fb"),
+                    ("status", outcome.Enriched.Status),
+                    ("reason", VerdictReason(outcome.Enriched)),
+                    ("handover", handover),
+                    ("after_retry", handover == "retry" ? true : null),
+                    ("cdn", ProbeTimingLog.Host(outcome.Enriched.ResolvedM3U8Url)));
                 yielded.Add(outcome.Enriched.Stream);
                 if (outcome.Enriched.Status == StreamResolutionStatus.Healthy && tiers?.IsHigh(outcome.Enriched.Stream) == true)
                     highHealthy++;
@@ -582,6 +654,18 @@ public class StreamResolver(
     }
 
     private readonly record struct ResolveOutcome(EnrichedStream Enriched, IReadOnlyList<Stream> Siblings, bool RequeueAsChip = false);
+
+    /// <summary>Why a row is not healthy, for the <c>[probe-timing]</c> verdict line (null when healthy).</summary>
+    private static string? VerdictReason(EnrichedStream enriched)
+    {
+        if (enriched.Status == StreamResolutionStatus.Healthy)
+            return null;
+        if (enriched.DeferReason != StreamDeferReason.None)
+            return enriched.DeferReason.ToString();
+        if (enriched.Health is { } health)
+            return health.Status.ToString();
+        return string.IsNullOrEmpty(enriched.ResolvedM3U8Url) ? "no-playlist" : "error";
+    }
 
     private static string CandidateKey(Stream stream) =>
         $"{stream.Url}\n{stream.PlayerStream?.Trim() ?? ""}";
@@ -693,9 +777,26 @@ public class StreamResolver(
                 };
             }
 
+            var chip = MpPageUrl.IsV2Stream(stream) ? GetPlayerStreamName(stream) : null;
+            var handover = chip is null ? null : (localLanPlayService as IMpHarvestProbe)?.MpChipHandover(stream.Url, chip);
+            var healthStartMs = Timing.Ms;
+            Timing.Log(logger, "health-start",
+                ("row", stream.Channel),
+                ("chip", chip),
+                ("cdn", ProbeTimingLog.Host(m3u8Url)),
+                ("handover", handover),
+                ("early", chip is null ? null : handover == "early"),
+                ("retry", chip is null ? null : handover == "retry"));
             StreamHealth health = probe is null
                 ? await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, cancellationToken)
                 : await healthChecker.CheckStreamHealthAsync(m3u8Url, enriched.Referer, probe, cancellationToken);
+            Timing.Log(logger, "health-end",
+                ("row", stream.Channel),
+                ("chip", chip),
+                ("cdn", ProbeTimingLog.Host(m3u8Url)),
+                ("handover", handover),
+                ("result", health.Status),
+                ("duration_ms", Timing.Ms - healthStartMs));
 
             enriched.Health = health;
             if (health.Status == StreamHealthStatus.Healthy)

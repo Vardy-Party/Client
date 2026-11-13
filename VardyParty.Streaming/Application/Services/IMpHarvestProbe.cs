@@ -31,4 +31,19 @@ public interface IMpHarvestProbe
 
     /// <summary>Completes when the harvest changes (a chip event, a deadline, its end) or a new harvest starts.</summary>
     Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Rule 7 early-chip retry (Jon, 13 Nov 2026): <paramref name="chip"/> on
+    /// <paramref name="pageUrl"/> was handed over early (no backup yet) and failed its health
+    /// check. True when the running harvest schedules its one retry (after the configured
+    /// <c>EarlyChipRetryDelaySeconds</c>, 10s by default): the resolver re-queues the row
+    /// instead of yielding it dead. False when the verdict stands.
+    /// </summary>
+    bool RetryEarlyMpChip(string pageUrl, string? chip) => false;
+
+    /// <summary>
+    /// How the harvest last handed <paramref name="chip"/> over (see
+    /// <see cref="MpHarvestSession.HandoverOf"/>), for the <c>[probe-timing]</c> log. Null when unknown.
+    /// </summary>
+    string? MpChipHandover(string pageUrl, string? chip) => null;
 }

@@ -60,6 +60,12 @@ public sealed class MpHarvestSession
     private bool _legacy;
     private readonly bool _chipListSeed;
     private readonly Func<bool>? _handOverPlaylistOnlyNow;
+    // Rule 7 early-chip retry (Jon, 13 Nov 2026): chips handed over early because no backup
+    // existed, the time each retried chip is due, and how each label was last handed over.
+    private readonly ConcurrentDictionary<string, bool> _handedEarly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _handover = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ITimer> _retryTimers = [];
 
     /// <param name="time">The clock.</param>
     /// <param name="mode">How the seed answers.</param>
@@ -163,12 +169,69 @@ public sealed class MpHarvestSession
     {
         if (_cancelled || string.IsNullOrWhiteSpace(label))
             return false;
+        var key = label.Trim();
+        if (_byLabel.TryGetValue(key, out var cached) && _retryAt.TryGetValue(key, out var retryAt))
+            return IsReadyForWaiter(cached) || _time.GetUtcNow() >= retryAt;
         if (_done)
             return true;
-        var key = label.Trim();
-        if (_byLabel.TryGetValue(key, out var cached))
+        if (cached is not null)
             return IsReadyForWaiter(cached) || PlaylistWaitOver(key);
         return false;
+    }
+
+    /// <summary>
+    /// Rule 7 early-chip retry (Jon, 13 Nov 2026: "Give an early playlist chip that fails one
+    /// more try before marking it dead"; the delay is configurable, 10s by default). A chip
+    /// this harvest handed over early, because no backup existed, failed its health check:
+    /// it is handed over once more <paramref name="delay"/> from now, or sooner if its
+    /// probe-ready line arrives, even if the harvest has ended meanwhile. True when the retry
+    /// is scheduled; false for a chip that was not handed over early or was already retried
+    /// (its verdict stands). Nothing is held while the retry waits.
+    /// </summary>
+    public bool RetryEarlyChip(string? label, TimeSpan delay)
+    {
+        if (_cancelled || !_chipListSeed || string.IsNullOrWhiteSpace(label))
+            return false;
+        var key = label.Trim();
+        if (!_handedEarly.ContainsKey(key) || !_byLabel.ContainsKey(key))
+            return false;
+        if (delay < TimeSpan.Zero)
+            delay = TimeSpan.Zero;
+        if (!_retryAt.TryAdd(key, _time.GetUtcNow() + delay))
+            return false;
+        lock (_gate)
+            _retryTimers.Add(_time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, delay, Timeout.InfiniteTimeSpan));
+        Signal();
+        return true;
+    }
+
+    /// <summary>
+    /// How the last labeled wait for <paramref name="label"/> was answered, for the
+    /// <c>[probe-timing]</c> log: <c>probe-ready</c>, <c>early</c> (playlist-only, no backup),
+    /// <c>playlist-wait</c> (playlist-only after <see cref="ProbeReadyWait"/>),
+    /// <c>harvest-end</c>, or <c>retry</c> (the early-chip retry). Null before any answer.
+    /// </summary>
+    public string? HandoverOf(string? label) =>
+        !string.IsNullOrWhiteSpace(label) && _handover.TryGetValue(label.Trim(), out var kind) ? kind : null;
+
+    /// <summary>
+    /// The early-chip retry for <paramref name="label"/> is scheduled and not due yet: a
+    /// resolve now would only wait, so the row must stay queued (out of the MP lane).
+    /// </summary>
+    public bool IsRetryWaiting(string? label)
+    {
+        if (_cancelled || string.IsNullOrWhiteSpace(label))
+            return false;
+        var key = label.Trim();
+        return _retryAt.TryGetValue(key, out var retryAt)
+               && _time.GetUtcNow() < retryAt
+               && !(_byLabel.TryGetValue(key, out var cached) && IsReadyForWaiter(cached));
+    }
+
+    private M3U8Response? Handed(string key, string kind, M3U8Response? response)
+    {
+        _handover[key] = _retryAt.ContainsKey(key) ? "retry" : kind;
+        return response;
     }
 
     public void Apply(MpPlayEvent ev)
@@ -334,28 +397,43 @@ public sealed class MpHarvestSession
             {
                 _byLabel.TryGetValue(key, out var cached);
                 if (cached is not null && IsReadyForWaiter(cached))
-                    return cached;
-                if (_done)
+                    return Handed(key, string.IsNullOrWhiteSpace(cached.Url) ? "miss" : "probe-ready", cached);
+                if (cached is not null && _retryAt.TryGetValue(key, out var retryAt))
+                {
+                    // The early-chip retry waits for its own time, even after the harvest ended.
+                    wait = retryAt - _time.GetUtcNow();
+                    if (wait <= TimeSpan.Zero)
+                        return Handed(key, "retry", cached);
+                }
+                else if (_done)
                 {
                     if (cached is not null)
-                        return cached;
+                        return Handed(key, "harvest-end", cached);
                     if (_fault is not null)
                         throw FaultForWaiter();
                     return null;
                 }
-
-                wait = Timeout.InfiniteTimeSpan;
-                if (_chipListSeed && cached is not null && _cachedAt.TryGetValue(key, out var at))
+                else
                 {
-                    wait = ProbeReadyWait - (_time.GetUtcNow() - at);
-                    if (wait <= TimeSpan.Zero || HandOverPlaylistOnlyNow)
-                        return cached;
-                }
-                else if (_chipListSeed && cached is null)
-                {
-                    wait = ProbeReadyWait - (_time.GetUtcNow() - LastProgressAt);
-                    if (wait <= TimeSpan.Zero)
-                        throw ChipTimedOut(key);
+                    wait = Timeout.InfiniteTimeSpan;
+                    if (_chipListSeed && cached is not null && _cachedAt.TryGetValue(key, out var at))
+                    {
+                        wait = ProbeReadyWait - (_time.GetUtcNow() - at);
+                        if (wait <= TimeSpan.Zero)
+                            return Handed(key, "playlist-wait", cached);
+                        if (HandOverPlaylistOnlyNow)
+                        {
+                            // Handed over early (no backup): a failed check gets one retry.
+                            _handedEarly[key] = true;
+                            return Handed(key, "early", cached);
+                        }
+                    }
+                    else if (_chipListSeed && cached is null)
+                    {
+                        wait = ProbeReadyWait - (_time.GetUtcNow() - LastProgressAt);
+                        if (wait <= TimeSpan.Zero)
+                            throw ChipTimedOut(key);
+                    }
                 }
             }
 
@@ -378,6 +456,15 @@ public sealed class MpHarvestSession
     {
         _cancelled = true;
         _done = true;
+        List<ITimer> retryTimers;
+        lock (_gate)
+        {
+            retryTimers = _retryTimers.ToList();
+            _retryTimers.Clear();
+        }
+
+        foreach (var timer in retryTimers)
+            timer.Dispose();
         MarkCompleted();
     }
 

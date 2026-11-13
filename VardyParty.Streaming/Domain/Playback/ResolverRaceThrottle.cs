@@ -100,6 +100,13 @@ public sealed class ResolverRaceThrottle
     private TopTierHeadStart? _headStart;
     private StreamTiers? _tiers;
     private volatile bool _backupWanted;
+
+    /// <summary>
+    /// The session's <c>[probe-timing]</c> log (docs/PROBE_SCHEDULING_RULES.md, "Probe timing
+    /// log"). The orchestrator (and the probe timeline harness) starts it per session; the
+    /// resolver and <c>LocalLanPlayService</c> write to it.
+    /// </summary>
+    public ProbeTimingLog Timing { get; } = new();
     private TaskCompletionSource _backupWantedChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>

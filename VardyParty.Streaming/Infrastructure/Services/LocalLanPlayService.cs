@@ -82,6 +82,17 @@ public class LocalLanPlayService(
     private readonly TimeSpan _m3u8CallTimeout = LocalServicePlayBudget.BaseTimeout(
         gamesApiSettings.Value is { } settings ? TimeSpan.FromSeconds(settings.M3U8CallTimeoutSeconds) : null);
 
+    /// <summary>
+    /// Rule 7 early-chip retry delay (Jon, 13 Nov 2026): <c>GamesApi:EarlyChipRetryDelaySeconds</c>,
+    /// 10s when unset. Settable for tests.
+    /// </summary>
+    internal TimeSpan EarlyChipRetryDelay { get; set; } = TimeSpan.FromSeconds(
+        gamesApiSettings.Value is { EarlyChipRetryDelaySeconds: >= 0 } retrySettings
+            ? retrySettings.EarlyChipRetryDelaySeconds
+            : GamesApiSettings.DefaultEarlyChipRetryDelaySeconds);
+
+    private ProbeTimingLog Timing => raceThrottle?.Timing ?? ProbeTimingLog.Detached;
+
     private readonly LocalServiceEndpointCache _endpoints = new(DiscoveryCacheTtl, DiscoveryFailureCacheTtl);
 
     internal LocalServiceEndpointCache EndpointsForTests => _endpoints;
@@ -468,10 +479,35 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
+    public bool RetryEarlyMpChip(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest
+                   && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                   && harvest.RetryEarlyChip(chip, EarlyChipRetryDelay);
+        }
+    }
+
+    /// <inheritdoc />
+    public string? MpChipHandover(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                ? harvest.HandoverOf(chip)
+                : null;
+        }
+    }
+
+    /// <inheritdoc />
     public bool CanStartMp(string pageUrl, string? chip)
     {
         lock (_mpHarvestGate)
         {
+            // A chip waiting for its early-chip retry (rule 7) would only wait in the lane.
+            if (_mpHarvest is { } retrying && retrying.CanReuseFor(_mpHarvestPage, pageUrl) && retrying.IsRetryWaiting(chip))
+                return false;
             // No harvest running: a reuse from a finished one, or a new POST, decides.
             if (_mpHarvest is not { } harvest || harvest.IsCompleted)
                 return true;
@@ -899,7 +935,7 @@ public class LocalLanPlayService(
     {
         if (TryReuseMpHarvest(streamUrl) is { } running)
         {
-            return await running.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+            return await HandOverAsync(running, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
 
         // One POST /mp at LocalService at a time; the gate is released when that
@@ -915,6 +951,7 @@ public class LocalLanPlayService(
             try
             {
                 slot = await raceThrottle.EnterAsync(cancellationToken).ConfigureAwait(false);
+                Timing.Log(logger, "slot-grant", ("lane", "mp-seed"), ("page", ProbeTimingLog.Host(streamUrl)));
             }
             catch
             {
@@ -951,12 +988,33 @@ public class LocalLanPlayService(
             _mpPostGate.Release();
             if (reused is null)
                 throw MpDisabledException();
-            return await reused.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+            return await HandOverAsync(reused, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
 
         started!.TrySetResult();
         _ = ReadMpHarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, harvestCts!, slot);
-        return await harvest.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+        return await HandOverAsync(harvest, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>A labeled wait on the harvest, logged as a <c>[probe-timing]</c> chip handover.</summary>
+    private async Task<M3U8Response?> HandOverAsync(
+        MpHarvestSession harvest,
+        string streamUrl,
+        string? label,
+        CancellationToken cancellationToken)
+    {
+        var response = await harvest.WaitForAsync(label, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(label) && response is not null)
+        {
+            Timing.Log(logger, "chip-handover",
+                ("chip", label.Trim()),
+                ("page", ProbeTimingLog.Host(streamUrl)),
+                ("handover", harvest.HandoverOf(label) ?? "unknown"),
+                ("playlist", !string.IsNullOrWhiteSpace(response.Url)),
+                ("cdn", ProbeTimingLog.Host(response.Url)));
+        }
+
+        return response;
     }
 
     /// <summary>
@@ -965,18 +1023,38 @@ public class LocalLanPlayService(
     /// after <see cref="MpHarvestSession.ProbeReadyWait"/>. The harvest carries on in
     /// the background on <see cref="_mpPostGate"/> alone.
     /// </summary>
-    private async Task ReleaseSlotWhenListedAsync(MpHarvestSession harvest, IDisposable slot)
+    private async Task ReleaseSlotWhenListedAsync(MpHarvestSession harvest, IDisposable slot, string streamUrl)
     {
+        var reason = "listed";
         try
         {
             await harvest.Listed.WaitAsync(harvest.ProbeReadyWait, Time).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
+            reason = "timeout";
         }
         finally
         {
             slot.Dispose();
+            Timing.Log(logger, "slot-release", ("lane", "mp-seed"), ("page", ProbeTimingLog.Host(streamUrl)), ("reason", reason));
+        }
+    }
+
+    /// <summary><c>[probe-timing]</c>: when the page listed its chips and when each chip line arrived.</summary>
+    private void LogHarvestLine(string streamUrl, MpPlayEvent ev)
+    {
+        if (ev.Type == "chips" && ev.Streams is { Count: > 0 } chips)
+        {
+            Timing.Log(logger, "mp-chips", ("page", ProbeTimingLog.Host(streamUrl)), ("count", chips.Count), ("chips", string.Join(",", chips)));
+        }
+        else if (ev.Type == "chip")
+        {
+            Timing.Log(logger, "chip-listed",
+                ("chip", (ev.SelectedStream ?? ev.Label)?.Trim()),
+                ("page", ProbeTimingLog.Host(streamUrl)),
+                ("playlist", !string.IsNullOrWhiteSpace(ev.Url)),
+                ("probe_ready", MpRewrittenSegment.HasProbeReady(ev.RewrittenSegments)));
         }
     }
 
@@ -1001,7 +1079,7 @@ public class LocalLanPlayService(
         // more (ReleaseMpWant), never by one caller among several.
         var cancellationToken = harvestCts.Token;
         if (slot is not null)
-            _ = ReleaseSlotWhenListedAsync(harvest, slot);
+            _ = ReleaseSlotWhenListedAsync(harvest, slot, streamUrl);
         try
         {
             using var harvestTimeout = new CancellationTokenSource(MpHarvestTimeout, Time);
@@ -1115,6 +1193,7 @@ public class LocalLanPlayService(
                 if (ev is not null)
                 {
                     harvest.Apply(ev);
+                    LogHarvestLine(streamUrl, ev);
                 }
             }
 

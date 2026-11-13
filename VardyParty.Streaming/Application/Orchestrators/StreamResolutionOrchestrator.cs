@@ -194,6 +194,8 @@ public class StreamResolutionOrchestrator(
         CancellationToken cancellationToken)
     {
         Reset();
+        // [probe-timing]: every line's ms counts from here (docs/PROBE_SCHEDULING_RULES.md).
+        raceThrottle?.Timing.BeginSession(HeadStartTime);
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
         _tiers = null;
 
@@ -246,6 +248,10 @@ public class StreamResolutionOrchestrator(
 
         // First-play delay diagnostics: wall clock from 1st/2nd healthy → race → Exo open.
         var firstPlayDiag = new FirstPlayDelayDiag();
+        using var probeTrace = new ProbeSessionTrace(
+            raceThrottle?.Timing ?? ProbeTimingLog.Detached, logger, streamSwitchingService, () => _tiers);
+        firstPlayDiag.Trace = probeTrace;
+        (raceThrottle?.Timing ?? ProbeTimingLog.Detached).Log(logger, "session-start", ("candidates", orderedStreams.Count));
 
         void StartPlaybackChain(EnrichedStream first)
         {
@@ -296,6 +302,7 @@ public class StreamResolutionOrchestrator(
             // Rule 11 backup push: from first play until a second row is in the pool, the
             // resolver lets Medium rows fill every free slot (no Medium cap) ahead of finding.
             raceThrottle?.SetBackupWanted(hasPlayedFirstStream && _healthyStreamCount < 2);
+            probeTrace.PoolChanged();
             firstPlayDiag.MarkHealthyCount(
                 _healthyStreamCount,
                 readyStream.Stream?.Channel,
@@ -850,6 +857,7 @@ public class StreamResolutionOrchestrator(
                 attempt.PlayerOpened = true;
             firstPlayDiag?.MarkPlayerOpened(
                 enrichedStream.Stream.Channel, usedCachedUrl, racePlayReady, logger);
+            firstPlayDiag?.Trace?.Picture(enrichedStream);
             logger.LogInformation(
                 "[StreamResolution] Opening player: {Channel} usedCached={UsedCached} raceWon={RaceWon} urlHost={Host}",
                 enrichedStream.Stream.Channel,
