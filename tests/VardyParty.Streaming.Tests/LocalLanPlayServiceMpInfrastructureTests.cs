@@ -84,7 +84,9 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 """{"type":"error","statusCode":500,"error":"mp play execution failed"}""")),
             out _);
 
-        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service));
+        // The chip list may release the seed first (rule 5); the chip row then
+        // meets the fault.
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service, chip: "Chip A"));
 
         Assert.Equal(LocalServiceUnavailableReason.ServiceError, ex.Reason);
     }
@@ -168,9 +170,13 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 """{"type":"done"}""")),
             out _);
 
-        var result = await ResolveMp(service);
+        var seed = await ResolveMp(service);
+        var chip = await ResolveMp(service, chip: "Chip A");
 
-        Assert.Equal("https://cdn.example.test/mp.m3u8", result?.Url);
+        // The seed answers with the probe-ready chip or, if the chip list got in
+        // first, with the list (rule 5); either way the chip resolves.
+        Assert.Equal(["Chip A"], seed?.Streams);
+        Assert.Equal("https://cdn.example.test/mp.m3u8", chip?.Url);
     }
 
     [Theory]
@@ -194,8 +200,8 @@ public class LocalLanPlayServiceMpInfrastructureTests
         Assert.Equal(LocalServiceUnavailableReason.Unauthorized, ex.Reason);
     }
 
-    private static Task<M3U8Response?> ResolveMp(LocalLanPlayService service, string page = Page)
-        => service.ResolveM3U8UrlAsync(page, playerStreamName: null, resolutionStrategy: "v2", source: "mp", CancellationToken.None);
+    private static Task<M3U8Response?> ResolveMp(LocalLanPlayService service, string page = Page, string? chip = null)
+        => service.ResolveM3U8UrlAsync(page, playerStreamName: chip, resolutionStrategy: "v2", source: "mp", CancellationToken.None);
 
     private sealed class Counts
     {
