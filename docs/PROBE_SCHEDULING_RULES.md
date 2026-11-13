@@ -12,7 +12,9 @@ Decided (Jon, 13 Nov 2026): "first come first served on playable streams." No ro
 
 Decided (Jon, 13 Nov 2026): "You talk of a singular recommended stream but there can be multiple. The point of this exercise is to find the best way of getting a good stream in front of a user fastest and to have a backup stream ready. So highly recommended streams come before finding." Then: "Top tier is High confidence only", "Option B, head start then overlap", "Yes, cut the startup drain and second /play", and "medium-confidence should NOT be disregarded". So:
 - High-confidence recommended rows (the top tier) come first, Medium-confidence rows (the second tier) next, then finding (Low recommendations, MP pages, FB rows). After the 12s head start, first come, first served (rules 1, 9).
-- Then (Jon, 13 Nov 2026): "high can occupy 2 slots on local-service / medium only one / then fit in v1 and v2 into gaps". During the head start High rows may use both LocalService slots, Medium rows at most one, and any slot they do not use is filled by finding (V1 = FB `/play`, V2 = MP `/mp`) as it frees up. A slot a dead High row frees goes straight to the next High row, else to a Medium row (rule 1).
+- Then (Jon, 13 Nov 2026): "high can occupy 2 slots on local-service / medium only one / then fit in v1 and v2 into gaps". High rows may use both LocalService slots, Medium rows at most one, and any slot they do not use is filled by finding (V1 = FB `/play`, V2 = MP `/mp`) as it frees up. A slot a dead High row frees goes straight to the next High row, else to a Medium row (rule 1).
+- Then (Jon, 13 Nov 2026): "Medium limited to one slot always". The Medium cap is not only for the head start: two Medium rows never run at once, after the head start and in the re-queue passes and CDN rechecks too (rule 1).
+- And (Jon, 13 Nov 2026): "you want the best experience for the user". The acceptance targets are what the viewer sees, in seconds from opening a match: picture time, backup time, needless switches and channel-number stability ("Acceptance" below). Every scheduling rule is there to improve those numbers.
 - And: the backup is the second playable High row, then the first playable Medium row, then the first playable finding row, whatever the channel numbers; a better-tier row that turns playable later replaces a finding backup. The chips of a High (Medium) MP page are High (Medium) rows (rules 1, 11).
 - First play uses the link the probe returned; a fresh `/play` only when that link genuinely cannot be reused. First play never waits for other probes: the startup drain and the second `/play` are gone (rule 12).
 - The priority window pauses finding only while a backup exists that still needs warming. No backup at first play means finding carries on (rule 11).
@@ -25,12 +27,12 @@ Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harn
 
 1. **Order and tiers.** Try-order is recommended rows first (High, then Medium, then Low confidence), then every MP row, then the FB rows, each group in catalog order. With no usable recommendations, MP rows go first and the FB rows are rotated by the session salt. MP rows run in their own lane (rule 4). On top of try-order, the first pass gives recommended rows a **12s** head start in which LocalService's two slots are shared out by tier:
    - **Top tier: High.** Every High-confidence recommended row (a recommended MP page or chip counts, and so does every chip LocalService lists for a High page). High rows may use **both** slots: a slot goes to a waiting High row before anything else.
-   - **Second tier: Medium.** Medium-confidence recommended rows (and the chips of a Medium page). Medium rows use **at most one** slot at a time: a free slot no High row wants goes to a Medium row while no other Medium row is running. A second Medium row waits while a finding row could take the slot instead, so no slot sits idle. A slot a dead High row frees goes to the next High row, else at once to a Medium row.
+   - **Second tier: Medium.** Medium-confidence recommended rows (and the chips of a Medium page). Medium rows use **at most one** slot at a time, **always** (in the head start, after it, and in later passes of the session): a free slot no High row wants goes to a Medium row while no other Medium row is running. A second Medium row waits for the first to yield, even if no finding row is queued to take the slot. A slot a dead High row frees goes to the next High row, else at once to a Medium row.
    - **Finding: everything else** (Low recommendations, MP pages, FB rows). Finding fills every slot High and Medium do not use, from the first second: V2 (`/mp`, the MP lane) first, then V1 (FB `/play`). A finding probe never starts while a High FB row is queued, or while a Medium FB row is queued and no Medium row runs. A finding call may ask while both slots are busy; it waits for the next slot nobody in a tier wants.
-   - After the 12s: first come, first served (rule 9), in try-order (High, then Medium, then finding) with no Medium cap; an MP row still waits while a better-tier FB row is queued.
+   - After the 12s: first come, first served (rule 9), in try-order (High, then Medium, then finding), still with **one Medium row at a time** (a held Medium row leaves its slot to finding); an MP row still waits while a better-tier FB row that may start is queued.
    - With no High or Medium recommendation, nothing changes: the MP lane starts at once beside the first FB rows.
-   - The head start covers the first resolver pass only; Deferred re-queue passes and CDN rechecks are first come, first served. The tiers themselves last the session (the backup reads them, rule 11).
-   CURRENT: `StreamTestOrderPolicy.Build`; `StreamRecommendationPolicy.SpreadDiscoveryOrder` and `IsMpLike` (#162); lanes in `StreamResolver.ResolveStreamsIncrementallyAsync` (`FillWindow`, `FillFb`, `NextMp`). Tiers: `TopTierHeadStart` (`Select`, `Duration` = 12s) holding a `StreamTiers` (chips inherit their page's tier in `StreamTiers.Inherit`, called on the seed re-queue and on chips listed later), started by `ResolverRaceThrottle.BeginTopTierHeadStart` around the first pass in `StreamResolutionOrchestrator.ResolveAsync` and applied by `StreamResolver` (`HoldsFinding`, `WaitingOnHeadStart`, woken by `TopTierHeadStart.Elapsed`; during the head start `FillWindow` starts tier FB rows before the MP lane). [R1 54 rows; R1 two High healthy; R1 one slow High; R1 both High dead; R1 four High; R1 R11 High-recommended MP page; R1 one High, one Medium; R1 no High, only Medium; R1 High dead, Medium healthy; R1 a dead High row's slot; R1 R11 the chips of a High MP page; R1 no recommendations; R1 R9 one High row; R1 R9 one slow High row]
+   - The head start covers the first resolver pass only. The tiers last the session (`ResolverRaceThrottle.CurrentTiers`): Deferred re-queue passes and CDN rechecks keep the Medium cap, and the backup reads them (rule 11).
+   CURRENT: `StreamTestOrderPolicy.Build`; `StreamRecommendationPolicy.SpreadDiscoveryOrder` and `IsMpLike` (#162); lanes in `StreamResolver.ResolveStreamsIncrementallyAsync` (`FillWindow`, `FillFb`, `NextMp`). Tiers: `TopTierHeadStart` (`Select`, `Duration` = 12s) holding a `StreamTiers` (chips inherit their page's tier in `StreamTiers.Inherit`, called on the seed re-queue and on chips listed later), started by `ResolverRaceThrottle.BeginTopTierHeadStart` around the first pass in `StreamResolutionOrchestrator.ResolveAsync` (which also sets the session's `ResolverRaceThrottle.CurrentTiers`, cleared by a session with no tiers) and applied by `StreamResolver` in every pass (`tiers` = the head start's or `CurrentTiers`; `HoldsFinding`, `WaitingOnHeadStart`, woken by `TopTierHeadStart.Elapsed`; during the head start `FillWindow` starts tier FB rows before the MP lane). [R1 Medium is limited to one slot after the head start too; R1 Medium is limited to one slot in a re-queue pass; R1 54 rows; R1 two High healthy; R1 one slow High; R1 both High dead; R1 four High; R1 R11 High-recommended MP page; R1 one High, one Medium; R1 no High, only Medium; R1 High dead, Medium healthy; R1 a dead High row's slot; R1 R11 the chips of a High MP page; R1 no recommendations; R1 R9 one High row; R1 R9 one slow High row]
 2. **Concurrency.** LocalService runs at most 2 sessions at once, before first play and after it. A session is a `/play` probe, or a new `/mp` harvest until LocalService lists the page's chips (or the seed gives up, or the POST fails or is cancelled). After that the harvest holds no slot.
    CURRENT: `ResolverRaceThrottle.MaxConcurrent` and `EnterAsync`; `/play` takes a slot in `LocalLanPlayService.ResolveM3U8UrlCoreAsync`; `/mp` takes one in `LocalLanPlayService.CallMpEndpointCoreAsync` after the `/mp` gate and gives it back in `ReleaseSlotWhenListedAsync` (chip list, first chip, harvest end, or `MpHarvestSession.ProbeReadyWait`) or in the `finally` of `ReadMpHarvestAsync` (error, cancel); FB window of 2 in `StreamResolver.FillWindow` (batch size 2 from `StreamResolutionOrchestrator.ResolveAsync`). Nothing drops this to 1 after first play: the priority window (rule 11) may pause new finding probes while a backup warms, then 2 again. [R2 two dead FB; R2 /mp holds a slot only until its chips are listed; R5 slow ten-chip page; R2 R13 /mp 500 before listing]
 3. **MP single-flight.** At most one MP row is probed at a time, and LocalService runs at most one `POST /mp` at a time. A row for another MP page waits in the queue while a harvest runs (it does not sit in the MP lane), and a harvest nobody wants any more is cancelled so the next page can POST.
@@ -58,21 +60,72 @@ Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harn
 14. **Retry before switch.** A stalled stream is retried in place up to 3 times (reload the playlist, then a fresh resolve) before playback moves to the next channel. A confirmed-dead error switches at once.
     CURRENT: `PlaybackPolicy.ShouldRetrySameStream`, `NextSameStreamRetryStep`, `ClassifyPlaybackError`. Tested by `SameStreamRecoveryBusinessRulesTests`; this is outside the probe timeline.
 
-## Acceptance (numbers PROPOSED, for Jon to set)
+## Acceptance: the viewer's experience (numbers PROPOSED, for Jon to set)
 
-These are measured on the timeline by `Expect.*` in the harness. The constants are in `ProbeAcceptance`.
+Jon (13 Nov 2026): "you want the best experience for the user". So the targets are what the viewer sees, measured on every scenario's timeline in seconds from opening the match (t+0). The rules above exist to make these numbers better; if a rule makes one worse in some scenario, the rule changes. Constants are in `ProbeAcceptance`; checks are `Expect.*`; `ProbeSchedulingRulesTests.Acceptance` applies them to every scenario in `ProbeSchedulingScenarios.All`.
 
-- **A1.** First play comes within **2s** of the first healthy verdict (rule 9), plus the one fresh start `/play` when the probed link cannot be reused (rule 12). `FirstPlayWithinOfFirstHealthy`
-- **A2.** MP chips are queued as rows within **2s** of LocalService listing them. `ChipsVisibleWithin`
-- **A3.** No slot sits idle while a candidate is queued, outside priority-window holds and the tier head start: **1s** total tolerance. `NoIdleSlotWhileQueued`
-- **A4.** A seed with no probe-ready chip gives up within **30s** of `POST /mp`. `SeedReleasesSlotBy`
-- **A5.** With High or Medium recommendations, during the **12s** head start no finding probe starts ahead of a High row or the first Medium row (rule 1); finding beside them, in the slots they leave, is expected. `TopTierHeadStartHeld`. Per case: `MediumRunningNeverExceeds(1)` (Medium uses one slot), `BackupReplaced`, `HighTierIncludes`.
+1. **Picture time**: when the first playable stream is on screen (first play). Target: within **2s** of the first healthy verdict, plus the one fresh start `/play` when the probed link cannot be reused (rule 12). `FirstPlayWithinOfFirstHealthy` (was A1). How early the first healthy verdict comes is the job of the supporting measures below.
+2. **Backup time**: when a second playable stream is ready to switch to (the backup, rule 11: no warm needed, or its warm `/play` has answered). Target: within **2s** of the second healthy verdict (or of first play, if that is later), plus any warm `/play` the prewarmer ran in between. A better-tier row that replaces the backup later does not reset it. `BackupReadyWithinOfSecondHealthy`.
+3. **Needless switches**: **0**. The playing stream never changes unless the viewer asks or it dies; a stalled stream is retried in place before switching (rule 14). The harness counts any change of the playing row. `NoNeedlessSwitch`.
+4. **Channel-number stability**: **0** renumberings. A row keeps its channel number from the moment it joins the pool (rule 10); the backup choice never moves numbers. `ChannelNumbersStable`.
 
-Also checked per case (rules 2-3): `LocalServiceSessionsNeverExceed`, `SessionsAtMostUntilListed` (at most 2 sessions until the chip list), `MpHoldsNoSlotFrom`, `NoSlotHeldAtEnd`, `PlaysBesideHarvestAtLeast` (2 FB beside the background harvest), `MpPostsAtOnceNeverExceed(1)`, `MpPostCount`.
+Supporting measures, folded under those (they keep the picture and backup early):
+- Under picture and backup time:
+  - **A2.** MP chips are queued as rows within **2s** of LocalService listing them. `ChipsVisibleWithin`
+  - **A3.** No slot sits idle while a candidate is queued, outside priority-window holds and tier holds (the head start and the Medium cap): **1s** total tolerance. `NoIdleSlotWhileQueued`
+  - **A4.** A seed with no probe-ready chip gives up within **30s** of `POST /mp`, so a stuck page never holds a slot. `SeedReleasesSlotBy`
+  - **A5.** With High or Medium recommendations, during the **12s** head start no finding probe starts ahead of a High row or the first Medium row (rule 1). `TopTierHeadStartHeld`. Per case: `MediumRunningNeverExceeds(1)` (in every pass), `BackupReplaced`, `HighTierIncludes`.
+- LocalService load (rules 2-3), per case: `LocalServiceSessionsNeverExceed`, `SessionsAtMostUntilListed` (at most 2 sessions until the chip list), `MpHoldsNoSlotFrom`, `NoSlotHeldAtEnd`, `PlaysBesideHarvestAtLeast` (2 FB beside the background harvest), `MpPostsAtOnceNeverExceed(1)`, `MpPostCount`.
 
 Settled (Jon, 12 Nov 2026): chips that are already harvested may be probed during the priority window (rule 11).
 
-Results per scenario are printed by `ProbeSchedulingRulesTests.Acceptance` (run with `--logger "console;verbosity=detailed"`). One known miss: `SeedSilent` A2. LocalService lists the chips at t+34s, after the seed gave up at t+30s, and the resolver's retry asks again at t+37s (3s, not 2s).
+One known miss: `SeedSilent` A2. LocalService lists the chips at t+34s, after the seed gave up at t+30s, and the resolver's retry asks again at t+37s (3s, not 2s). Picture and backup time are not affected beyond that.
+
+### Every scenario, in seconds from opening the match
+
+Generated by the harness: `ProbeSchedulingRulesTests.UxTable_MatchesTheRulesDoc` runs every scenario and fails when this table and the timelines disagree (it prints the table to paste in). "Picture" is first play; "Backup ready" is when a backup was first ready to switch to; "First/Second healthy" are the first two distinct healthy verdicts, the floor for each. "-" means it never happened (no healthy row, or only one). Picture later than first healthy means a fresh start `/play` (`SingleHealthyNoBackup`); backup later than second healthy means a warm `/play` (`PriorityWindow`).
+
+<!-- ux-table:begin -->
+| Scenario | Picture | First healthy | Backup ready | Second healthy | Switches | Renumbered |
+|---|---|---|---|---|---|---|
+| SlowTenChipPage | 13.0 | 13.0 | 29.0 | 29.0 | 0 | 0 |
+| BuriedMp54Rows | 9.0 | 9.0 | 10.0 | 10.0 | 0 | 0 |
+| NormalMp | 4.0 | 4.0 | 11.0 | 11.0 | 0 | 0 |
+| SlowMpHealthyFb | 6.0 | 6.0 | 61.0 | 61.0 | 0 | 0 |
+| MpPendingDeadFbs | 101.0 | 101.0 | - | - | 0 | 0 |
+| DeadFbsOnly | - | - | - | - | 0 | 0 |
+| PriorityWindow | 6.0 | 6.0 | 15.0 | 8.0 | 0 | 0 |
+| CdnUnreachableFirst | 9.0 | 9.0 | - | - | 0 | 0 |
+| SeedNeverProbeReady | 40.0 | 40.0 | - | - | 0 | 0 |
+| SeedSilent | 38.0 | 38.0 | 39.0 | 39.0 | 0 | 0 |
+| AllFbDeadWorkingMp | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| AllFbDeadFirstChipDead | 12.0 | 12.0 | 13.0 | 13.0 | 0 | 0 |
+| FastMp | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| PlaylistOnlyMp | 6.0 | 6.0 | 13.5 | 13.5 | 0 | 0 |
+| AllChipsMiss | - | - | - | - | 0 | 0 |
+| TwoMpPages | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| HarvestFaultsMidway | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| MpErrorsBeforeListing | - | - | - | - | 0 | 0 |
+| ChipLateAfterListing | 10.0 | 10.0 | 59.0 | 59.0 | 0 | 0 |
+| RecommendedMpBeforeSlowFb | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| FbBeforeSlowRecommended | 6.0 | 6.0 | 26.0 | 26.0 | 0 | 0 |
+| TwoHighHealthy | 9.0 | 9.0 | 10.0 | 10.0 | 0 | 0 |
+| OneHighSlow | 11.0 | 11.0 | 12.0 | 12.0 | 0 | 0 |
+| HighsDead | 26.0 | 26.0 | 31.0 | 31.0 | 0 | 0 |
+| FourHighs | 10.0 | 10.0 | 17.0 | 17.0 | 0 | 0 |
+| RecommendedMp | 4.0 | 4.0 | 11.0 | 11.0 | 0 | 0 |
+| SingleHealthyNoBackup | 11.0 | 6.0 | - | - | 0 | 0 |
+| NoRecs | 4.0 | 4.0 | 11.0 | 11.0 | 0 | 0 |
+| HighPlusMedium | 9.0 | 9.0 | 11.0 | 11.0 | 0 | 0 |
+| NoHighOnlyMedium | 7.0 | 7.0 | 10.0 | 10.0 | 0 | 0 |
+| HighDeadMediumHealthy | 6.0 | 6.0 | 16.0 | 16.0 | 0 | 0 |
+| EarlyFbBeforeLateHigh | 9.0 | 9.0 | 13.0 | 13.0 | 0 | 0 |
+| EarlyFbBeforeLateMedium | 9.0 | 9.0 | 13.0 | 13.0 | 0 | 0 |
+| DeadHighSlotToMedium | 10.0 | 10.0 | 14.0 | 14.0 | 0 | 0 |
+| HighMpChips | 10.0 | 10.0 | 12.0 | 12.0 | 0 | 0 |
+| MediumCapAfterHeadStart | 27.0 | 27.0 | 46.0 | 46.0 | 0 | 0 |
+| MediumCapInReQueuePass | 33.0 | 33.0 | 155.0 | 155.0 | 0 | 0 |
+<!-- ux-table:end -->
 
 ## Timeline harness
 
@@ -84,7 +137,7 @@ Results per scenario are printed by `ProbeSchedulingRulesTests.Acceptance` (run 
 - `StreamSwitchingService` (rows join the pool on their verdict, as in `StreamResolutionOrchestrator`)
 - `TopTierHeadStart` (and its `StreamTiers`) around run 1, `FirstPlayOpenStrategy` for how first play opens and when the priority window holds, and the pool's backup order (`SetBackupPreference`, `GetUpcoming`)
 
-Modelled like the orchestrator: the start `/play` when the probed link cannot be reused (with the backup warmed beside it), a prewarmer that warms upcoming rows that need it one at a time from first play, and the rule-11 window. A row's `/play` answer can carry a plain link, a Referer soak link (`Play.SoakAt`) or a cookie-bound single-use link (`Play.SingleUseAt`). The timeline records the head start, the tiers at the end (inherited chips included), how first play opened, the fresh start `/play`, every backup in turn and when the last one was ready, and each priority hold.
+Modelled like the orchestrator: the start `/play` when the probed link cannot be reused (with the backup warmed beside it), a prewarmer that warms upcoming rows that need it one at a time from first play, the rule-11 window, and (with `ThenReResolveDeferredAfter`) a re-queue pass of the rows that ended Deferred, in the same session, with no head start but the session's tiers. An FB row can answer its later `/play`s differently (`Fb(id, first, retry:)`). A row's `/play` answer can carry a plain link, a Referer soak link (`Play.SoakAt`) or a cookie-bound single-use link (`Play.SingleUseAt`). The timeline records the head start, the tiers at the end (inherited chips included), how first play opened, the fresh start `/play`, every backup in turn, when a backup was first ready and when the last one was ready, each priority hold, any change of the playing row (switches) and any renumbering of the pool.
 
 Only LocalService (HTTP) and the CDN health check are scripted. They run on `MilestoneClock`, a `TimeProvider` that jumps straight to the next due timer, so a 111s harvest runs in milliseconds. Between milestones the harness waits for the thread pool to go quiet (`SpinWait`, not a hot spin); if it does not within 5s the run fails with the timeline so far instead of advancing the clock early.
 
@@ -103,13 +156,13 @@ Scenario provenance: `SlowTenChipPage` is the Czechia v Spain Windows run (12 No
 
 How the tests are organised:
 - CURRENT cases run as a theory.
-- `Acceptance` runs A1-A5 on every scenario in `ProbeSchedulingScenarios.All`.
+- `Acceptance` runs the four experience targets and A2-A5 on every scenario in `ProbeSchedulingScenarios.All`; `UxTable_MatchesTheRulesDoc` checks the table above.
 - A new rule the code doesn't do yet goes in `Gaps` with a skipped `Gap_*` fact (`NoOpenGaps` fails while any is listed, as a reminder). There are none now.
 
-The harness records the resolver's two lanes (FB window, MP lane) from its "Starting resolve" logs and yields; A3 counts time when a lane has a free place and a queued row for it. A scenario can switch match mid-run (`ThenSwitchAt`): run 1 is cancelled and run 2 starts on the same `LocalLanPlayService`; the scripted LocalService stops a `/mp` when the client closes the connection.
+The harness records the resolver's two lanes (FB window, MP lane) from its "Starting resolve" logs and yields; A3 counts time when a lane has a free place and a queued row for it, outside the times the resolver reports a queued row waiting on a tier rule (`TopTierHeadStart.FindingHeld`, `StreamTiers.RowsHeld`). A scenario can switch match mid-run (`ThenSwitchAt`): run 1 is cancelled and run 2 starts on the same `LocalLanPlayService`; the scripted LocalService stops a `/mp` when the client closes the connection.
 
 What the harness does not model:
-- the orchestrator's re-queue passes for Deferred rows;
+- the orchestrator's re-queue timing: a scenario picks one delay for one re-queue pass (the orchestrator waits 5s/15s for an outage and 2 min, 5 min, then 10 min for a CDN-unreachable row);
 - the player itself: first play is the moment the player would open, and a failed open is not modelled;
 - the `/play` timeout (65s), which is not on a `TimeProvider`. The `/mp` harvest timeout (330s) and the 30s deadlines are on `LocalLanPlayService.Time`.
 
