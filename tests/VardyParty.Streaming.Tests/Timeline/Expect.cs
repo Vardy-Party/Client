@@ -416,18 +416,19 @@ internal static class Expect
 
     /// <summary>
     /// A5 (rule 1): during the head start finding only fills gaps. No finding probe
-    /// (FB /play or MP /mp) starts before every High row has started, nor before a Medium
-    /// row has started (when there is one). Finding beside them is expected: High may use
-    /// both slots, Medium one, and finding fills the rest.
+    /// (FB /play or MP /mp) starts before the first two High rows have started (every High
+    /// row when there are fewer), nor before a Medium row has started (when there is one).
+    /// Finding beside them is expected: High may use both slots, Medium one, and finding
+    /// fills the rest; a third or later High row waits for finding (Jon, 13 Nov 2026).
     /// </summary>
     public static Expectation TopTierHeadStartHeld() => new(
-        $"A5 during the {ProbeAcceptance.HeadStartSeconds}s head start no finding probe starts ahead of a High or the first Medium row",
+        $"A5 during the {ProbeAcceptance.HeadStartSeconds}s head start no finding probe starts ahead of the first two High rows or the first Medium row",
         t =>
         {
             if (t.HeadStart is not { } hs)
                 return null;
             double StartOf(string key) => t.FirstCall(key)?.Start ?? t.Result(key)?.At ?? double.MaxValue;
-            var highStart = hs.TopTier.Select(StartOf).DefaultIfEmpty(0).Max();
+            var highStart = hs.TopTier.Select(StartOf).OrderBy(s => s).Take(2).DefaultIfEmpty(0).Max();
             var mediumStart = hs.Medium.Select(StartOf).DefaultIfEmpty(0).Min();
             var bound = Math.Min(hs.To, Math.Max(highStart, mediumStart));
             var early = t.Calls.Where(c => !t.TierCallKeys.Contains(c.Key) && c.Start < bound - Eps).ToList();

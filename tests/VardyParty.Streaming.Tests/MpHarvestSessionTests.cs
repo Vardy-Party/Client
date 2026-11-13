@@ -325,6 +325,30 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public async Task PlaylistOnlyChip_HandedOverAtOnce_OnlyWhileNoBackupExists()
+    {
+        // Arrange - rule 7 (Jon, 13 Nov 2026): while no backup exists a playlist-only chip
+        // is handed over at once; once a backup exists the 30s wait applies again.
+        var clock = new Timeline.MilestoneClock(Start);
+        var noBackup = false;
+        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => noBackup);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(PlaylistOnly("Chip A"));
+        harvest.Apply(PlaylistOnly("Chip B"));
+        var readyWithBackup = harvest.IsChipReady("Chip A");
+
+        // Act
+        noBackup = true;
+        var readyWithoutBackup = harvest.IsChipReady("Chip A");
+        var answer = await harvest.WaitForAsync("Chip B", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert
+        Assert.False(readyWithBackup);
+        Assert.True(readyWithoutBackup);
+        Assert.Equal("https://stream.example.test/Chip-B.m3u8", answer?.Url);
+    }
+
+    [Fact]
     public async Task WaitForAsync_NamedChip_NotSent_ThrowsRetryableOnceTheHarvestStalls()
     {
         // Arrange - rule 7: a direct wait for a listed chip LocalService has not sent,

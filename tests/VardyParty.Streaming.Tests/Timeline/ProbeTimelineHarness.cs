@@ -243,7 +243,11 @@ internal static class ProbeTimelineHarness
 
                 if (retry.Count == 0)
                     return;
-                await Task.Delay(TimeSpan.FromSeconds(after), _clock, _cts.Token).ConfigureAwait(false);
+                var wait = _scenario.CdnRecheckFromPolicy
+                    ? CdnReachabilityPolicy.RecheckDelay(0, noBackup: _pool.GetHealthyStreams().Count < 2)
+                    : TimeSpan.FromSeconds(after);
+                Note($"re-queue wait {wait.TotalSeconds:F0}s");
+                await Task.Delay(wait, _clock, _cts.Token).ConfigureAwait(false);
                 Note($"re-queue pass: {string.Join(", ", retry.Select(KeyOf))}");
                 Interlocked.Add(ref _mpTotal, retry.Count(MpPageUrl.IsV2Stream));
                 Interlocked.Add(ref _fbTotal, retry.Count(r => !MpPageUrl.IsV2Stream(r)));

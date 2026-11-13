@@ -271,6 +271,20 @@ internal sealed class ProbeScenario
         return this;
     }
 
+    /// <summary>
+    /// The CDN-unreachable recheck: like <see cref="ThenReResolveDeferredAfter"/>, but the wait
+    /// is the orchestrator's first recheck (<see cref="CdnReachabilityPolicy.RecheckDelay(int, bool)"/>):
+    /// 30s while the pool holds fewer than two rows when run 1 ends, else 2 min.
+    /// </summary>
+    public bool CdnRecheckFromPolicy { get; private set; }
+
+    public ProbeScenario ThenCdnRecheckDeferred()
+    {
+        ReResolveDeferredAfter = 0;
+        CdnRecheckFromPolicy = true;
+        return this;
+    }
+
     public ProbeScenario WithoutPriorityWindow()
     {
         PriorityWindowAfterFirstPlay = false;

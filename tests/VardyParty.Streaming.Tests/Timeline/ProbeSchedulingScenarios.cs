@@ -245,7 +245,7 @@ internal static class ProbeSchedulingScenarios
         .Fb("f2", Play.HealthyAt(30))
         .Recommend("m1", RecommendationConfidence.Medium)
         .Recommend("m2", RecommendationConfidence.Medium)
-        .ThenReResolveDeferredAfter(120);
+        .ThenCdnRecheckDeferred();
 
     /// <summary>
     /// Rule 1 (Jon: "Let a second Medium use a slot only when nothing else is queued"): two
@@ -257,6 +257,25 @@ internal static class ProbeSchedulingScenarios
         .Fb("m2", Play.HealthyAt(5))
         .Recommend("m1", RecommendationConfidence.Medium)
         .Recommend("m2", RecommendationConfidence.Medium);
+
+    /// <summary>
+    /// Rule 7 once a backup exists: fbA plays at 4s and fbB is in the pool at 8s, so chip A's
+    /// playlist-only line at 12s waits the full 30s before it is handed over (42s).
+    /// </summary>
+    public static ProbeScenario PlaylistOnlyWithBackup() => ProbeScenario.Named("Playlist-only chip after the backup is ready: the 30s wait applies")
+        .Mp("mp", MpScript.Headers(8).Chips(8, "A").Chip(12, "A", ChipKind.PlaylistOnly).Done(90))
+        .Fb("fbA", Play.HealthyAt(3))
+        .Fb("fbB", Play.HealthyAt(4));
+
+    /// <summary>
+    /// The CDN recheck once a backup exists: fbA and fbB are in the pool when run 1 ends, so
+    /// the CDN-unreachable row f1 waits the 2-minute first recheck, not 30s.
+    /// </summary>
+    public static ProbeScenario CdnRecheckWithBackup() => ProbeScenario.Named("CDN-unreachable row with a backup in the pool: 2-minute first recheck")
+        .Fb("f1", Play.CdnUnreachableAt(2), retry: Play.HealthyAt(1))
+        .Fb("fbA", Play.HealthyAt(3))
+        .Fb("fbB", Play.HealthyAt(4))
+        .ThenCdnRecheckDeferred();
 
     /// <summary>
     /// Rule 1: finding work appears mid-probe. Page mpA (finding) takes the second slot at 0s,
@@ -432,6 +451,8 @@ internal static class ProbeSchedulingScenarios
         (nameof(MediumCapInReQueuePass), MediumCapInReQueuePass),
         (nameof(MediumOnlyNoFinding), MediumOnlyNoFinding),
         (nameof(FindingArrivesMidProbe), FindingArrivesMidProbe),
+        (nameof(PlaylistOnlyWithBackup), PlaylistOnlyWithBackup),
+        (nameof(CdnRecheckWithBackup), CdnRecheckWithBackup),
     ];
 
     // ---- the table ----
@@ -614,8 +635,9 @@ internal static class ProbeSchedulingScenarios
             PlaylistOnlyMp,
             FirstPlayOn("fbA"), FirstPlayBy(6.001),
             SeedReturns("mp", 8.9, 9.1),
-            RowEnds("mp", StreamResolutionStatus.Healthy, 13.4, 13.6),
-            RowEnds("mp:C", StreamResolutionStatus.Healthy, 15.4, 15.6),
+            // fbA plays at 6s with no backup: the playlist-only chips are handed over at once.
+            RowEnds("mp", StreamResolutionStatus.Healthy, 10.9, 11.1),
+            RowEnds("mp:C", StreamResolutionStatus.Healthy, 14.4, 14.6),
             PoolOrder("fbA", "mp", "mp:B", "mp:C"),
             NoPriorityHold()),
 
@@ -702,11 +724,15 @@ internal static class ProbeSchedulingScenarios
             FourHighs,
             TopTierIs("h1", "h2", "h3", "h4"),
             FirstPlayOn("h2"), FirstPlayBy(10.001),
-            StartsBy("h3", 10.001),
-            // h4 (the last High FB row) starts at 17s; until then the MP lane waits.
-            StartsNotBefore("mp", 17), StartsBy("mp", 17.001),
-            NoFindingStartsBefore(17),
-            BackupIs("h3"), BackupReadyBy(17.001),
+            // Jon, 13 Nov 2026: "Let finding go before a third High". h2 is healthy at 10s
+            // with h1 still running: h3 is a third High, so f1 takes h2's slot (backup at 14s)
+            // and h3 takes f1's at 14s. h4 (the last High FB row) starts when h1 dies (20s);
+            // until then the MP page waits (a later High yields to one-probe finding only).
+            StartsBy("f1", 10.001), StartsNotBefore("f1", 10),
+            StartsBy("h3", 14.001), StartsNotBefore("h3", 14),
+            StartsNotBefore("mp", 20), StartsBy("mp", 20.001),
+            NoFindingStartsBefore(10),
+            BackupReplaced("f1", "h3"), BackupIs("h3"), BackupReadyBy(21.001),
             TopTierHeadStartHeld()),
 
         new("R1 R11 High-recommended MP page takes the MP lane at 0s; finding fills the gap and plays first; the page is the backup", "R1 R4 R11",
@@ -773,8 +799,9 @@ internal static class ProbeSchedulingScenarios
             MediumTierIs("m1", "m2"),
             RowEnds("m1", StreamResolutionStatus.Deferred, 2, 2.001),
             FirstPlayOn("f2"),
-            NthCallStartsBetween("m1", 2, 153, 153.001), NthCallStartsBetween("f1", 2, 153, 153.001),
-            NthCallStartsBetween("m2", 2, 155, 155.001),
+            // f2 alone in the pool when run 1 ends (33s): the first CDN recheck waits 30s.
+            NthCallStartsBetween("m1", 2, 63, 63.001), NthCallStartsBetween("f1", 2, 63, 63.001),
+            NthCallStartsBetween("m2", 2, 65, 65.001),
             MediumRunningNeverExceeds(2),
             PoolOrder("f2", "f1", "m1", "m2"),
             BackupReplaced("f1", "m1")),
@@ -796,6 +823,23 @@ internal static class ProbeSchedulingScenarios
             RowEnds("m1", StreamResolutionStatus.Healthy, 46, 46.001),
             StartsNotBefore("m3", 40),
             FirstPlayOn("m2"), BackupIs("m1")),
+
+        new("R7 R11 a playlist-only chip waits 30s once a backup exists", "R7 R11",
+            PlaylistOnlyWithBackup,
+            FirstPlayOn("fbA"), FirstPlayBy(4.001),
+            BackupIs("fbB"), BackupReadyBy(8.001),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 42.9, 43.1)),
+
+        new("R11 R13 CDN recheck with a backup in the pool: the first recheck waits 2 min", "R11 R13",
+            CdnRecheckWithBackup,
+            RowEnds("f1", StreamResolutionStatus.Deferred, 2, 2.001),
+            FirstPlayOn("fbA"), BackupIs("fbB"),
+            NthCallStartsBetween("f1", 2, 127, 127.001)),
+
+        new("R7 R11 slow ten-chip page: with no backup the playlist-only chips are handed over at once", "R7 R11",
+            SlowTenChipPage,
+            FirstPlayOn("fb-north"), FirstPlayBy(13.001),
+            BackupReadyBy(19.601), BackupIs("mp-north")),
 
         new("R11 an early FB row is the backup only until the second High row is playable", "R1 R11",
             EarlyFbBeforeLateHigh,

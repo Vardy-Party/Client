@@ -155,6 +155,21 @@ public class CdnReachabilityPolicyTests
     }
 
     [Fact]
+    public void RecheckDelay_NoBackup_OnlyTheFirstRecheckIs30s()
+    {
+        // Arrange - Jon, 13 Nov 2026: a shorter first recheck while there is no backup.
+        var attempts = new[] { 0, 1, 2, 9 };
+
+        // Act
+        var noBackup = attempts.Select(a => CdnReachabilityPolicy.RecheckDelay(a, noBackup: true)).ToArray();
+        var withBackup = attempts.Select(a => CdnReachabilityPolicy.RecheckDelay(a, noBackup: false)).ToArray();
+
+        // Assert
+        Assert.Equal([TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10)], noBackup);
+        Assert.Equal(attempts.Select(CdnReachabilityPolicy.RecheckDelay), withBackup);
+    }
+
+    [Fact]
     public void ShouldKeepRechecking_WhileLiveOnly()
     {
         // Arrange
