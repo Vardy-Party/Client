@@ -26,4 +26,45 @@ internal static class FirstPlayHoldPolicy
         index < frontier
         || frontier >= catalogCount
         || (index >= catalogCount && hasPlayedFirstStream);
+
+    /// <summary>
+    /// Same, for MP-aware callers. A row holds at <paramref name="holdPosition"/>: an
+    /// MP chip sibling (index at or past the catalog count) holds at its MP page's
+    /// catalog place, so a healthy chip can be the first play once every earlier
+    /// non-MP row has yielded, e.g. when every FB row is dead (rule 9). After first
+    /// play every MP row - the catalog MP row, which is now its first chip (rule 6),
+    /// and its siblings - joins at once, so chips keep the order they turned healthy
+    /// in (rule 10).
+    /// </summary>
+    public static bool IsReleasable(
+        int index,
+        int holdPosition,
+        IReadOnlyList<bool> mpCatalog,
+        int frontier,
+        bool hasPlayedFirstStream)
+    {
+        var catalogCount = mpCatalog.Count;
+        var isMp = index >= catalogCount || mpCatalog[index];
+        return holdPosition < frontier
+               || frontier >= catalogCount
+               || (isMp && hasPlayedFirstStream);
+    }
+
+    /// <summary>
+    /// Hold place for a row at <paramref name="index"/>: its own index for catalog
+    /// rows; for an MP chip sibling, the catalog index of the MP row on the same page.
+    /// </summary>
+    public static int HoldPosition(int index, string? pageUrl, IReadOnlyList<string?> catalogUrls, IReadOnlyList<bool> mpCatalog)
+    {
+        if (index < catalogUrls.Count || string.IsNullOrWhiteSpace(pageUrl))
+            return index;
+
+        for (var i = 0; i < catalogUrls.Count; i++)
+        {
+            if (mpCatalog[i] && string.Equals(catalogUrls[i], pageUrl, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return index;
+    }
 }

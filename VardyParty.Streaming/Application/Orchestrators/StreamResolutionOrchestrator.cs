@@ -219,6 +219,7 @@ public class StreamResolutionOrchestrator(
         for (var i = 0; i < orderedStreams.Count; i++)
             catalogIndex[orderedStreams[i]] = i;
         var mpCatalog = orderedStreams.Select(StreamRecommendationPolicy.IsMpLike).ToArray();
+        var catalogUrls = orderedStreams.Select(s => (string?)s.Url).ToArray();
         var resolvedCatalog = new HashSet<int>();
         var heldHealthy = new SortedDictionary<int, EnrichedStream>();
         var nextExtraIndex = orderedStreams.Count;
@@ -262,12 +263,18 @@ public class StreamResolutionOrchestrator(
 
             // Catalog rows stay held until the frontier passes (first play follows
             // catalog order). MP chip siblings use nextExtraIndex (>= catalog
-            // count); holding them until every catalog row finishes left the UI
-            // on one V2 stream while /mp had already harvested the rest.
+            // count) and hold at their MP page's catalog place, so a healthy chip
+            // can start playback when every earlier non-MP row is dead; after
+            // first play they join at once (holding them until every catalog row
+            // finished left the UI on one V2 stream while /mp had harvested the rest).
             var ready = heldHealthy
-                .Where(pair => FirstPlayHoldPolicy.IsReleasable(
-                    pair.Key, frontier, orderedStreams.Count, hasPlayedFirstStream))
-                .Select(pair => pair.Key)
+                .Select(pair => (Index: pair.Key,
+                    Hold: FirstPlayHoldPolicy.HoldPosition(pair.Key, pair.Value.Stream?.Url, catalogUrls, mpCatalog)))
+                .Where(row => FirstPlayHoldPolicy.IsReleasable(
+                    row.Index, row.Hold, mpCatalog, frontier, hasPlayedFirstStream))
+                .OrderBy(row => row.Hold)
+                .ThenBy(row => row.Index)
+                .Select(row => row.Index)
                 .ToList();
             foreach (var index in ready)
             {
