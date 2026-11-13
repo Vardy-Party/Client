@@ -115,6 +115,12 @@ public static class PlaybackUrlRacer
 
             if (waits.Count == 0)
             {
+                // A leg can finish between StateOf above and the IsCompleted checks here.
+                // Decide again on what it returned instead of reporting no winner while
+                // that leg may hold the video URL.
+                if (StateOf(recommendedLeg) != r || StateOf(partnerLeg) != p)
+                    continue;
+
                 return new PlaybackRaceResult<T>(
                     null, null, Finished(recommendedLeg), Finished(partnerLeg), PlayReadyRow: false);
             }
