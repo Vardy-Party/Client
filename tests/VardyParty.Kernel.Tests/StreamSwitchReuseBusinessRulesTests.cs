@@ -57,13 +57,36 @@ public class StreamSwitchReuseBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_UnreadableExpiry_StaysOnFreshPath()
+    public void Rule_TwoPartSignedJsonToken_WithLifeLeft_AttachesCached()
     {
-        // Arrange
-        var row = Row("https://cdn.northgate.test/live/index.m3u8?sig=abc", "Northgate", RefererSoak());
+        // Arrange - Windows 13 Nov 2026 19:41:13: Next onto LiveStreams went ResolveFresh
+        // ("token expiry unknown") and waited 15s for /play behind the find-phase probes,
+        // although its token said 29 min were left.
+        static string B64(string json) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var exp = Now.AddMinutes(29).ToUnixTimeSeconds();
+        var url = "https://sha.sharpnessonline.store/simpch21/index.m3u8?token="
+            + B64("{\"stream\":\"simpch21\",\"ip\":\"0.0.0.0\",\"exp\":" + exp + "}") + ".333773ca98f5";
+        var row = Row(url, "LiveStreams", RefererSoak());
+
+        // Act
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(row, Now);
 
         // Assert
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, PlaybackUrlReusePolicy.PlanSwitch(row, Now).Kind);
+        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
+    }
+
+    [Fact]
+    public void Rule_UnreadableExpiry_PlaysTheProbedLink_FailedStartReResolvesOnce()
+    {
+        // Arrange - round 12: V1 switching is immediate like V2 (Jon, 13 Nov 2026).
+        var row = Row("https://cdn.northgate.test/live/index.m3u8?sig=abc", "Northgate", RefererSoak());
+
+        // Act
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(row, Now);
+
+        // Assert
+        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
     }
 
     [Fact]

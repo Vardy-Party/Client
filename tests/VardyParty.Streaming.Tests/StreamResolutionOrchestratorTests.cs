@@ -1366,7 +1366,7 @@ public class StreamResolutionOrchestratorTests
             .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south-find-burned.m3u8")
             .With(e => e.Status, StreamResolutionStatus.Healthy)
             .With(e => e.Referer, "https://streams.example.com/south.html")
-            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south" })
+            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south", ["Cookie"] = "s=1" }) // cookie-bound: still fresh in round 12
             .With(e => e.UnusedResolvedUrl, false)
             .Create();
         var firstYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

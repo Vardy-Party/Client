@@ -370,9 +370,10 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanNextPrepare_RefererSoak_NoWarm_ClearAndResolveFresh()
+    public void PlanNextPrepare_RefererSoak_NoWarm_KeepsItsProbedLink()
     {
-        // Arrange
+        // Arrange - V1 Next plays the probed link at once (Jon: "there is a delay switching
+        // to v1"); a burned token fails fast and the controller re-resolves once.
         var next = Soak("Channel West");
         next.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
 
@@ -380,7 +381,21 @@ public class FirstPlayOpenStrategyTests
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
 
         // Assert
-        Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ClearAndResolveFresh, kind);
+        Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
+    }
+
+    [Fact]
+    public void PlanNextPrepare_RefererSoak_WarmReady_StillTakesTheWarmLink()
+    {
+        // Arrange - a ready warm link is fresher than the probed one.
+        var next = Soak("Channel West");
+        next.ResolvedM3U8Url = "https://cdn.example.com/burned.m3u8";
+
+        // Act
+        var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: true);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.ApplyWarmUnused, kind);
     }
 
     [Fact]

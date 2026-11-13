@@ -115,16 +115,38 @@ public class MpChipSwitchBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_FbRowWithUnknownExpiry_KeepsTheFreshPath()
+    public void Rule_FbRowWithUnknownExpiry_PlaysItsProbedLinkAtOnce_LikeV2()
     {
-        // Arrange - V1 soak tokens can be one-shot; only V2 chips play the probed link.
+        // Arrange - Jon, 13 Nov 2026: "there is a delay switching to v1". A V1 row's probed
+        // link plays now; a burned soak token fails its start fast and re-resolves once.
         var fb = Row("https://cdn.northgate.test/live/index.m3u8?sig=abc", "Northgate", RefererSoak());
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(fb, Now);
 
         // Assert
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, plan.Kind);
-        Assert.False(PlaybackUrlReusePolicy.CanTryProbedLink(fb, Now));
+        Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
+        Assert.Equal(fb.ResolvedM3U8Url, plan.Url);
+        Assert.StartsWith("probed link", plan.Reason);
+        Assert.True(PlaybackUrlReusePolicy.CanTryProbedLink(fb, Now));
+    }
+
+    [Fact]
+    public void Rule_FbCookieRow_OrSingleUseHost_OrNoLink_StaysFresh()
+    {
+        // Arrange - the exceptions Jon kept: cookie-bound session, single-use host, no link.
+        var cookie = Row("https://cdn.northgate.test/live/index.m3u8?sig=abc", "Northgate",
+            new Dictionary<string, string> { ["Cookie"] = "fb=1" });
+        var noLink = Row(null, "Northgate", RefererSoak());
+
+        // Act
+        var cookiePlan = PlaybackUrlReusePolicy.PlanSwitch(cookie, Now);
+        var noLinkPlan = PlaybackUrlReusePolicy.PlanSwitch(noLink, Now);
+
+        // Assert
+        Assert.Equal(PlaybackSwitchKind.ResolveFresh, cookiePlan.Kind);
+        Assert.Equal(PlaybackSwitchKind.ResolveFresh, noLinkPlan.Kind);
+        Assert.False(PlaybackUrlReusePolicy.CanTryProbedLink(cookie, Now));
+        Assert.False(PlaybackUrlReusePolicy.CanTryProbedLink(noLink, Now));
     }
 }

@@ -88,10 +88,29 @@ public class PlaybackSwitchMakeBeforeBreakTests
     }
 
     [Fact]
-    public async Task Switch_UnknownExpiry_ShowsPendingThenAttachesFresh()
+    public async Task Switch_UnknownExpiry_PlaysTheProbedLinkAtOnce_NoPlay()
     {
-        // Arrange
+        // Arrange - round 12 (Jon: "there is a delay switching to v1"): a V1 row's probed
+        // link plays straight away; a failed start re-resolves once (controller rule).
         PlayingThenNext("http://oak-lane-burned.m3u8");
+        _resolve = (_, _) => Task.FromResult<string?>("https://fresh.vivoentv.test/a.m3u8");
+        var sut = CreateSut();
+
+        // Act
+        var switched = await SwitchAsync(sut);
+
+        // Assert
+        Assert.True(switched);
+        Assert.Empty(_resolved);
+        Assert.Equal(new[] { ("http://oak-lane-burned.m3u8", true) }, _attaches);
+        Assert.Empty(_status);
+    }
+
+    [Fact]
+    public async Task Switch_CookieRowUnknownExpiry_ShowsPendingThenAttachesFresh()
+    {
+        // Arrange - cookie-bound sessions keep the fresh path.
+        PlayingThenNext("http://oak-lane-burned.m3u8", Cookie());
         _resolve = (_, _) => Task.FromResult<string?>("https://fresh.vivoentv.test/a.m3u8");
         var sut = CreateSut();
 
@@ -104,6 +123,8 @@ public class PlaybackSwitchMakeBeforeBreakTests
         Assert.Equal(new[] { ("https://fresh.vivoentv.test/a.m3u8", false) }, _attaches);
         Assert.Equal(new[] { "Switching to vivoentv\u2026" }, _status);
     }
+
+    private static Dictionary<string, string> Cookie() => new() { ["Cookie"] = "fb=1" };
 
     [Fact]
     public async Task Switch_CookieBoundRow_StaysOnFreshPathEvenWithLongToken()
@@ -125,7 +146,7 @@ public class PlaybackSwitchMakeBeforeBreakTests
     public async Task Rule_SwitchFails_StaysOnPlayingStream_WithoutReplayingIt()
     {
         // Arrange
-        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8");
+        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8", Cookie());
         var sut = CreateSut();
 
         // Act
@@ -144,7 +165,7 @@ public class PlaybackSwitchMakeBeforeBreakTests
     public async Task Switch_ResolveThrows_IsTreatedAsFailedSwitch()
     {
         // Arrange
-        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8");
+        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8", Cookie());
         _resolve = (_, _) => throw new InvalidOperationException("northgate resolve");
         var sut = CreateSut();
 
@@ -176,7 +197,7 @@ public class PlaybackSwitchMakeBeforeBreakTests
     public async Task Switch_SupersededWhileResolving_DoesNotAttachOrRevert()
     {
         // Arrange
-        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8");
+        var (playing, _) = PlayingThenNext("http://oak-lane-burned.m3u8", Cookie());
         var third = SoakRow("all-sports-hd", "http://all-sports.m3u8");
         _pool.AddHealthyStream(third);
         var gate = new TaskCompletionSource<string?>();

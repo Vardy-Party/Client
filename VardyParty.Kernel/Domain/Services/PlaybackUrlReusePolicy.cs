@@ -193,14 +193,24 @@ public static class PlaybackUrlReusePolicy
     /// fresh: no link, a known single-use source, or a readable expiry without
     /// <see cref="MinComfortableLife"/> (that case is <see cref="CanReuseCached"/>'s). A
     /// failed start re-resolves once (<c>PlaybackSessionController</c>'s cached-URL retry),
-    /// then Next moves on. FB/V1 rows keep the fresh path for an unreadable expiry
-    /// (their soak tokens can be one-shot; StreamSwitchReuseBusinessRulesTests).
+    /// then Next moves on.
+    /// <para>
+    /// FB/V1 rows follow the same rule (Jon, 13 Nov 2026: "there is a delay switching to
+    /// v1" - Windows 19:47:29 and 19:49:31, Next onto LiveStreams waited 11-12s on a fresh
+    /// <c>/play</c> while its probed link sat on the row). A V1 soak token the health check
+    /// already burned fails its start at once (a 403 in ~0.1s) and re-resolves once, so the
+    /// worst case costs what the fresh path always cost. Still fresh: no link, a cookie-bound
+    /// session, a registered single-use host (<see cref="IsKnownSingleUse"/>), and a readable
+    /// expiry without <see cref="MinComfortableLife"/>.
+    /// </para>
     /// </summary>
     public static bool CanTryProbedLink(EnrichedStream? row, DateTimeOffset now)
     {
         if (row?.Stream is null || string.IsNullOrWhiteSpace(row.ResolvedM3U8Url))
             return false;
-        if (!IsMpRow(row))
+        // A non-MP row carrying an old harvest (no UnusedResolvedUrl) stays fresh, so a stale
+        // harvest is not attached forever (CanReuseCached).
+        if (!IsMpRow(row) && MpRewrittenSegment.HasProbeReady(row.RewrittenSegments))
             return false;
         if (IsKnownSingleUse(row))
             return false;
@@ -252,7 +262,9 @@ public static class PlaybackUrlReusePolicy
             return new PlaybackSwitchPlan(
                 PlaybackSwitchKind.AttachCached,
                 url,
-                "probed MP chip link, expiry unknown: play it now; a failed start re-resolves once");
+                IsMpRow(current)
+                    ? "probed MP chip link, expiry unknown: play it now; a failed start re-resolves once"
+                    : "probed link, expiry unknown: play it now; a failed start re-resolves once");
         }
 
         var mpStale = MpRewrittenSegment.HasProbeReady(current.RewrittenSegments)
