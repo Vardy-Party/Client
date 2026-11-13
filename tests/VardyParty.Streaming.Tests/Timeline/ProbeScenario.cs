@@ -100,6 +100,11 @@ internal sealed class MpScript
 
     public IReadOnlyDictionary<string, (ChipKind Kind, double HealthTakes, StreamHealthStatus Health)> ChipVerdicts => _chips;
 
+    /// <summary>A chip's verdict on its second health check (the rule 7 early-chip retry), when it differs.</summary>
+    public IReadOnlyDictionary<string, StreamHealthStatus> RetryVerdicts => _retryVerdicts;
+
+    private readonly Dictionary<string, StreamHealthStatus> _retryVerdicts = new(StringComparer.OrdinalIgnoreCase);
+
     public static MpScript Headers(double seconds) => new(seconds);
 
     /// <summary>The <c>chips</c> event: every label LocalService found on the page.</summary>
@@ -116,9 +121,12 @@ internal sealed class MpScript
         string label,
         ChipKind kind = ChipKind.Playable,
         double healthTakes = 1,
-        StreamHealthStatus health = StreamHealthStatus.Healthy)
+        StreamHealthStatus health = StreamHealthStatus.Healthy,
+        StreamHealthStatus? retryHealth = null)
     {
         _chips[label] = (kind, healthTakes, health);
+        if (retryHealth is { } retry)
+            _retryVerdicts[label] = retry;
         _lines.Add(new MpLine(seconds, ChipJson(label, kind), $"chip {label} ({kind})"));
         return this;
     }

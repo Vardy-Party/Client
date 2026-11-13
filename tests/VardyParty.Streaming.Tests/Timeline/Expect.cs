@@ -336,6 +336,48 @@ internal static class Expect
             : $"never more than {m}");
 
     /// <summary>Rule 6: the page is POSTed exactly <paramref name="n"/> times (no re-POST per chip).</summary>
+    /// <summary>The client health checks of one chip (<c>row:label</c>): how many, and when the last one ended with what.</summary>
+    public static Expectation ChipHealthChecks(string chipKey, int n, StreamHealthStatus last, double lastFrom, double lastTo) => new(
+        $"{chipKey}: {n} health checks, the last {last} between t+{lastFrom}s and t+{lastTo}s",
+        t =>
+        {
+            var checks = t.HealthVerdicts.Where(v => v.Key == chipKey).ToList();
+            if (checks.Count != n)
+                return $"{checks.Count} checks ({string.Join(", ", checks.Select(c => $"{c.Status} at {Fmt(c.At)}"))})";
+            var end = checks[^1];
+            return end.Status == last && end.At >= lastFrom - Eps && end.At <= lastTo + Eps
+                ? null
+                : $"last {end.Status} at {Fmt(end.At)}";
+        });
+
+    /// <summary>
+    /// The <c>[probe-timing]</c> log (docs/PROBE_SCHEDULING_RULES.md): every line has the prefix,
+    /// an event and ms since session start, no line carries a URL (hosts only), and each of
+    /// <paramref name="events"/> appears (a value after a colon must also appear on that line,
+    /// e.g. <c>health-start:retry=true</c>).
+    /// </summary>
+    public static Expectation ProbeTimingLogged(params string[] events) => new(
+        $"[probe-timing] lines for {string.Join(", ", events)}",
+        t =>
+        {
+            var lines = t.ProbeTimingLines.ToList();
+            var malformed = lines.FirstOrDefault(l => !System.Text.RegularExpressions.Regex.IsMatch(l, @"^\[probe-timing\] event=[a-z-]+ ms=\d+( |$)"));
+            if (malformed is not null)
+                return $"malformed: {malformed}";
+            var withUrl = lines.FirstOrDefault(l => l.Contains("://", StringComparison.Ordinal) || l.Contains(".m3u8", StringComparison.OrdinalIgnoreCase));
+            if (withUrl is not null)
+                return $"carries a URL: {withUrl}";
+            foreach (var e in events)
+            {
+                var parts = e.Split(':', 2);
+                if (!lines.Any(l => l.Contains($" event={parts[0]} ", StringComparison.Ordinal)
+                                    && (parts.Length == 1 || l.Contains(" " + parts[1], StringComparison.Ordinal))))
+                    return $"no {e} line";
+            }
+
+            return null;
+        });
+
     public static Expectation MpPostCount(string mpId, int n) => new(
         $"exactly {n} POST /mp for {mpId}",
         t => t.PostsAt(mpId).ToList() is var posts && posts.Count == n

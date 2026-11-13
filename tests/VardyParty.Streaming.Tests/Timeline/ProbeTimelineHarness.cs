@@ -64,6 +64,7 @@ internal static class ProbeTimelineHarness
         private readonly MilestoneClock _clock = new(Start);
         private readonly ProbeTimeline _tl;
         private readonly ResolverRaceThrottle _throttle = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _chipChecks = new(StringComparer.Ordinal);
         private readonly StreamSwitchingService _pool = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly CancellationTokenSource _switchCts = new();
@@ -106,6 +107,8 @@ internal static class ProbeTimelineHarness
         {
             _scenario = scenario;
             _tl = new ProbeTimeline { Scenario = scenario };
+            // [probe-timing] ms count from the scenario's t=0, as from the orchestrator's session start.
+            _throttle.Timing.BeginSession(_clock);
             foreach (var row in scenario.Rows)
                 _rowsById[row.Id] = row;
         }
@@ -736,7 +739,19 @@ internal static class ProbeTimelineHarness
             Bump();
             var template = state?.FirstOrDefault(kv => kv.Key == "{OriginalFormat}").Value as string;
             object? Value(string name) => state?.FirstOrDefault(kv => kv.Key == name).Value;
-            if (template is not null && template.StartsWith("[StreamResolver] Starting resolve", StringComparison.Ordinal))
+            if (message.StartsWith(ProbeTimingLog.Prefix, StringComparison.Ordinal))
+            {
+                lock (_tl)
+                    _tl.ProbeTimingLines.Add(message);
+            }
+            else if (template is not null && template.StartsWith("[StreamResolver] MP chip", StringComparison.Ordinal)
+                && template.Contains("one retry queued", StringComparison.Ordinal))
+            {
+                // Rule 7 early-chip retry: the row goes back in the queue and starts again.
+                Interlocked.Increment(ref _mpTotal);
+                Note($"retry queued {Value("Chip")}");
+            }
+            else if (template is not null && template.StartsWith("[StreamResolver] Starting resolve", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref Value("Kind") as string == "MP" ? ref _mpStarted : ref _fbStarted);
             }
@@ -993,8 +1008,13 @@ internal static class ProbeTimelineHarness
 
                 var rowId = parts[0];
                 var label = Uri.UnescapeDataString(parts[1][..^".m3u8".Length]);
-                var chip = run._rowsById[rowId].Mp!.ChipVerdicts[label];
-                return ($"{rowId}:{label}", chip.HealthTakes, chip.Health);
+                var mp = run._rowsById[rowId].Mp!;
+                var chip = mp.ChipVerdicts[label];
+                var key = $"{rowId}:{label}";
+                // A second check of the same chip (the rule 7 early-chip retry) may answer differently.
+                var checks = run._chipChecks.AddOrUpdate(key, 1, (_, n) => n + 1);
+                var status = checks > 1 && mp.RetryVerdicts.TryGetValue(label, out var retry) ? retry : chip.Health;
+                return (key, chip.HealthTakes, status);
             }
         }
 
@@ -1005,6 +1025,10 @@ internal static class ProbeTimelineHarness
             private ILocalLanPlayService Inner => inner;
 
             public bool IsMpChipReady(string pageUrl, string? chip) => inner.IsMpChipReady(pageUrl, chip);
+
+            public bool RetryEarlyMpChip(string pageUrl, string? chip) => inner.RetryEarlyMpChip(pageUrl, chip);
+
+            public string? MpChipHandover(string pageUrl, string? chip) => inner.MpChipHandover(pageUrl, chip);
 
             public bool CanStartMp(string pageUrl, string? chip) => inner.CanStartMp(pageUrl, chip);
 

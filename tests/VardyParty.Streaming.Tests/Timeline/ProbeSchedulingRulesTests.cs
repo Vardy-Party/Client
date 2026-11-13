@@ -143,6 +143,34 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
             $"docs/PROBE_SCHEDULING_RULES.md UX table is out of date. Generated:\n{table}");
     }
 
+    /// <summary>
+    /// The <c>[probe-timing]</c> lines for an early chip that fails and passes on its retry:
+    /// chip listed and handed over (early, then retry), each health check with its result and
+    /// duration, the retry, the verdict, and slot grant/release with tier. Prints them (the
+    /// sample in docs/PROBE_SCHEDULING_RULES.md).
+    /// </summary>
+    [Fact]
+    public async Task ProbeTimingLog_EarlyChipRetry_EmitsTheKeyLines()
+    {
+        // Arrange
+        var scenario = ProbeSchedulingScenarios.EarlyChipRetryPasses();
+
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(scenario);
+
+        // Assert
+        foreach (var line in timeline.ProbeTimingLines)
+            output.WriteLine(line);
+        var why = Expect.ProbeTimingLogged(
+            "slot-grant:lane=fb", "slot-grant:lane=mp", "slot-grant:lane=mp-seed", "slot-release:lane=mp-seed",
+            "slot-release:result=retry-queued", "mp-chips", "chip-listed:chip=A",
+            "chip-handover:handover=early", "health-start:early=true", "health-end:result=ManifestNotFound",
+            "chip-retry-queued:first_result=ManifestNotFound", "chip-handover:handover=retry",
+            "health-start:retry=true", "health-end:result=Healthy", "verdict:after_retry=true",
+            "verdict:reason=no-playlist").Check(timeline);
+        Assert.True(why is null, why + "\n" + string.Join("\n", timeline.ProbeTimingLines));
+    }
+
     private const string UxTableBegin = "<!-- ux-table:begin -->";
     private const string UxTableEnd = "<!-- ux-table:end -->";
 

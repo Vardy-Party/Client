@@ -268,6 +268,27 @@ internal static class ProbeSchedulingScenarios
         .Fb("fbB", Play.HealthyAt(4));
 
     /// <summary>
+    /// Rule 7 early-chip retry (Jon, 13 Nov 2026): fbA plays at 4s with no backup, so chip A's
+    /// playlist-only line at 12s is handed over at once. Its first check fails (13s); it is not
+    /// dead: the harvest hands it over again 10s later (EarlyChipRetryDelaySeconds) and that
+    /// check passes (24s), so it becomes the backup.
+    /// </summary>
+    public static ProbeScenario EarlyChipRetryPasses() => ProbeScenario.Named("Early playlist-only chip fails, passes on the retry 10s later")
+        .Mp("mp", MpScript.Headers(8).Chips(8, "A")
+            .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.ManifestNotFound, retryHealth: StreamHealthStatus.Healthy)
+            .Done(90))
+        .Fb("fbA", Play.HealthyAt(3))
+        .DeadFb("fbB");
+
+    /// <summary>As <see cref="EarlyChipRetryPasses"/>, but the retry fails too: the chip is dead after the retry (24s).</summary>
+    public static ProbeScenario EarlyChipRetryFails() => ProbeScenario.Named("Early playlist-only chip fails twice: dead after the retry")
+        .Mp("mp", MpScript.Headers(8).Chips(8, "A")
+            .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.ManifestNotFound)
+            .Done(90))
+        .Fb("fbA", Play.HealthyAt(3))
+        .DeadFb("fbB");
+
+    /// <summary>
     /// The CDN recheck once a backup exists: fbA and fbB are in the pool when run 1 ends, so
     /// the CDN-unreachable row f1 waits the 2-minute first recheck, not 30s.
     /// </summary>
@@ -453,6 +474,8 @@ internal static class ProbeSchedulingScenarios
         (nameof(FindingArrivesMidProbe), FindingArrivesMidProbe),
         (nameof(PlaylistOnlyWithBackup), PlaylistOnlyWithBackup),
         (nameof(CdnRecheckWithBackup), CdnRecheckWithBackup),
+        (nameof(EarlyChipRetryPasses), EarlyChipRetryPasses),
+        (nameof(EarlyChipRetryFails), EarlyChipRetryFails),
     ];
 
     // ---- the table ----
@@ -829,6 +852,28 @@ internal static class ProbeSchedulingScenarios
             FirstPlayOn("fbA"), FirstPlayBy(4.001),
             BackupIs("fbB"), BackupReadyBy(8.001),
             RowEnds("mp", StreamResolutionStatus.Healthy, 42.9, 43.1)),
+
+        new("R7 R11 an early playlist-only chip that fails gets one retry 10s later; it passes and is the backup", "R7 R11",
+            EarlyChipRetryPasses,
+            FirstPlayOn("fbA"), FirstPlayBy(4.001),
+            ChipHealthChecks("mp:A", 2, StreamHealthStatus.Healthy, 23.9, 24.1),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 23.9, 24.1),
+            BackupIs("mp"), BackupReadyBy(24.101),
+            PoolOrder("fbA", "mp"),
+            MpPostCount("mp", 1),
+            MpHoldsNoSlotFrom(8.001),
+            ProbeTimingLogged("slot-grant", "slot-release", "mp-chips", "chip-listed", "chip-handover:handover=early",
+                "health-start:early=true", "health-end:result=ManifestNotFound", "chip-retry-queued",
+                "chip-handover:handover=retry", "health-start:retry=true", "verdict:after_retry=true")),
+
+        new("R7 an early playlist-only chip that fails twice is dead after the retry", "R7",
+            EarlyChipRetryFails,
+            FirstPlayOn("fbA"), FirstPlayBy(4.001),
+            ChipHealthChecks("mp:A", 2, StreamHealthStatus.ManifestNotFound, 23.9, 24.1),
+            RowEnds("mp", StreamResolutionStatus.Failed, 23.9, 24.1),
+            NoBackup(),
+            MpPostCount("mp", 1),
+            MpHoldsNoSlotFrom(8.001)),
 
         new("R11 R13 CDN recheck with a backup in the pool: the first recheck waits 2 min", "R11 R13",
             CdnRecheckWithBackup,

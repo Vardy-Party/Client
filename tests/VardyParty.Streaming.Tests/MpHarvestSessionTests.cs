@@ -349,6 +349,90 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public async Task EarlyChip_FailedCheck_IsHandedOverOnceMoreAfterTheDelay_OnlyOnce()
+    {
+        // Arrange - rule 7 (Jon, 13 Nov 2026): a playlist-only chip handed over early (no
+        // backup) that fails its check gets one retry after the configured delay (10s).
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => true);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        harvest.Apply(PlaylistOnly("Chip A"));
+        await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        var firstHandover = harvest.HandoverOf("Chip A");
+
+        // Act
+        var scheduled = harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10));
+        var readyBefore = harvest.IsChipReady("Chip A");
+        var waitingBefore = harvest.IsRetryWaiting("Chip A");
+        var retry = harvest.WaitForAsync("Chip A", CancellationToken.None);
+        var answeredBefore = retry.IsCompleted;
+        clock.AdvanceToNext();
+        var answer = await retry.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert
+        Assert.Equal("early", firstHandover);
+        Assert.True(scheduled);
+        Assert.False(readyBefore);
+        Assert.True(waitingBefore);
+        Assert.False(answeredBefore);
+        Assert.Equal(10, clock.T, 3);
+        Assert.Equal("https://stream.example.test/Chip-A.m3u8", answer?.Url);
+        Assert.Equal("retry", harvest.HandoverOf("Chip A"));
+        Assert.True(harvest.IsChipReady("Chip A"));
+        Assert.False(harvest.IsRetryWaiting("Chip A"));
+        Assert.False(harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task ChipHandedOverAtTheNormalTime_GetsNoRetry()
+    {
+        // Arrange - with a backup the 30s wait applies; that verdict stands (no retry).
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => false);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(PlaylistOnly("Chip A"));
+        harvest.Apply(ProbeReady("Chip B"));
+        var waitA = harvest.WaitForAsync("Chip A", CancellationToken.None);
+        clock.AdvanceToNext();
+        await waitA.WaitAsync(TimeSpan.FromSeconds(2));
+        await harvest.WaitForAsync("Chip B", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Act
+        var retryA = harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10));
+        var retryB = harvest.RetryEarlyChip("Chip B", TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.Equal("playlist-wait", harvest.HandoverOf("Chip A"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
+        Assert.False(retryA);
+        Assert.False(retryB);
+    }
+
+    [Fact]
+    public async Task EarlyChipRetry_WaitsForItsTime_EvenAfterTheHarvestEnds()
+    {
+        // Arrange
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => true);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        harvest.Apply(PlaylistOnly("Chip A"));
+        await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10));
+
+        // Act
+        harvest.Complete(failed: false);
+        var readyAtEnd = harvest.IsChipReady("Chip A");
+        var changed = harvest.Changed;
+        clock.AdvanceToNext();
+        await changed.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // Assert
+        Assert.False(readyAtEnd);
+        Assert.Equal(10, clock.T, 3);
+        Assert.True(harvest.IsChipReady("Chip A"));
+    }
+
+    [Fact]
     public async Task WaitForAsync_NamedChip_NotSent_ThrowsRetryableOnceTheHarvestStalls()
     {
         // Arrange - rule 7: a direct wait for a listed chip LocalService has not sent,

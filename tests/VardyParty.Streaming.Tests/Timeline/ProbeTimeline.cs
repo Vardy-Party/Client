@@ -70,6 +70,9 @@ internal sealed class ProbeTimeline
     public List<ChipsQueued> ChipsQueued { get; } = new();
     public List<(double At, string RowId, string What)> LocalServiceEvents { get; } = new();
     public List<(double At, string Key, StreamHealthStatus Status)> HealthVerdicts { get; } = new();
+
+    /// <summary>Every rendered <c>[probe-timing]</c> line, in order (docs/PROBE_SCHEDULING_RULES.md).</summary>
+    public List<string> ProbeTimingLines { get; } = new();
     public List<string> Pool { get; } = new();
     public List<(double At, string Line)> Log { get; } = new();
     public (double At, string Key)? FirstPlay { get; set; }
