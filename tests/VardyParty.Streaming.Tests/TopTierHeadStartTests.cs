@@ -133,4 +133,45 @@ public class TopTierHeadStartTests
         Assert.Null(headStart);
         Assert.Null(throttle.CurrentHeadStart);
     }
+
+    [Fact]
+    public void Tiers_ChipsOfAHighPage_AreHigh_AndOfAMediumPage_Medium()
+    {
+        // Arrange — rule 1: chips LocalService lists for a recommended MP page take its tier.
+        var highPage = Row("mp-high");
+        var mediumPage = Row("mp-medium");
+        var findingPage = Row("mp-finding");
+        var tiers = new StreamTiers([highPage], [mediumPage]);
+        var highChip = Row("mp-high-b");
+        var mediumChip = Row("mp-medium-b");
+        var findingChip = Row("mp-finding-b");
+
+        // Act
+        tiers.Inherit(highPage, [highChip]);
+        tiers.Inherit(mediumPage, [mediumChip]);
+        tiers.Inherit(findingPage, [findingChip]);
+
+        // Assert
+        Assert.Equal(StreamTier.High, tiers.TierOf(highChip));
+        Assert.Equal(StreamTier.Medium, tiers.TierOf(mediumChip));
+        Assert.Equal(StreamTier.Finding, tiers.TierOf(findingChip));
+        Assert.Equal(2, tiers.HighCount);
+        Assert.Equal(2, tiers.MediumCount);
+    }
+
+    [Fact]
+    public void Tiers_AChipThatAlreadyHasATier_KeepsIt()
+    {
+        // Arrange — a chip recommended High on its own stays High under a Medium page.
+        var mediumPage = Row("mp-medium");
+        var chip = Row("mp-medium-a");
+        var tiers = new StreamTiers([chip], [mediumPage]);
+
+        // Act
+        tiers.Inherit(mediumPage, [chip]);
+
+        // Assert
+        Assert.Equal(StreamTier.High, tiers.TierOf(chip));
+        Assert.Equal(1, tiers.MediumCount);
+    }
 }

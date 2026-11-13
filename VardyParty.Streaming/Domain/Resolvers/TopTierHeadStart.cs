@@ -7,17 +7,18 @@ namespace VardyParty.Streaming;
 /// Recommended tiers first (docs/PROBE_SCHEDULING_RULES.md rule 1; Jon, 13 Nov 2026).
 /// <list type="bullet">
 /// <item>Top tier: every High-confidence recommended row (a recommended MP page or chip
-/// included). For <see cref="Duration"/> the top tier has both LocalService slots to itself.</item>
-/// <item>Second tier: Medium-confidence recommended rows. They come next, before any
-/// finding. During the head start a Medium row may start only when every High row has a
-/// verdict or there are fewer than two High rows (so a slot the top tier cannot use does
-/// not sit idle).</item>
-/// <item>Finding: Low recommendations, MP pages and FB rows. No finding probe
-/// (<c>/mp</c> included) starts during the head start while a High or Medium row has no
-/// verdict. After it, a slot not used by High goes to Medium first, then finding (MP
-/// lane first): an MP finding row waits while a High or Medium FB row is still queued.</item>
+/// included; the chips LocalService lists for a High page inherit High). For
+/// <see cref="Duration"/> High rows may use both LocalService slots: a free slot goes to a
+/// waiting High row first.</item>
+/// <item>Second tier: Medium-confidence recommended rows (and the chips of a Medium page).
+/// Medium rows use at most one slot at a time: a slot no High row wants goes to a Medium
+/// row while no other Medium row runs (a slot a dead High row frees goes to Medium at once).</item>
+/// <item>Finding: Low recommendations, MP pages and FB rows. Finding fills every slot High
+/// and Medium leave, from the first second, MP lane (<c>/mp</c>) first, then FB
+/// <c>/play</c> (Jon: "high can occupy 2 slots on local-service, medium only one, then fit
+/// in v1 and v2 into gaps").</item>
 /// </list>
-/// After that, first come, first served applies. Shared by <see cref="StreamResolver"/>
+/// After <see cref="Duration"/>, first come, first served in try-order (no Medium cap). Shared by <see cref="StreamResolver"/>
 /// (which applies it), <see cref="StreamResolutionOrchestrator"/> and the probe timeline harness.
 /// </summary>
 public sealed class TopTierHeadStart : IDisposable
@@ -25,8 +26,6 @@ public sealed class TopTierHeadStart : IDisposable
     /// <summary>How long the top tier has LocalService to itself.</summary>
     public static readonly TimeSpan Duration = TimeSpan.FromSeconds(12);
 
-    private readonly HashSet<StreamModel> _rows;
-    private readonly HashSet<StreamModel> _medium;
     private readonly CancellationTokenSource _cts = new();
     private readonly Action<TopTierHeadStart>? _onDispose;
     private volatile bool _findingHeld;
@@ -37,9 +36,7 @@ public sealed class TopTierHeadStart : IDisposable
         TimeProvider time,
         Action<TopTierHeadStart>? onDispose = null)
     {
-        _rows = new HashSet<StreamModel>(high, ReferenceEqualityComparer.Instance);
-        _medium = new HashSet<StreamModel>(medium, ReferenceEqualityComparer.Instance);
-        _medium.ExceptWith(_rows);
+        Tiers = new StreamTiers(high, medium);
         _onDispose = onDispose;
         Elapsed = Task.Delay(Duration, time, _cts.Token)
             .ContinueWith(static _ => { }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -50,16 +47,19 @@ public sealed class TopTierHeadStart : IDisposable
 
     public bool IsElapsed => Elapsed.IsCompleted;
 
+    /// <summary>The session's tiers (chips inherit their page's tier as they are listed).</summary>
+    public StreamTiers Tiers { get; }
+
     /// <summary>Number of High (top-tier) rows.</summary>
-    public int Count => _rows.Count;
+    public int Count => Tiers.HighCount;
 
-    public int MediumCount => _medium.Count;
+    public int MediumCount => Tiers.MediumCount;
 
-    /// <summary>A High-confidence recommended row.</summary>
-    public bool IsTopTier(StreamModel? row) => row is not null && _rows.Contains(row);
+    /// <summary>A High-confidence recommended row (or a chip of a High page).</summary>
+    public bool IsTopTier(StreamModel? row) => Tiers.IsHigh(row);
 
     /// <summary>A Medium-confidence recommended row (the second tier).</summary>
-    public bool IsMedium(StreamModel? row) => row is not null && _medium.Contains(row);
+    public bool IsMedium(StreamModel? row) => Tiers.IsMedium(row);
 
     /// <summary>
     /// Set by the resolver: finding rows are queued but held by the head start right now.

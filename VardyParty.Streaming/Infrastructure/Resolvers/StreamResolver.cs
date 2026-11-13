@@ -59,9 +59,9 @@ public class StreamResolver(
         // /mp never takes an FB place. A seed that only lists chips is re-queued as
         // its first chip with the rest beside it (rules 5-6). First play is first
         // come, first served (StreamResolutionOrchestrator, rule 9). Chip siblings
-        // from /mp are inserted into `pending` and picked up by FillWindow. With a
-        // High or Medium recommendations (rule 1) the other rows wait for the head
-        // start (TopTierHeadStart).
+        // from /mp are inserted into `pending` and picked up by FillWindow. With High
+        // or Medium recommendations (rule 1) the head start shares the slots out by
+        // tier (TopTierHeadStart): High up to two, Medium one, finding the rest.
         var gate = new SemaphoreSlim(concurrency, concurrency);
         var inFlight = new List<(Task<ResolveOutcome> Task, bool IsMp)>();
         var started = new HashSet<int>();
@@ -78,49 +78,61 @@ public class StreamResolver(
         var headStart = raceThrottle?.CurrentHeadStart;
         var yielded = new HashSet<Stream>(ReferenceEqualityComparer.Instance);
 
-        // Rule 1 (TopTierHeadStart). High rows are never held. A Medium row waits during
-        // the head start while a High row has no verdict and there are two or more High
-        // rows; after it, a Medium MP row still waits while a High FB row is queued. A
-        // finding row waits during the head start while a High or Medium row has no
-        // verdict; after it, an MP finding row still waits while a High or Medium FB row
-        // is queued. FB rows need no extra check after the head start: the FB window
-        // takes rows in try-order, which puts High, then Medium, first.
+        // Rule 1 (TopTierHeadStart; Jon, 13 Nov 2026: "high can occupy 2 slots on
+        // local-service, medium only one, then fit in v1 and v2 into gaps"). During the
+        // head start a free LocalService slot goes to a waiting High row first (High may
+        // use both), else to a Medium row while no other Medium row is running (Medium
+        // uses at most one), else to finding (FB /play or MP /mp). A Medium row beyond the
+        // first waits only while a finding row could take the slot instead, so no slot
+        // sits idle. After the head start a Medium MP row still waits while a High FB row
+        // is queued, and an MP finding row while a High or Medium FB row is queued; FB rows
+        // need no extra check: the FB window takes rows in try-order (High, Medium first).
+        // Chips of a High (Medium) MP page are High (Medium) rows too (StreamTiers.Inherit).
         bool HoldsFinding(int index)
         {
             var candidate = pending[index];
             if (headStart is null || headStart.IsTopTier(candidate))
                 return false;
-            var highWaiting = false;
-            var tierWaiting = false;
             var highFbQueued = false;
             var tierFbQueued = false;
+            var mediumFbQueued = false;
+            var mediumRunning = 0;
+            var findingQueued = false;
             for (var i = 0; i < pending.Count; i++)
             {
                 var row = pending[i];
+                var queued = !started.Contains(i);
                 var high = headStart.IsTopTier(row);
-                if ((!high && !headStart.IsMedium(row)) || yielded.Contains(row))
+                var medium = !high && headStart.IsMedium(row);
+                if (!high && !medium)
+                {
+                    findingQueued |= queued && i != index;
                     continue;
-                tierWaiting = true;
-                highWaiting |= high;
-                if (!started.Contains(i) && !MpPageUrl.IsV2Stream(row))
+                }
+
+                if (yielded.Contains(row))
+                    continue;
+                if (queued && !MpPageUrl.IsV2Stream(row))
                 {
                     tierFbQueued = true;
                     highFbQueued |= high;
+                    mediumFbQueued |= medium;
                 }
+
+                if (medium && !queued)
+                    mediumRunning++;
             }
 
             var isMp = MpPageUrl.IsV2Stream(candidate);
             if (headStart.IsMedium(candidate))
             {
                 if (!headStart.IsElapsed)
-                    return highWaiting && headStart.Count >= 2;
+                    return highFbQueued || (mediumRunning >= 1 && findingQueued);
                 return isMp && highFbQueued;
             }
 
-            if (!tierWaiting)
-                return false;
             if (!headStart.IsElapsed)
-                return true;
+                return highFbQueued || (mediumFbQueued && mediumRunning == 0);
             return isMp && tierFbQueued;
         }
 
@@ -195,18 +207,33 @@ public class StreamResolver(
             // LocalService, so they may still be probed (rule 11).
             var raceInFlight = raceThrottle?.RaceInFlight == true;
 
+            // Rule 1: during the head start High and Medium FB rows go before the MP lane,
+            // so a finding /mp never takes a slot ahead of them; the MP lane then goes
+            // before finding FB rows (MP lane first among finding).
+            if (!raceInFlight && headStart is { IsElapsed: false })
+                FillFb(tiersOnly: true);
+
             if (activeMp == 0 && NextMp(raceInFlight) is int mpIndex)
                 Start(mpIndex, isMp: true);
 
             if (raceInFlight)
                 return;
 
+            FillFb(tiersOnly: false);
+        }
+
+        void FillFb(bool tiersOnly)
+        {
             while (activeFb < concurrency)
             {
                 int? pick = null;
                 for (var i = nextIndex; i < pending.Count; i++)
                 {
-                    if (!started.Contains(i) && !MpPageUrl.IsV2Stream(pending[i]) && !HoldsFinding(i))
+                    if (started.Contains(i) || MpPageUrl.IsV2Stream(pending[i]))
+                        continue;
+                    if (tiersOnly && !headStart!.IsTopTier(pending[i]) && !headStart.IsMedium(pending[i]))
+                        continue;
+                    if (!HoldsFinding(i))
                     {
                         pick = i;
                         break;
@@ -357,6 +384,8 @@ public class StreamResolver(
                     seen.Add(CandidateKey(seed));
                     var rows = new List<Stream> { seed };
                     rows.AddRange(outcome.Siblings.Where(s => seen.Add(CandidateKey(s))));
+                    // Rule 1: the chips of a High (Medium) page are High (Medium) rows.
+                    headStart?.Tiers.Inherit(seed, rows);
                     InsertUnstarted(pending, started, rows);
                     nextIndex = FirstUnstarted(pending, started);
                     onTotalStreamsKnown?.Invoke(pending.Count);
@@ -377,6 +406,8 @@ public class StreamResolver(
                 var added = outcome.Siblings.Count > 0
                     ? EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
                     : [];
+                if (added.Count > 0)
+                    headStart?.Tiers.Inherit(outcome.Enriched.Stream, added);
 
                 // Publish total once MP chip inventory is known (siblings and/or sole chip).
                 if (entry.IsMp || outcome.Siblings.Count > 0)
