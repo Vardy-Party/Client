@@ -100,17 +100,31 @@ public sealed class ResolverRaceThrottle
     private TopTierHeadStart? _headStart;
     private StreamTiers? _tiers;
     private volatile bool _backupWanted;
+    private TaskCompletionSource _backupWantedChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// A stream is playing and the pool holds no other playable row yet (rule 11 "backup
     /// push"): until a backup exists, the resolver lifts the Medium cap so recommended rows
-    /// (High, then Medium) fill every free slot ahead of finding. Set by the orchestrator as
-    /// rows join the pool (and by the probe timeline harness).
+    /// (High, then Medium) fill every free slot ahead of finding, and an <c>/mp</c> harvest
+    /// hands playlist-only chips over at once instead of after rule 7's 30s. Set by the
+    /// orchestrator as rows join the pool (and by the probe timeline harness).
     /// </summary>
     public bool BackupWanted => _backupWanted;
 
     /// <summary>Sets <see cref="BackupWanted"/>: true from first play until a second row joins the pool.</summary>
-    public void SetBackupWanted(bool wanted) => _backupWanted = wanted;
+    public void SetBackupWanted(bool wanted)
+    {
+        if (_backupWanted == wanted)
+            return;
+        _backupWanted = wanted;
+        Interlocked.Exchange(
+            ref _backupWantedChanged,
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+    }
+
+    /// <summary>Completes the next time <see cref="BackupWanted"/> changes (the resolver's wake).</summary>
+    public Task WaitForBackupWantedChangeAsync(CancellationToken cancellationToken) =>
+        Volatile.Read(ref _backupWantedChanged).Task.WaitAsync(cancellationToken);
 
     /// <summary>
     /// The running top-tier head start (rule 1), or null. The resolver reads it when a

@@ -80,6 +80,10 @@ public class StreamResolver(
         // Medium cap holds in every pass (Deferred re-queues, CDN rechecks).
         var tiers = headStart?.Tiers ?? raceThrottle?.CurrentTiers;
         var yielded = new HashSet<Stream>(ReferenceEqualityComparer.Instance);
+        // High rows this run found healthy: with the High rows running they are the "first
+        // two Highs" of rule 1; a dead High does not count, so its slot still goes to the
+        // next High row.
+        var highHealthy = 0;
 
         // Rule 1 (Jon, 13 Nov 2026: "high can occupy 2 slots on local-service, medium only
         // one, then fit in v1 and v2 into gaps"; then "Let a second Medium use a slot only
@@ -92,6 +96,10 @@ public class StreamResolver(
         // is queued, and finding waits while a tier FB row that may start is queued. After it,
         // only MP rows need that check (the FB window takes rows in try-order: High, Medium,
         // then finding, passing over a Medium row the cap holds).
+        // Jon, 13 Nov 2026: "Let finding go before a third High". The first two High rows
+        // (running or found healthy this run) keep both slots and the head start; a third or
+        // later High row waits while a finding row that answers in one probe (an FB row, or a
+        // chip the harvest holds) could take the same place now, and takes it when none could.
         // Rule 11 backup push: while a stream plays with no backup in the pool
         // (ResolverRaceThrottle.BackupWanted), the Medium cap is off, so Medium rows fill the
         // free slots ahead of finding until a second row is playable.
@@ -99,11 +107,12 @@ public class StreamResolver(
         bool HoldsFinding(int index)
         {
             var candidate = pending[index];
-            if (tiers is null || tiers.IsHigh(candidate))
+            if (tiers is null)
                 return false;
             var highFbQueued = false;
             var mediumFbQueued = false;
             var mediumRunning = 0;
+            var highRunning = 0;
             for (var i = 0; i < pending.Count; i++)
             {
                 var row = pending[i];
@@ -120,11 +129,29 @@ public class StreamResolver(
 
                 if (medium && !queued)
                     mediumRunning++;
+                if (high && !queued)
+                    highRunning++;
             }
 
             var inHeadStart = headStart is { IsElapsed: false };
             var backupWanted = raceThrottle?.BackupWanted == true;
             var isMp = MpPageUrl.IsV2Stream(candidate);
+            // The first two High rows are taken: a queued High row is a third (or later) one.
+            var leadHighsTaken = highRunning + highHealthy >= 2;
+            if (tiers.IsHigh(candidate))
+                return leadHighsTaken && FindingCanTakePlace(isMp, index, forLaterHigh: true);
+
+            // Only a High row that still counts among the first two holds the other tiers.
+            var laterHighFbQueued = highFbQueued && leadHighsTaken;
+            highFbQueued &= !leadHighsTaken;
+
+            // A later High row yields only to finding that answers in one probe (an FB row,
+            // or an MP chip the harvest holds), not to a new /mp page, which holds a slot
+            // while the page loads and then needs chip probes: such an MP row waits while a
+            // later High FB row is queued.
+            if (laterHighFbQueued && isMp && !tiers.IsMedium(candidate)
+                && harvestProbe?.IsMpChipReady(candidate.Url, GetPlayerStreamName(candidate)) != true)
+                return true;
             if (tiers.IsMedium(candidate))
             {
                 if (mediumRunning >= 1 && !backupWanted && FindingCanTakePlace(isMp, index))
@@ -145,7 +172,7 @@ public class StreamResolver(
         // (a chip the harvest holds, or one it can start). A finding row that is only waiting
         // (a chip not sent yet, a page behind another page's harvest) does not count, so it
         // never leaves a slot idle.
-        bool FindingCanTakePlace(bool mpLane, int except)
+        bool FindingCanTakePlace(bool mpLane, int except, bool forLaterHigh = false)
         {
             // A finding /mp seed in flight holds (or is waiting for) a LocalService slot until
             // its chips are listed. With the FB rows in flight it fills both slots: an FB
@@ -185,6 +212,14 @@ public class StreamResolver(
                     continue;
                 var chip = GetPlayerStreamName(row);
                 var ready = harvestProbe?.IsMpChipReady(row.Url, chip) == true;
+                if (forLaterHigh)
+                {
+                    // A later High row yields only to a chip the harvest holds (MP lane).
+                    if (mpLane && ready)
+                        return true;
+                    continue;
+                }
+
                 var canStart = harvestProbe is null || harvestProbe.CanStartMp(row.Url, chip);
                 if (mpLane ? ready || canStart : !ready && canStart)
                     return true;
@@ -360,6 +395,10 @@ public class StreamResolver(
                     waits.Add(raceThrottle.WaitUntilRaceEndsAsync(token));
                 if (onHarvest && harvestProbe is not null)
                     waits.Add(harvestProbe.WaitForMpHarvestChangeAsync(token));
+                // Rule 7: while no backup exists playlist-only chips are handed over at once,
+                // so a change of BackupWanted can make a queued chip ready.
+                if (onHarvest && raceThrottle is not null)
+                    waits.Add(raceThrottle.WaitForBackupWantedChangeAsync(token));
                 if (onHeadStart && headStart is not null)
                     waits.Add(headStart.Elapsed.WaitAsync(token));
                 if (waits.Count > 0)
@@ -489,6 +528,8 @@ public class StreamResolver(
                 logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
                     outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
                 yielded.Add(outcome.Enriched.Stream);
+                if (outcome.Enriched.Status == StreamResolutionStatus.Healthy && tiers?.IsHigh(outcome.Enriched.Stream) == true)
+                    highHealthy++;
                 yield return outcome.Enriched;
 
                 cancellationToken.ThrowIfCancellationRequested();

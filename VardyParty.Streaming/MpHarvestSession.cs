@@ -59,9 +59,22 @@ public sealed class MpHarvestSession
     private volatile bool _cancelled;
     private bool _legacy;
     private readonly bool _chipListSeed;
+    private readonly Func<bool>? _handOverPlaylistOnlyNow;
 
-    public MpHarvestSession(TimeProvider? time = null, MpSeedMode mode = MpSeedMode.ChipList, TimeSpan? probeReadyWait = null)
+    /// <param name="time">The clock.</param>
+    /// <param name="mode">How the seed answers.</param>
+    /// <param name="probeReadyWait">Overrides <see cref="DefaultProbeReadyWait"/>.</param>
+    /// <param name="handOverPlaylistOnlyNow">
+    /// True while a playlist-only chip should be handed over at once instead of after
+    /// <see cref="ProbeReadyWait"/> (rule 7, Jon 13 Nov 2026: while no backup exists).
+    /// </param>
+    public MpHarvestSession(
+        TimeProvider? time = null,
+        MpSeedMode mode = MpSeedMode.ChipList,
+        TimeSpan? probeReadyWait = null,
+        Func<bool>? handOverPlaylistOnlyNow = null)
     {
+        _handOverPlaylistOnlyNow = handOverPlaylistOnlyNow;
         _time = time ?? TimeProvider.System;
         _startedAt = _time.GetUtcNow();
         _lastProgressAt = _startedAt;
@@ -335,7 +348,7 @@ public sealed class MpHarvestSession
                 if (_chipListSeed && cached is not null && _cachedAt.TryGetValue(key, out var at))
                 {
                     wait = ProbeReadyWait - (_time.GetUtcNow() - at);
-                    if (wait <= TimeSpan.Zero)
+                    if (wait <= TimeSpan.Zero || HandOverPlaylistOnlyNow)
                         return cached;
                 }
                 else if (_chipListSeed && cached is null)
@@ -504,7 +517,11 @@ public sealed class MpHarvestSession
 
     private bool PlaylistWaitOver(string key) =>
         _chipListSeed
-        && _cachedAt.TryGetValue(key, out var at) && _time.GetUtcNow() - at >= ProbeReadyWait;
+        && _cachedAt.TryGetValue(key, out var at)
+        && (HandOverPlaylistOnlyNow || _time.GetUtcNow() - at >= ProbeReadyWait);
+
+    /// <summary>Rule 7: while no backup exists a playlist-only chip is handed over at once.</summary>
+    private bool HandOverPlaylistOnlyNow => _handOverPlaylistOnlyNow?.Invoke() == true;
 
     /// <summary>
     /// Seed deadline passed with nothing listed while the harvest still runs: we know

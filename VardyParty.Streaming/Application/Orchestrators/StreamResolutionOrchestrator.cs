@@ -445,8 +445,9 @@ public class StreamResolutionOrchestrator(
                     deferred.Count);
             }
 
-            // CDN unreachable is never dead: recheck those rows after 2 min, 5 min,
-            // then every 10 min while the game is live. A row that comes back Healthy
+            // CDN unreachable is never dead (Deferred): recheck those rows after 2 min (30s
+            // while the viewer has no backup stream, Jon 13 Nov 2026), 5 min, then every
+            // 10 min while the game is live. A row that comes back Healthy
             // joins the pool through Accept (appended, stable numbering). Playback
             // that is already running carries on meanwhile.
             if (cdnDeferred.Count > 0)
@@ -461,7 +462,8 @@ public class StreamResolutionOrchestrator(
                     CdnRecheckDelayAsync,
                     OnCdnRecheckWaiting,
                     logger,
-                    enumerationCts.Token).ConfigureAwait(false);
+                    enumerationCts.Token,
+                    noBackup: () => _healthyStreamCount < 2).ConfigureAwait(false);
                 if (viewerLeft)
                     return outcome;
 
@@ -532,7 +534,8 @@ public class StreamResolutionOrchestrator(
             {
                 if (playbackTask is { IsCompleted: false })
                     return;
-                _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {wait.TotalMinutes:F0} min";
+                var next = wait < TimeSpan.FromMinutes(1) ? $"{wait.TotalSeconds:F0}s" : $"{wait.TotalMinutes:F0} min";
+                _status = $"{CdnReachabilityPolicy.RecheckingMessage}: {count} stream(s), next check in {next}";
                 PublishProgress();
             }
 

@@ -930,7 +930,10 @@ public class LocalLanPlayService(
         {
             if (reused is null && !IsMpDisabledRemembered(baseUrl))
             {
-                harvest = new MpHarvestSession(Time);
+                // Rule 7: while a stream plays with no backup (BackupWanted), playlist-only
+                // chips are handed over at once instead of after ProbeReadyWait.
+                var throttle = raceThrottle;
+                harvest = new MpHarvestSession(Time, handOverPlaylistOnlyNow: () => throttle?.BackupWanted == true);
                 harvestCts = new CancellationTokenSource();
                 _mpHarvest = harvest;
                 _mpHarvestPage = streamUrl;
