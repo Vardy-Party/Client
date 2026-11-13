@@ -10,7 +10,21 @@ internal sealed record PlayScript(
     double AnswerAt,
     PlayAnswer Answer,
     double HealthTakes = 1,
-    StreamHealthStatus Health = StreamHealthStatus.Healthy);
+    StreamHealthStatus Health = StreamHealthStatus.Healthy,
+    PlayLink Link = PlayLink.Plain);
+
+/// <summary>What kind of link a playable <c>/play</c> answer carries (its <c>requestHeaders</c>).</summary>
+internal enum PlayLink
+{
+    /// <summary>No playback headers: the probed link is reused as is (no warm needed).</summary>
+    Plain,
+
+    /// <summary>A Referer soak header: the probed link plays at first play; as a backup the prewarmer warms it.</summary>
+    Soak,
+
+    /// <summary>A Cookie-bound session: single-use, so first play needs a fresh <c>/play</c> and it is never warmed.</summary>
+    SingleUse
+}
 
 internal enum PlayAnswer
 {
@@ -32,6 +46,14 @@ internal static class Play
 
     public static PlayScript HealthyAt(double seconds, double healthTakes = 1) =>
         new(seconds, PlayAnswer.Playlist, healthTakes);
+
+    /// <summary>Healthy, with a Referer soak link (the prewarmer warms it as a backup).</summary>
+    public static PlayScript SoakAt(double seconds, double healthTakes = 1) =>
+        new(seconds, PlayAnswer.Playlist, healthTakes, Link: PlayLink.Soak);
+
+    /// <summary>Healthy, with a Cookie-bound single-use link (first play needs a fresh <c>/play</c>).</summary>
+    public static PlayScript SingleUseAt(double seconds, double healthTakes = 1) =>
+        new(seconds, PlayAnswer.Playlist, healthTakes, Link: PlayLink.SingleUse);
 
     public static PlayScript Dead(double seconds = DeadFbSeconds) =>
         new(seconds, PlayAnswer.NoPlaylist);
@@ -181,8 +203,9 @@ internal sealed class ProbeScenario
     public IReadOnlyList<(string Id, RecommendationConfidence Confidence)> Recommended => _recommended;
 
     /// <summary>
-    /// After first play, pause new probes for <see cref="ResolverRaceThrottle.PlaybackPriorityTimeout"/>
-    /// as the orchestrator does (on by default; the prewarmer's early release is not modelled).
+    /// After first play, run the playback-priority window as the orchestrator does (rule 11):
+    /// for <see cref="ResolverRaceThrottle.PlaybackPriorityTimeout"/> finding is paused only
+    /// while a backup needs warming. On by default.
     /// </summary>
     public bool PriorityWindowAfterFirstPlay { get; private set; } = true;
 
@@ -235,18 +258,6 @@ internal sealed class ProbeScenario
     public ProbeScenario WithoutPriorityWindow()
     {
         PriorityWindowAfterFirstPlay = false;
-        return this;
-    }
-
-    /// <summary>
-    /// At first play, also run the startup race's <c>BeginRace</c> + <c>DrainOthersAsync</c>
-    /// (as <c>StreamResolutionOrchestrator</c> does before the race) and record when the drain finished.
-    /// </summary>
-    public bool StartupRaceDrain { get; private set; }
-
-    public ProbeScenario WithStartupRaceDrain()
-    {
-        StartupRaceDrain = true;
         return this;
     }
 

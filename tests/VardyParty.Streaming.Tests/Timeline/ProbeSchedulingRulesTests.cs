@@ -54,7 +54,7 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
     /// A1-A5 for every scenario, written to the test output (run with a detailed
     /// console logger to read it). Fails only when a measure that applies is missed:
     /// A1 when there is a healthy row, A2 and A4 when there is an MP page, A3 always,
-    /// A5 (re-run with the startup race drain) when there is a first play.
+    /// A5 when there is a top tier (High-confidence recommendations).
     /// </summary>
     [Theory]
     [MemberData(nameof(AllScenarios))]
@@ -66,7 +66,6 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
 
         // Act
         var timeline = await ProbeTimelineHarness.RunAsync(make());
-        var drained = await ProbeTimelineHarness.RunAsync(make().WithStartupRaceDrain());
 
         // Assert
         var rows = new List<(string Measure, string? Why, bool Applies)>
@@ -74,7 +73,7 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
             ("A1", Expect.FirstPlayWithinOfFirstHealthy().Check(timeline),
                 timeline.HealthVerdicts.Any(h => h.Status == VardyParty.Kernel.StreamHealthStatus.Healthy)),
             ("A3", Expect.NoIdleSlotWhileQueued().Check(timeline), true),
-            ("A5", Expect.DrainWithin(ProbeAcceptance.DrainSeconds).Check(drained), drained.FirstPlay is not null),
+            ("A5", Expect.TopTierHeadStartHeld().Check(timeline), timeline.HeadStart is not null),
         };
         foreach (var id in mpIds)
         {

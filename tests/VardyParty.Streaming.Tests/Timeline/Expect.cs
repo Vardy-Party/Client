@@ -18,20 +18,26 @@ internal sealed record Expectation(string Description, Func<ProbeTimeline, strin
 /// </summary>
 internal static class ProbeAcceptance
 {
-    /// <summary>A1: first play within this many seconds of the first healthy verdict.</summary>
+    /// <summary>
+    /// A1: first play within this many seconds of the first healthy verdict (plus the
+    /// fresh start <c>/play</c> when the probed link could not be reused).
+    /// </summary>
     public const double FirstPlayAfterHealthySeconds = 2;
 
     /// <summary>A2: MP chips queued as rows within this many seconds of LocalService listing them.</summary>
     public const double ChipsVisibleSeconds = 2;
 
-    /// <summary>A3: total seconds a lane place (2 FB, 1 MP) may sit idle while a candidate for it is queued (outside the priority window).</summary>
+    /// <summary>A3: total seconds a lane place (2 FB, 1 MP) may sit idle while a candidate for it is queued (outside priority holds and the top-tier head start).</summary>
     public const double IdleSlotToleranceSeconds = 1;
 
     /// <summary>A4: an /mp seed gives up (and releases its slot) this many seconds after the POST.</summary>
     public const double SeedGiveUpSeconds = 30;
 
-    /// <summary>A5: a startup race drains find-phase probes within one dead FB (~20s) plus this margin.</summary>
-    public const double DrainSeconds = 21;
+    /// <summary>
+    /// A5: with High or Medium recommendations, no finding probe starts before this many
+    /// seconds (the head start) unless every High and Medium row already has a verdict.
+    /// </summary>
+    public static double HeadStartSeconds => TopTierHeadStart.Duration.TotalSeconds;
 }
 
 internal static class Expect
@@ -108,15 +114,33 @@ internal static class Expect
             return actual.SequenceEqual(keys) ? null : $"started {string.Join(", ", actual)}";
         });
 
-    /// <summary>Rule 11: no browser probe (/play or a new /mp) starts in the window; harvested chips may.</summary>
-    public static Expectation NoBrowserProbeStartsInPriorityWindow() => new(
-        "no /play or /mp seed starts inside the 30s playback-priority window",
+    /// <summary>Rule 11: no browser probe (/play or a new /mp) starts while the priority window holds; harvested chips may.</summary>
+    public static Expectation NoBrowserProbeStartsWhilePriorityHolds() => new(
+        "no /play or /mp seed starts while the playback-priority window holds",
         t =>
         {
-            if (t.PriorityWindow is not { } w)
-                return "no priority window happened";
-            var inside = t.Calls.Where(c => c.Kind != ProbeKind.MpChip && c.Start > w.From + Eps && c.Start < w.To - Eps).ToList();
+            if (t.PriorityHolds.Count == 0)
+                return "the priority window never held";
+            var inside = t.Calls.Where(c => c.Kind != ProbeKind.MpChip && t.PriorityHolds.Any(h => c.Start > h.From + Eps && c.Start < h.To - Eps)).ToList();
             return inside.Count == 0 ? null : $"started inside: {string.Join(", ", inside.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
+        });
+
+    /// <summary>Rule 11: the priority window never pauses finding (no backup, or none that needs warming).</summary>
+    public static Expectation NoPriorityHold() => new(
+        "the priority window never pauses finding",
+        t => t.PriorityHolds.Count == 0 ? null : $"held {string.Join(", ", t.PriorityHolds.Select(h => $"{Fmt(h.From)}-{Fmt(h.To)}"))}");
+
+    /// <summary>Rule 11: the window holds while the backup warms and lets go once it is ready.</summary>
+    public static Expectation PriorityHoldsUntilBackupReady() => new(
+        "the priority window holds only until the backup is warm",
+        t =>
+        {
+            if (t.PriorityHolds.Count == 0)
+                return "the priority window never held";
+            if (t.BackupReadyAt is not { } ready)
+                return "the backup never became ready";
+            var last = t.PriorityHolds.Max(h => h.To);
+            return last <= ready + Eps ? null : $"held until {Fmt(last)}, backup ready {Fmt(ready)}";
         });
 
     /// <summary>Rule 11 tweak: a chip the harvest already holds is probed inside the window.</summary>
@@ -131,6 +155,45 @@ internal static class Expect
                 : $"started {(t.FirstCall(key) is { } x ? Fmt(x.Start) : "never")}, window {Fmt(w.From)}-{Fmt(w.To)}";
         });
 
+    // ---- top tier, first play and backup (rules 1, 6, 12) ----
+
+    /// <summary>Rule 1: no finding probe (a row neither High nor Medium, /mp included) starts before <paramref name="at"/>.</summary>
+    public static Expectation NoFindingStartsBefore(double at) => new(
+        $"no finding probe starts before t+{at}s",
+        t =>
+        {
+            var early = t.Calls.Where(c => !t.TierCallKeys.Contains(c.Key) && c.Start < at - Eps).ToList();
+            return early.Count == 0 ? null : $"started: {string.Join(", ", early.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
+        });
+
+    public static Expectation TopTierIs(params string[] keys) => new(
+        $"top tier is {string.Join(", ", keys)}",
+        t => (t.HeadStart?.TopTier ?? []).SequenceEqual(keys) ? null : $"top tier is {string.Join(", ", t.HeadStart?.TopTier ?? [])}");
+
+    public static Expectation MediumTierIs(params string[] keys) => new(
+        $"Medium tier is {string.Join(", ", keys)}",
+        t => (t.HeadStart?.Medium ?? []).SequenceEqual(keys) ? null : $"Medium tier is {string.Join(", ", t.HeadStart?.Medium ?? [])}");
+
+    public static Expectation NoHeadStart() => new(
+        "no top-tier head start (behaviour unchanged)",
+        t => t.HeadStart is null ? null : $"head start for {string.Join(", ", t.HeadStart.Value.TopTier)}");
+
+    public static Expectation FirstPlayOpens(FirstPlayOpenStrategy.StartKind kind) => new(
+        $"first play opens with {kind}",
+        t => t.FirstPlayKind == kind ? null : $"opened with {t.FirstPlayKind?.ToString() ?? "nothing"}");
+
+    public static Expectation BackupIs(string key) => new(
+        $"the backup is {key}",
+        t => t.Backup?.Key == key ? null : $"backup was {t.Backup?.Key ?? "none"}");
+
+    public static Expectation NoBackup() => new(
+        "no backup",
+        t => t.Backup is null ? null : $"backup {t.Backup.Value.Key} at {Fmt(t.Backup.Value.At)}");
+
+    public static Expectation BackupReadyBy(double by) => new(
+        $"the backup is ready by t+{by}s",
+        t => t.BackupReadyAt is { } r && r <= by + Eps ? null : $"ready {(t.BackupReadyAt is { } x ? Fmt(x) : "never")}");
+
     public static Expectation StartsBy(string key, double by) => new(
         $"{key} probe starts by t+{by}s",
         t => t.FirstCall(key) is { } c && c.Start <= by + Eps ? null : $"started {(t.FirstCall(key) is { } x ? Fmt(x.Start) : "never")}");
@@ -144,26 +207,6 @@ internal static class Expect
     public static Expectation PoolOrder(params string[] keys) => new(
         $"pool (channel numbers) starts {string.Join(", ", keys.Select((k, i) => $"#{i + 1} {k}"))}",
         t => t.Pool.Take(keys.Length).SequenceEqual(keys) ? null : $"pool is {string.Join(", ", t.Pool)}");
-
-    public static Expectation NoProbeStartsInPriorityWindow() => new(
-        "no new probe starts inside the 30s playback-priority window",
-        t =>
-        {
-            if (t.PriorityWindow is not { } w)
-                return "no priority window happened";
-            var inside = t.Calls.Where(c => c.Start > w.From + Eps && c.Start < w.To - Eps).ToList();
-            return inside.Count == 0 ? null : $"started inside: {string.Join(", ", inside.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
-        });
-
-    public static Expectation DrainWithin(double seconds) => new(
-        $"startup race drain finishes within {seconds}s of first play",
-        t => t.FirstPlay is not { } fp
-            ? "no first play"
-            : t.DrainedAt is { } d && d - fp.At <= seconds + Eps ? null : $"drained {(t.DrainedAt is { } x ? Fmt(x) : "never")}");
-
-    public static Expectation DrainNotBefore(double at) => new(
-        $"startup race drain waits until t+{at}s (documents today)",
-        t => t.DrainedAt is { } d && d >= at - Eps ? null : $"drained {(t.DrainedAt is { } x ? Fmt(x) : "never")}");
 
     // ---- LocalService load (rules 2-3) ----
 
@@ -258,15 +301,33 @@ internal static class Expect
     // ---- acceptance (numbers PROPOSED, see ProbeAcceptance) ----
 
     public static Expectation FirstPlayWithinOfFirstHealthy(double seconds = ProbeAcceptance.FirstPlayAfterHealthySeconds) => new(
-        $"A1 first play within {seconds}s of the first healthy verdict",
+        $"A1 first play within {seconds}s of the first healthy verdict (plus a fresh start /play if the link was single-use)",
         t =>
         {
             var healthy = t.HealthVerdicts.Where(h => h.Status == StreamHealthStatus.Healthy).Select(h => (double?)h.At).Min();
             if (healthy is null)
                 return "no healthy verdict";
-            return t.FirstPlay is { } fp && fp.At - healthy <= seconds + Eps
+            var fresh = t.FreshStartPlay is { } f0 ? f0.To - f0.From : 0;
+            return t.FirstPlay is { } fp && fp.At - healthy <= seconds + fresh + Eps
                 ? null
                 : $"first healthy {Fmt(healthy.Value)}, first play {(t.FirstPlay is { } f ? Fmt(f.At) : "never")}";
+        });
+
+    /// <summary>
+    /// A5 (rule 1): with recommended tiers, no finding probe starts during the head start
+    /// while a High or Medium row has no verdict.
+    /// </summary>
+    public static Expectation TopTierHeadStartHeld() => new(
+        $"A5 no finding probe during the {ProbeAcceptance.HeadStartSeconds}s head start while a High or Medium row has no verdict",
+        t =>
+        {
+            if (t.HeadStart is not { } hs)
+                return null;
+            var tiers = hs.TopTier.Concat(hs.Medium).ToList();
+            var verdicts = tiers.Select(k => t.Result(k)?.At ?? double.MaxValue).ToList();
+            var bound = Math.Min(hs.To, verdicts.Max());
+            var early = t.Calls.Where(c => !t.TierCallKeys.Contains(c.Key) && c.Start < bound - Eps).ToList();
+            return early.Count == 0 ? null : $"finding started before t+{bound:0.###}s: {string.Join(", ", early.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
         });
 
     public static Expectation ChipsVisibleWithin(string mpId, double seconds = ProbeAcceptance.ChipsVisibleSeconds) => new(
@@ -284,11 +345,11 @@ internal static class Expect
         });
 
     public static Expectation NoIdleSlotWhileQueued(double toleranceSeconds = ProbeAcceptance.IdleSlotToleranceSeconds) => new(
-        $"A3 no lane place idle while a candidate is queued (tolerance {toleranceSeconds}s, priority window excluded)",
+        $"A3 no lane place idle while a candidate is queued (tolerance {toleranceSeconds}s, priority holds and the head start excluded)",
         t =>
         {
             var idle = t.Intervals()
-                .Where(i => i.Snap.IdleWithWork(ResolverRaceThrottle.MaxConcurrent) && !i.Snap.PriorityHold)
+                .Where(i => i.Snap.IdleWithWork(ResolverRaceThrottle.MaxConcurrent) && !i.Snap.PriorityHold && !i.Snap.HeadStartHold)
                 .ToList();
             var total = idle.Sum(i => i.Until - i.Snap.At);
             return total <= toleranceSeconds + Eps

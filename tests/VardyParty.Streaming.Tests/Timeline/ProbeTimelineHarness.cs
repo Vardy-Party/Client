@@ -26,13 +26,18 @@ namespace VardyParty.Streaming.Tests.Timeline;
 /// (FB window, MP lane, seed re-queue, sibling queueing), LocalLanPlayService (throttle slots,
 /// <c>/mp</c> NDJSON harvest, MpHarvestSession seed rules), ResolverRaceThrottle,
 /// StreamTestOrderPolicy (try-order) and StreamSwitchingService (channel numbers;
-/// first come, first served, as in the orchestrator). Only LocalService (HTTP) and the CDN
-/// health check are scripted, on a <see cref="MilestoneClock"/>: the run jumps from
-/// one milestone to the next, so a 111s harvest runs in milliseconds.
-/// Not modelled: the orchestrator's deferred re-queue passes, the prewarmer and its
-/// early release of the priority window, and the real-time <c>/play</c> timeout. The
-/// <c>/mp</c> harvest timeout and the 30s seed/chip deadlines run on this clock
-/// (<see cref="LocalLanPlayService.Time"/>).
+/// first come, first served, as in the orchestrator), TopTierHeadStart (rule 1) and
+/// FirstPlayOpenStrategy (how first play opens, rule 12; when the priority window holds,
+/// rule 11). Only LocalService (HTTP) and the CDN health check are scripted, on a
+/// <see cref="MilestoneClock"/>: the run jumps from one milestone to the next, so a 111s
+/// harvest runs in milliseconds.
+/// Modelled like the orchestrator: the top-tier head start around run 1; the start
+/// <c>/play</c> when the probed link cannot be reused (with the backup warmed beside it);
+/// a prewarmer that warms upcoming rows that need it, one at a time, from first play; and
+/// the rule-6 priority window. Not modelled: the orchestrator's deferred re-queue passes,
+/// the player itself (first play = the moment the player would open) and the real-time
+/// <c>/play</c> timeout. The <c>/mp</c> harvest timeout and the 30s seed/chip deadlines run
+/// on this clock (<see cref="LocalLanPlayService.Time"/>).
 /// Between milestones the harness waits for the thread pool to go quiet. If it does
 /// not within <c>MaxSettle</c> the run fails (with the timeline so far) rather than
 /// advance the clock early and pass or fail for the wrong reason.
@@ -71,6 +76,14 @@ internal static class ProbeTimelineHarness
         private bool _hasPlayed;
         private IDisposable? _priorityHold;
         private ITimer? _priorityTimer;
+        private double? _priorityHoldFrom;
+        private bool _windowOpen;
+        private LocalLanPlayService? _lan;
+        private TopTierHeadStart? _headStart;
+        // The warm cache, as the prewarmer fills it: row -> when its warm /play answered.
+        private readonly Dictionary<EnrichedStream, double> _warm = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<EnrichedStream> _warmInFlight = new(ReferenceEqualityComparer.Instance);
+        private EnrichedStream? _playing;
         private long _activity;
         private int _idleWorkers = 1;
         // Resolver lanes (from its logs and yields): FB window of 2, MP lane of 1.
@@ -161,6 +174,7 @@ internal static class ProbeTimelineHarness
             lan.Clock = _clock.GetUtcNow;
             lan.Time = _clock;
             lan.EndpointsForTests.Remember(Endpoint, DateTimeOffset.UtcNow);
+            _lan = lan;
 
             var resolver = new StreamResolver(
                 new ScriptedHealth(this),
@@ -175,6 +189,21 @@ internal static class ProbeTimelineHarness
             var firstToken = _scenario.SwitchAt is null
                 ? _cts.Token
                 : CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, _switchCts.Token).Token;
+
+            // Rule 1: the orchestrator wraps the first pass in the head start (High, then Medium).
+            var (topTier, mediumTier) = TopTierHeadStart.Select(recommendations, _ordered);
+            _headStart = _throttle.BeginTopTierHeadStart(topTier, mediumTier, _clock);
+            if (_headStart is not null)
+            {
+                _tl.HeadStart = (0, TopTierHeadStart.Duration.TotalSeconds,
+                    topTier.Select(r => _keyByRef[r]).ToList(), mediumTier.Select(r => _keyByRef[r]).ToList());
+                Note($"head start {TopTierHeadStart.Duration.TotalSeconds}s: High {string.Join(", ", topTier.Select(r => _keyByRef[r]))}; Medium {string.Join(", ", mediumTier.Select(r => _keyByRef[r]))}");
+                var headStart = _headStart;
+                _ = headStart.Elapsed.ContinueWith(
+                    _ => { if (T >= TopTierHeadStart.Duration.TotalSeconds - 1e-9) Note("head start ends"); },
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+
             var consume = Task.Run(async () =>
             {
                 try
@@ -189,6 +218,10 @@ internal static class ProbeTimelineHarness
                 catch (OperationCanceledException) when (_switchCts.IsCancellationRequested)
                 {
                     Note("run 1 cancelled (match switch)");
+                }
+                finally
+                {
+                    _headStart?.Dispose();
                 }
             });
 
@@ -266,7 +299,19 @@ internal static class ProbeTimelineHarness
 
             _priorityTimer?.Dispose();
             _switchTimer?.Dispose();
-            _priorityHold?.Dispose();
+            lock (_gate)
+                EndPriorityHold();
+            _headStart?.Dispose();
+            if (_headStart is { } hs)
+            {
+                foreach (var row in _ordered.Where(r => hs.IsTopTier(r) || hs.IsMedium(r)))
+                {
+                    _tl.TierCallKeys.Add(_keyByRef[row]);
+                    if (!string.IsNullOrWhiteSpace(row.PlayerStream))
+                        _tl.TierCallKeys.Add($"{RowIdOf(row.Url)}:{row.PlayerStream.Trim()}");
+                }
+            }
+
             lock (_gate)
             {
                 _tl.Pool.Clear();
@@ -349,7 +394,8 @@ internal static class ProbeTimelineHarness
                     Volatile.Read(ref _fbStarted) - Volatile.Read(ref _fbDone),
                     Volatile.Read(ref _mpStarted) - Volatile.Read(ref _mpDone),
                     _throttle.RaceInFlight,
-                    inFlight);
+                    inFlight,
+                    _throttle.CurrentHeadStart?.FindingHeld == true);
                 if (_tl.Snapshots.Count > 0 && Math.Abs(_tl.Snapshots[^1].At - snap.At) < 1e-9)
                     _tl.Snapshots[^1] = snap;
                 else
@@ -380,34 +426,189 @@ internal static class ProbeTimelineHarness
             var key = KeyOf(row.Stream);
             Note($"pool +{key} (#{_pool.GetHealthyStreams().Count})");
             if (_hasPlayed)
+            {
+                AfterPoolChange();
                 return;
+            }
 
+            // StartPlaybackChain: the priority window begins, then RaceStartAsync plans the open.
             _hasPlayed = true;
-            _tl.FirstPlay = (T, key);
-            Note($"FIRST PLAY on {key}");
+            _playing = row;
             if (_scenario.PriorityWindowAfterFirstPlay)
             {
-                _priorityHold = _throttle.BeginPlaybackPriority();
+                _windowOpen = true;
                 _tl.PriorityWindow = (T, T + ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds);
-                Note($"priority window starts ({ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds}s)");
+                Note($"priority window ({ResolverRaceThrottle.PlaybackPriorityTimeout.TotalSeconds}s): holds only while a backup needs warming");
                 _priorityTimer = _clock.CreateTimer(_ =>
                 {
-                    _priorityHold?.Dispose();
-                    Note("priority window ends");
+                    lock (_gate)
+                    {
+                        _windowOpen = false;
+                        EndPriorityHold();
+                        Note("priority window ends");
+                    }
                 }, null, ResolverRaceThrottle.PlaybackPriorityTimeout, Timeout.InfiniteTimeSpan);
+                UpdatePriorityHold();
             }
 
-            if (_scenario.StartupRaceDrain)
+            var plan = FirstPlayOpenStrategy.PlanStart(
+                row, _pool.GetHealthyStreams(), _clock.GetUtcNow(),
+                r => _warm.ContainsKey(r) || _warmInFlight.Contains(r));
+            _tl.FirstPlayKind = plan.Kind;
+            if (plan.Kind != FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst)
             {
-                _ = Task.Run(async () =>
-                {
-                    using var race = _throttle.BeginRace();
-                    Note("startup race: DrainOthersAsync");
-                    await _throttle.DrainOthersAsync(_cts.Token).ConfigureAwait(false);
-                    _tl.DrainedAt = T;
-                    Note("startup race: drained");
-                });
+                FirstPlayNow(row, plan.Reason);
+                return;
             }
+
+            // The probed link cannot be reused: one fresh /play for the start row (it takes
+            // the next free slot ahead of finding; no drain), the backup warmed beside it.
+            // StartPlaybackChain pauses new finding starts at once (before the resolver's next fill).
+            Note($"start /play {key} ({plan.Reason})");
+            var started = T;
+            var race = _throttle.BeginRace();
+            if (plan.PartnerToWarm is { } partner)
+                StartWarm(partner);
+            _ = Task.Run(async () =>
+            {
+                using var startHold = race;
+                using var leg = _throttle.MarkRaceLeg();
+                try
+                {
+                    var response = await _lan!.ResolveM3U8UrlAsync(row.Stream.Url, null, "v1", "fb", _cts.Token).ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        _tl.FreshStartPlay = (started, T);
+                        if (!string.IsNullOrWhiteSpace(response?.Url))
+                            FirstPlayNow(row, "fresh /play answered");
+                        else
+                            Note($"start /play {key} returned no playlist");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            });
+        }
+
+        private void FirstPlayNow(EnrichedStream row, string why)
+        {
+            var key = KeyOf(row.Stream);
+            _tl.FirstPlay = (T, key);
+            Note($"FIRST PLAY on {key} ({_tl.FirstPlayKind}: {why})");
+            AfterPoolChange();
+        }
+
+        // PlayStreamAsync starts the prewarmer once the player opens; pool changes kick it.
+        private void AfterPoolChange()
+        {
+            if (_playing is null)
+                return;
+            if (_tl.FirstPlay is not null)
+                KickPrewarm();
+            TrackBackup();
+            UpdatePriorityHold();
+        }
+
+        private EnrichedStream? CurrentBackup() =>
+            PlaybackUrlReusePolicy.UpcomingInSwitchOrder(_pool.GetHealthyStreams(), _playing, 1).FirstOrDefault();
+
+        private bool NeedsWarm(EnrichedStream row) =>
+            PlaybackUrlReusePolicy.ShouldPrewarm(row) && !_warm.ContainsKey(row);
+
+        private void TrackBackup()
+        {
+            if (_tl.BackupReadyAt is not null || CurrentBackup() is not { } backup)
+                return;
+            if (_tl.Backup is null)
+            {
+                _tl.Backup = (T, KeyOf(backup.Stream));
+                Note($"backup: {KeyOf(backup.Stream)}");
+            }
+
+            if (_tl.Backup?.Key == KeyOf(backup.Stream) && !NeedsWarm(backup))
+            {
+                _tl.BackupReadyAt = T;
+                Note($"backup {KeyOf(backup.Stream)} ready");
+            }
+        }
+
+        // The prewarmer: one warm /play at a time for the next PrewarmDepth rows that need it.
+        private void KickPrewarm()
+        {
+            if (_warmInFlight.Count > 0)
+                return;
+            var target = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
+                    _pool.GetHealthyStreams(), _playing, PlaybackUrlReusePolicy.PrewarmDepth)
+                .FirstOrDefault(NeedsWarm);
+            if (target is not null)
+                StartWarm(target);
+        }
+
+        private void StartWarm(EnrichedStream row)
+        {
+            if (!_warmInFlight.Add(row))
+                return;
+            var key = KeyOf(row.Stream);
+            var from = T;
+            Note($"warm /play {key}");
+            _ = Task.Run(async () =>
+            {
+                // MarkRaceLeg: the warm takes a slot through the priority / race hold.
+                using var leg = _throttle.MarkRaceLeg();
+                try
+                {
+                    var response = await _lan!.ResolveM3U8UrlAsync(row.Stream.Url, null, "v1", "fb", _cts.Token).ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        _warmInFlight.Remove(row);
+                        _tl.Warms.Add((key, from, T));
+                        if (!string.IsNullOrWhiteSpace(response?.Url))
+                        {
+                            _warm[row] = T;
+                            Note($"warm {key} ready");
+                        }
+
+                        AfterPoolChange();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            });
+        }
+
+        // Rule 11: inside the window, hold finding only while a backup needs warming.
+        private void UpdatePriorityHold()
+        {
+            if (!_windowOpen)
+                return;
+            var now = _clock.GetUtcNow();
+            var wanted = FirstPlayOpenStrategy.PlaybackPriorityHolds(
+                FirstPlayOpenStrategy.CountBackupsNeedingWarm(
+                    _pool.GetHealthyStreams(), _playing, now,
+                    r => _warm.TryGetValue(r, out var at) ? (now + TimeSpan.FromMinutes(10), _clock.Start + TimeSpan.FromSeconds(at)) : null,
+                    _ => false));
+            if (wanted && _priorityHold is null)
+            {
+                _priorityHold = _throttle.BeginPlaybackPriority();
+                _priorityHoldFrom = T;
+                Note("priority hold: a backup needs warming");
+            }
+            else if (!wanted)
+            {
+                EndPriorityHold();
+            }
+        }
+
+        private void EndPriorityHold()
+        {
+            if (_priorityHold is null)
+                return;
+            _priorityHold.Dispose();
+            _priorityHold = null;
+            _tl.PriorityHolds.Add((_priorityHoldFrom ?? T, T));
+            Note("priority hold ends");
         }
 
         // ---- identity ----
@@ -549,9 +750,15 @@ internal static class ProbeTimelineHarness
                 }
 
                 run.LocalServiceEvent(row.Id, $"/play answers {script.Answer}");
+                var headers = script.Link switch
+                {
+                    PlayLink.Soak => $$""","requestHeaders":{"Referer":"{{FbPage(row.Id)}}"}""",
+                    PlayLink.SingleUse => $$""","requestHeaders":{"Referer":"{{FbPage(row.Id)}}","Cookie":"session={{row.Id}}"}""",
+                    _ => ""
+                };
                 return script.Answer switch
                 {
-                    PlayAnswer.Playlist => Json(HttpStatusCode.OK, $$"""{"url":"{{FbPlaylist(row.Id)}}"}"""),
+                    PlayAnswer.Playlist => Json(HttpStatusCode.OK, $$"""{"url":"{{FbPlaylist(row.Id)}}" """.TrimEnd() + headers + "}"),
                     PlayAnswer.CdnUnreachable => Json(HttpStatusCode.GatewayTimeout, """{"error":"page navigation timed out"}"""),
                     _ => Json(HttpStatusCode.NotFound, """{"error":"M3U8 not captured"}""")
                 };

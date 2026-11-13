@@ -39,7 +39,8 @@ internal sealed record Snapshot(
     int FbActive,
     int MpActive,
     bool PriorityHold,
-    IReadOnlyList<string> InFlight)
+    IReadOnlyList<string> InFlight,
+    bool HeadStartHold = false)
 {
     public int Unstarted => UnstartedFb + UnstartedMp;
 
@@ -72,11 +73,38 @@ internal sealed class ProbeTimeline
     public List<string> Pool { get; } = new();
     public List<(double At, string Line)> Log { get; } = new();
     public (double At, string Key)? FirstPlay { get; set; }
-    public (double From, double To)? PriorityWindow { get; set; }
-    public double EndedAt { get; set; }
 
-    /// <summary>When the startup race's DrainOthersAsync returned (see <see cref="ProbeScenario.WithStartupRaceDrain"/>).</summary>
-    public double? DrainedAt { get; set; }
+    /// <summary>How first play opened (<see cref="FirstPlayOpenStrategy.StartKind"/>).</summary>
+    public FirstPlayOpenStrategy.StartKind? FirstPlayKind { get; set; }
+
+    /// <summary>The fresh start <c>/play</c> (only when the probed link could not be reused).</summary>
+    public (double From, double To)? FreshStartPlay { get; set; }
+
+    /// <summary>The head start (rule 1): from, until, the High (top-tier) keys and the Medium keys.</summary>
+    public (double From, double To, IReadOnlyList<string> TopTier, IReadOnlyList<string> Medium)? HeadStart { get; set; }
+
+    /// <summary>
+    /// Probe keys of High and Medium rows, including the first-chip key a tier MP page's
+    /// seed is re-queued under (its chip call is "page:chip", its result "page").
+    /// </summary>
+    public HashSet<string> TierCallKeys { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The playback-priority window (rule 11): from first play for 30s.</summary>
+    public (double From, double To)? PriorityWindow { get; set; }
+
+    /// <summary>When the window actually paused finding (a backup needed warming).</summary>
+    public List<(double From, double To)> PriorityHolds { get; } = new();
+
+    /// <summary>The first backup (the next channel after the playing one) and when it was chosen.</summary>
+    public (double At, string Key)? Backup { get; set; }
+
+    /// <summary>When that backup was ready to switch to (needs no warm, or its warm <c>/play</c> answered).</summary>
+    public double? BackupReadyAt { get; set; }
+
+    /// <summary>Warm <c>/play</c>s for backups (prewarmer and the fresh start's partner): key, from, to.</summary>
+    public List<(string Key, double From, double To)> Warms { get; } = new();
+
+    public double EndedAt { get; set; }
 
     /// <summary>Harness settles (one per milestone) and the wall-clock they took, so slow or flaky runs show up.</summary>
     public int SettleCount { get; set; }
@@ -113,12 +141,18 @@ internal sealed class ProbeTimeline
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Scenario: {Scenario.Name}");
-        sb.AppendLine($"First play: {(FirstPlay is { } fp ? $"{Fmt(fp.At)} on {fp.Key}" : "none")}");
+        sb.AppendLine($"First play: {(FirstPlay is { } fp ? $"{Fmt(fp.At)} on {fp.Key} ({FirstPlayKind})" : "none")}");
+        if (HeadStart is { } hs)
+            sb.AppendLine($"Head start: {Fmt(hs.From)}-{Fmt(hs.To)} High {string.Join(", ", hs.TopTier)}; Medium {string.Join(", ", hs.Medium)}");
+        if (FreshStartPlay is { } fsp)
+            sb.AppendLine($"Fresh start /play: {Fmt(fsp.From)}-{Fmt(fsp.To)}");
+        sb.AppendLine($"Backup: {(Backup is { } b ? $"{b.Key} chosen {Fmt(b.At)}, ready {(BackupReadyAt is { } r ? Fmt(r) : "never")}" : "none")}");
+        sb.AppendLine($"Priority holds: {(PriorityHolds.Count == 0 ? "none" : string.Join(", ", PriorityHolds.Select(h => $"{Fmt(h.From)}-{Fmt(h.To)}")))}");
         sb.AppendLine($"Pool (channel order): {string.Join(", ", Pool.Select((k, i) => $"#{i + 1} {k}"))}");
         sb.AppendLine($"Harness: {SettleCount} settles, {SettleTotalMs:0} ms total, slowest {SettleMaxMs:0} ms");
         sb.AppendLine("Milestones (play slots / plays at LS / mp open / health / FB active+queued / MP active+queued / hold | in flight):");
         foreach (var s in Snapshots)
-            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : "-")} | {string.Join(", ", s.InFlight)}");
+            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : s.HeadStartHold ? "HEAD" : "-")} | {string.Join(", ", s.InFlight)}");
         sb.AppendLine("Events:");
         foreach (var (at, line) in Log.OrderBy(l => l.At))
             sb.AppendLine($"  {Fmt(at)}  {line}");

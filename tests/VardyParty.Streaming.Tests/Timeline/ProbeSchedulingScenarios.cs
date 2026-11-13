@@ -80,9 +80,104 @@ internal static class ProbeSchedulingScenarios
     public static ProbeScenario DeadFbsOnly() => ProbeScenario.Named("Six dead FB, no MP")
         .DeadFb("d1", "d2", "d3", "d4", "d5", "d6");
 
-    public static ProbeScenario PriorityWindow() => ProbeScenario.Named("First play then the 30s priority window")
-        .Fb("fbA", Play.HealthyAt(5))
+    /// <summary>
+    /// Rule 11: fbA plays at 6s with no backup, so finding carries on; fbB (a Referer soak
+    /// link) joins at 8s and the window pauses finding while the prewarmer warms it.
+    /// </summary>
+    public static ProbeScenario PriorityWindow() => ProbeScenario.Named("First play, then the window holds only while the backup warms")
+        .Fb("fbA", Play.SoakAt(5))
+        .Fb("fbB", Play.SoakAt(7))
         .DeadFb("d1", "d2", "d3", "d4");
+
+    // ---- top tier (rule 1: High-confidence recommendations get a 12s head start) ----
+
+    /// <summary>Two High recommendations, both healthy inside the head start; a fast FB and an MP page wait.</summary>
+    public static ProbeScenario TwoHighHealthy() => ProbeScenario.Named("Two High recommendations healthy at 9s and 10s")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.HealthyAt(8))
+        .Fb("h2", Play.HealthyAt(9))
+        .DeadFb("d1")
+        .Recommend("h1").Recommend("h2");
+
+    /// <summary>The only High recommendation is slow (healthy at 31s): finding starts at 12s and plays first.</summary>
+    public static ProbeScenario OneHighSlow() => ProbeScenario.Named("One High recommendation healthy at 31s")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.HealthyAt(30))
+        .DeadFb("d1")
+        .Recommend("h1");
+
+    /// <summary>Both High recommendations are dead (20s each); a Low recommendation and the MP page are healthy.</summary>
+    public static ProbeScenario HighsDead() => ProbeScenario.Named("Two High recommendations dead, Low and MP healthy")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("l1", Play.HealthyAt(5))
+        .Fb("h1", Play.Dead())
+        .Fb("h2", Play.Dead())
+        .DeadFb("d1")
+        .Recommend("h1").Recommend("h2")
+        .Recommend("l1", RecommendationConfidence.Low);
+
+    /// <summary>Four High recommendations (two dead, two healthy): the top tier keeps both slots while its FB rows wait.</summary>
+    public static ProbeScenario FourHighs() => ProbeScenario.Named("Four High recommendations, two healthy")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.Dead())
+        .Fb("h2", Play.HealthyAt(9))
+        .Fb("h3", Play.HealthyAt(6))
+        .Fb("h4", Play.Dead())
+        .Recommend("h1").Recommend("h2").Recommend("h3").Recommend("h4");
+
+    /// <summary>A High-recommended MP page: it takes the MP lane at 0s; the FB rows are finding.</summary>
+    public static ProbeScenario RecommendedMp() => ProbeScenario.Named("High-recommended MP page")
+        .Mp("mp", MpScript.Normal(["A", "B", "C"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .DeadFb("d1", "d2")
+        .Recommend("mp");
+
+    /// <summary>One High recommendation, single-use (cookie-bound), nothing else healthy: a fresh start /play, no backup.</summary>
+    public static ProbeScenario SingleHealthyNoBackup() => ProbeScenario.Named("One healthy row (High, single-use), no backup")
+        .Fb("h1", Play.SingleUseAt(5))
+        .DeadFb("d1", "d2", "d3", "d4")
+        .Recommend("h1");
+
+    /// <summary>One High (healthy at 9s) and one Medium (healthy at 11s): the Medium row is the backup.</summary>
+    public static ProbeScenario HighPlusMedium() => ProbeScenario.Named("One High healthy at 9s, one Medium at 11s")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.HealthyAt(8))
+        .Fb("m1", Play.HealthyAt(10))
+        .DeadFb("d1")
+        .Recommend("h1")
+        .Recommend("m1", RecommendationConfidence.Medium);
+
+    /// <summary>No High, two Medium (one healthy, one dead): Medium is probed from 0s, finding after the head start.</summary>
+    public static ProbeScenario NoHighOnlyMedium() => ProbeScenario.Named("No High, two Medium")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("m1", Play.HealthyAt(6))
+        .Fb("m2", Play.Dead())
+        .DeadFb("d1")
+        .Recommend("m1", RecommendationConfidence.Medium)
+        .Recommend("m2", RecommendationConfidence.Medium);
+
+    /// <summary>The High row is dead (20s); the Medium row beside it is healthy at 6s and plays.</summary>
+    public static ProbeScenario HighDeadMediumHealthy() => ProbeScenario.Named("High dead, Medium healthy at 6s")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.Dead())
+        .Fb("m1", Play.HealthyAt(5))
+        .DeadFb("d1")
+        .Recommend("h1")
+        .Recommend("m1", RecommendationConfidence.Medium);
+
+    /// <summary><see cref="TwoHighHealthy"/> with no recommendations: no head start, behaviour unchanged.</summary>
+    public static ProbeScenario NoRecs() => ProbeScenario.Named("No recommendations (TwoHighHealthy rows)")
+        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Fb("f1", Play.HealthyAt(3))
+        .Fb("h1", Play.HealthyAt(8))
+        .Fb("h2", Play.HealthyAt(9))
+        .DeadFb("d1");
 
     public static ProbeScenario CdnUnreachableFirst() => ProbeScenario.Named("CDN-unreachable row ahead of a healthy row")
         .Fb("x", Play.CdnUnreachableAt(5))
@@ -117,17 +212,20 @@ internal static class ProbeSchedulingScenarios
         .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(58, "B").Done(59))
         .DeadFb("d1", "d2");
 
-    /// <summary>A recommended FB row is slow; the recommended MP page behind it is playable first.</summary>
-    public static ProbeScenario RecommendedMpBeforeSlowFb() => ProbeScenario.Named("Recommended MP playable at 11s, recommended FB ahead of it at 26s")
+    /// <summary>
+    /// A High-recommended FB row is slow; with one High row, the Medium-recommended MP
+    /// page takes the other slot from 0s and is playable first (first come, first served).
+    /// </summary>
+    public static ProbeScenario RecommendedMpBeforeSlowFb() => ProbeScenario.Named("Medium MP playable at 11s beside a slow High FB (26s)")
         .Fb("north", Play.HealthyAt(25))
         .Mp("mp", MpScript.Normal(["A", "B"]))
         .DeadFb("d1")
         .Recommend("north")
         .Recommend("mp", RecommendationConfidence.Medium);
 
-    /// <summary>The recommended row is slow; a later FB row is playable first.</summary>
-    public static ProbeScenario FbBeforeSlowRecommended() => ProbeScenario.Named("FB playable at 6s, recommended row at 16s")
-        .Fb("rec", Play.HealthyAt(15))
+    /// <summary>The High-recommended row is slow; after the head start a later FB row is playable first.</summary>
+    public static ProbeScenario FbBeforeSlowRecommended() => ProbeScenario.Named("FB playable at 18s (after the head start), High row at 26s")
+        .Fb("rec", Play.HealthyAt(25))
         .Fb("south", Play.HealthyAt(5))
         .DeadFb("d1")
         .Recommend("rec");
@@ -211,18 +309,33 @@ internal static class ProbeSchedulingScenarios
         (nameof(ChipLateAfterListing), ChipLateAfterListing),
         (nameof(RecommendedMpBeforeSlowFb), RecommendedMpBeforeSlowFb),
         (nameof(FbBeforeSlowRecommended), FbBeforeSlowRecommended),
+        (nameof(TwoHighHealthy), TwoHighHealthy),
+        (nameof(OneHighSlow), OneHighSlow),
+        (nameof(HighsDead), HighsDead),
+        (nameof(FourHighs), FourHighs),
+        (nameof(RecommendedMp), RecommendedMp),
+        (nameof(SingleHealthyNoBackup), SingleHealthyNoBackup),
+        (nameof(NoRecs), NoRecs),
+        (nameof(HighPlusMedium), HighPlusMedium),
+        (nameof(NoHighOnlyMedium), NoHighOnlyMedium),
+        (nameof(HighDeadMediumHealthy), HighDeadMediumHealthy),
     ];
 
     // ---- the table ----
 
     public static readonly ProbeCase[] Current =
     [
-        new("R1 54 rows: MP probed beside the recommended rows", "R1 R4",
+        new("R1 54 rows: the two High rows first, then the Medium row, then MP and the rest", "R1 R4",
             BuriedMp54Rows,
+            TopTierIs("f10", "f20"), MediumTierIs("f30"),
             StartOrderAmong(ProbeKind.Play, "f10", "f20", "f30", "f33"),
-            StartsBy("mp40", 0.001),
+            // Two High rows: the Medium row starts once both have a verdict (10s);
+            // finding waits for the head start (12s) because f30 is still probing.
+            StartsNotBefore("f30", 10), StartsBy("f30", 10.001),
+            NoFindingStartsBefore(12), StartsBy("mp40", 12.001),
             FirstPlayOn("f10"), FirstPlayBy(9.001),
-            ChipsQueued("mp40", 3, by: 9.001)),
+            BackupIs("f20"), BackupReadyBy(10.001),
+            ChipsQueued("mp40", 3, by: 21.001)),
 
         new("R2 two dead FB probed at once (~20s each)", "R2",
             DeadFbsOnly,
@@ -271,31 +384,38 @@ internal static class ProbeSchedulingScenarios
             NoIdleSlotWhileQueued(),
             NoSlotHeldAtEnd()),
 
-        new("R9 first come first served: a recommended MP playable first plays before a slower recommended FB", "R9 R10",
+        new("R1 R9 one High row: the Medium MP takes the free slot at 0s and plays first", "R1 R9 R10",
             RecommendedMpBeforeSlowFb,
+            TopTierIs("north"), MediumTierIs("mp"),
+            PostStartsBetween("mp", 0, 0.001),
+            NoFindingStartsBefore(12),
             FirstPlayOn("mp"), FirstPlayBy(11.001),
             FirstPlayWithinOfFirstHealthy(0.001),
             PoolOrder("mp", "mp:B", "north")),
 
-        new("R9 first come first served: an FB playable first plays before a slower recommended row", "R9 R10",
+        new("R1 R9 after the head start, first come first served: an FB plays before a slower High row", "R1 R9 R10",
             FbBeforeSlowRecommended,
-            FirstPlayOn("south"), FirstPlayBy(6.001),
+            StartsNotBefore("south", 12), StartsBy("south", 12.001),
+            FirstPlayOn("south"), FirstPlayBy(18.001),
             FirstPlayWithinOfFirstHealthy(0.001),
             PoolOrder("south", "rec")),
 
-        new("R11 after first play no new probe starts for 30s", "R11",
+        new("R11 the priority window holds only while the backup warms", "R11 R12",
             PriorityWindow,
-            FirstPlayBy(6.001),
-            NoProbeStartsInPriorityWindow(),
-            StartsNotBefore("d2", 36), StartsBy("d2", 36.001)),
+            FirstPlayOn("fbA"), FirstPlayBy(6.001),
+            FirstPlayOpens(FirstPlayOpenStrategy.StartKind.PlayProbedLink),
+            StartsBy("d1", 6.001),
+            BackupIs("fbB"), BackupReadyBy(15.001),
+            PriorityHoldsUntilBackupReady(),
+            NoBrowserProbeStartsWhilePriorityHolds(),
+            StartsNotBefore("d2", 15), StartsBy("d2", 15.001)),
 
         new("R11 harvested MP chips are probed inside the priority window", "R11",
             NormalMp,
             FirstPlayOn("fbA"), FirstPlayBy(4.001),
-            NoBrowserProbeStartsInPriorityWindow(),
+            NoPriorityHold(),
             ChipProbedInPriorityWindow("mp:E"),
-            RowEnds("mp:E", StreamResolutionStatus.Healthy, 14.9, 15.1),
-            StartsNotBefore("fbC", 34), StartsBy("fbC", 34.001)),
+            RowEnds("mp:E", StreamResolutionStatus.Healthy, 14.9, 15.1)),
 
         new("R13 a CDN-unreachable row is Deferred and does not hold first play", "R13",
             CdnUnreachableFirst,
@@ -351,10 +471,6 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp:B", StreamResolutionStatus.Failed, 299.9, 300.1),
             MpPostCount("mp", 1)),
 
-        new("R12 the startup race never waits on a listed /mp (slow ten-chip page)", "R2 R12",
-            () => SlowTenChipPage().WithStartupRaceDrain(),
-            DrainWithin(ProbeAcceptance.DrainSeconds)),
-
         new("R9 all FB dead: first play on the MP page's first chip", "R6 R9",
             AllFbDeadWorkingMp,
             FirstPlayOn("mp"), FirstPlayBy(11.001),
@@ -376,7 +492,7 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp:F", StreamResolutionStatus.Healthy, 15.9, 16.1),
             PoolOrder("mp", "mp:B", "mp:C", "mp:D", "mp:E", "mp:F"),
             ChipsVisibleWithin("mp"),
-            NoBrowserProbeStartsInPriorityWindow(),
+            NoPriorityHold(),
             NoIdleSlotWhileQueued()),
 
         new("R7 playlist-only chips are probed once the harvest ends", "R6 R7 R11",
@@ -386,7 +502,7 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp", StreamResolutionStatus.Healthy, 13.4, 13.6),
             RowEnds("mp:C", StreamResolutionStatus.Healthy, 15.4, 15.6),
             PoolOrder("fbA", "mp", "mp:B", "mp:C"),
-            NoBrowserProbeStartsInPriorityWindow()),
+            NoPriorityHold()),
 
         new("R6 every chip a miss: one POST /mp, every chip Failed from that harvest", "R3 R6",
             AllChipsMiss,
@@ -435,6 +551,100 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mpB:B2", StreamResolutionStatus.Healthy),
             LocalServiceSessionsNeverExceed(3),
             NoSlotHeldAtEnd()),
+
+        // ---- top tier first (rule 1), first play (rule 12), backup (rule 11) ----
+
+        new("R1 two High healthy: first play on the first, the second is the backup, finding waits", "R1 R11 R12",
+            TwoHighHealthy,
+            TopTierIs("h1", "h2"),
+            NoFindingStartsBefore(10), StartsBy("mp", 10.001),
+            FirstPlayOn("h1"), FirstPlayBy(9.001),
+            FirstPlayOpens(FirstPlayOpenStrategy.StartKind.UseExisting),
+            BackupIs("h2"), BackupReadyBy(10.001),
+            NoPriorityHold(),
+            PoolOrder("h1", "h2", "f1"),
+            TopTierHeadStartHeld()),
+
+        new("R1 one slow High: finding starts at 12s and plays first", "R1 R9",
+            OneHighSlow,
+            TopTierIs("h1"),
+            // MP lane first: /mp takes the free slot at 12s; f1 gets one when the chips list (21s).
+            NoFindingStartsBefore(12), PostStartsBetween("mp", 12, 12.001), StartsBy("f1", 12.001),
+            FirstPlayOn("mp"), FirstPlayBy(23.001),
+            RowEnds("h1", StreamResolutionStatus.Healthy, 30.9, 31.1),
+            TopTierHeadStartHeld()),
+
+        new("R1 both High dead: finding asks at 12s, gets the slots they free at 20s; first play on the Low recommendation", "R1 R9",
+            HighsDead,
+            TopTierIs("h1", "h2"),
+            // Calls include the wait for a LocalService slot: both are held by the dead High rows until 20s.
+            NoFindingStartsBefore(12), StartsBy("mp", 12.001), PostStartsBetween("mp", 20, 20.001),
+            FirstPlayOn("l1"), FirstPlayBy(26.001),
+            TopTierHeadStartHeld()),
+
+        new("R1 four High: top-tier FB rows keep the slots; MP waits while one is queued", "R1 R11",
+            FourHighs,
+            TopTierIs("h1", "h2", "h3", "h4"),
+            FirstPlayOn("h2"), FirstPlayBy(10.001),
+            StartsBy("h3", 10.001),
+            // h4 (the last High FB row) starts at 17s; until then the MP lane waits.
+            StartsNotBefore("mp", 17), StartsBy("mp", 17.001),
+            NoFindingStartsBefore(17),
+            BackupIs("h3"), BackupReadyBy(17.001),
+            TopTierHeadStartHeld()),
+
+        new("R1 High-recommended MP page takes the MP lane at 0s", "R1 R4",
+            RecommendedMp,
+            TopTierIs("mp"),
+            StartsBy("mp", 0.001),
+            NoFindingStartsBefore(11),
+            FirstPlayOn("mp"), FirstPlayBy(11.001),
+            BackupIs("mp:B"),
+            TopTierHeadStartHeld()),
+
+        new("R11 R12 single healthy row, single-use: fresh start /play, no backup, finding carries on", "R11 R12",
+            SingleHealthyNoBackup,
+            TopTierIs("h1"),
+            FirstPlayOpens(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst),
+            FirstPlayOn("h1"), FirstPlayBy(11.001),
+            NoBackup(), NoPriorityHold(),
+            StartsBy("d1", 11.001),
+            FirstPlayWithinOfFirstHealthy()),
+
+        new("R1 one High, one Medium: High plays, the Medium row is the backup, finding after both", "R1 R11",
+            HighPlusMedium,
+            TopTierIs("h1"), MediumTierIs("m1"),
+            StartsBy("m1", 0.001),
+            FirstPlayOn("h1"), FirstPlayBy(9.001),
+            BackupIs("m1"), BackupReadyBy(11.001),
+            NoFindingStartsBefore(11), StartsBy("mp", 11.001),
+            PoolOrder("h1", "m1"),
+            TopTierHeadStartHeld()),
+
+        new("R1 no High, only Medium: Medium probed from 0s, finding after the head start", "R1",
+            NoHighOnlyMedium,
+            TopTierIs(), MediumTierIs("m1", "m2"),
+            StartsBy("m1", 0.001), StartsBy("m2", 0.001),
+            FirstPlayOn("m1"), FirstPlayBy(7.001),
+            NoFindingStartsBefore(12), StartsBy("mp", 12.001),
+            TopTierHeadStartHeld()),
+
+        new("R1 High dead, Medium healthy: the Medium row plays; finding after the head start", "R1 R9",
+            HighDeadMediumHealthy,
+            TopTierIs("h1"), MediumTierIs("m1"),
+            StartsBy("m1", 0.001),
+            FirstPlayOn("m1"), FirstPlayBy(6.001),
+            RowEnds("h1", StreamResolutionStatus.Failed, 19.9, 20.1),
+            NoFindingStartsBefore(12), StartsBy("mp", 12.001),
+            BackupIs("mp"),
+            TopTierHeadStartHeld()),
+
+        new("R1 no recommendations: no head start, behaviour unchanged", "R1 R4 R9",
+            NoRecs,
+            NoHeadStart(),
+            StartsBy("mp", 0.001),
+            FirstPlayOn("f1"), FirstPlayBy(4.001),
+            NoIdleSlotWhileQueued()),
     ];
 
     /// <summary>Rules written down before the code does them. Empty: every rule is CURRENT.</summary>
