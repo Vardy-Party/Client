@@ -85,6 +85,21 @@ internal static class Expect
 
     public static Expectation SeedReleasesSlotBy(string mpId, double by) => SeedReturns(mpId, 0, by);
 
+    /// <summary>A4: the seed call returns (its slot released) within <paramref name="seconds"/> of its first <c>POST /mp</c> (a page that waited for a slot is measured from when it got one).</summary>
+    public static Expectation SeedReleasesSlotWithinOfPost(string mpId, double seconds = ProbeAcceptance.SeedGiveUpSeconds) => new(
+        $"A4 {mpId} /mp seed returns within {seconds}s of its POST",
+        t =>
+        {
+            if (t.FirstCall(mpId) is not { Kind: ProbeKind.MpSeed } c)
+                return $"{mpId} seed never started";
+            var post = t.PostsAt(mpId).Select(p => (double?)p).Min();
+            if (post is null)
+                return c.End is null ? null : $"{mpId} never POSTed";
+            return c.End is { } end && end - post.Value <= seconds + Eps
+                ? null
+                : $"POST {Fmt(post.Value)}, seed returned {(c.End is { } e ? Fmt(e) : "never")}";
+        });
+
     public static Expectation PlaysWhileMpOpenAtMost(int n) => new(
         $"at most {n} /play at LocalService while an MP probe is open",
         t => MaxPlaysWhileMp(t) is var m && m <= n ? null : $"saw {m}");

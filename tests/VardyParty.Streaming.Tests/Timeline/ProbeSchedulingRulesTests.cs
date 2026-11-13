@@ -87,7 +87,7 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
         {
             var listed = timeline.ListedAt(id) is not null;
             rows.Add(($"A2 {id}", Expect.ChipsVisibleWithin(id).Check(timeline), listed));
-            rows.Add(($"A4 {id}", Expect.SeedReleasesSlotBy(id, ProbeAcceptance.SeedGiveUpSeconds + 0.001).Check(timeline), true));
+            rows.Add(($"A4 {id}", Expect.SeedReleasesSlotWithinOfPost(id).Check(timeline), true));
         }
 
         foreach (var (measure, why, applies) in rows)

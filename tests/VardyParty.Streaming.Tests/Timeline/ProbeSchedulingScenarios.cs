@@ -216,9 +216,10 @@ internal static class ProbeSchedulingScenarios
         .Recommend("h1").Recommend("mp");
 
     /// <summary>
-    /// Rule 1, "Medium limited to one slot always": three Medium rows, the first two dead
-    /// (20s). When m1 and f1 both fail at 20s (after the 12s head start) only one Medium row
-    /// takes a slot; finding takes the other.
+    /// Rule 1 and the rule-11 backup push: three Medium rows, the first two dead (20s). When m1
+    /// and f1 both fail at 20s (after the 12s head start) only one Medium row takes a slot;
+    /// finding (f2) takes the other, since it is queued. f2 plays at 27s with no backup, so
+    /// the Medium cap lifts and m3 takes f2's slot ahead of d1: backup at 33s (46s before).
     /// </summary>
     public static ProbeScenario MediumCapAfterHeadStart() => ProbeScenario.Named("Three Medium rows past the head start: one at a time")
         .Fb("m1", Play.Dead())
@@ -232,10 +233,10 @@ internal static class ProbeSchedulingScenarios
         .Recommend("m3", RecommendationConfidence.Medium);
 
     /// <summary>
-    /// Rule 1, "Medium limited to one slot always", in a re-queue pass: m1, m2 and f1 are CDN
-    /// unreachable at first and healthy when the orchestrator tries them again (2 min after
-    /// run 1 ends at 33s). No head start then, but the session's tiers still hold m2 until m1
-    /// yields at 158s; without the cap m2 would start at 155s, beside m1's /play.
+    /// Rule 1 in a re-queue pass: m1, m2 and f1 are CDN unreachable at first and healthy when
+    /// the orchestrator tries them again (2 min after run 1 ends at 33s). No head start then,
+    /// but the session's tiers still apply: at 153s the second slot goes to finding (f1), not
+    /// to m2; when f1 is done (155s) nothing else is queued, so m2 takes the free slot.
     /// </summary>
     public static ProbeScenario MediumCapInReQueuePass() => ProbeScenario.Named("Two Medium rows re-queued after CDN unreachable: one at a time")
         .Fb("m1", Play.CdnUnreachableAt(2), retry: Play.HealthyAt(4))
@@ -245,6 +246,35 @@ internal static class ProbeSchedulingScenarios
         .Recommend("m1", RecommendationConfidence.Medium)
         .Recommend("m2", RecommendationConfidence.Medium)
         .ThenReResolveDeferredAfter(120);
+
+    /// <summary>
+    /// Rule 1 (Jon: "Let a second Medium use a slot only when nothing else is queued"): two
+    /// Medium rows and no finding at all. m1 is dead (20s); m2 takes the free slot at 0s, so
+    /// the slot never sits idle while a Medium row waits.
+    /// </summary>
+    public static ProbeScenario MediumOnlyNoFinding() => ProbeScenario.Named("Two Medium rows, nothing else: the second takes the free slot")
+        .Fb("m1", Play.Dead())
+        .Fb("m2", Play.HealthyAt(5))
+        .Recommend("m1", RecommendationConfidence.Medium)
+        .Recommend("m2", RecommendationConfidence.Medium);
+
+    /// <summary>
+    /// Rule 1: finding work appears mid-probe. Page mpA (finding) takes the second slot at 0s,
+    /// so m2 waits; it starts once mpA lists its chips (4s), the only finding left being a
+    /// chip not sent yet and page mpB behind mpA's harvest. When mpA's harvest ends (30s),
+    /// mpB asks for a slot: the running Medium probes are not pre-empted and mpB takes the
+    /// next free slot (m2's, 39s). m2 plays at 40s with no backup, so m3 is let in then
+    /// (rule-11 backup push) and waits for m1's slot.
+    /// </summary>
+    public static ProbeScenario FindingArrivesMidProbe() => ProbeScenario.Named("Finding arrives while two Medium rows run")
+        .Mp("mpA", MpScript.Headers(4).Chips(4, "A").Chip(5, "A", ChipKind.Miss).Done(30))
+        .Mp("mpB", MpScript.Normal(["B1"]))
+        .Fb("m1", Play.HealthyAt(45))
+        .Fb("m2", Play.HealthyAt(35))
+        .Fb("m3", Play.HealthyAt(5))
+        .Recommend("m1", RecommendationConfidence.Medium)
+        .Recommend("m2", RecommendationConfidence.Medium)
+        .Recommend("m3", RecommendationConfidence.Medium);
 
     /// <summary><see cref="TwoHighHealthy"/> with no recommendations: no head start, behaviour unchanged.</summary>
     public static ProbeScenario NoRecs() => ProbeScenario.Named("No recommendations (TwoHighHealthy rows)")
@@ -400,6 +430,8 @@ internal static class ProbeSchedulingScenarios
         (nameof(HighMpChips), HighMpChips),
         (nameof(MediumCapAfterHeadStart), MediumCapAfterHeadStart),
         (nameof(MediumCapInReQueuePass), MediumCapInReQueuePass),
+        (nameof(MediumOnlyNoFinding), MediumOnlyNoFinding),
+        (nameof(FindingArrivesMidProbe), FindingArrivesMidProbe),
     ];
 
     // ---- the table ----
@@ -726,25 +758,44 @@ internal static class ProbeSchedulingScenarios
             BackupIs("mp"),
             TopTierHeadStartHeld()),
 
-        new("R1 Medium is limited to one slot after the head start too: m2 and f2 take the slots m1 and f1 free at 20s", "R1",
+        new("R1 R11 one Medium slot past the head start while finding is queued; with no backup at first play the cap lifts", "R1 R11",
             MediumCapAfterHeadStart,
             TopTierIs(), MediumTierIs("m1", "m2", "m3"),
             StartsBy("m1", 0.001), StartsBy("f1", 0.001),
             StartsBy("m2", 20.001), StartsBy("f2", 20.001),
-            StartsNotBefore("m3", 40),
-            MediumRunningNeverExceeds(1),
-            FirstPlayOn("f2")),
+            StartsBy("m3", 27.001), StartsNotBefore("m3", 27),
+            StartsNotBefore("d1", 33),
+            FirstPlayOn("f2"), FirstPlayBy(27.001),
+            BackupIs("m3"), BackupReadyBy(33.001)),
 
-        new("R1 Medium is limited to one slot in a re-queue pass: m2 waits for m1, finding fills the other slot", "R1 R11 R13",
+        new("R1 re-queue pass: the second slot goes to finding before a second Medium; then the free slot to m2", "R1 R11 R13",
             MediumCapInReQueuePass,
             MediumTierIs("m1", "m2"),
             RowEnds("m1", StreamResolutionStatus.Deferred, 2, 2.001),
             FirstPlayOn("f2"),
             NthCallStartsBetween("m1", 2, 153, 153.001), NthCallStartsBetween("f1", 2, 153, 153.001),
-            NthCallStartsBetween("m2", 2, 158, 158.001),
-            MediumRunningNeverExceeds(1),
+            NthCallStartsBetween("m2", 2, 155, 155.001),
+            MediumRunningNeverExceeds(2),
             PoolOrder("f2", "f1", "m1", "m2"),
             BackupReplaced("f1", "m1")),
+
+        new("R1 two Medium rows and nothing else: the second takes the free slot at 0s", "R1",
+            MediumOnlyNoFinding,
+            MediumTierIs("m1", "m2"),
+            StartsBy("m1", 0.001), StartsBy("m2", 0.001),
+            FirstPlayOn("m2"), FirstPlayBy(6.001),
+            RowEnds("m1", StreamResolutionStatus.Failed, 19.9, 20.1)),
+
+        new("R1 finding arrives while two Medium rows run: no pre-emption, the next free slot goes to finding", "R1 R11",
+            FindingArrivesMidProbe,
+            MediumTierIs("m1", "m2", "m3"),
+            StartsBy("m1", 0.001), PostStartsBetween("mpA", 0, 0.001),
+            StartsBy("m2", 4.001), StartsNotBefore("m2", 4),
+            PostStartsBetween("mpB", 39, 39.001),
+            RowEnds("m2", StreamResolutionStatus.Healthy, 40, 40.001),
+            RowEnds("m1", StreamResolutionStatus.Healthy, 46, 46.001),
+            StartsNotBefore("m3", 40),
+            FirstPlayOn("m2"), BackupIs("m1")),
 
         new("R11 an early FB row is the backup only until the second High row is playable", "R1 R11",
             EarlyFbBeforeLateHigh,

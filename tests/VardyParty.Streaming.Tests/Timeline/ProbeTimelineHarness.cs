@@ -329,6 +329,7 @@ internal static class ProbeTimelineHarness
 
             _priorityTimer?.Dispose();
             _switchTimer?.Dispose();
+            _throttle.SetBackupWanted(false);
             lock (_gate)
                 EndPriorityHold();
             _headStart?.Dispose();
@@ -460,6 +461,8 @@ internal static class ProbeTimelineHarness
         {
             _pool.AddHealthyStream(row);
             var key = KeyOf(row.Stream);
+            // Rule 11 backup push, as the orchestrator: a row plays and no other is in the pool yet.
+            _throttle.SetBackupWanted(_pool.GetHealthyStreams().Count < 2);
             // Channel numbers: the pool before this row must be a prefix of the pool after it.
             var pool = _pool.GetHealthyStreams().Select(e => KeyOf(e.Stream)).ToList();
             if (!pool.Take(_lastPool.Count).SequenceEqual(_lastPool))
