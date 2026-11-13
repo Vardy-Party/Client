@@ -107,7 +107,8 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
 2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. Try-order only decides what is probed first.
-   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play. The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R9 first come first served" (docs/PROBE_SCHEDULING_RULES.md rule 9).
+   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play, except in the startup race (below). The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R9 first come first served" (docs/PROBE_SCHEDULING_RULES.md rule 9).
+   - Startup race exception (Jon, 13 Nov 2026: "Keep the recommended head start in the startup race"): the recommended leg gets up to 1.5s of grace over an already-playable partner (`PlaybackRacePolicy.RecommendedGrace`, `PlaybackRacePolicy.Decide`, `PlaybackUrlRacer.RaceAsync`). See "First play open + early Next capacity" for which path is live.
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
@@ -503,6 +504,13 @@ When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRa
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
 `RaceAsync` winner wait is no longer used for first picture.
+
+Recommended head start (Jon, 13 Nov 2026: "Keep the recommended head start in the startup
+race"): the one exception to first come, first served. In the dual-leg race the recommended
+leg gets up to 1.5s (`PlaybackRacePolicy.RecommendedGrace`) of grace over a partner that is
+already playable, before the partner plays (`PlaybackRacePolicy.Decide`, `PlaybackUrlRacer.RaceAsync`,
+tested by `PlaybackRaceBusinessRulesTests`). Open-recommended-first above never plays the partner
+ahead of the start row at all (the partner only warms for Next), so the live path has no grace timer.
 
 Tests:
 - Unit: `FirstPlayOpenStrategyTests` (PlanStart / DecideAfter / PlanNext / priority helpers)
