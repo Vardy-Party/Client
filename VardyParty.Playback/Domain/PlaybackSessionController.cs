@@ -20,6 +20,7 @@ public sealed class PlaybackSessionController
     private int _healthyStreamCount;
     private bool _isBuffering;
     private int _consecutiveDownloadFailures;
+    private int _consecutiveRefusedDownloads;
 
     // Same-stream recovery: an established stream that errors is retried
     // (reload, then a fresh /play) before the session switches away from it.
@@ -197,6 +198,7 @@ public sealed class PlaybackSessionController
         _isBuffering = false;
         _usedCachedUrl = usedCachedUrl;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _videoConfirmed = false;
         _videoSeen = false;
         _readyAt = null;
@@ -404,21 +406,30 @@ public sealed class PlaybackSessionController
     /// Windows AdaptiveMediaSource download failures. After
     /// <see cref="PlaybackPolicy.MaxConsecutiveDownloadFailures"/> this is a hard Error.
     /// </summary>
-    public IReadOnlyList<PlaybackEffect> NotifyDownloadFailure(string? reason = null)
+    /// <param name="statusCode">HTTP status of the failed download (0 when unknown).
+    /// <see cref="PlaybackPolicy.MaxConsecutiveRefusedDownloads"/> refused (401/403) ones in a
+    /// row are a hard Error at once: Windows 13 Nov 2026, every fhlsport955 segment of three
+    /// V2 chips was 403 and the black screen lasted until Media Foundation gave up (~5s).</param>
+    public IReadOnlyList<PlaybackEffect> NotifyDownloadFailure(string? reason = null, int statusCode = 0)
     {
         if (_state == PlaybackSessionState.Closed)
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
 
         RefreshHealthyStreamCount();
         _consecutiveDownloadFailures++;
-        if (!PlaybackPolicy.IsHardDownloadFailure(_consecutiveDownloadFailures))
+        _consecutiveRefusedDownloads = PlaybackPolicy.IsRefusedStatus(statusCode) ? _consecutiveRefusedDownloads + 1 : 0;
+        if (!PlaybackPolicy.IsHardDownloadFailure(_consecutiveDownloadFailures, _consecutiveRefusedDownloads))
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Download failure below threshold")];
 
+        var refused = _consecutiveRefusedDownloads >= PlaybackPolicy.MaxConsecutiveRefusedDownloads;
+        var message = refused
+            ? PlaybackPolicy.RefusedDownloadReason(statusCode) + (string.IsNullOrWhiteSpace(reason) ? string.Empty : $": {reason}")
+            : reason ?? "Consecutive download failures";
         return OnError(new MediaEngineEvent
         {
             Kind = MediaEngineEventKind.Error,
             Generation = _attachGeneration,
-            Message = reason ?? "Consecutive download failures"
+            Message = message
         });
     }
 
@@ -431,7 +442,11 @@ public sealed class PlaybackSessionController
     /// <summary>
     /// A successful segment/manifest download resets the consecutive-failure counter.
     /// </summary>
-    public void NotifyDownloadSuccess() => _consecutiveDownloadFailures = 0;
+    public void NotifyDownloadSuccess()
+    {
+        _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
+    }
 
     public void Reset()
     {
@@ -446,6 +461,7 @@ public sealed class PlaybackSessionController
         _healthyStreamCount = 0;
         _isBuffering = false;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _metricsWindow = new StreamMetricsWindow();
         _videoConfirmed = false;
         _videoSeen = false;
@@ -465,6 +481,7 @@ public sealed class PlaybackSessionController
         _cacheRetryUsed = false;
         _usedCachedUrl = false;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _cdnUnreachableSkips = 0;
         _state = PlaybackSessionState.Playing;
         // The retry worked. The budget refills once SameStreamRetryWindow passes
@@ -476,7 +493,17 @@ public sealed class PlaybackSessionController
 
         if (!RequireVideoConfirmation)
         {
+            // Hosts without video confirmation (Windows, Linux, Apple): Ready is the
+            // picture, so it is also the "stream confirmed" moment. Without this the pool
+            // never cleared tried-this-cycle marks there and the switch counter/trace
+            // (IStreamSwitchingService.PlayingConfirmed) never saw a switch (Windows log
+            // 13 Nov 2026 19:41:28: LiveStreams played, from_row stayed techydeals).
             _lastGoodUrl = _currentUrl;
+            var key = FeedKey(_currentUrl);
+            if (key.Length > 0)
+                _failedFeeds.Remove(key);
+            try { StreamConfirmedInCycle?.Invoke(_currentUrl); }
+            catch { /* the pool mark is advisory */ }
             return
             [
                 new PlaybackEffect(PlaybackEffectKind.MarkEstablished, Url: _currentUrl, Generation: _attachGeneration),
@@ -801,6 +828,7 @@ public sealed class PlaybackSessionController
         // Every failure past the threshold re-enters OnError. Without this reset,
         // one burst of segment failures burned the whole budget in a single tick.
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _isBuffering = true;
         _state = PlaybackSessionState.Buffering;
         _metricsWindow = new StreamMetricsWindow();
