@@ -76,6 +76,14 @@ public class StreamResolutionOrchestrator(
     private int _playbackPriorityWindowActive;
 
     /// <summary>
+    /// This session's recommended tiers (rule 1), kept past the head start: the backup
+    /// preference (rule 11) reads them. Null when nothing is recommended High or Medium.
+    /// </summary>
+    private StreamTiers? _tiers;
+
+    private Func<EnrichedStream, StreamTier>? TierOf => _tiers is { } tiers ? tiers.TierOf : null;
+
+    /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
     /// running and was not cancelled. When this runs out the outcome is
     /// StartRefused — surfaced to the user — never a silent empty outcome.
@@ -186,6 +194,7 @@ public class StreamResolutionOrchestrator(
     {
         Reset();
         streamSwitchingService.Initialize(game.ApiLeague, game.Home, game.Away);
+        _tiers = null;
 
         _isResolving = true;
         _status = localLanPlayService?.UsesRemoteCompute == true
@@ -240,6 +249,10 @@ public class StreamResolutionOrchestrator(
         void StartPlaybackChain(EnrichedStream first)
         {
             firstPlayDiag.MarkPlaybackChainStarted(first.Stream?.Channel);
+            // Rule 11: while this start row plays, the backup (Next, auto-advance and the
+            // prewarmer's first target) is the best-tier other row, whatever its channel number.
+            if (_tiers is not null)
+                streamSwitchingService.SetBackupPreference(first, TierOf);
             BeginPlaybackPriorityWindow(cancellationToken);
             // Rule 12: a start row whose probed link cannot be reused needs one fresh
             // /play. Pause new finding starts now, before the resolver fills its next
@@ -375,7 +388,9 @@ public class StreamResolutionOrchestrator(
                     string.Join(", ", mediumTier.Select(row => row.Channel)));
             }
 
-            using (raceThrottle?.BeginTopTierHeadStart(topTier, mediumTier, HeadStartTime))
+            var headStart = raceThrottle?.BeginTopTierHeadStart(topTier, mediumTier, HeadStartTime);
+            _tiers = headStart?.Tiers;
+            using (headStart)
             {
                 await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
                                    orderedStreams,
@@ -1345,7 +1360,7 @@ public class StreamResolutionOrchestrator(
             healthy = streamSwitchingService.GetHealthyStreams();
 
         var plan = FirstPlayOpenStrategy.PlanStart(
-            stream, healthy, now, warmUrls.IsWarmOrInFlight);
+            stream, healthy, now, warmUrls.IsWarmOrInFlight, TierOf);
         if (plan.Kind == FirstPlayOpenStrategy.StartKind.UseExisting)
             return new RaceStart(false, null, null);
 
@@ -1616,7 +1631,8 @@ public class StreamResolutionOrchestrator(
                 first,
                 streamSwitchingService.GetHealthyStreams(),
                 DateTimeOffset.UtcNow,
-                warmUrls.IsWarmOrInFlight).Kind
+                warmUrls.IsWarmOrInFlight,
+                TierOf).Kind
             == FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst;
     }
 
@@ -1642,8 +1658,11 @@ public class StreamResolutionOrchestrator(
         var now = DateTimeOffset.UtcNow;
         return FirstPlayOpenStrategy.PlaybackPriorityHolds(
             FirstPlayOpenStrategy.CountBackupsNeedingWarm(
-                streamSwitchingService.GetHealthyStreams(),
-                streamSwitchingService.GetCurrentStream(),
+                streamSwitchingService.GetUpcoming(PlaybackUrlReusePolicy.PrewarmDepth)
+                    ?? PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
+                        streamSwitchingService.GetHealthyStreams(),
+                        streamSwitchingService.GetCurrentStream(),
+                        PlaybackUrlReusePolicy.PrewarmDepth),
                 now,
                 row => warmUrls.Peek(row) is { } entry ? (entry.Expiry, entry.ResolvedAt) : null,
                 warmUrls.IsUnwarmable));

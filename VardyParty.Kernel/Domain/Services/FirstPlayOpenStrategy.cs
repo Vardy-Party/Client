@@ -94,7 +94,8 @@ public static class FirstPlayOpenStrategy
         EnrichedStream recommended,
         IReadOnlyList<EnrichedStream> healthy,
         DateTimeOffset now,
-        Func<EnrichedStream, bool>? isWarmOrInFlight = null)
+        Func<EnrichedStream, bool>? isWarmOrInFlight = null,
+        Func<EnrichedStream, StreamTier>? tierOf = null)
     {
         ArgumentNullException.ThrowIfNull(recommended);
         ArgumentNullException.ThrowIfNull(healthy);
@@ -124,7 +125,7 @@ public static class FirstPlayOpenStrategy
         }
 
         var partner = PlaybackRacePolicy.PickPartner(
-            healthy, recommended, now, isWarmOrInFlight);
+            healthy, recommended, now, isWarmOrInFlight, tierOf);
 
         return new StartPlan(
             StartKind.ResolveRecommendedOpenFirst,
@@ -174,13 +175,29 @@ public static class FirstPlayOpenStrategy
         Func<EnrichedStream, bool> isUnwarmable)
     {
         ArgumentNullException.ThrowIfNull(healthy);
+        return CountBackupsNeedingWarm(
+            PlaybackUrlReusePolicy.UpcomingInSwitchOrder(healthy, current, PlaybackUrlReusePolicy.PrewarmDepth),
+            now,
+            warmEntry,
+            isUnwarmable);
+    }
+
+    /// <summary>
+    /// As above, for the rows the prewarmer would look at, in the order it looks
+    /// (<c>IStreamSwitchingService.GetUpcoming</c>: backup order while the start row plays).
+    /// </summary>
+    public static int CountBackupsNeedingWarm(
+        IReadOnlyList<EnrichedStream> upcoming,
+        DateTimeOffset now,
+        Func<EnrichedStream, (DateTimeOffset Expiry, DateTimeOffset ResolvedAt)?> warmEntry,
+        Func<EnrichedStream, bool> isUnwarmable)
+    {
+        ArgumentNullException.ThrowIfNull(upcoming);
         ArgumentNullException.ThrowIfNull(warmEntry);
         ArgumentNullException.ThrowIfNull(isUnwarmable);
 
-        var upcoming = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
-            healthy, current, PlaybackUrlReusePolicy.PrewarmDepth);
         var n = 0;
-        for (var depth = 0; depth < upcoming.Count; depth++)
+        for (var depth = 0; depth < upcoming.Count && depth < PlaybackUrlReusePolicy.PrewarmDepth; depth++)
         {
             var row = upcoming[depth];
             if (!PlaybackUrlReusePolicy.ShouldPrewarm(row) || isUnwarmable(row))

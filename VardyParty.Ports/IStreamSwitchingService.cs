@@ -115,4 +115,22 @@ public interface IStreamSwitchingService
 
     /// <summary>True when Next has somewhere untried to go (another unskipped row, or untried fallbacks for the current one).</summary>
     bool HasUntriedOther() => true;
+
+    // ---- Backup preference (docs/PROBE_SCHEDULING_RULES.md rule 11) ----
+    // While the start row (the first to play) is playing, the backup - where Next and
+    // auto-advance go, and what the prewarmer warms first - is the best-tier other row:
+    // the second playable High, then the first playable Medium, then the first playable
+    // finding row. Channel numbers never change; from any other row Next walks them as
+    // before. Defaults keep other implementations unchanged.
+
+    /// <summary>Sets the start row and how to read a row's tier; null for either clears the preference.</summary>
+    void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf) { }
+
+    /// <summary>
+    /// Up to <paramref name="depth"/> rows Next would reach first: backup order while the
+    /// start row plays (<see cref="PlaybackUrlReusePolicy.UpcomingInBackupOrder"/>), else
+    /// switch order.
+    /// </summary>
+    IReadOnlyList<EnrichedStream> GetUpcoming(int depth) =>
+        PlaybackUrlReusePolicy.UpcomingInSwitchOrder(GetHealthyStreams(), GetCurrentStream(), depth);
 }

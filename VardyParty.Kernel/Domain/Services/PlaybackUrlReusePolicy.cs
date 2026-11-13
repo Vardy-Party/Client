@@ -310,6 +310,35 @@ public static class PlaybackUrlReusePolicy
         return result;
     }
 
+    /// <summary>
+    /// Backup order (docs/PROBE_SCHEDULING_RULES.md rule 11): up to <paramref name="depth"/>
+    /// pool rows other than <paramref name="current"/>, best tier first (High, then Medium,
+    /// then finding) and, within a tier, by channel number (the first to become playable).
+    /// Channel numbers do not change; only which row is the backup. With no
+    /// <paramref name="tierOf"/> this is <see cref="UpcomingInSwitchOrder"/>.
+    /// </summary>
+    public static IReadOnlyList<EnrichedStream> UpcomingInBackupOrder(
+        IReadOnlyList<EnrichedStream> healthy,
+        EnrichedStream? current,
+        int depth,
+        Func<EnrichedStream, StreamTier>? tierOf)
+    {
+        ArgumentNullException.ThrowIfNull(healthy);
+        if (tierOf is null)
+            return UpcomingInSwitchOrder(healthy, current, depth);
+        if (depth <= 0)
+            return new List<EnrichedStream>();
+
+        return healthy
+            .Select((row, index) => (Row: row, Index: index))
+            .Where(x => !ReferenceEquals(x.Row, current))
+            .OrderBy(x => tierOf(x.Row))
+            .ThenBy(x => x.Index)
+            .Select(x => x.Row)
+            .Take(depth)
+            .ToList();
+    }
+
     public static string SwitchPendingText(string? channel)
         => $"Switching to {Label(channel)}\u2026";
 

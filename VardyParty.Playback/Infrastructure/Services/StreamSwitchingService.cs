@@ -13,6 +13,8 @@ namespace VardyParty.Playback;
 /// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
 /// later numbers down to close the gap. Merged duplicates never take a number; a
 /// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
+/// While the start row (the first to play) plays, Next goes to the backup - the best-tier
+/// other row (docs/PROBE_SCHEDULING_RULES.md rule 11) - without renumbering anything.
 /// </summary>
 public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = null)
     : IStreamSwitchingService, IDisposable
@@ -45,6 +47,11 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     private readonly Dictionary<EnrichedStream, (DateTimeOffset At, string Reason)> _triedRows = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, (DateTimeOffset At, string Reason)> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
     private Func<DateTimeOffset> _clock = static () => DateTimeOffset.UtcNow;
+
+    // Backup preference (docs/PROBE_SCHEDULING_RULES.md rule 11): while the start row
+    // plays, Next goes to the best-tier other row. Channel numbers are untouched.
+    private EnrichedStream? _startRow;
+    private Func<EnrichedStream, StreamTier>? _tierOf;
 
     /// <summary>Test seam: the clock the tried-this-cycle TTL reads (a method so property-filling fixtures leave it alone).</summary>
     public void SetClock(Func<DateTimeOffset> clock) => _clock = clock ?? (static () => DateTimeOffset.UtcNow);
@@ -80,6 +87,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _triedRows.Clear();
         _failedFeeds.Clear();
         _currentStreamIndex = -1;
+        _startRow = null;
+        _tierOf = null;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
         _currentStreamSubject.OnNext(null);
@@ -310,6 +319,13 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         {
             if (_healthyStreams.Count == 0) return false;
 
+            if (BackupIndex() is var backup && backup >= 0)
+            {
+                _logger.LogInformation("[Cycle] Next: backup {Row} (best tier while the start row plays)",
+                    Describe(_healthyStreams[backup]));
+                return SwitchToStream(backup);
+            }
+
             if (AnySkippedRow())
             {
                 var untried = FindUntried(+1);
@@ -393,6 +409,9 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             if (_healthyStreams.Count == 0)
                 return null;
 
+            if (BackupIndex() is var backup && backup >= 0)
+                return _healthyStreams[backup];
+
             if (AnySkippedRow())
             {
                 var untried = FindUntried(+1);
@@ -412,6 +431,11 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             if (_healthyStreams.Count == 0 || _currentStreamIndex < 0)
             {
                 return false;
+            }
+
+            if (BackupIndex() is var backup && backup >= 0)
+            {
+                return backup <= _currentStreamIndex;
             }
 
             if (AnySkippedRow())
@@ -497,6 +521,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             _triedRows.Clear();
             _failedFeeds.Clear();
             _currentStreamIndex = -1;
+            _startRow = null;
+            _tierOf = null;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
             _currentStreamSubject.OnNext(null);
@@ -553,6 +579,72 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
             return true;
         }
+    }
+
+    // ---- Backup preference (docs/PROBE_SCHEDULING_RULES.md rule 11) ----
+
+    public void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf)
+    {
+        lock (_healthyStreams)
+        {
+            _startRow = tierOf is null ? null : startRow;
+            _tierOf = startRow is null ? null : tierOf;
+        }
+    }
+
+    public IReadOnlyList<EnrichedStream> GetUpcoming(int depth)
+    {
+        lock (_healthyStreams)
+        {
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+            return PlaybackUrlReusePolicy.UpcomingInBackupOrder(
+                _healthyStreams.ToList(),
+                current,
+                depth,
+                BackupPreferenceActive() ? _tierOf : null);
+        }
+    }
+
+    // The start row is playing and tiers are known.
+    private bool BackupPreferenceActive() =>
+        _tierOf is not null
+        && _startRow is not null
+        && _currentStreamIndex >= 0
+        && _currentStreamIndex < _healthyStreams.Count
+        && ReferenceEquals(_healthyStreams[_currentStreamIndex], _startRow);
+
+    /// <summary>
+    /// The backup's index while the start row plays: the best-tier other row not skipped
+    /// this cycle, lowest channel number within a tier. -1 when the preference is off or
+    /// no other row is playable.
+    /// </summary>
+    private int BackupIndex()
+    {
+        if (!BackupPreferenceActive())
+        {
+            return -1;
+        }
+
+        var best = -1;
+        var bestTier = StreamTier.Finding;
+        for (var i = 0; i < _healthyStreams.Count; i++)
+        {
+            if (i == _currentStreamIndex || IsRowSkipped(_healthyStreams[i]))
+            {
+                continue;
+            }
+
+            var tier = _tierOf!(_healthyStreams[i]);
+            if (best < 0 || tier < bestTier)
+            {
+                best = i;
+                bestTier = tier;
+            }
+        }
+
+        return best;
     }
 
     // ---- Tried-this-cycle (docs/STREAM_PLAYBACK_RULES.md "No loops") ----

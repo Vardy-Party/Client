@@ -526,6 +526,77 @@ public class FirstPlayOpenStrategyTests
 
     // --- helpers -------------------------------------------------------------
 
+    // --- Backup order (rule 11: High, then Medium, then finding) ---------------
+
+    [Fact]
+    public void UpcomingInBackupOrder_BestTierFirst_ThenChannelNumber()
+    {
+        // Arrange — #1 plays; #2 and #3 are finding, #4 Medium, #5 High.
+        var playing = Soak("Channel 1");
+        var f2 = Soak("Channel 2");
+        var f3 = Soak("Channel 3");
+        var m4 = Soak("Channel 4");
+        var h5 = Soak("Channel 5");
+        var tiers = new Dictionary<EnrichedStream, StreamTier>(ReferenceEqualityComparer.Instance)
+        {
+            [playing] = StreamTier.High, [m4] = StreamTier.Medium, [h5] = StreamTier.High,
+        };
+        StreamTier TierOf(EnrichedStream row) => tiers.TryGetValue(row, out var t) ? t : StreamTier.Finding;
+
+        // Act
+        var order = PlaybackUrlReusePolicy.UpcomingInBackupOrder([playing, f2, f3, m4, h5], playing, 5, TierOf);
+
+        // Assert
+        Assert.Equal([h5, m4, f2, f3], order);
+    }
+
+    [Fact]
+    public void UpcomingInBackupOrder_NoTiers_IsSwitchOrder()
+    {
+        // Arrange
+        var a = Soak("Channel A");
+        var b = Soak("Channel B");
+        var c = Soak("Channel C");
+
+        // Act
+        var order = PlaybackUrlReusePolicy.UpcomingInBackupOrder([a, b, c], b, 2, tierOf: null);
+
+        // Assert
+        Assert.Equal([c, a], order);
+    }
+
+    [Fact]
+    public void PlanStart_FreshStartWithTiers_PartnerIsTheBestTierRow()
+    {
+        // Arrange — single-use start row; the next channel is finding, a later one Medium.
+        var start = CookieFb("Channel Start");
+        var finding = CookieFb("Channel Finding");
+        var medium = CookieFb("Channel Medium");
+        StreamTier TierOf(EnrichedStream row) => ReferenceEquals(row, medium) ? StreamTier.Medium : StreamTier.Finding;
+
+        // Act
+        var plan = FirstPlayOpenStrategy.PlanStart(start, [start, finding, medium], Now, tierOf: TierOf);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
+        Assert.Same(medium, plan.PartnerToWarm);
+    }
+
+    [Fact]
+    public void CountBackupsNeedingWarm_Upcoming_CountsAtMostPrewarmDepth()
+    {
+        // Arrange — the prewarmer looks at PrewarmDepth rows of the upcoming list.
+        var upcoming = new List<EnrichedStream>();
+        for (var i = 0; i < PlaybackUrlReusePolicy.PrewarmDepth + 2; i++)
+            upcoming.Add(Soak($"Channel {i}"));
+
+        // Act
+        var n = FirstPlayOpenStrategy.CountBackupsNeedingWarm(upcoming, Now, _ => null, _ => false);
+
+        // Assert
+        Assert.Equal(PlaybackUrlReusePolicy.PrewarmDepth, n);
+    }
+
     private static EnrichedStream Soak(string name) => new()
     {
         Stream = new Stream { Url = $"https://streams.example.com/{name}", Channel = name },
