@@ -262,6 +262,11 @@ public static class FirstPlayOpenStrategy
         if (warmEntryReady)
             return NextPrepareKind.ApplyWarmUnused;
 
+        // Rule 12 on Next: keep the probed link and play it (never clear it for a fresh
+        // resolve first); a failed start re-resolves once.
+        if (PlaybackUrlReusePolicy.CanTryProbedLink(next, now))
+            return NextPrepareKind.AttachAsIs;
+
         if (LocalServiceSoakTrustRequiresFresh(next, now))
             return NextPrepareKind.ClearAndResolveFresh;
 

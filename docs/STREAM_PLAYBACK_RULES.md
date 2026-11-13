@@ -454,6 +454,22 @@ re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8To
    playing while the target resolves, with "Switching to X..." shown; on failure the pool index is put
    back on the playing row **without re-attaching it** and "Couldn't switch to X - staying on the current
    stream" is shown. A newer switch supersedes an older pending one.
+8. **V2/MP chips switch immediately (13 Nov 2026).** Jon: "i am used to v2 switching being
+   immediate". A chip of an MP page (`PlaybackUrlReusePolicy.IsMpRow`) whose probed or harvested
+   link has an unreadable token expiry plays that link at once on Next, a chip pick and
+   auto-advance (`CanTryProbedLink`: `PlanSwitch` -> `AttachCached`, `PlanNextPrepare` ->
+   `AttachAsIs`, `AttachCurrentFromPoolAsync`). No `/mp` round trip first. A failed start gets the
+   session's one fresh re-resolve (`usedCachedUrl: true`), then Next moves on. Still fresh: no link,
+   Cookie-bound / single-use host, or a readable expiry under 60 s. FB/V1 rows keep rule 3 (unknown
+   expiry stays fresh; their soak tokens can be one-shot). The prewarmer skips MP chips that
+   already have a link (it only started a second `POST /mp`).
+9. **A switch that could not resolve is not a switch.** When the target's fresh resolve returns
+   nothing, the target is marked tried this cycle ("Couldn't switch"), the index goes back to the
+   playing row, and Next advances to the next untried row with "Couldn't switch to X - trying the
+   next stream". Only with no untried row left does it stay ("... staying on the current stream").
+   `[probe-timing] event=switch` (and its `switches=` count) is logged only when the new row shows
+   video (`IStreamSwitchingService.PlayingConfirmed`); an index change logs `event=switch-requested`.
+   The orchestrator says "Switch requested" / "Switching to next stream", never "Switched".
 
 Platform limits: a channel switch still cuts over once the new URL is resolved, because replacing the
 media source clears the picture. A playing-token refresh does not. Android keeps the same ExoPlayer and,
@@ -469,7 +485,9 @@ Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuse
 `StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay`
 (warm → ApplyWarmUnused) and `Rule_NextOntoOneShotRow_NoWarm_ClearsAndKicks` (Streaming);
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
-`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
+`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback). Rules 8-9:
+`MpChipSwitchBusinessRulesTests` (Kernel), `MpChipSwitchPlaybackTests` (Playback),
+`ProbeTimingLogTests.SessionTrace_FailedSwitchThatStaysOnPlayingStream_IsNotCounted` (Streaming).
 
 ## First play open + early Next capacity (`FirstPlayOpenStrategy`)
 
@@ -624,6 +642,8 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
   - 401/403 → `Unauthorized` (also on `/play`).
   - 503 "V2/MP scrape disabled on this local service" → `MpDisabled`. The client remembers it per endpoint for 60s (`MpDisabledMemory`), so other MP rows in the sweep are answered locally without a POST. The row is "unavailable here", not dead. The client never turns V2/MP on.
 - `MpDisabled` and `Unauthorized` are not retryable (`IsRetryable` false): the resolver defers them at once, without the 2s/5s retries.
+- **One harvest per app (13 Nov 2026).** `ILocalLanPlayService` is a transient typed HttpClient, so the resolver, `ApiService` (switch re-resolve) and the prewarmer each had their own `LocalLanPlayService` and their own harvest; a second `POST /mp` for the same page got nothing from LocalService and failed "sent nothing for 30s". The `/mp` lane state lives in the singleton `MpHarvestHub`, so every instance joins the running harvest (`LocalLanPlayServiceMpInfrastructureTests.Rule_TwoClientInstancesSharingTheHub_JoinOneHarvest_OnlyOnePostMp`).
+- **Late joiners get their own wait.** A chip waiter's stall deadline counts from `max(last progress, when it joined)`, so a caller arriving after a silence is not failed instantly (`MpHarvestSessionTests.WaitForAsync_NamedChip_JoiningAfterASilence_GetsItsOwnWait_NotAnInstantFailure`).
 
 ### First start and in-player fresh `/play` (`ApiService`, `InfrastructureRetryPolicy`)
 

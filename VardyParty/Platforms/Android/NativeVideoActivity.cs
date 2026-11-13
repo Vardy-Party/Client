@@ -946,7 +946,8 @@ namespace VardyParty.Platforms.Android
                 }
 
                 _logger?.LogInformation(
-                    "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
+                    "[NativeVideoActivity] Re-resolving {Kind} m3u8 for {Channel}",
+                    PlaybackUrlReusePolicy.IsMpRow(current) ? "MP chip (/mp)" : "one-shot FB/V1 (/play)",
                     current.Stream?.Channel ?? "(null)");
                 // Make-before-break: ExoPlayer keeps playing the current stream while
                 // /play (or the warm pre-resolve) runs; only the overlay changes.
@@ -972,27 +973,26 @@ namespace VardyParty.Platforms.Android
 
                 if (string.IsNullOrWhiteSpace(url) && playing != null)
                 {
+                    // Not a switch: say so, then move on to the next untried row (the user
+                    // asked to leave this one); stay on the playing row only when nothing
+                    // else is left (PlaybackPoolCommandActions.SkipFailedSwitchTarget).
                     _logger?.LogWarning(
-                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} - staying on {Playing}",
+                        "[NativeVideoActivity] Fresh resolve returned no URL for {Channel} - not switched (playing {Playing})",
                         current.Stream?.Channel ?? "(null)",
                         playing.Stream?.Channel ?? "(null)");
-                    ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
                     EndIfOwned();
                     RunOnUiThread(() =>
                     {
-                        // TrySwitchToCurrentStream ignores the row that is already playing,
-                        // so moving the index back does not re-/play it.
-                        var healthy = _switching?.GetHealthyStreams();
-                        if (healthy == null || !ReferenceEquals(_switching?.GetCurrentStream(), current))
+                        if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
                             return;
-                        for (var i = 0; i < healthy.Count; i++)
+                        if (_pool is { } pool)
                         {
-                            if (ReferenceEquals(healthy[i], playing))
-                            {
-                                _switching?.SwitchToStream(i);
-                                return;
-                            }
+                            pool.SkipFailedSwitchTarget(current, playingUrl, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                            return;
                         }
+
+                        ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
+                        RevertIndexToPlaying();
                     });
                     return;
                 }

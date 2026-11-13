@@ -72,6 +72,22 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     private readonly BehaviorSubject<EnrichedStream?> _currentStreamSubject = new(null);
     public IObservable<EnrichedStream?> CurrentStreamChanged => _currentStreamSubject;
 
+    private readonly Subject<EnrichedStream?> _playingConfirmedSubject = new();
+    public IObservable<EnrichedStream?>? PlayingConfirmed => _playingConfirmedSubject;
+
+    public void ConfirmPlaying(EnrichedStream? row)
+    {
+        if (row is null)
+            return;
+        try
+        {
+            _playingConfirmedSubject.OnNext(row);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private readonly BehaviorSubject<PlayerOverlayInfo?> _overlayInfoSubject = new(null);
     public IObservable<PlayerOverlayInfo?> OverlayInfoChanged => _overlayInfoSubject;
 
@@ -856,5 +872,6 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _healthyStreamsSubject?.Dispose();
         _currentIndexSubject?.Dispose();
         _currentStreamSubject?.Dispose();
+        _playingConfirmedSubject.Dispose();
     }
 }

@@ -341,8 +341,10 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanNextPrepare_MpHarvestUnreadableExpiry_ClearAndResolveFresh()
+    public void PlanNextPrepare_NonV2RowWithHarvestSamples_UnreadableExpiry_ClearAndResolveFresh()
     {
+        // Not a V2 chip (no mp/v2 strategy); a V2 chip keeps its probed link
+        // (MpChipSwitchBusinessRulesTests).
         // Arrange — unreadable harvest without UnusedResolvedUrl forces a fresh /play.
         var next = MpHarvest("Channel MP Beta", "http://oak-lane.m3u8");
 

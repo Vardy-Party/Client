@@ -18,6 +18,8 @@ internal sealed class ProbeSessionTrace : IDisposable
     private readonly IStreamSwitchingService _switching;
     private readonly Func<StreamTiers?> _tiers;
     private readonly IDisposable? _subscription;
+    private readonly IDisposable? _confirmedSubscription;
+    private readonly bool _countsConfirmedOnly;
     private long? _pictureMs;
     private long? _backupMs;
     private int _switches;
@@ -30,9 +32,25 @@ internal sealed class ProbeSessionTrace : IDisposable
         _logger = logger;
         _switching = switching;
         _tiers = tiers;
+        // A switch counts when the player shows video on the new row (PlayingConfirmed).
+        // An index change is only logged as a request: a switch that fails and stays on
+        // the playing stream is not a switch (TV log 13 Nov 2026, switches=3 with none).
         try
         {
-            _subscription = switching.CurrentStreamChanged?.Subscribe(new Observer(this));
+            if (switching.PlayingConfirmed is { } confirmed)
+            {
+                _confirmedSubscription = confirmed.Subscribe(new Observer(this, confirmedOnly: true));
+                _countsConfirmedOnly = true;
+            }
+        }
+        catch (NotSupportedException)
+        {
+            _confirmedSubscription = null;
+        }
+
+        try
+        {
+            _subscription = switching.CurrentStreamChanged?.Subscribe(new Observer(this, confirmedOnly: false));
         }
         catch (NotSupportedException)
         {
@@ -95,6 +113,31 @@ internal sealed class ProbeSessionTrace : IDisposable
             ("since_picture_ms", _backupMs - _pictureMs));
     }
 
+    private void OnRequested(EnrichedStream? row)
+    {
+        if (!_countsConfirmedOnly)
+        {
+            OnCurrent(row);
+            return;
+        }
+
+        if (row?.Stream is null)
+            return;
+        EnrichedStream? from;
+        lock (_gate)
+        {
+            if (_pictureMs is null || _ended || ReferenceEquals(_playing?.Stream, row.Stream))
+                return;
+            from = _playing;
+        }
+
+        _timing.Log(_logger, "switch-requested",
+            ("from_row", from?.Stream?.Channel),
+            ("to_tier", Tier(row)),
+            ("to_row", row.Stream.Channel),
+            ("to_chip", row.Stream.PlayerStream));
+    }
+
     private void OnCurrent(EnrichedStream? row)
     {
         if (row?.Stream is null)
@@ -129,6 +172,7 @@ internal sealed class ProbeSessionTrace : IDisposable
         }
 
         _subscription?.Dispose();
+        _confirmedSubscription?.Dispose();
         var backup = _pictureMs is null ? null : Backup(playing);
         _timing.Log(_logger, "session-end",
             ("picture_ms", _pictureMs),
@@ -150,7 +194,7 @@ internal sealed class ProbeSessionTrace : IDisposable
 
     private string Tier(EnrichedStream? row) => ProbeTimingLog.Tier(_tiers(), row?.Stream);
 
-    private sealed class Observer(ProbeSessionTrace trace) : IObserver<EnrichedStream?>
+    private sealed class Observer(ProbeSessionTrace trace, bool confirmedOnly) : IObserver<EnrichedStream?>
     {
         public void OnCompleted()
         {
@@ -160,6 +204,12 @@ internal sealed class ProbeSessionTrace : IDisposable
         {
         }
 
-        public void OnNext(EnrichedStream? value) => trace.OnCurrent(value);
+        public void OnNext(EnrichedStream? value)
+        {
+            if (confirmedOnly)
+                trace.OnCurrent(value);
+            else
+                trace.OnRequested(value);
+        }
     }
 }

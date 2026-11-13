@@ -1109,8 +1109,10 @@ public class StreamResolutionOrchestrator(
 
         if (streamSwitchingService.SwitchToNextStream())
         {
-            logger.LogInformation("[StreamResolution] Switched to next stream");
-            _status = "Switched to next stream";
+            // Only a request: the player attaches (and may fail and stay, or move on);
+            // the switch is counted when video shows (ProbeSessionTrace, PlayingConfirmed).
+            logger.LogInformation("[StreamResolution] Switch requested: {Channel}", nextStream.Stream.Channel);
+            _status = "Switching to next stream";
             PublishProgress();
             PrefetchUpcomingStreamUrl(game, cancellationToken);
         }

@@ -1347,7 +1347,7 @@ public class StreamResolutionOrchestratorTests
         _fixture.GetMock<IApiService>().Verify(
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        Assert.True(statuses.Contains("Switching to next stream"), string.Join(" | ", statuses));
         Assert.True(second.UnusedResolvedUrl, "Next must mark warm URL unused for AttachCached");
         Assert.Equal(warmUrl, second.ResolvedM3U8Url);
     }
@@ -1435,7 +1435,7 @@ public class StreamResolutionOrchestratorTests
         _fixture.GetMock<IApiService>().Verify(
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        Assert.True(statuses.Contains("Switching to next stream"), string.Join(" | ", statuses));
         Assert.True(
             kickCount > kicksBeforeNext,
             $"Next did not Kick prewarmer (before={kicksBeforeNext}, after={kickCount})");
