@@ -52,6 +52,9 @@ public class StreamResolutionOrchestrator(
     /// <summary>Test seam for the clock that decides whether the game is still live for rechecks.</summary>
     internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
 
+    /// <summary>Clock for the top-tier head start (<see cref="TopTierHeadStart.Duration"/>); tests replace it.</summary>
+    internal TimeProvider HeadStartTime { get; set; } = TimeProvider.System;
+
     /// <summary>Rows whose race <c>/play</c> this orchestrator marked in-flight, so a late leg is ended once.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichedStream, byte> _raceInFlight =
         new(ReferenceEqualityComparer.Instance);
@@ -70,6 +73,7 @@ public class StreamResolutionOrchestrator(
     /// <see cref="FirstPlayOpenStrategy.PlaybackPriorityTimeout"/>.
     /// </summary>
     private IDisposable? _playbackPriorityHold;
+    private int _playbackPriorityWindowActive;
 
     /// <summary>
     /// How long a new StartAsync waits for a previous session that is still
@@ -237,6 +241,10 @@ public class StreamResolutionOrchestrator(
         {
             firstPlayDiag.MarkPlaybackChainStarted(first.Stream?.Channel);
             BeginPlaybackPriorityWindow(cancellationToken);
+            // Rule 12: a start row whose probed link cannot be reused needs one fresh
+            // /play. Pause new finding starts now, before the resolver fills its next
+            // place, so that /play takes the next free slot; RaceStartAsync lets go.
+            var startHold = NeedsFreshStart(first) ? raceThrottle?.BeginRace() : null;
             playbackTask = RunPlaybackChainAsync(
                 game,
                 first,
@@ -244,7 +252,8 @@ public class StreamResolutionOrchestrator(
                 () => awaitingPlayableRow = true,
                 playbackLock,
                 cancellationToken,
-                firstPlayDiag);
+                firstPlayDiag,
+                startHold);
             _ = CancelEnumerationWhenViewerLeaves(playbackTask, enumerationCts);
         }
 
@@ -352,21 +361,38 @@ public class StreamResolutionOrchestrator(
                 }
             }
 
-            await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
-                               orderedStreams,
-                               2,
-                               enumerationCts.Token,
-                               totalCount =>
-                               {
-                                   _totalStreams = totalCount;
-                                   PublishProgress();
-                               }).WithCancellation(enumerationCts.Token))
+            // Recommended tiers first (rule 1): the High-confidence rows get both
+            // LocalService slots to themselves for TopTierHeadStart.Duration; Medium rows
+            // come next, before any finding. The first pass only; re-queue passes and
+            // rechecks are first come, first served.
+            var (topTier, mediumTier) = TopTierHeadStart.Select(selectionCoordinator.LatestRecommendations, orderedStreams);
+            if (topTier.Count + mediumTier.Count > 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (await ViewerLeftAsync())
-                    return outcome;
+                logger.LogInformation(
+                    "[StreamResolution] Head start {Seconds}s: High {High}; Medium {Medium}",
+                    TopTierHeadStart.Duration.TotalSeconds,
+                    string.Join(", ", topTier.Select(row => row.Channel)),
+                    string.Join(", ", mediumTier.Select(row => row.Channel)));
+            }
 
-                Accept(enrichedStream, requeued: false);
+            using (raceThrottle?.BeginTopTierHeadStart(topTier, mediumTier, HeadStartTime))
+            {
+                await foreach (var enrichedStream in streamResolver.ResolveStreamsIncrementallyAsync(
+                                   orderedStreams,
+                                   2,
+                                   enumerationCts.Token,
+                                   totalCount =>
+                                   {
+                                       _totalStreams = totalCount;
+                                       PublishProgress();
+                                   }).WithCancellation(enumerationCts.Token))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (await ViewerLeftAsync())
+                        return outcome;
+
+                    Accept(enrichedStream, requeued: false);
+                }
             }
 
             for (var pass = 0; pass < DeferredRequeueDelays.Length && deferred.Count > 0; pass++)
@@ -1179,13 +1205,15 @@ public class StreamResolutionOrchestrator(
         Action onPoolEmpty,
         object playbackLock,
         CancellationToken cancellationToken,
-        FirstPlayDelayDiag? firstPlayDiag = null)
+        FirstPlayDelayDiag? firstPlayDiag = null,
+        IDisposable? startHold = null)
     {
         var stream = first;
         while (true)
         {
-            var race = await RaceStartAsync(game, stream, playbackLock, cancellationToken, firstPlayDiag)
+            var race = await RaceStartAsync(game, stream, playbackLock, cancellationToken, firstPlayDiag, startHold)
                 .ConfigureAwait(false);
+            startHold = null;
             if (race.Ran)
             {
                 if (race.Terminal != null)
@@ -1284,17 +1312,24 @@ public class StreamResolutionOrchestrator(
     internal readonly record struct RaceStart(bool Ran, EnrichedStream? Play, PlaybackResult? Terminal);
 
     /// <summary>
-    /// First picture via <see cref="FirstPlayOpenStrategy"/> (all platforms): open the
-    /// recommended row alone; warm the partner on the second Chromium slot for Next.
-    /// Does not wait on a dual-leg winner for the finding UI to dismiss.
+    /// First picture via <see cref="FirstPlayOpenStrategy"/> (all platforms), for the
+    /// start row (the first healthy row, first come first served). The start row plays
+    /// the link its probe returned (<see cref="FirstPlayOpenStrategy.StartKind.PlayProbedLink"/>);
+    /// only a link that genuinely cannot be reused gets a fresh <c>/play</c>, with the
+    /// backup warmed beside it for Next. First play never waits for other probes
+    /// (docs/PROBE_SCHEDULING_RULES.md rule 12): no drain, no second <c>/play</c>.
     /// </summary>
     internal async Task<RaceStart> RaceStartAsync(
         Game game,
         EnrichedStream stream,
         object playbackLock,
         CancellationToken cancellationToken,
-        FirstPlayDelayDiag? firstPlayDiag = null)
+        FirstPlayDelayDiag? firstPlayDiag = null,
+        IDisposable? startHold = null)
     {
+        // The finding pause StartPlaybackChain took for a fresh start /play (if any):
+        // released when this start is decided.
+        using var chainHold = startHold;
         if (warmUrls == null || stream.Stream is null)
             return new RaceStart(false, null, null);
 
@@ -1314,6 +1349,18 @@ public class StreamResolutionOrchestrator(
         if (plan.Kind == FirstPlayOpenStrategy.StartKind.UseExisting)
             return new RaceStart(false, null, null);
 
+        if (plan.Kind == FirstPlayOpenStrategy.StartKind.PlayProbedLink)
+        {
+            // The probe's link plays as is; a failed start re-/plays once (PlayStreamAsync).
+            _racePlayReady[stream] = 0;
+            firstPlayDiag?.MarkRaceStarted(logger);
+            firstPlayDiag?.MarkRaceWon(stream.Stream.Channel, logger);
+            logger.LogInformation(
+                "[StreamResolution] First play on the probed link: {Channel} ({Reason}) (healthyCount={Healthy}, msSince1stHealthy={Ms1})",
+                stream.Stream.Channel, plan.Reason, healthy.Count, firstPlayDiag?.MsSinceFirstHealthy);
+            return new RaceStart(true, stream, null);
+        }
+
         var partner = plan.PartnerToWarm;
         logger.LogInformation(
             "[StreamResolution] Open-recommended first: {Recommended} partnerWarm={Partner} ({Reason}) " +
@@ -1326,10 +1373,10 @@ public class StreamResolutionOrchestrator(
             firstPlayDiag?.MsSinceSecondHealthy);
         firstPlayDiag?.MarkRaceStarted(logger);
 
-        // Nested hold under PlaybackPriority: drain find-phase so both slots serve open + warm.
-        using var raceHold = raceThrottle?.BeginRace();
-        if (raceThrottle != null)
-            await raceThrottle.DrainOthersAsync(cancellationToken).ConfigureAwait(false);
+        // The fresh leg (and the backup warm) take the next free slots ahead of finding
+        // (BeginRace pauses new find-phase starts). No drain: first play never waits for
+        // the probes already running (rule 12).
+        using var raceHold = startHold is null ? raceThrottle?.BeginRace() : null;
 
         Task<(M3U8Response? Response, RaceLegState State, bool Infrastructure)>? partnerTask = null;
         if (partner?.Stream is not null)
@@ -1555,38 +1602,81 @@ public class StreamResolutionOrchestrator(
         }
     }
 
-    private void BeginPlaybackPriorityWindow(CancellationToken cancellationToken)
+    /// <summary>
+    /// The playback-priority window (rule 11): for <see cref="FirstPlayOpenStrategy.PlaybackPriorityTimeout"/>
+    /// from first play, finding is paused only while a backup exists that the prewarmer
+    /// still has to warm (<see cref="FirstPlayOpenStrategy.CountBackupsNeedingWarm"/>).
+    /// No backup at first play means finding starts at once.
+    /// </summary>
+    private bool NeedsFreshStart(EnrichedStream first)
     {
-        if (raceThrottle is null || _playbackPriorityHold is not null)
-            return;
-
-        _playbackPriorityHold = raceThrottle.BeginPlaybackPriority();
-        logger.LogInformation(
-            "[FirstPlayDelay] playback_priority_start timeoutMs={TimeoutMs} prewarmDepth={Depth}",
-            (int)FirstPlayOpenStrategy.PlaybackPriorityTimeout.TotalMilliseconds,
-            PlaybackUrlReusePolicy.PrewarmDepth);
-        _ = ReleasePlaybackPriorityWhenReadyAsync(cancellationToken);
+        if (warmUrls is null || first.Stream is null)
+            return false;
+        return FirstPlayOpenStrategy.PlanStart(
+                first,
+                streamSwitchingService.GetHealthyStreams(),
+                DateTimeOffset.UtcNow,
+                warmUrls.IsWarmOrInFlight).Kind
+            == FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst;
     }
 
-    private async Task ReleasePlaybackPriorityWhenReadyAsync(CancellationToken cancellationToken)
+    private void BeginPlaybackPriorityWindow(CancellationToken cancellationToken)
+    {
+        if (raceThrottle is null || Interlocked.Exchange(ref _playbackPriorityWindowActive, 1) == 1)
+            return;
+
+        logger.LogInformation(
+            "[FirstPlayDelay] playback_priority_window timeoutMs={TimeoutMs} prewarmDepth={Depth}",
+            (int)FirstPlayOpenStrategy.PlaybackPriorityTimeout.TotalMilliseconds,
+            PlaybackUrlReusePolicy.PrewarmDepth);
+        // First look now, so a backup that needs warming is protected before the
+        // resolver starts its next probe.
+        UpdatePlaybackPriorityHold();
+        _ = RunPlaybackPriorityWindowAsync(cancellationToken);
+    }
+
+    private bool PlaybackPriorityHoldWanted()
+    {
+        if (warmUrls is null)
+            return false;
+        var now = DateTimeOffset.UtcNow;
+        return FirstPlayOpenStrategy.PlaybackPriorityHolds(
+            FirstPlayOpenStrategy.CountBackupsNeedingWarm(
+                streamSwitchingService.GetHealthyStreams(),
+                streamSwitchingService.GetCurrentStream(),
+                now,
+                row => warmUrls.Peek(row) is { } entry ? (entry.Expiry, entry.ResolvedAt) : null,
+                warmUrls.IsUnwarmable));
+    }
+
+    private void UpdatePlaybackPriorityHold()
+    {
+        if (PlaybackPriorityHoldWanted())
+        {
+            if (_playbackPriorityHold is null && raceThrottle is not null)
+            {
+                var hold = raceThrottle.BeginPlaybackPriority();
+                if (Interlocked.CompareExchange(ref _playbackPriorityHold, hold, null) is null)
+                    logger.LogInformation("[FirstPlayDelay] playback_priority_start (backup needs warming)");
+                else
+                    hold.Dispose();
+            }
+        }
+        else
+        {
+            EndPlaybackPriorityWindow();
+        }
+    }
+
+    private async Task RunPlaybackPriorityWindowAsync(CancellationToken cancellationToken)
     {
         try
         {
             var deadline = DateTime.UtcNow + FirstPlayOpenStrategy.PlaybackPriorityTimeout;
             while (DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
             {
-                if (warmUrls is not null
-                    && FirstPlayOpenStrategy.PlaybackPrioritySatisfied(
-                        FirstPlayOpenStrategy.CountWarmUpcoming(
-                            streamSwitchingService.GetHealthyStreams(),
-                            streamSwitchingService.GetCurrentStream(),
-                            DateTimeOffset.UtcNow,
-                            row => warmUrls.Peek(row)?.Expiry)))
-                {
-                    break;
-                }
-
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+                UpdatePlaybackPriorityHold();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1595,6 +1685,7 @@ public class StreamResolutionOrchestrator(
         finally
         {
             EndPlaybackPriorityWindow();
+            Interlocked.Exchange(ref _playbackPriorityWindowActive, 0);
         }
     }
 

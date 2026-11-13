@@ -46,9 +46,10 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanStart_MpHarvestUnreadableExpiry_ResolveRecommendedOpenFirst()
+    public void PlanStart_MpHarvestUnreadableExpiry_PlaysProbedLink()
     {
-        // Arrange — unreadable /mp harvest without UnusedResolvedUrl must not AttachCached forever.
+        // Arrange — the /mp harvest link was just probed: first play uses it (rule 12),
+        // no second /play; a failed start re-/plays once in the orchestrator.
         var mp = MpHarvest("Channel MP Alpha", "http://oak-lane.m3u8");
         var fb = Soak("Channel East");
 
@@ -56,8 +57,73 @@ public class FirstPlayOpenStrategyTests
         var plan = FirstPlayOpenStrategy.PlanStart(mp, [mp, fb], Now);
 
         // Assert
+        Assert.Equal(FirstPlayOpenStrategy.StartKind.PlayProbedLink, plan.Kind);
+        Assert.Null(plan.PartnerToWarm);
+    }
+
+    [Fact]
+    public void PlanStart_SoakRowWithProbedLink_PlaysProbedLink_NoSecondPlay()
+    {
+        // Arrange — Referer soak row the probe just resolved (unreadable expiry).
+        var start = Soak("Channel North");
+        start.ResolvedM3U8Url = "https://cdn.example.com/north.m3u8";
+        var backup = Soak("Channel East");
+
+        // Act
+        var plan = FirstPlayOpenStrategy.PlanStart(start, [start, backup], Now);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.StartKind.PlayProbedLink, plan.Kind);
+        Assert.Null(plan.PartnerToWarm);
+    }
+
+    [Fact]
+    public void PlanStart_CookieBoundProbedLink_FreshPlay_WarmsBackup()
+    {
+        // Arrange — a cookie-bound FB session is single-use: the probe burned it.
+        var start = CookieFb("Channel North");
+        start.ResolvedM3U8Url = "https://cdn.example.com/north.m3u8";
+        var backup = Soak("Channel East");
+
+        // Act
+        var plan = FirstPlayOpenStrategy.PlanStart(start, [start, backup], Now);
+
+        // Assert
         Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
-        Assert.Same(fb, plan.PartnerToWarm);
+        Assert.Same(backup, plan.PartnerToWarm);
+    }
+
+    [Fact]
+    public void PlanStart_ExpiredProbedLink_FreshPlay()
+    {
+        // Arrange — readable token already expired.
+        var start = Soak("Channel North");
+        start.ResolvedM3U8Url = "https://cdn.example.com/north.m3u8?e=1700000000";
+
+        // Act
+        var plan = FirstPlayOpenStrategy.PlanStart(start, [start], Now);
+
+        // Assert
+        Assert.Equal(FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst, plan.Kind);
+    }
+
+    [Theory]
+    [InlineData(null, false, false)]
+    [InlineData("https://cdn.example.com/a.m3u8", false, true)]
+    [InlineData("https://cdn.example.com/a.m3u8?e=1893456000", false, true)]
+    [InlineData("https://cdn.example.com/a.m3u8?e=1700000000", false, false)]
+    [InlineData("https://cdn.example.com/a.m3u8", true, false)]
+    public void CanPlayProbedLink_Table(string? url, bool cookie, bool expected)
+    {
+        // Arrange
+        var row = cookie ? CookieFb("Channel A") : Soak("Channel A");
+        row.ResolvedM3U8Url = url;
+
+        // Act
+        var actual = FirstPlayOpenStrategy.CanPlayProbedLink(row, Now);
+
+        // Assert
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
@@ -372,67 +438,89 @@ public class FirstPlayOpenStrategyTests
 
     [Theory]
     [InlineData(0, false)]
-    [InlineData(1, false)] // PrewarmDepth is 2
+    [InlineData(1, true)]
     [InlineData(2, true)]
-    [InlineData(3, true)]
-    public void PlaybackPrioritySatisfied_Table(int warmCount, bool expected)
+    public void PlaybackPriorityHolds_OnlyWhileABackupNeedsWarming(int needingWarm, bool expected)
     {
         // Arrange
-        _ = warmCount;
+        _ = needingWarm;
 
         // Act
-        var satisfied = FirstPlayOpenStrategy.PlaybackPrioritySatisfied(warmCount);
+        var holds = FirstPlayOpenStrategy.PlaybackPriorityHolds(needingWarm);
 
         // Assert
-        Assert.Equal(2, PlaybackUrlReusePolicy.PrewarmDepth);
-        Assert.Equal(expected, satisfied);
+        Assert.Equal(expected, holds);
     }
 
     [Fact]
-    public void CountWarmUpcoming_IgnoresStaleAndMissing()
+    public void CountBackupsNeedingWarm_NoBackup_Zero()
+    {
+        // Arrange — rule 11: a single healthy row has no backup to keep warm.
+        var playing = Soak("Channel Playing");
+
+        // Act
+        var n = FirstPlayOpenStrategy.CountBackupsNeedingWarm([playing], playing, Now, _ => null, _ => false);
+
+        // Assert
+        Assert.Equal(0, n);
+    }
+
+    [Fact]
+    public void CountBackupsNeedingWarm_SoakBackupNotWarm_One()
     {
         // Arrange
         var playing = Soak("Channel Playing");
-        var next1 = Soak("Channel Next1");
-        var next2 = Soak("Channel Next2");
+        var backup = Soak("Channel Backup");
 
         // Act
-        var n = FirstPlayOpenStrategy.CountWarmUpcoming(
-            [playing, next1, next2],
-            playing,
-            Now,
-            row =>
-            {
-                if (ReferenceEquals(row, next1))
-                    return Now + PlaybackUrlReusePolicy.MinComfortableLife + TimeSpan.FromSeconds(10);
-                if (ReferenceEquals(row, next2))
-                    return Now + TimeSpan.FromSeconds(5); // under MinComfortableLife → ignore
-                return null;
-            });
+        var n = FirstPlayOpenStrategy.CountBackupsNeedingWarm([playing, backup], playing, Now, _ => null, _ => false);
 
         // Assert
         Assert.Equal(1, n);
     }
 
     [Fact]
-    public void CountWarmUpcoming_OnlyLooksAtPrewarmDepth()
+    public void CountBackupsNeedingWarm_WarmCookieUnwarmableOrMpBackups_Zero()
     {
-        // Arrange
+        // Arrange — warm already, single-use (never warmed), unwarmable, /mp harvest.
+        var playing = Soak("Channel Playing");
+        var warm = Soak("Channel Warm");
+        var cookie = CookieFb("Channel Cookie");
+        var unwarmable = Soak("Channel Unwarmable");
+        var mp = MpHarvest("Channel MP", "http://oak-lane.m3u8");
+
+        // Act
+        var first = FirstPlayOpenStrategy.CountBackupsNeedingWarm(
+            [playing, warm, cookie], playing, Now,
+            row => ReferenceEquals(row, warm) ? (Now + TimeSpan.FromMinutes(10), Now) : null,
+            _ => false);
+        var second = FirstPlayOpenStrategy.CountBackupsNeedingWarm(
+            [playing, unwarmable, mp], playing, Now,
+            _ => null,
+            row => ReferenceEquals(row, unwarmable));
+
+        // Assert
+        Assert.Equal(0, first);
+        Assert.Equal(0, second);
+    }
+
+    [Fact]
+    public void CountBackupsNeedingWarm_OnlyLooksAtPrewarmDepth()
+    {
+        // Arrange — depth 2: u0, u1 warm; u2 is not looked at.
         var playing = Soak("Channel P");
         var u0 = Soak("Channel U0");
         var u1 = Soak("Channel U1");
         var u2 = Soak("Channel U2");
 
-        // Act — depth 2 → u0,u1 only; u2 warm must not count.
-        var n = FirstPlayOpenStrategy.CountWarmUpcoming(
-            [playing, u0, u1, u2],
-            playing,
-            Now,
-            row => ReferenceEquals(row, u2)
-                ? Now + TimeSpan.FromMinutes(5)
-                : null);
+        // Act
+        var n = FirstPlayOpenStrategy.CountBackupsNeedingWarm(
+            [playing, u0, u1, u2], playing, Now,
+            row => ReferenceEquals(row, u2) ? null : (Now + TimeSpan.FromMinutes(10), Now),
+            _ => false);
 
         // Assert
+        Assert.Equal(2, PlaybackUrlReusePolicy.PrewarmDepth);
         Assert.Equal(0, n);
     }
 

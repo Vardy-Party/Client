@@ -1265,11 +1265,16 @@ public class StreamResolutionOrchestratorTests
     [Fact]
     public async Task Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay()
     {
-        // Arrange — partner warmed during open-recommended; Next must ApplyWarmUnused
+        // Arrange — the start row is cookie-bound (single-use), so first play takes a
+        // fresh /play and warms the backup beside it; Next must ApplyWarmUnused
         // (no bare ResolveM3U8ForPlaybackAsync prefetch).
         const string warmUrl = "https://cdn.example.com/live/fresh.m3u8";
         var (game, first) = BuildGameAndHealthyStream();
-        first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/north" };
+        first.RequestHeaders = new Dictionary<string, string>
+        {
+            ["Referer"] = "https://player.example.test/north",
+            ["Cookie"] = "session=north",
+        };
         var second = _fixture.Build<EnrichedStream>()
             .With(e => e.Stream, _fixture.Build<StreamModel>()
                 .With(s => s.Url, "https://streams.example.com/south.html")

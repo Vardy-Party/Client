@@ -8,15 +8,15 @@ namespace VardyParty.Kernel;
 /// </summary>
 /// <remarks>
 /// Measured stall (Bravia 3.3.15): dual startup <c>/play</c> race held finding UI
-/// ~25s after two healthy rows. This strategy opens the recommended row alone and
-/// warms the partner for seamless Next, while pausing find-phase Chromium.
+/// ~25s after two healthy rows. This strategy opens the start row alone, on its
+/// probed link when that can be reused (docs/PROBE_SCHEDULING_RULES.md rule 12), and
+/// warms the backup for seamless Next.
 /// </remarks>
 public static class FirstPlayOpenStrategy
 {
     /// <summary>
-    /// How long find-phase stays paused after first playback starts so Next can
-    /// take a warm URL (unless <see cref="PlaybackUrlReusePolicy.PrewarmDepth"/>
-    /// is satisfied sooner).
+    /// How long after first playback starts the priority window may pause find-phase,
+    /// and only while a backup needs warming (<see cref="PlaybackPriorityHolds"/>).
     /// </summary>
     public static readonly TimeSpan PlaybackPriorityTimeout = TimeSpan.FromSeconds(30);
 
@@ -27,7 +27,15 @@ public static class FirstPlayOpenStrategy
         UseExisting,
 
         /// <summary>
-        /// Fresh <c>/play</c> the recommended row only; open as soon as it is playable.
+        /// Play the link the find-phase probe returned, with no second <c>/play</c> and no
+        /// wait for other probes (docs/PROBE_SCHEDULING_RULES.md rule 12). A failed start
+        /// re-<c>/play</c>s once (the cached-URL retry in the orchestrator).
+        /// </summary>
+        PlayProbedLink,
+
+        /// <summary>
+        /// Fresh <c>/play</c> the start row only (its probed link cannot be reused:
+        /// <see cref="CanPlayProbedLink"/>); open as soon as it is playable.
         /// Optionally warm <see cref="StartPlan.PartnerToWarm"/> on the second slot
         /// without waiting for picture.
         /// </summary>
@@ -107,6 +115,14 @@ public static class FirstPlayOpenStrategy
                 Reason: "recommended already warm or pre-resolving");
         }
 
+        if (CanPlayProbedLink(recommended, now))
+        {
+            return new StartPlan(
+                StartKind.PlayProbedLink,
+                PartnerToWarm: null,
+                Reason: "play the probed link; a failed start re-/plays once");
+        }
+
         var partner = PlaybackRacePolicy.PickPartner(
             healthy, recommended, now, isWarmOrInFlight);
 
@@ -116,6 +132,65 @@ public static class FirstPlayOpenStrategy
             Reason: partner?.Stream is not null
                 ? $"open recommended first; warm partner {partner.Stream.Channel} for Next"
                 : "open recommended first; no partner to warm");
+    }
+
+    /// <summary>
+    /// Whether first play may use the link the find-phase probe returned. Only a link
+    /// that genuinely cannot be reused needs a fresh <c>/play</c>: no link, a known
+    /// single-use source (cookie-bound session or registered single-use host), or a
+    /// readable token that has already expired. An unreadable expiry is tried as is
+    /// (the probe was just made); a failed start re-<c>/play</c>s once.
+    /// </summary>
+    public static bool CanPlayProbedLink(EnrichedStream row, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (row.Stream is null || string.IsNullOrWhiteSpace(row.ResolvedM3U8Url))
+            return false;
+        if (PlaybackUrlReusePolicy.IsKnownSingleUse(row))
+            return false;
+        return M3u8TokenExpiry.RemainingLife(row.ResolvedM3U8Url, now) is not { } left || left > TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// Rule 11 (docs/PROBE_SCHEDULING_RULES.md): inside the playback-priority window
+    /// (<see cref="PlaybackPriorityTimeout"/> from first play) finding is paused only
+    /// while a backup exists that the prewarmer still has to warm. No backup, or a
+    /// backup that needs no warm (its probed link is reusable, it is single-use, or its
+    /// warm link is already in hand), means finding carries on.
+    /// </summary>
+    public static bool PlaybackPriorityHolds(int backupsNeedingWarm) => backupsNeedingWarm > 0;
+
+    /// <summary>
+    /// Upcoming switch-order rows (up to <see cref="PlaybackUrlReusePolicy.PrewarmDepth"/>)
+    /// that the prewarmer would warm now: the same test as <c>UpcomingStreamPrewarmer</c>
+    /// (<see cref="PlaybackUrlReusePolicy.ShouldPrewarm"/>, not unwarmable, and
+    /// <see cref="PlaybackUrlReusePolicy.NeedsPrewarmRefresh"/> for its warm entry).
+    /// </summary>
+    public static int CountBackupsNeedingWarm(
+        IReadOnlyList<EnrichedStream> healthy,
+        EnrichedStream? current,
+        DateTimeOffset now,
+        Func<EnrichedStream, (DateTimeOffset Expiry, DateTimeOffset ResolvedAt)?> warmEntry,
+        Func<EnrichedStream, bool> isUnwarmable)
+    {
+        ArgumentNullException.ThrowIfNull(healthy);
+        ArgumentNullException.ThrowIfNull(warmEntry);
+        ArgumentNullException.ThrowIfNull(isUnwarmable);
+
+        var upcoming = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
+            healthy, current, PlaybackUrlReusePolicy.PrewarmDepth);
+        var n = 0;
+        for (var depth = 0; depth < upcoming.Count; depth++)
+        {
+            var row = upcoming[depth];
+            if (!PlaybackUrlReusePolicy.ShouldPrewarm(row) || isUnwarmable(row))
+                continue;
+            var entry = warmEntry(row);
+            if (PlaybackUrlReusePolicy.NeedsPrewarmRefresh(entry?.Expiry, entry?.ResolvedAt, depth, now))
+                n++;
+        }
+
+        return n;
     }
 
     /// <summary>
@@ -177,39 +252,6 @@ public static class FirstPlayOpenStrategy
             return NextPrepareKind.ClearAndResolveFresh;
 
         return NextPrepareKind.AttachAsIs;
-    }
-
-    /// <summary>
-    /// Playback-priority window is done when enough upcoming rows are warm
-    /// (or the timeout elapses in the host).
-    /// </summary>
-    public static bool PlaybackPrioritySatisfied(int warmUpcomingCount) =>
-        warmUpcomingCount >= PlaybackUrlReusePolicy.PrewarmDepth;
-
-    /// <summary>
-    /// Count upcoming switch-order rows that already have a warm entry with
-    /// comfortable life left (host supplies Peek expiry via callback).
-    /// </summary>
-    public static int CountWarmUpcoming(
-        IReadOnlyList<EnrichedStream> healthy,
-        EnrichedStream? current,
-        DateTimeOffset now,
-        Func<EnrichedStream, DateTimeOffset?> warmExpiry)
-    {
-        ArgumentNullException.ThrowIfNull(healthy);
-        ArgumentNullException.ThrowIfNull(warmExpiry);
-
-        var upcoming = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
-            healthy, current, PlaybackUrlReusePolicy.PrewarmDepth);
-        var n = 0;
-        foreach (var row in upcoming)
-        {
-            var expiry = warmExpiry(row);
-            if (expiry is { } e && e - now > PlaybackUrlReusePolicy.MinComfortableLife)
-                n++;
-        }
-
-        return n;
     }
 
     /// <summary>

@@ -57,10 +57,11 @@ public class StreamResolver(
         // at once. MP rows have their own lane of one (docs/PROBE_SCHEDULING_RULES.md
         // rules 3-4): LocalService is single-threaded for POST /mp, and an in-flight
         // /mp never takes an FB place. A seed that only lists chips is re-queued as
-        // its first chip with the rest beside it (rules 5-6). First playback still
-        // follows catalog index (StreamResolutionOrchestrator holds a faster later
-        // row until earlier candidates have yielded). Chip siblings from /mp are
-        // inserted into `pending` and picked up by FillWindow.
+        // its first chip with the rest beside it (rules 5-6). First play is first
+        // come, first served (StreamResolutionOrchestrator, rule 9). Chip siblings
+        // from /mp are inserted into `pending` and picked up by FillWindow. With a
+        // High or Medium recommendations (rule 1) the other rows wait for the head
+        // start (TopTierHeadStart).
         var gate = new SemaphoreSlim(concurrency, concurrency);
         var inFlight = new List<(Task<ResolveOutcome> Task, bool IsMp)>();
         var started = new HashSet<int>();
@@ -73,6 +74,71 @@ public class StreamResolver(
         // cancelled run lets go, so LocalService's single /mp is not held for nobody.
         var wantedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var pageWants = new List<IDisposable>();
+        // Rule 1: the head start running when this run began (the first pass only).
+        var headStart = raceThrottle?.CurrentHeadStart;
+        var yielded = new HashSet<Stream>(ReferenceEqualityComparer.Instance);
+
+        // Rule 1 (TopTierHeadStart). High rows are never held. A Medium row waits during
+        // the head start while a High row has no verdict and there are two or more High
+        // rows; after it, a Medium MP row still waits while a High FB row is queued. A
+        // finding row waits during the head start while a High or Medium row has no
+        // verdict; after it, an MP finding row still waits while a High or Medium FB row
+        // is queued. FB rows need no extra check after the head start: the FB window
+        // takes rows in try-order, which puts High, then Medium, first.
+        bool HoldsFinding(int index)
+        {
+            var candidate = pending[index];
+            if (headStart is null || headStart.IsTopTier(candidate))
+                return false;
+            var highWaiting = false;
+            var tierWaiting = false;
+            var highFbQueued = false;
+            var tierFbQueued = false;
+            for (var i = 0; i < pending.Count; i++)
+            {
+                var row = pending[i];
+                var high = headStart.IsTopTier(row);
+                if ((!high && !headStart.IsMedium(row)) || yielded.Contains(row))
+                    continue;
+                tierWaiting = true;
+                highWaiting |= high;
+                if (!started.Contains(i) && !MpPageUrl.IsV2Stream(row))
+                {
+                    tierFbQueued = true;
+                    highFbQueued |= high;
+                }
+            }
+
+            var isMp = MpPageUrl.IsV2Stream(candidate);
+            if (headStart.IsMedium(candidate))
+            {
+                if (!headStart.IsElapsed)
+                    return highWaiting && headStart.Count >= 2;
+                return isMp && highFbQueued;
+            }
+
+            if (!tierWaiting)
+                return false;
+            if (!headStart.IsElapsed)
+                return true;
+            return isMp && tierFbQueued;
+        }
+
+        // Finding rows are queued and held by the head start; wake when it elapses.
+        bool WaitingOnHeadStart()
+        {
+            if (headStart is null)
+                return false;
+            var held = false;
+            for (var i = 0; i < pending.Count && !held; i++)
+            {
+                if (!started.Contains(i) && HoldsFinding(i))
+                    held = true;
+            }
+
+            headStart.FindingHeld = held;
+            return held && !headStart.IsElapsed;
+        }
 
         async Task<ResolveOutcome> StartFbAsync(Stream stream)
         {
@@ -140,7 +206,7 @@ public class StreamResolver(
                 int? pick = null;
                 for (var i = nextIndex; i < pending.Count; i++)
                 {
-                    if (!started.Contains(i) && !MpPageUrl.IsV2Stream(pending[i]))
+                    if (!started.Contains(i) && !MpPageUrl.IsV2Stream(pending[i]) && !HoldsFinding(i))
                     {
                         pick = i;
                         break;
@@ -159,13 +225,16 @@ public class StreamResolver(
         // the ready ones; otherwise the next MP row in queue order that will not just
         // wait on a running harvest (rule 7: a chip the harvest has not answered yet,
         // or another page's row, stays queued and is woken by the harvest). During a
-        // race only ready chips may start.
+        // race only ready chips may start. A finding row held by the top-tier head
+        // start (rule 1) does not start at all.
         int? NextMp(bool readyOnly)
         {
             int? firstMp = null;
             for (var i = nextIndex; i < pending.Count; i++)
             {
                 if (started.Contains(i) || !MpPageUrl.IsV2Stream(pending[i]))
+                    continue;
+                if (HoldsFinding(i))
                     continue;
                 var chip = GetPlayerStreamName(pending[i]);
                 if (harvestProbe?.IsMpChipReady(pending[i].Url, chip) == true)
@@ -191,7 +260,7 @@ public class StreamResolver(
             return false;
         }
 
-        async Task WakeAsync(bool onRace, bool onHarvest, CancellationToken token)
+        async Task WakeAsync(bool onRace, bool onHarvest, bool onHeadStart, CancellationToken token)
         {
             // Race end, or a harvest change that may have made a chip ready. Only what
             // the loop is actually waiting on: a race wait with no race in flight
@@ -203,6 +272,8 @@ public class StreamResolver(
                     waits.Add(raceThrottle.WaitUntilRaceEndsAsync(token));
                 if (onHarvest && harvestProbe is not null)
                     waits.Add(harvestProbe.WaitForMpHarvestChangeAsync(token));
+                if (onHeadStart && headStart is not null)
+                    waits.Add(headStart.Elapsed.WaitAsync(token));
                 if (waits.Count > 0)
                     await Task.WhenAny(waits).ConfigureAwait(false);
             }
@@ -222,12 +293,13 @@ public class StreamResolver(
                 if (!waitingOnRace)
                     pauseLogged = false;
                 var waitingOnHarvest = MpWaitingOnHarvest();
+                var waitingOnHeadStart = WaitingOnHeadStart();
 
-                if (inFlight.Count == 0 && !waitingOnRace && !waitingOnHarvest)
+                if (inFlight.Count == 0 && !waitingOnRace && !waitingOnHarvest && !waitingOnHeadStart)
                     break;
 
                 Task<ResolveOutcome>? completedTask;
-                if (waitingOnRace || waitingOnHarvest)
+                if (waitingOnRace || waitingOnHarvest || waitingOnHeadStart)
                 {
                     if (waitingOnRace && inFlight.Count == 0 && !pauseLogged)
                     {
@@ -239,7 +311,7 @@ public class StreamResolver(
                     using var wakeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     // Arm the wake first, then look again: a chip that turned ready (or a
                     // race that ended) after the last FillWindow cannot be missed.
-                    var wake = WakeAsync(waitingOnRace, waitingOnHarvest, wakeCts.Token);
+                    var wake = WakeAsync(waitingOnRace, waitingOnHarvest, waitingOnHeadStart, wakeCts.Token);
                     FillWindow();
                     var first = await Task.WhenAny(inFlight.Select(x => (Task)x.Task).Append(wake)).ConfigureAwait(false);
                     wakeCts.Cancel();
@@ -324,6 +396,7 @@ public class StreamResolver(
 
                 logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
                     outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
+                yielded.Add(outcome.Enriched.Stream);
                 yield return outcome.Enriched;
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -334,6 +407,8 @@ public class StreamResolver(
         {
             foreach (var want in pageWants)
                 want.Dispose();
+            if (headStart is not null)
+                headStart.FindingHeld = false;
         }
 
         logger.LogInformation("[StreamResolver] Completed incremental resolution of all streams");

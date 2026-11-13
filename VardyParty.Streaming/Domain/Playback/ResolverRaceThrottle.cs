@@ -12,8 +12,8 @@ public sealed class ResolverRaceThrottle
     public const int MaxConcurrent = 2;
 
     /// <summary>
-    /// How long find-phase stays paused after first playback starts so Next can take
-    /// a warm URL (unless prewarm depth is satisfied sooner).
+    /// How long after first playback starts the window may pause find-phase while a
+    /// backup needs warming (docs/PROBE_SCHEDULING_RULES.md rule 11).
     /// </summary>
     public static TimeSpan PlaybackPriorityTimeout =>
         VardyParty.Kernel.FirstPlayOpenStrategy.PlaybackPriorityTimeout;
@@ -76,7 +76,11 @@ public sealed class ResolverRaceThrottle
         return new Release(() => RaceLegDepth.Value--);
     }
 
-    /// <summary>Waits until plays that started before the race have released their slots.</summary>
+    /// <summary>
+    /// Waits until plays that started before the race have released their slots.
+    /// No production caller since first play stopped draining (rule 12); kept for any
+    /// callers that need a full drain.
+    /// </summary>
     public async Task DrainOthersAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -91,6 +95,31 @@ public sealed class ResolverRaceThrottle
 
             await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private TopTierHeadStart? _headStart;
+
+    /// <summary>
+    /// The running top-tier head start (rule 1), or null. The resolver reads it when a
+    /// run starts; the orchestrator (and the timeline harness) owns it.
+    /// </summary>
+    public TopTierHeadStart? CurrentHeadStart => Volatile.Read(ref _headStart);
+
+    /// <summary>
+    /// Starts the head start for the High rows (<paramref name="topTier"/>) and the Medium
+    /// rows (<paramref name="medium"/>) on <paramref name="time"/>. Dispose when the first
+    /// resolver pass ends. Null when there is neither.
+    /// </summary>
+    public TopTierHeadStart? BeginTopTierHeadStart(
+        IReadOnlyCollection<VardyParty.Kernel.Stream> topTier,
+        IReadOnlyCollection<VardyParty.Kernel.Stream> medium,
+        TimeProvider time)
+    {
+        if (topTier.Count == 0 && medium.Count == 0)
+            return null;
+        var headStart = new TopTierHeadStart(topTier, medium, time, ended => Interlocked.CompareExchange(ref _headStart, null, ended));
+        Volatile.Write(ref _headStart, headStart);
+        return headStart;
     }
 
     /// <summary>Candidate testing awaits this while <see cref="RaceInFlight"/> and nothing else is in flight.</summary>
