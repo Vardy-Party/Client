@@ -29,11 +29,15 @@ namespace VardyParty.Platforms.Android
         private int _pendingOffset;
         private bool _upstreamDone;
         private IDictionary<string, IList<string>>? _unwrappedHeaders;
+        private readonly Action<int>? _onOpenOutcome;
 
-        public UnwrappingDataSource(IDataSource upstream, PlaybackTransferMeter? meter = null)
+        /// <param name="onOpenOutcome">Called once per open: 0 when the server answered,
+        /// else the HTTP status of the failure (0 when unknown). Feeds the refused-download rule.</param>
+        public UnwrappingDataSource(IDataSource upstream, PlaybackTransferMeter? meter = null, Action<int>? onOpenOutcome = null)
         {
             _upstream = upstream ?? throw new ArgumentNullException(nameof(upstream));
             _meter = meter;
+            _onOpenOutcome = onOpenOutcome;
         }
 
         public void AddTransferListener(ITransferListener? transferListener)
@@ -53,7 +57,18 @@ namespace VardyParty.Platforms.Android
                 dataSpec = PlayingPlaylistRedirect.Apply(dataSpec);
 
             // Upstream IOExceptions (HTTP 403, DNS) must reach Media3 unchanged.
-            var length = _upstream.Open(dataSpec);
+            long length;
+            try
+            {
+                length = _upstream.Open(dataSpec);
+            }
+            catch (Exception ex)
+            {
+                ReportOpenOutcome(PlaybackPolicy.HttpStatusFromErrorText(ex.Message), failed: true);
+                throw;
+            }
+
+            ReportOpenOutcome(0, failed: false);
             if (dataSpec is null
                 || dataSpec.Position > 0
                 || (dataSpec.Length > 0 && dataSpec.Length != C.LengthUnset))
@@ -93,6 +108,14 @@ namespace VardyParty.Platforms.Android
                 "VardyParty",
                 $"UnwrappingDataSource: image-wrapped TS unwrapped ({_pending.Length} bytes) {_upstream.Uri}");
             return _pending.Length;
+        }
+
+        private void ReportOpenOutcome(int status, bool failed)
+        {
+            if (_onOpenOutcome is null || (failed && status == 0))
+                return;
+            try { _onOpenOutcome(status); }
+            catch { /* reporting must never break a load */ }
         }
 
         private static bool IsPlaylist(DataSpec dataSpec)
@@ -225,18 +248,20 @@ namespace VardyParty.Platforms.Android
     {
         private readonly IDataSourceFactory _inner;
         private readonly PlaybackTransferMeter? _meter;
+        private readonly Action<int>? _onOpenOutcome;
 
-        public UnwrappingDataSourceFactory(IDataSourceFactory inner, PlaybackTransferMeter? meter = null)
+        public UnwrappingDataSourceFactory(IDataSourceFactory inner, PlaybackTransferMeter? meter = null, Action<int>? onOpenOutcome = null)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _meter = meter;
+            _onOpenOutcome = onOpenOutcome;
         }
 
         public IDataSource CreateDataSource()
         {
             var upstream = _inner.CreateDataSource()
                 ?? throw new InvalidOperationException("Upstream data source factory returned null.");
-            return new UnwrappingDataSource(upstream, _meter);
+            return new UnwrappingDataSource(upstream, _meter, _onOpenOutcome);
         }
     }
 }

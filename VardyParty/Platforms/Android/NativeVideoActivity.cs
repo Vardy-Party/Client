@@ -1828,6 +1828,11 @@ namespace VardyParty.Platforms.Android
                         return;
 
                     var message = BuildEngineErrorMessage(error);
+                    if (_activity.IsRefusalAlreadyHandled())
+                    {
+                        _activity._logger?.LogInformation("[NativeVideoActivity] Player error after refused downloads (already handled): {Message}", message);
+                        return;
+                    }
                     _activity._logger?.LogWarning("[NativeVideoActivity] Player error: {Message}", message);
                     _activity._anticipatingToken = false;
                     _activity._playerFaulted = true;

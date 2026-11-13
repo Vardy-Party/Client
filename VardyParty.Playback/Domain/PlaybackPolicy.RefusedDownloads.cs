@@ -29,6 +29,38 @@ public static partial class PlaybackPolicy
     public static string RefusedDownloadReason(int statusCode) => $"Stream refused ({statusCode})";
 
     /// <summary>
+    /// HTTP status in a failed download's error text, else 0: "HTTP 403" (Android managed
+    /// data source), "Response code: 403" (Media3 InvalidResponseCodeException), "status=403"
+    /// (Windows segment log). Lets Android feed refused segments into
+    /// <see cref="IsHardDownloadFailure(int, int)"/> like Windows.
+    /// </summary>
+    public static int HttpStatusFromErrorText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+        var match = HttpStatusPattern().Match(text);
+        return match.Success
+               && int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var code)
+               && code is >= 100 and <= 599
+            ? code
+            : 0;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:\bHTTP(?:/\d(?:\.\d)?)?|\bResponse code:?|\bstatus\s*[=:]?)\s*(\d{3})\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex HttpStatusPattern();
+
+    /// <summary>
+    /// A first frame / video size belongs to the current attach only once the player has
+    /// been handed the session's URL. Between BeginAttach and the engine attach the old
+    /// stream's frame must not confirm the new one (an audio-only target would then pass
+    /// as "video shown").
+    /// </summary>
+    public static bool IsPictureForCurrentAttach(string? playerUrl, string? sessionCurrentUrl)
+        => !string.IsNullOrWhiteSpace(playerUrl)
+           && !string.IsNullOrWhiteSpace(sessionCurrentUrl)
+           && string.Equals(playerUrl, sessionCurrentUrl, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Value for <c>AdaptiveMediaSourceDownloadResult.ExtendedStatus</c> on a failed download.
     /// WinRT rejects a bare HTTP status (403 threw "The parameter is incorrect" on every
     /// failed segment); it takes a failure HRESULT, so HTTP statuses map to
