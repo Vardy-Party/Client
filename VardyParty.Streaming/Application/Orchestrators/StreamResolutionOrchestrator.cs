@@ -177,6 +177,7 @@ public class StreamResolutionOrchestrator(
         finally
         {
             EndPlaybackPriorityWindow();
+            raceThrottle?.SetBackupWanted(false);
             // Whatever exit fired (user closed, cancelled, failed, completed), the homepage modal is bound
             // to IsResolving, so it must never depend on which return statement ran.
             if (_isResolving)
@@ -292,6 +293,9 @@ public class StreamResolutionOrchestrator(
             }
 
             _healthyStreamCount = streamSwitchingService.GetHealthyStreams().Count;
+            // Rule 11 backup push: from first play until a second row is in the pool, the
+            // resolver lets Medium rows fill every free slot (no Medium cap) ahead of finding.
+            raceThrottle?.SetBackupWanted(hasPlayedFirstStream && _healthyStreamCount < 2);
             firstPlayDiag.MarkHealthyCount(
                 _healthyStreamCount,
                 readyStream.Stream?.Channel,

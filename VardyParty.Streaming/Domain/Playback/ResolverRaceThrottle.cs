@@ -99,6 +99,18 @@ public sealed class ResolverRaceThrottle
 
     private TopTierHeadStart? _headStart;
     private StreamTiers? _tiers;
+    private volatile bool _backupWanted;
+
+    /// <summary>
+    /// A stream is playing and the pool holds no other playable row yet (rule 11 "backup
+    /// push"): until a backup exists, the resolver lifts the Medium cap so recommended rows
+    /// (High, then Medium) fill every free slot ahead of finding. Set by the orchestrator as
+    /// rows join the pool (and by the probe timeline harness).
+    /// </summary>
+    public bool BackupWanted => _backupWanted;
+
+    /// <summary>Sets <see cref="BackupWanted"/>: true from first play until a second row joins the pool.</summary>
+    public void SetBackupWanted(bool wanted) => _backupWanted = wanted;
 
     /// <summary>
     /// The running top-tier head start (rule 1), or null. The resolver reads it when a

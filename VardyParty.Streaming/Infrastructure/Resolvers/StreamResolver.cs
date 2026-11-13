@@ -82,15 +82,19 @@ public class StreamResolver(
         var yielded = new HashSet<Stream>(ReferenceEqualityComparer.Instance);
 
         // Rule 1 (Jon, 13 Nov 2026: "high can occupy 2 slots on local-service, medium only
-        // one, then fit in v1 and v2 into gaps"; "Medium limited to one slot always").
-        // A free LocalService slot goes to a waiting High row first (High may use both),
-        // else to a Medium row while no other Medium row is running (Medium uses at most one
-        // slot, in every pass: the head start, after it, and later passes, through the
-        // session's tiers), else to finding (FB /play or MP /mp), so no slot sits idle for
-        // want of a tier row. During the head start a Medium row also waits while a High FB
-        // row is queued, and finding waits while a tier FB row that may start is queued.
-        // After it, only MP rows need that check (the FB window takes rows in try-order:
-        // High, Medium, then finding, passing over a Medium row the cap holds).
+        // one, then fit in v1 and v2 into gaps"; then "Let a second Medium use a slot only
+        // when nothing else is queued"). A free LocalService slot goes to a waiting High row
+        // first (High may use both), else to the first Medium row, else to finding (FB /play
+        // or MP /mp), else to a second Medium row: a second Medium row waits only while a
+        // finding row could take the same place now, so no slot sits idle while a Medium
+        // waits. A running Medium probe is never pre-empted. This holds in every pass (the
+        // session's tiers). During the head start a Medium row also waits while a High FB row
+        // is queued, and finding waits while a tier FB row that may start is queued. After it,
+        // only MP rows need that check (the FB window takes rows in try-order: High, Medium,
+        // then finding, passing over a Medium row the cap holds).
+        // Rule 11 backup push: while a stream plays with no backup in the pool
+        // (ResolverRaceThrottle.BackupWanted), the Medium cap is off, so Medium rows fill the
+        // free slots ahead of finding until a second row is playable.
         // Chips of a High (Medium) MP page are High (Medium) rows too (StreamTiers.Inherit).
         bool HoldsFinding(int index)
         {
@@ -119,18 +123,74 @@ public class StreamResolver(
             }
 
             var inHeadStart = headStart is { IsElapsed: false };
+            var backupWanted = raceThrottle?.BackupWanted == true;
             var isMp = MpPageUrl.IsV2Stream(candidate);
             if (tiers.IsMedium(candidate))
             {
-                if (mediumRunning >= 1)
+                if (mediumRunning >= 1 && !backupWanted && FindingCanTakePlace(isMp, index))
                     return true;
                 return highFbQueued && (inHeadStart || isMp);
             }
 
             // A tier FB row that may start now: any High row, or a Medium row while no
-            // Medium row runs (a Medium row the cap holds leaves the slot to finding).
-            var tierFbCanStart = highFbQueued || (mediumFbQueued && mediumRunning == 0);
+            // Medium row runs (or while a backup is wanted: no Medium cap then).
+            var tierFbCanStart = highFbQueued || (mediumFbQueued && (mediumRunning == 0 || backupWanted));
             return tierFbCanStart && (inHeadStart || isMp);
+        }
+
+        // A finding row could take the place a second Medium row asks for, now: for the FB
+        // window, a queued FB finding row, an MP finding row that would POST /mp now, or a
+        // finding /mp seed in flight that, with the running FB rows, fills both LocalService
+        // slots; for the MP lane, an MP finding row the lane could start
+        // (a chip the harvest holds, or one it can start). A finding row that is only waiting
+        // (a chip not sent yet, a page behind another page's harvest) does not count, so it
+        // never leaves a slot idle.
+        bool FindingCanTakePlace(bool mpLane, int except)
+        {
+            // A finding /mp seed in flight holds (or is waiting for) a LocalService slot until
+            // its chips are listed. With the FB rows in flight it fills both slots: an FB
+            // second Medium then waits, so it cannot take the slot ahead of the seed.
+            if (!mpLane)
+            {
+                var seeds = 0;
+                for (var i = 0; i < pending.Count; i++)
+                {
+                    var row = pending[i];
+                    if (started.Contains(i) && !yielded.Contains(row) && MpPageUrl.IsV2Stream(row)
+                        && GetPlayerStreamName(row) is null && !tiers!.IsHigh(row) && !tiers.IsMedium(row))
+                        seeds++;
+                }
+
+                if (seeds > 0 && activeFb + seeds >= concurrency)
+                    return true;
+            }
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                if (i == except || started.Contains(i))
+                    continue;
+                var row = pending[i];
+
+                if (tiers!.IsHigh(row) || tiers.IsMedium(row) || HoldsFinding(i))
+                    continue;
+                var rowIsMp = MpPageUrl.IsV2Stream(row);
+                if (!rowIsMp)
+                {
+                    if (!mpLane)
+                        return true;
+                    continue;
+                }
+
+                if (activeMp > 0)
+                    continue;
+                var chip = GetPlayerStreamName(row);
+                var ready = harvestProbe?.IsMpChipReady(row.Url, chip) == true;
+                var canStart = harvestProbe is null || harvestProbe.CanStartMp(row.Url, chip);
+                if (mpLane ? ready || canStart : !ready && canStart)
+                    return true;
+            }
+
+            return false;
         }
 
         // Records whether a queued row waits on a tier rule (the harness's A3 seam), and
