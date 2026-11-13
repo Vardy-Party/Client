@@ -135,6 +135,28 @@ public class TopTierHeadStartTests
     }
 
     [Fact]
+    public void CurrentTiers_OutliveTheHeadStart_UntilANewSessionWithoutTiers()
+    {
+        // Arrange — "Medium limited to one slot always": later passes of the session
+        // (Deferred re-queues, CDN rechecks) still read the tiers after the head start.
+        var throttle = new ResolverRaceThrottle();
+        var m1 = Row("m1");
+        var headStart = throttle.BeginTopTierHeadStart([], [m1], TimeProvider.System)!;
+
+        // Act
+        headStart.Dispose();
+        var afterHeadStart = throttle.CurrentTiers;
+        throttle.BeginTopTierHeadStart([], [], TimeProvider.System);
+        var nextSession = throttle.CurrentTiers;
+
+        // Assert
+        Assert.Null(throttle.CurrentHeadStart);
+        Assert.Same(headStart.Tiers, afterHeadStart);
+        Assert.True(afterHeadStart!.IsMedium(m1));
+        Assert.Null(nextSession);
+    }
+
+    [Fact]
     public void Tiers_ChipsOfAHighPage_AreHigh_AndOfAMediumPage_Medium()
     {
         // Arrange — rule 1: chips LocalService lists for a recommended MP page take its tier.

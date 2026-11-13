@@ -11,14 +11,17 @@ namespace VardyParty.Streaming;
 /// <see cref="Duration"/> High rows may use both LocalService slots: a free slot goes to a
 /// waiting High row first.</item>
 /// <item>Second tier: Medium-confidence recommended rows (and the chips of a Medium page).
-/// Medium rows use at most one slot at a time: a slot no High row wants goes to a Medium
-/// row while no other Medium row runs (a slot a dead High row frees goes to Medium at once).</item>
+/// Medium rows use at most one slot at a time, always (Jon: "Medium limited to one slot
+/// always"; the cap lasts the session through <see cref="StreamTiers"/>): a slot no High row
+/// wants goes to a Medium row while no other Medium row runs (a slot a dead High row frees
+/// goes to Medium at once).</item>
 /// <item>Finding: Low recommendations, MP pages and FB rows. Finding fills every slot High
 /// and Medium leave, from the first second, MP lane (<c>/mp</c>) first, then FB
 /// <c>/play</c> (Jon: "high can occupy 2 slots on local-service, medium only one, then fit
 /// in v1 and v2 into gaps").</item>
 /// </list>
-/// After <see cref="Duration"/>, first come, first served in try-order (no Medium cap). Shared by <see cref="StreamResolver"/>
+/// After <see cref="Duration"/>, first come, first served in try-order, still with one Medium
+/// row at a time (<see cref="ResolverRaceThrottle.CurrentTiers"/> keeps the tiers). Shared by <see cref="StreamResolver"/>
 /// (which applies it), <see cref="StreamResolutionOrchestrator"/> and the probe timeline harness.
 /// </summary>
 public sealed class TopTierHeadStart : IDisposable
@@ -62,7 +65,8 @@ public sealed class TopTierHeadStart : IDisposable
     public bool IsMedium(StreamModel? row) => Tiers.IsMedium(row);
 
     /// <summary>
-    /// Set by the resolver: finding rows are queued but held by the head start right now.
+    /// Set by the resolver: rows are queued but held by the head start right now (see also
+    /// <see cref="StreamTiers.RowsHeld"/>, which covers the Medium cap after it).
     /// Read-only seam for the probe timeline harness (A3 excludes this time).
     /// </summary>
     public bool FindingHeld

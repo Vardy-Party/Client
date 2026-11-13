@@ -60,8 +60,8 @@ public class StreamResolver(
         // its first chip with the rest beside it (rules 5-6). First play is first
         // come, first served (StreamResolutionOrchestrator, rule 9). Chip siblings
         // from /mp are inserted into `pending` and picked up by FillWindow. With High
-        // or Medium recommendations (rule 1) the head start shares the slots out by
-        // tier (TopTierHeadStart): High up to two, Medium one, finding the rest.
+        // or Medium recommendations (rule 1) the slots are shared out by tier
+        // (StreamTiers, TopTierHeadStart): High up to two, Medium one, finding the rest.
         var gate = new SemaphoreSlim(concurrency, concurrency);
         var inFlight = new List<(Task<ResolveOutcome> Task, bool IsMp)>();
         var started = new HashSet<int>();
@@ -76,45 +76,40 @@ public class StreamResolver(
         var pageWants = new List<IDisposable>();
         // Rule 1: the head start running when this run began (the first pass only).
         var headStart = raceThrottle?.CurrentHeadStart;
+        // The session's tiers: from the head start, and after it from the throttle, so the
+        // Medium cap holds in every pass (Deferred re-queues, CDN rechecks).
+        var tiers = headStart?.Tiers ?? raceThrottle?.CurrentTiers;
         var yielded = new HashSet<Stream>(ReferenceEqualityComparer.Instance);
 
-        // Rule 1 (TopTierHeadStart; Jon, 13 Nov 2026: "high can occupy 2 slots on
-        // local-service, medium only one, then fit in v1 and v2 into gaps"). During the
-        // head start a free LocalService slot goes to a waiting High row first (High may
-        // use both), else to a Medium row while no other Medium row is running (Medium
-        // uses at most one), else to finding (FB /play or MP /mp). A Medium row beyond the
-        // first waits only while a finding row could take the slot instead, so no slot
-        // sits idle. After the head start a Medium MP row still waits while a High FB row
-        // is queued, and an MP finding row while a High or Medium FB row is queued; FB rows
-        // need no extra check: the FB window takes rows in try-order (High, Medium first).
+        // Rule 1 (Jon, 13 Nov 2026: "high can occupy 2 slots on local-service, medium only
+        // one, then fit in v1 and v2 into gaps"; "Medium limited to one slot always").
+        // A free LocalService slot goes to a waiting High row first (High may use both),
+        // else to a Medium row while no other Medium row is running (Medium uses at most one
+        // slot, in every pass: the head start, after it, and later passes, through the
+        // session's tiers), else to finding (FB /play or MP /mp), so no slot sits idle for
+        // want of a tier row. During the head start a Medium row also waits while a High FB
+        // row is queued, and finding waits while a tier FB row that may start is queued.
+        // After it, only MP rows need that check (the FB window takes rows in try-order:
+        // High, Medium, then finding, passing over a Medium row the cap holds).
         // Chips of a High (Medium) MP page are High (Medium) rows too (StreamTiers.Inherit).
         bool HoldsFinding(int index)
         {
             var candidate = pending[index];
-            if (headStart is null || headStart.IsTopTier(candidate))
+            if (tiers is null || tiers.IsHigh(candidate))
                 return false;
             var highFbQueued = false;
-            var tierFbQueued = false;
             var mediumFbQueued = false;
             var mediumRunning = 0;
-            var findingQueued = false;
             for (var i = 0; i < pending.Count; i++)
             {
                 var row = pending[i];
+                var high = tiers.IsHigh(row);
+                var medium = !high && tiers.IsMedium(row);
+                if ((!high && !medium) || yielded.Contains(row))
+                    continue;
                 var queued = !started.Contains(i);
-                var high = headStart.IsTopTier(row);
-                var medium = !high && headStart.IsMedium(row);
-                if (!high && !medium)
-                {
-                    findingQueued |= queued && i != index;
-                    continue;
-                }
-
-                if (yielded.Contains(row))
-                    continue;
                 if (queued && !MpPageUrl.IsV2Stream(row))
                 {
-                    tierFbQueued = true;
                     highFbQueued |= high;
                     mediumFbQueued |= medium;
                 }
@@ -123,23 +118,26 @@ public class StreamResolver(
                     mediumRunning++;
             }
 
+            var inHeadStart = headStart is { IsElapsed: false };
             var isMp = MpPageUrl.IsV2Stream(candidate);
-            if (headStart.IsMedium(candidate))
+            if (tiers.IsMedium(candidate))
             {
-                if (!headStart.IsElapsed)
-                    return highFbQueued || (mediumRunning >= 1 && findingQueued);
-                return isMp && highFbQueued;
+                if (mediumRunning >= 1)
+                    return true;
+                return highFbQueued && (inHeadStart || isMp);
             }
 
-            if (!headStart.IsElapsed)
-                return highFbQueued || (mediumFbQueued && mediumRunning == 0);
-            return isMp && tierFbQueued;
+            // A tier FB row that may start now: any High row, or a Medium row while no
+            // Medium row runs (a Medium row the cap holds leaves the slot to finding).
+            var tierFbCanStart = highFbQueued || (mediumFbQueued && mediumRunning == 0);
+            return tierFbCanStart && (inHeadStart || isMp);
         }
 
-        // Finding rows are queued and held by the head start; wake when it elapses.
+        // Records whether a queued row waits on a tier rule (the harness's A3 seam), and
+        // whether the loop must wake when the head start elapses.
         bool WaitingOnHeadStart()
         {
-            if (headStart is null)
+            if (tiers is null)
                 return false;
             var held = false;
             for (var i = 0; i < pending.Count && !held; i++)
@@ -148,7 +146,10 @@ public class StreamResolver(
                     held = true;
             }
 
-            headStart.FindingHeld = held;
+            tiers.RowsHeld = held;
+            if (headStart is null)
+                return false;
+            headStart.FindingHeld = held && !headStart.IsElapsed;
             return held && !headStart.IsElapsed;
         }
 
@@ -231,7 +232,7 @@ public class StreamResolver(
                 {
                     if (started.Contains(i) || MpPageUrl.IsV2Stream(pending[i]))
                         continue;
-                    if (tiersOnly && !headStart!.IsTopTier(pending[i]) && !headStart.IsMedium(pending[i]))
+                    if (tiersOnly && !tiers!.IsHigh(pending[i]) && !tiers.IsMedium(pending[i]))
                         continue;
                     if (!HoldsFinding(i))
                     {
@@ -385,7 +386,7 @@ public class StreamResolver(
                     var rows = new List<Stream> { seed };
                     rows.AddRange(outcome.Siblings.Where(s => seen.Add(CandidateKey(s))));
                     // Rule 1: the chips of a High (Medium) page are High (Medium) rows.
-                    headStart?.Tiers.Inherit(seed, rows);
+                    tiers?.Inherit(seed, rows);
                     InsertUnstarted(pending, started, rows);
                     nextIndex = FirstUnstarted(pending, started);
                     onTotalStreamsKnown?.Invoke(pending.Count);
@@ -407,7 +408,7 @@ public class StreamResolver(
                     ? EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
                     : [];
                 if (added.Count > 0)
-                    headStart?.Tiers.Inherit(outcome.Enriched.Stream, added);
+                    tiers?.Inherit(outcome.Enriched.Stream, added);
 
                 // Publish total once MP chip inventory is known (siblings and/or sole chip).
                 if (entry.IsMp || outcome.Siblings.Count > 0)
@@ -440,6 +441,8 @@ public class StreamResolver(
                 want.Dispose();
             if (headStart is not null)
                 headStart.FindingHeld = false;
+            if (tiers is not null)
+                tiers.RowsHeld = false;
         }
 
         logger.LogInformation("[StreamResolver] Completed incremental resolution of all streams");

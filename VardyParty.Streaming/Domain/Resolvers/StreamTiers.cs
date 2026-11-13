@@ -7,13 +7,15 @@ namespace VardyParty.Streaming;
 /// Which rows are recommended High or Medium for this session (docs/PROBE_SCHEDULING_RULES.md
 /// rule 1), by row reference. A chip of a recommended MP page inherits the page's tier
 /// (<see cref="Inherit"/>). Outlives the head start: the backup preference (rule 11) reads
-/// it through <see cref="TierOf(EnrichedStream)"/>. Thread-safe.
+/// it through <see cref="TierOf(EnrichedStream)"/>, and the resolver keeps the Medium cap
+/// (one LocalService slot, always) in every pass of the session. Thread-safe.
 /// </summary>
 public sealed class StreamTiers
 {
     private readonly object _gate = new();
     private readonly HashSet<StreamModel> _high;
     private readonly HashSet<StreamModel> _medium;
+    private volatile bool _rowsHeld;
 
     public StreamTiers(IEnumerable<StreamModel> high, IEnumerable<StreamModel> medium)
     {
@@ -71,6 +73,17 @@ public sealed class StreamTiers
                     target.Add(chip);
             }
         }
+    }
+
+    /// <summary>
+    /// Set by the resolver: a queued row is waiting on a tier rule right now (the head start,
+    /// or the Medium cap: a second Medium row waits for the first). Read-only seam for the
+    /// probe timeline harness (A3 excludes this time).
+    /// </summary>
+    public bool RowsHeld
+    {
+        get => _rowsHeld;
+        internal set => _rowsHeld = value;
     }
 
     /// <summary>Snapshot of the High rows (diagnostics and the probe timeline harness).</summary>

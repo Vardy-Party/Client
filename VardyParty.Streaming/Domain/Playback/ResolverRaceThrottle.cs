@@ -98,6 +98,7 @@ public sealed class ResolverRaceThrottle
     }
 
     private TopTierHeadStart? _headStart;
+    private StreamTiers? _tiers;
 
     /// <summary>
     /// The running top-tier head start (rule 1), or null. The resolver reads it when a
@@ -106,9 +107,18 @@ public sealed class ResolverRaceThrottle
     public TopTierHeadStart? CurrentHeadStart => Volatile.Read(ref _headStart);
 
     /// <summary>
+    /// The session's tiers (rule 1), or null when nothing is recommended High or Medium. Set
+    /// by <see cref="BeginTopTierHeadStart"/> at the start of every session's first pass and
+    /// kept after the head start ends, so the Medium cap (one LocalService slot, always)
+    /// also holds in later passes: the Deferred re-queue passes and the CDN rechecks.
+    /// </summary>
+    public StreamTiers? CurrentTiers => Volatile.Read(ref _tiers);
+
+    /// <summary>
     /// Starts the head start for the High rows (<paramref name="topTier"/>) and the Medium
-    /// rows (<paramref name="medium"/>) on <paramref name="time"/>. Dispose when the first
-    /// resolver pass ends. Null when there is neither.
+    /// rows (<paramref name="medium"/>) on <paramref name="time"/>, and makes them the session's
+    /// <see cref="CurrentTiers"/>. Dispose when the first resolver pass ends. Null (and no
+    /// tiers) when there is neither.
     /// </summary>
     public TopTierHeadStart? BeginTopTierHeadStart(
         IReadOnlyCollection<VardyParty.Kernel.Stream> topTier,
@@ -116,8 +126,14 @@ public sealed class ResolverRaceThrottle
         TimeProvider time)
     {
         if (topTier.Count == 0 && medium.Count == 0)
+        {
+            // A new session with no tiers: the last session's tiers no longer apply.
+            Volatile.Write(ref _tiers, null);
             return null;
+        }
+
         var headStart = new TopTierHeadStart(topTier, medium, time, ended => Interlocked.CompareExchange(ref _headStart, null, ended));
+        Volatile.Write(ref _tiers, headStart.Tiers);
         Volatile.Write(ref _headStart, headStart);
         return headStart;
     }

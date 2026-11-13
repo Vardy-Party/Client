@@ -374,10 +374,11 @@ public class StreamResolutionOrchestrator(
                 }
             }
 
-            // Recommended tiers first (rule 1): the High-confidence rows get both
-            // LocalService slots to themselves for TopTierHeadStart.Duration; Medium rows
-            // come next, before any finding. The first pass only; re-queue passes and
-            // rechecks are first come, first served.
+            // Recommended tiers first (rule 1): High-confidence rows may use both
+            // LocalService slots, Medium rows one, and finding fills the rest; the head start
+            // (TopTierHeadStart.Duration) covers the first pass only. The tiers become the
+            // session's (ResolverRaceThrottle.CurrentTiers), so re-queue passes and rechecks
+            // keep Medium to one slot ("Medium limited to one slot always").
             var (topTier, mediumTier) = TopTierHeadStart.Select(selectionCoordinator.LatestRecommendations, orderedStreams);
             if (topTier.Count + mediumTier.Count > 0)
             {
