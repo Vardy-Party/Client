@@ -18,6 +18,8 @@ Decided (Jon, 13 Nov 2026): "You talk of a singular recommended stream but there
   - "Skip the 30s playlist-only wait while there's no backup": while a stream plays with no backup in the pool, a playlist-only chip is handed over at once; once a backup exists the 30s wait applies again (rule 7).
   - "Use a shorter first CDN recheck while there's no backup": while the viewer has fewer than two playable streams, the first CDN-unreachable recheck waits 30s instead of 2 min; every later recheck, and the first one once a backup exists, keeps the 2/5/10-minute back-off. The row stays Deferred, never dead. Risk accepted: the 2-minute first recheck was chosen after the 31 Oct 2026 IP block, so rechecking sooner could keep a block alive or trip another one (rule 13).
   - "Let finding go before a third High": the first two High rows (running or found healthy) keep both slots and the head start; a third or later High row waits while a finding row that answers in one probe (an FB row, or an MP chip the harvest holds) could take the slot (rule 1).
+- Then (Jon, 13 Nov 2026): "Give an early playlist chip that fails one more try before marking it dead", then "30s on chip testing? i think 30s is too long". A playlist-only chip handed over early (no backup yet) that fails its health check is not marked dead: it is checked once more after a configurable delay, **10s** by default (`GamesApi:EarlyChipRetryDelaySeconds`), and marked dead only if that check fails too. The retry holds no slot or MP lane while it waits and adds no switch or renumbering; a chip handed over at the normal time keeps one check (rule 7).
+- And (Jon, 13 Nov 2026): "you need to make logging changes so we can get and collect data". Every scheduling event that sets these delays is logged as one `[probe-timing]` line ("Probe timing log" below), so real sessions can tune them.
 - And (Jon, 13 Nov 2026): "you want the best experience for the user". The acceptance targets are what the viewer sees, in seconds from opening a match: picture time, backup time, needless switches and channel-number stability ("Acceptance" below). Every scheduling rule is there to improve those numbers.
 - And: the backup is the second playable High row, then the first playable Medium row, then the first playable finding row, whatever the channel numbers; a better-tier row that turns playable later replaces a finding backup. The chips of a High (Medium) MP page are High (Medium) rows (rules 1, 11).
 - First play uses the link the probe returned; a fresh `/play` only when that link genuinely cannot be reused. First play never waits for other probes: the startup drain and the second `/play` are gone (rule 12).
@@ -47,8 +49,8 @@ Timeline tests: `tests/VardyParty.Streaming.Tests/Timeline/` (see "Timeline harn
    CURRENT: the seed answers with the chip list (`MpHarvestSession.WaitForAsync`, `SeedFallback`, `ChipList`); the resolver re-queues the seed row as its first chip (`StreamResolver.ChipListSeed`, re-queue in `ResolveStreamsIncrementallyAsync`); the slot comes back in `LocalLanPlayService.ReleaseSlotWhenListedAsync` (`MpHarvestSession.Listed`). Before: the place was held until a probe-ready chip or the end of the harvest, 111s for Czechia v Spain. [R5 slow ten-chip page; R3/R6 normal MP]
 6. **Chips are rows.** Every chip LocalService lists becomes its own queued row, even when the seed has no probe-ready playlist. The catalog MP row becomes the first chip (it keeps its catalog place); the other chips are new rows, appended to the pool as they turn healthy. A finished harvest answers its chips from what it saw, so one page is POSTed once.
    CURRENT: `StreamResolver.ChipListSeed` and the re-queue in `ResolveStreamsIncrementallyAsync`; chips listed later on a yield (`EnqueueMpSiblingsNext`); a finished harvest with chips hands over the list, not null (`MpHarvestSession.SeedFallback`); a finished, fault-free harvest is reused for its page for `MpHarvestSession.VerdictMemory` (60s) so each chip reads its verdict instead of re-POSTing (`MpHarvestSession.CanReuseFor`). Before: a seed with no probe-ready chip returned null and Czechia v Spain's 10 chips were dropped; a page whose chips all missed was POSTed again per chip. [R6 slow ten-chip page; R6 every chip a miss; R9 all FB dead]
-7. **Deadlines.** Nothing waits in a slot or the MP lane for LocalService. The seed gives up 30s (`MpHarvestSession.ProbeReadyWait`) after `POST /mp` with nothing listed; that is retried (2s, 5s), then Deferred and re-queued, never Failed. A chip that only has a playlist is handed over as is 30s after its playlist line (or when the harvest ends); while a stream plays with no backup in the pool it is handed over at once (Jon, 13 Nov 2026), and the 30s wait applies again once a backup exists. A chip that is listed but not sent waits in the queue, outside the MP lane, until LocalService sends it or the harvest ends, however long the harvest is silent, so a chip sent late is still probed; a direct caller that waits for it (not the resolver) fails as infrastructure after 30s with no new chip line.
-   CURRENT: `MpHarvestSession.DefaultProbeReadyWait` (per session, set in the constructor); seed deadline in `MpHarvestSession.WaitForAsync` (`SeedTimedOut`); playlist-only deadline in `PlaylistWaitOver`, woken by a timer (`ScheduleWake`), skipped while `handOverPlaylistOnlyNow` (from `LocalLanPlayService`: `ResolverRaceThrottle.BackupWanted`) is true, with the resolver woken when it changes (`ResolverRaceThrottle.WaitForBackupWantedChangeAsync`); `StreamResolver.NextMp` only starts a chip the harvest can answer (`IMpHarvestProbe.CanStartMp`, `MpHarvestSession.IsChipReady`) and otherwise waits for `WaitForMpHarvestChangeAsync`, so a waiting chip never holds the MP lane; direct-wait stall deadline in `MpHarvestSession.WaitForAsync` (`ChipTimedOut`, restarted by `Progress`); harvest timeout on the same clock (`LocalLanPlayService.MpHarvestTimeout`, 330s). [R7 seed gives up; R7 a playlist-only chip; R7 playlist-only chips; R7 R11 a playlist-only chip waits 30s once a backup exists; R7 R11 slow ten-chip page; R7 a chip sent 50s after the chip list; R9 slow MP; R4 two FB at once beside a listed /mp harvest]
+7. **Deadlines.** Nothing waits in a slot or the MP lane for LocalService. The seed gives up 30s (`MpHarvestSession.ProbeReadyWait`) after `POST /mp` with nothing listed; that is retried (2s, 5s), then Deferred and re-queued, never Failed. A chip that only has a playlist is handed over as is 30s after its playlist line (or when the harvest ends); while a stream plays with no backup in the pool it is handed over at once (Jon, 13 Nov 2026), and the 30s wait applies again once a backup exists. A chip handed over early that fails its health check gets **one retry** (Jon, 13 Nov 2026): it goes back in the queue, holding no slot and not the MP lane, and is handed over again 10s later (`GamesApi:EarlyChipRetryDelaySeconds`), or sooner if its probe-ready line arrives, even if the harvest has ended; only a second failure marks it dead, and it joins the pool (or is dead) once, on its final verdict. A chip that is listed but not sent waits in the queue, outside the MP lane, until LocalService sends it or the harvest ends, however long the harvest is silent, so a chip sent late is still probed; a direct caller that waits for it (not the resolver) fails as infrastructure after 30s with no new chip line.
+   CURRENT: `MpHarvestSession.DefaultProbeReadyWait` (per session, set in the constructor); seed deadline in `MpHarvestSession.WaitForAsync` (`SeedTimedOut`); playlist-only deadline in `PlaylistWaitOver`, woken by a timer (`ScheduleWake`), skipped while `handOverPlaylistOnlyNow` (from `LocalLanPlayService`: `ResolverRaceThrottle.BackupWanted`) is true, with the resolver woken when it changes (`ResolverRaceThrottle.WaitForBackupWantedChangeAsync`); early-chip retry: `MpHarvestSession.RetryEarlyChip` (only for a chip it handed over early, once; its own timer, `IsRetryWaiting`), asked by `StreamResolver` through `IMpHarvestProbe.RetryEarlyMpChip` on a Failed health verdict, which re-queues the row unstarted instead of yielding it; `LocalLanPlayService.CanStartMp` keeps a waiting retry out of the MP lane; delay `LocalLanPlayService.EarlyChipRetryDelay` from `GamesApiSettings.EarlyChipRetryDelaySeconds` (default `DefaultEarlyChipRetryDelaySeconds` = 10); `StreamResolver.NextMp` only starts a chip the harvest can answer (`IMpHarvestProbe.CanStartMp`, `MpHarvestSession.IsChipReady`) and otherwise waits for `WaitForMpHarvestChangeAsync`, so a waiting chip never holds the MP lane; direct-wait stall deadline in `MpHarvestSession.WaitForAsync` (`ChipTimedOut`, restarted by `Progress`); harvest timeout on the same clock (`LocalLanPlayService.MpHarvestTimeout`, 330s). [R7 seed gives up; R7 a playlist-only chip; R7 playlist-only chips; R7 R11 a playlist-only chip waits 30s once a backup exists; R7 R11 an early playlist-only chip that fails gets one retry; R7 an early playlist-only chip that fails twice; R7 R11 slow ten-chip page; R7 a chip sent 50s after the chip list; R9 slow MP; R4 two FB at once beside a listed /mp harvest]
 8. **Dead FB is a verdict.** A dead FB link fails in about 20s, frees its slot, and is not retried by the client.
    CURRENT: a null answer is the stream's verdict (`LocalLanPlayService.CallPlayEndpointAsync`) and the row is Failed in `StreamResolver.ResolveAndTestStreamInternalAsync`. [R2 two dead FB]
 9. **First come, first served.** The first row to get a healthy, playable verdict plays first, recommended or not, MP or FB. No row holds it behind an earlier row that is still probing; try-order and the tier head start (rule 1) only decide which rows are probed first.
@@ -133,6 +135,8 @@ Generated by the harness: `ProbeSchedulingRulesTests.UxTable_MatchesTheRulesDoc`
 | FindingArrivesMidProbe | 40.0 | 40.0 | 46.0 | 46.0 | 0 | 0 |
 | PlaylistOnlyWithBackup | 4.0 | 4.0 | 8.0 | 8.0 | 0 | 0 |
 | CdnRecheckWithBackup | 4.0 | 4.0 | 7.0 | 7.0 | 0 | 0 |
+| EarlyChipRetryPasses | 4.0 | 4.0 | 24.0 | 24.0 | 0 | 0 |
+| EarlyChipRetryFails | 4.0 | 4.0 | - | - | 0 | 0 |
 <!-- ux-table:end -->
 
 **What sets the slowest backups** (13 Nov 2026). There is no throttle-down to one slot after first play, and the priority window holds only while a backup still needs warming, so most backup times are set by the scripted LocalService answers: SlowMpHealthyFb 61 (chip A is sent at 60), ChipLateAfterListing 59 (chip B at 58), FbBeforeSlowRecommended 26 (the recommended row turns healthy at 25), HighsDead 31 and HighDeadMediumHealthy 16 (the rows that could back up wait for a slot dead High rows hold). The levers, all done:
@@ -141,6 +145,54 @@ Generated by the harness: `ProbeSchedulingRulesTests.UxTable_MatchesTheRulesDoc`
 - **A 30s first CDN recheck while no backup exists** (rule 13): MediumCapInReQueuePass backup 155 to 65.
 - **Finding before a third High** (rule 1): FourHighs backup 14 (f1) instead of 17 (h3); h3 still becomes the backup at 21 (a better tier replaces a finding backup, rule 11).
 No picture time changed and no switch or renumbering was added.
+
+**Early-chip retry** (rule 7, 13 Nov 2026): no existing scenario changed. In EarlyChipRetryPasses chip A (handed over early at 12s, dead at 13s) passes its retry at 24s and is the backup; before, it was dead at 13s and there was no backup. In EarlyChipRetryFails it is dead at 24s instead of 13s, and nothing else waited on it.
+
+## Probe timing log
+
+Every event that sets the scheduling delays is one Information-level log line, so a session's timings can be collected from Android logcat (`adb logcat | grep probe-timing`) or the Windows log and used to tune the delays (the early-chip retry, rule 7's 30s, the head start):
+
+```
+[probe-timing] event=NAME ms=N key=value key="value with spaces" ...
+```
+
+- `ms` counts from the start of the session (`StreamResolutionOrchestrator.ResolveAsync`, `ResolverRaceThrottle.Timing.BeginSession`).
+- Fields with no value are left out. URLs are reduced to their host (`page=`, `cdn=`); no path, query or token is ever logged.
+- `tier` is `high`, `medium`, `finding`, or `none` (no recommendations this session).
+
+| Event | Written by | Fields |
+|---|---|---|
+| `session-start` | orchestrator | `candidates` |
+| `slot-grant`, `slot-release` | resolver (`lane=fb` or `mp`); `LocalLanPlayService` (`lane=mp-seed`, the LocalService slot a new `/mp` holds until its chips are listed) | `lane tier row chip page fb_active mp_active` (counts including this grant); release: `held_ms result` (`Healthy`, `Failed`, `Deferred`, `chips-listed`, `retry-queued`) or `reason` (`listed`, `timeout`) |
+| `mp-chips` | `LocalLanPlayService` | `page count chips` (the page listed its chips) |
+| `chip-listed` | `LocalLanPlayService` | `chip page playlist probe_ready` (a chip line arrived) |
+| `chip-handover` | `LocalLanPlayService` | `chip page handover playlist cdn`; `handover` is `probe-ready`, `early` (playlist-only, no backup), `playlist-wait` (playlist-only after 30s), `harvest-end`, `miss` or `retry` |
+| `health-start`, `health-end` | resolver | `row chip cdn handover early retry`; end: `result duration_ms` |
+| `chip-retry-queued` | resolver | `row chip tier page first_result` (an early chip failed; one retry queued) |
+| `verdict` | resolver | `row chip tier lane status reason handover after_retry cdn` (`reason`: the defer reason or health status, `no-playlist`, `error`) |
+| `picture` | orchestrator | `row chip tier cdn` (the player opened on the first row) |
+| `backup-ready` | orchestrator | `playing_tier backup_tier backup_row backup_chip picture_ms since_picture_ms` |
+| `switch` | orchestrator | `from_tier to_tier to_row to_chip switches` |
+| `session-end` | orchestrator | `picture_ms backup_ms switches playing_tier backup_tier healthy` |
+
+Sample (EarlyChipRetryPasses, from `ProbeTimingLog_EarlyChipRetry_EmitsTheKeyLines`; the harness has no orchestrator, so no session lines):
+
+```
+[probe-timing] event=chip-listed ms=12000 chip=A page=mp.example.test playlist=true probe_ready=false
+[probe-timing] event=slot-grant ms=12000 lane=mp tier=none row=A chip=A page=mp.example.test fb_active=1 mp_active=1
+[probe-timing] event=chip-handover ms=12000 chip=A page=mp.example.test handover=early playlist=true cdn=cdn.example.test
+[probe-timing] event=health-start ms=12000 row=A chip=A cdn=cdn.example.test handover=early early=true retry=false
+[probe-timing] event=health-end ms=13000 row=A chip=A cdn=cdn.example.test handover=early result=ManifestNotFound duration_ms=1000
+[probe-timing] event=slot-release ms=13000 lane=mp tier=none row=A chip=A held_ms=1000 result=retry-queued
+[probe-timing] event=chip-retry-queued ms=13000 row=A chip=A tier=none page=mp.example.test first_result=ManifestNotFound
+[probe-timing] event=slot-grant ms=23000 lane=mp tier=none row=A chip=A page=mp.example.test fb_active=0 mp_active=1
+[probe-timing] event=chip-handover ms=23000 chip=A page=mp.example.test handover=retry playlist=true cdn=cdn.example.test
+[probe-timing] event=health-start ms=23000 row=A chip=A cdn=cdn.example.test handover=retry early=false retry=true
+[probe-timing] event=health-end ms=24000 row=A chip=A cdn=cdn.example.test handover=retry result=Healthy duration_ms=1000
+[probe-timing] event=verdict ms=24000 row=A chip=A tier=none lane=mp status=Healthy handover=retry after_retry=true cdn=cdn.example.test
+```
+
+CURRENT: `ProbeTimingLog` (one per `ResolverRaceThrottle`, `Timing`); `ProbeSessionTrace` (picture, backup, switches via `IStreamSwitchingService.CurrentStreamChanged`, summary on dispose). Tests: `ProbeTimingLogTests`, `ProbeSchedulingRulesTests.ProbeTimingLog_EarlyChipRetry_EmitsTheKeyLines`, and `Expect.ProbeTimingLogged` (prefix, fields, no URL).
 
 ## Timeline harness
 
