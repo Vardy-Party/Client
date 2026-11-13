@@ -107,8 +107,8 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
 2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. Try-order only decides what is probed first.
-   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play, except in the startup race (below). The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R9 first come first served" (docs/PROBE_SCHEDULING_RULES.md rule 9).
-   - Startup race exception (Jon, 13 Nov 2026: "Keep the recommended head start in the startup race"): the recommended leg gets up to 1.5s of grace over an already-playable partner (`PlaybackRacePolicy.RecommendedGrace`, `PlaybackRacePolicy.Decide`, `PlaybackUrlRacer.RaceAsync`). See "First play open + early Next capacity" for which path is live.
+   - Recommended tiers first (Jon, 13 Nov 2026: "highly recommended streams come before finding", "Top tier is High confidence only", "Option B, head start then overlap", "medium-confidence should NOT be disregarded"): on the first pass High-confidence recommended rows get both LocalService slots alone for 12s (`TopTierHeadStart.Duration`); Medium-confidence rows come next, before any finding (Low recommendations, MP, FB), and take a slot during the 12s only when every High row has a verdict or there are fewer than two. After the 12s a slot not used by High goes to Medium, then finding (MP lane first). No High or Medium recommendation: unchanged. Details: docs/PROBE_SCHEDULING_RULES.md rule 1.
+   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play. The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R1 R9" (docs/PROBE_SCHEDULING_RULES.md rule 9).
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
@@ -476,47 +476,59 @@ Cross-platform policy in Kernel (`FirstPlayOpenStrategy`). Android, Windows, and
 all execute it through `StreamResolutionOrchestrator` + `PlaybackUrlResolver` — do not fork
 per OS. Tune the strategy type while experimenting.
 
-When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRacePolicy.NeedsFreshPlay`):
+The start row is the first healthy row (first come, first served). First play never waits for
+other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
 
-1. **Open recommended first.** One Chromium `/play` (and playlist probe) for the recommended
-   row. Picture opens as soon as that leg is video or unverified. The finding UI must not wait
-   on a dual-leg winner race (~25s stall measured on Bravia when both slots raced).
-2. **Partner warms for Next.** If the next switch-order row also needs fresh `/play`, it runs
-   on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not** awaited for first
-   picture. Immediate Next applies that warm as `UnusedResolvedUrl` (`PlanNextPrepare`) so
-   every platform's `PlanSwitch` can `AttachCached`.
-3. **Recommended empty / audio-only.** Report/remove as before. Prefer another pooled row that
+1. **Play the probed link.** When the row can play without a fresh `/play`
+   (`PlaybackRacePolicy.NeedsFreshPlay` is false) or is already warm, the existing path runs.
+   Otherwise, if `FirstPlayOpenStrategy.CanPlayProbedLink` (a link, not single-use, token not
+   already expired), the start plays the link the find-phase probe returned
+   (`StartKind.PlayProbedLink`): no second `/play`, no partner leg. A failed open re-`/play`s
+   once (`PlayStreamAsync`).
+2. **Fresh `/play` only when the link cannot be reused.** A cookie-bound or single-use-host
+   link, or an expired token (`StartKind.ResolveRecommendedOpenFirst`): one Chromium `/play` (and
+   playlist probe) for the start row; picture opens as soon as that leg is video or unverified.
+   `StartPlaybackChain` pauses new finding starts at once (`NeedsFreshStart`,
+   `ResolverRaceThrottle.BeginRace`) so this `/play` takes the next free slot; nothing is drained
+   (`DrainOthersAsync` is no longer called).
+3. **Backup warms for Next.** On the fresh path, if the next switch-order row also needs a
+   fresh `/play`, it runs on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not**
+   awaited for first picture. Immediate Next applies that warm as `UnusedResolvedUrl`
+   (`PlanNextPrepare`) so every platform's `PlanSwitch` can `AttachCached`. After first play the
+   prewarmer keeps the next `PrewarmDepth` rows warm.
+4. **Start empty / audio-only.** Report/remove as before. Prefer another pooled row that
    can play from cache; else await the partner warm leg and open that.
-4. **Recommended infrastructure is terminal for open-recommended.** After
-   `InfrastructureRetryPolicy` retries on the recommended leg, LocalServiceUnavailable
-   closes the start — do **not** `ReadyCachedRow` / partner-open as if empty/audio failed.
-   Infrastructure is still not a stream verdict (no report/remove). Partner warm stays
-   single-shot; only the recommended open-first leg shares the fresh-resolve retry loop.
-5. **Playback-priority window.** From first playback-chain start until
-   `PrewarmDepth` upcoming rows are warm (or `PlaybackPriorityTimeout` = 30s),
-   `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase `/play|/mp`. Attach and
-   prewarm use `MarkRaceLeg` so they still take slots. Logs: `[FirstPlayDelay] playback_priority_*`.
-6. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
+5. **Start infrastructure is terminal.** After `InfrastructureRetryPolicy` retries on the
+   fresh start leg, LocalServiceUnavailable closes the start — do **not** `ReadyCachedRow` /
+   partner-open as if empty/audio failed. Infrastructure is still not a stream verdict (no
+   report/remove). Partner warm stays single-shot.
+6. **Playback-priority window.** For `PlaybackPriorityTimeout` (30s) from first
+   playback-chain start, `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase
+   `/play|/mp` only while a backup exists that the prewarmer still has to warm
+   (`FirstPlayOpenStrategy.CountBackupsNeedingWarm`, `PlaybackPriorityHolds`). No backup at first
+   play means finding carries on. Attach and prewarm use `MarkRaceLeg` so they still take slots.
+   Logs: `[FirstPlayDelay] playback_priority_*`.
+7. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
    orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not block consuming
    a partner warm.
-7. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
+8. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
+
+The backup is the next channel in switch order (append-only numbering). With the tier head
+start that is usually the second playable High row, then the first playable Medium row, then the
+first playable finding row; a finding row that turns healthy earlier takes the next channel and
+is the backup.
 
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
-`RaceAsync` winner wait is no longer used for first picture.
-
-Recommended head start (Jon, 13 Nov 2026: "Keep the recommended head start in the startup
-race"): the one exception to first come, first served. In the dual-leg race the recommended
-leg gets up to 1.5s (`PlaybackRacePolicy.RecommendedGrace`) of grace over a partner that is
-already playable, before the partner plays (`PlaybackRacePolicy.Decide`, `PlaybackUrlRacer.RaceAsync`,
-tested by `PlaybackRaceBusinessRulesTests`). Open-recommended-first above never plays the partner
-ahead of the start row at all (the partner only warms for Next), so the live path has no grace timer.
+`RaceAsync` winner wait (and its 1.5s `RecommendedGrace`) is not used for first picture and has
+no production caller.
 
 Tests:
 - Unit: `FirstPlayOpenStrategyTests` (PlanStart / DecideAfter / PlanNext / priority helpers)
 - Business rules: `FirstPlayOpenBusinessRulesTests`, `StartupRaceBusinessRulesTests`
-  (two-healthy open without waiting partner; partner warm for Next; MP harvest;
-  audio-only / empty fallbacks; playback-priority hold)
+  (probed link plays without a second `/play`; single-use start takes one fresh `/play`;
+  partner warm for Next; MP harvest; audio-only / empty fallbacks)
+- Head start: `TopTierHeadStartTests`; timeline cases in `ProbeSchedulingScenarios` (rules 1, 11, 12)
 - Warm take order: `PlaybackUrlResolverWarmTests.Bind_ExistingWarm_TakesBeforeWaitingOnInFlightKick`
 - Also: `ResolverRaceThrottleTests`, `PlaybackRaceBusinessRulesTests`.
 
