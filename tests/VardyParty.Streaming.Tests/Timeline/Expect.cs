@@ -24,7 +24,7 @@ internal static class ProbeAcceptance
     /// <summary>A2: MP chips queued as rows within this many seconds of LocalService listing them.</summary>
     public const double ChipsVisibleSeconds = 2;
 
-    /// <summary>A3: total seconds a slot may sit idle while a candidate is queued (outside the priority window).</summary>
+    /// <summary>A3: total seconds a lane place (2 FB, 1 MP) may sit idle while a candidate for it is queued (outside the priority window).</summary>
     public const double IdleSlotToleranceSeconds = 1;
 
     /// <summary>A4: an /mp seed gives up (and releases its slot) this many seconds after the POST.</summary>
@@ -99,6 +99,38 @@ internal static class Expect
             return actual.SequenceEqual(keys) ? null : $"started {string.Join(", ", actual)}";
         });
 
+    /// <summary>Order in which rows of one kind (e.g. FB /play) start; the MP lane runs beside them (rule 4).</summary>
+    public static Expectation StartOrderAmong(ProbeKind kind, params string[] keys) => new(
+        $"{kind} probes start in order {string.Join(", ", keys)}",
+        t =>
+        {
+            var actual = t.Calls.Where(c => c.Kind == kind).Select(c => c.Key).Distinct().Take(keys.Length).ToArray();
+            return actual.SequenceEqual(keys) ? null : $"started {string.Join(", ", actual)}";
+        });
+
+    /// <summary>Rule 11: no browser probe (/play or a new /mp) starts in the window; harvested chips may.</summary>
+    public static Expectation NoBrowserProbeStartsInPriorityWindow() => new(
+        "no /play or /mp seed starts inside the 30s playback-priority window",
+        t =>
+        {
+            if (t.PriorityWindow is not { } w)
+                return "no priority window happened";
+            var inside = t.Calls.Where(c => c.Kind != ProbeKind.MpChip && c.Start > w.From + Eps && c.Start < w.To - Eps).ToList();
+            return inside.Count == 0 ? null : $"started inside: {string.Join(", ", inside.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
+        });
+
+    /// <summary>Rule 11 tweak: a chip the harvest already holds is probed inside the window.</summary>
+    public static Expectation ChipProbedInPriorityWindow(string key) => new(
+        $"{key} (already harvested) is probed inside the priority window",
+        t =>
+        {
+            if (t.PriorityWindow is not { } w)
+                return "no priority window happened";
+            return t.FirstCall(key) is { } c && c.Start > w.From - Eps && c.Start < w.To - Eps
+                ? null
+                : $"started {(t.FirstCall(key) is { } x ? Fmt(x.Start) : "never")}, window {Fmt(w.From)}-{Fmt(w.To)}";
+        });
+
     public static Expectation StartsBy(string key, double by) => new(
         $"{key} probe starts by t+{by}s",
         t => t.FirstCall(key) is { } c && c.Start <= by + Eps ? null : $"started {(t.FirstCall(key) is { } x ? Fmt(x.Start) : "never")}");
@@ -162,16 +194,16 @@ internal static class Expect
         });
 
     public static Expectation NoIdleSlotWhileQueued(double toleranceSeconds = ProbeAcceptance.IdleSlotToleranceSeconds) => new(
-        $"A3 no slot idle while a candidate is queued (tolerance {toleranceSeconds}s, priority window excluded)",
+        $"A3 no lane place idle while a candidate is queued (tolerance {toleranceSeconds}s, priority window excluded)",
         t =>
         {
             var idle = t.Intervals()
-                .Where(i => i.Snap.SlotsInUse < ResolverRaceThrottle.MaxConcurrent && i.Snap.Unstarted > 0 && !i.Snap.PriorityHold)
+                .Where(i => i.Snap.IdleWithWork(ResolverRaceThrottle.MaxConcurrent) && !i.Snap.PriorityHold)
                 .ToList();
             var total = idle.Sum(i => i.Until - i.Snap.At);
             return total <= toleranceSeconds + Eps
                 ? null
-                : $"{total:0.###}s idle: {string.Join("; ", idle.Take(5).Select(i => $"{Fmt(i.Snap.At)}-{Fmt(i.Until)} slots {i.Snap.SlotsInUse} queued {i.Snap.Unstarted}"))}";
+                : $"{total:0.###}s idle: {string.Join("; ", idle.Take(5).Select(i => $"{Fmt(i.Snap.At)}-{Fmt(i.Until)} FB {i.Snap.FbActive}+{i.Snap.UnstartedFb} MP {i.Snap.MpActive}+{i.Snap.UnstartedMp}"))}";
         });
 
     private static int MaxPlaysWhileMp(ProbeTimeline t) =>

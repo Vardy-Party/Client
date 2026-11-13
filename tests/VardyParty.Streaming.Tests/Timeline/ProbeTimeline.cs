@@ -34,9 +34,22 @@ internal sealed record Snapshot(
     int PlaysAtLocalService,
     int MpOpen,
     int HealthOpen,
-    int Unstarted,
+    int UnstartedFb,
+    int UnstartedMp,
+    int FbActive,
+    int MpActive,
     bool PriorityHold,
-    IReadOnlyList<string> InFlight);
+    IReadOnlyList<string> InFlight)
+{
+    public int Unstarted => UnstartedFb + UnstartedMp;
+
+    /// <summary>
+    /// A lane is idle with work queued: the FB window has a free place and an FB row
+    /// waits, or the MP lane is empty and an MP row waits (rules 2-4).
+    /// </summary>
+    public bool IdleWithWork(int fbWindow) =>
+        (FbActive < fbWindow && UnstartedFb > 0) || (MpActive == 0 && UnstartedMp > 0);
+}
 
 internal sealed record RowResult(string Key, double At, StreamResolutionStatus Status, string? Error);
 
@@ -81,9 +94,9 @@ internal sealed class ProbeTimeline
         sb.AppendLine($"Scenario: {Scenario.Name}");
         sb.AppendLine($"First play: {(FirstPlay is { } fp ? $"{Fmt(fp.At)} on {fp.Key}" : "none")}");
         sb.AppendLine($"Pool (channel order): {string.Join(", ", Pool.Select((k, i) => $"#{i + 1} {k}"))}");
-        sb.AppendLine("Milestones (slots / plays at LS / mp open / health / unstarted / hold | in flight):");
+        sb.AppendLine("Milestones (play slots / plays at LS / mp open / health / FB active+queued / MP active+queued / hold | in flight):");
         foreach (var s in Snapshots)
-            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  {s.Unstarted}  {(s.PriorityHold ? "HOLD" : "-")} | {string.Join(", ", s.InFlight)}");
+            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : "-")} | {string.Join(", ", s.InFlight)}");
         sb.AppendLine("Events:");
         foreach (var (at, line) in Log.OrderBy(l => l.At))
             sb.AppendLine($"  {Fmt(at)}  {line}");

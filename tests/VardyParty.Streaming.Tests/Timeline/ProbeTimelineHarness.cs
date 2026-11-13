@@ -23,15 +23,16 @@ namespace VardyParty.Streaming.Tests.Timeline;
 
 /// <summary>
 /// Runs a <see cref="ProbeScenario"/> against the REAL scheduling code - StreamResolver
-/// (window, MP single-flight, sibling queueing), LocalLanPlayService (throttle slots,
+/// (FB window, MP lane, seed re-queue, sibling queueing), LocalLanPlayService (throttle slots,
 /// <c>/mp</c> NDJSON harvest, MpHarvestSession seed rules), ResolverRaceThrottle,
 /// StreamTestOrderPolicy (try-order), FirstPlayHoldPolicy (first-play hold) and
 /// StreamSwitchingService (channel numbers). Only LocalService (HTTP) and the CDN
 /// health check are scripted, on a <see cref="MilestoneClock"/>: the run jumps from
 /// one milestone to the next, so a 111s harvest runs in milliseconds.
 /// Not modelled: the orchestrator's deferred re-queue passes, the prewarmer and its
-/// early release of the priority window, and our own real-time HTTP timeouts
-/// (CancelAfter in LocalLanPlayService is not on a TimeProvider).
+/// early release of the priority window, and the real-time <c>/play</c> timeout. The
+/// <c>/mp</c> harvest timeout and the 30s seed/chip deadlines run on this clock
+/// (<see cref="LocalLanPlayService.Time"/>).
 /// </summary>
 internal static class ProbeTimelineHarness
 {
@@ -71,8 +72,14 @@ internal static class ProbeTimelineHarness
         private ITimer? _priorityTimer;
         private long _activity;
         private int _idleWorkers = 1;
-        private int _started;
-        private int _knownTotal;
+        // Resolver lanes (from its logs and yields): FB window of 2, MP lane of 1.
+        private int _fbTotal;
+        private int _mpTotal;
+        private int _fbStarted;
+        private int _mpStarted;
+        private int _fbDone;
+        private int _mpDone;
+        private string?[] _catalogUrls = [];
         private int _plays;
         private int _mpOpen;
         private int _healthOpen;
@@ -100,11 +107,16 @@ internal static class ProbeTimelineHarness
         {
             // Busy pool workers when nothing of ours runs: this loop plus whatever the
             // test host keeps blocked. Settle waits for the count to come back to it.
-            _idleWorkers = Enumerable.Range(0, 50).Select(_ =>
+            // Sampled for a while: a test-host thread that happens to be busy at the
+            // first sample would set the bar too high, and the first milestone could
+            // then pass while the resolver is still starting its first probes.
+            _idleWorkers = int.MaxValue;
+            var sample = Stopwatch.StartNew();
+            while (sample.ElapsedMilliseconds < 30)
             {
                 Thread.Sleep(0);
-                return BusyWorkers();
-            }).Min();
+                _idleWorkers = Math.Min(_idleWorkers, BusyWorkers());
+            }
 
             var catalog = _scenario.Rows.Select(BuildStream).ToList();
             for (var i = 0; i < catalog.Count; i++)
@@ -129,8 +141,10 @@ internal static class ProbeTimelineHarness
             for (var i = 0; i < _ordered.Count; i++)
                 _catalogIndex[_ordered[i]] = i;
             _mpCatalog = _ordered.Select(StreamRecommendationPolicy.IsMpLike).ToArray();
+            _catalogUrls = _ordered.Select(s => (string?)s.Url).ToArray();
             _nextExtra = _ordered.Count;
-            _knownTotal = _ordered.Count;
+            _mpTotal = _ordered.Count(MpPageUrl.IsV2Stream);
+            _fbTotal = _ordered.Count - _mpTotal;
             Note("try-order: " + string.Join(", ", _ordered.Select(s => _keyByRef[s])));
 
             var lan = new LocalLanPlayService(
@@ -148,6 +162,7 @@ internal static class ProbeTimelineHarness
             lan.DiscoverOverrideForTests = _ => Task.FromResult<string?>(Endpoint);
             lan.DelayAsync = (d, ct) => Task.Delay(d, _clock, ct);
             lan.Clock = _clock.GetUtcNow;
+            lan.Time = _clock;
             lan.EndpointsForTests.Remember(Endpoint, DateTimeOffset.UtcNow);
 
             var resolver = new StreamResolver(
@@ -240,7 +255,13 @@ internal static class ProbeTimelineHarness
             {
                 Thread.Sleep(0);
                 var now = Interlocked.Read(ref _activity);
-                if (now != last || ThreadPool.PendingWorkItemCount > 0 || BusyWorkers() > _idleWorkers)
+                var busy = BusyWorkers();
+
+                // Work left over from an earlier run (or the test host) can make the
+                // starting baseline too high; once it drains, the lower count is idle.
+                if (busy < _idleWorkers)
+                    _idleWorkers = busy;
+                if (now != last || ThreadPool.PendingWorkItemCount > 0 || busy > _idleWorkers)
                 {
                     last = now;
                     quietFrom = sw.Elapsed;
@@ -250,6 +271,8 @@ internal static class ProbeTimelineHarness
                 if (sw.Elapsed - quietFrom >= window)
                     return;
             }
+
+            Note($"(harness: settle gave up after {MaxSettle.TotalSeconds:0}s; busy workers {BusyWorkers()}, idle bar {_idleWorkers})");
         }
 
         private static int BusyWorkers()
@@ -270,7 +293,10 @@ internal static class ProbeTimelineHarness
                     Volatile.Read(ref _plays),
                     Volatile.Read(ref _mpOpen),
                     Volatile.Read(ref _healthOpen),
-                    Math.Max(0, Volatile.Read(ref _knownTotal) - Volatile.Read(ref _started)),
+                    Math.Max(0, Volatile.Read(ref _fbTotal) - Volatile.Read(ref _fbStarted)),
+                    Math.Max(0, Volatile.Read(ref _mpTotal) - Volatile.Read(ref _mpStarted)),
+                    Volatile.Read(ref _fbStarted) - Volatile.Read(ref _fbDone),
+                    Volatile.Read(ref _mpStarted) - Volatile.Read(ref _mpDone),
                     _throttle.RaceInFlight,
                     inFlight);
                 if (_tl.Snapshots.Count > 0 && Math.Abs(_tl.Snapshots[^1].At - snap.At) < 1e-9)
@@ -291,6 +317,7 @@ internal static class ProbeTimelineHarness
                     _tl.Results.Add(new RowResult(key, T, row.Status, row.ErrorMessage));
                 Note($"yield {key}: {row.Status}{(row.ErrorMessage is { } e ? $" ({e})" : "")}");
 
+                Interlocked.Increment(ref MpPageUrl.IsV2Stream(row.Stream) ? ref _mpDone : ref _fbDone);
                 var index = _catalogIndex.TryGetValue(row.Stream, out var known) ? known : _nextExtra++;
                 _resolved.Add(index);
                 if (row.Status == StreamResolutionStatus.Healthy)
@@ -303,8 +330,11 @@ internal static class ProbeTimelineHarness
         {
             var frontier = FirstPlayHoldPolicy.Frontier(_mpCatalog, _resolved);
             var ready = _held
-                .Where(p => FirstPlayHoldPolicy.IsReleasable(p.Key, frontier, _ordered.Count, _hasPlayed))
-                .Select(p => p.Key)
+                .Select(p => (Index: p.Key, Hold: FirstPlayHoldPolicy.HoldPosition(p.Key, p.Value.Stream?.Url, _catalogUrls, _mpCatalog)))
+                .Where(r => FirstPlayHoldPolicy.IsReleasable(r.Index, r.Hold, _mpCatalog, frontier, _hasPlayed))
+                .OrderBy(r => r.Hold)
+                .ThenBy(r => r.Index)
+                .Select(r => r.Index)
                 .ToList();
             foreach (var index in ready)
             {
@@ -404,23 +434,28 @@ internal static class ProbeTimelineHarness
             object? Value(string name) => state?.FirstOrDefault(kv => kv.Key == name).Value;
             if (template is not null && template.StartsWith("[StreamResolver] Starting resolve", StringComparison.Ordinal))
             {
-                Interlocked.Increment(ref _started);
-                if (Value("Count") is int count)
-                    Volatile.Write(ref _knownTotal, count);
+                Interlocked.Increment(ref Value("Kind") as string == "MP" ? ref _mpStarted : ref _fbStarted);
             }
             else if (template is not null && template.StartsWith("[StreamResolver] LocalService listed", StringComparison.Ordinal))
             {
-                // "listed N more" repeats on every chip's yield (duplicates are skipped
-                // by the resolver); count only rows actually added to the queue.
-                var url = Value("Url") as string ?? "";
-                if (Value("Total") is int total)
+                // Extra = chip rows actually added to the queue (duplicates are skipped).
+                if (Value("Extra") is int added && added > 0)
                 {
-                    var added = total - Interlocked.Exchange(ref _knownTotal, total);
-                    if (added > 0)
-                    {
-                        lock (_tl)
-                            _tl.ChipsQueued.Add(new ChipsQueued(RowIdOf(url), T, added));
-                    }
+                    Interlocked.Add(ref _mpTotal, added);
+                    lock (_tl)
+                        _tl.ChipsQueued.Add(new ChipsQueued(RowIdOf(Value("Url") as string ?? ""), T, added));
+                }
+            }
+            else if (template is not null && template.StartsWith("[StreamResolver] MP page", StringComparison.Ordinal))
+            {
+                // A seed that listed chips: it goes back in the queue as its first chip
+                // (one MP resolve ended without a yield) with the others beside it.
+                if (Value("Extra") is int rows)
+                {
+                    Interlocked.Add(ref _mpTotal, rows - 1);
+                    Interlocked.Decrement(ref _mpStarted);
+                    lock (_tl)
+                        _tl.ChipsQueued.Add(new ChipsQueued(RowIdOf(Value("Url") as string ?? ""), T, rows));
                 }
             }
 
@@ -634,9 +669,13 @@ internal static class ProbeTimelineHarness
 
         // ---- LocalLanPlayService wrapper that records each resolver call ----
 
-        private sealed class RecordingLan(Run run, LocalLanPlayService inner) : ILocalLanPlayService
+        private sealed class RecordingLan(Run run, LocalLanPlayService inner) : ILocalLanPlayService, IMpHarvestProbe
         {
             private ILocalLanPlayService Inner => inner;
+
+            public bool IsMpChipReady(string pageUrl, string? chip) => inner.IsMpChipReady(pageUrl, chip);
+
+            public Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken) => inner.WaitForMpHarvestChangeAsync(cancellationToken);
 
             public Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
                 ResolveM3U8UrlAsync(streamUrl, null, null, null, cancellationToken);
