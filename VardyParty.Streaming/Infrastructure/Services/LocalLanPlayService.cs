@@ -48,8 +48,12 @@ public class LocalLanPlayService(
     IStreamHealthDataCollectionPreferencesStore? streamHealthDataCollection = null,
     IOptions<APISettings>? apiSettings = null,
     SelectionState? selectionState = null,
-    IStreamHealthClientEnvironment? clientEnvironment = null) : ILocalLanPlayService, IMpHarvestProbe
+    IStreamHealthClientEnvironment? clientEnvironment = null,
+    MpHarvestHub? mpHub = null) : ILocalLanPlayService, IMpHarvestProbe
 {
+    /// <summary>Shared <c>/mp</c> lane state (<see cref="MpHarvestHub"/>): one per app, not per instance.</summary>
+    private readonly MpHarvestHub _mp = mpHub ?? new MpHarvestHub();
+
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
     /// <summary>
@@ -114,23 +118,23 @@ public class LocalLanPlayService(
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
-    private readonly object _mpHarvestGate = new();
-    private MpHarvestSession? _mpHarvest;
-    private string? _mpHarvestPage;
-    private TaskCompletionSource _mpHarvestStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private object _mpHarvestGate => _mp.Gate;
+    private MpHarvestSession? _mpHarvest { get => _mp.Harvest; set => _mp.Harvest = value; }
+    private string? _mpHarvestPage { get => _mp.Page; set => _mp.Page = value; }
+    private TaskCompletionSource _mpHarvestStarted { get => _mp.Started; set => _mp.Started = value; }
 
     /// <summary>
     /// Owns the running harvest's lifetime (not any one caller's token): cancelled only
     /// when every caller and resolver run that wanted the page has been cancelled.
     /// </summary>
-    private CancellationTokenSource? _mpHarvestCts;
+    private CancellationTokenSource? _mpHarvestCts { get => _mp.Cts; set => _mp.Cts = value; }
 
     /// <summary>
     /// Who still wants each MP page: <see cref="CallMpEndpointAsync"/> callers while they
     /// wait, and resolver runs (<see cref="WantMpPage"/>) until they end. Guarded by
     /// <see cref="_mpHarvestGate"/>.
     /// </summary>
-    private readonly Dictionary<string, int> _mpWants = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, int> _mpWants => _mp.Wants;
 
     /// <summary>
     /// LocalService runs one <c>POST /mp</c> at a time. Held from the POST until that
@@ -139,7 +143,7 @@ public class LocalLanPlayService(
     /// The harvest also holds one <see cref="ResolverRaceThrottle"/> slot, but only
     /// until LocalService lists the page's chips (rule 2).
     /// </summary>
-    private readonly SemaphoreSlim _mpPostGate = new(1, 1);
+    private SemaphoreSlim _mpPostGate => _mp.PostGate;
 
     /// <summary>Test seam: clock for the <c>/mp</c> harvest (seed deadline, our harvest timeout).</summary>
     internal TimeProvider Time { get; set; } = TimeProvider.System;

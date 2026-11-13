@@ -362,6 +362,11 @@ public sealed class MpHarvestSession
     {
         ThrowIfCancelled(cancellationToken);
         var key = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
+        // A waiter that joins a running harvest gets its own ProbeReadyWait before the
+        // stall deadline can fail it: "sent nothing for 30s" must be true for this waiter,
+        // never an instant replay of a silence that happened before it asked (TV log
+        // 13 Nov 2026, 18:41:08: NW IT and TD Arabic failed within 1ms).
+        var joinedAt = _time.GetUtcNow();
         while (true)
         {
             var changed = Changed;
@@ -430,7 +435,9 @@ public sealed class MpHarvestSession
                     }
                     else if (_chipListSeed && cached is null)
                     {
-                        wait = ProbeReadyWait - (_time.GetUtcNow() - LastProgressAt);
+                        var lastProgress = LastProgressAt;
+                        var silentSince = lastProgress > joinedAt ? lastProgress : joinedAt;
+                        wait = ProbeReadyWait - (_time.GetUtcNow() - silentSince);
                         if (wait <= TimeSpan.Zero)
                             throw ChipTimedOut(key);
                     }

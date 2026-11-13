@@ -456,6 +456,36 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public async Task WaitForAsync_NamedChip_JoiningAfterASilence_GetsItsOwnWait_NotAnInstantFailure()
+    {
+        // Arrange - TV log 13 Nov 2026 18:41:08: NW IT and TD Arabic joined a harvest that
+        // had already been silent for 30s and failed within 1ms ("sent nothing for 30s").
+        // A late joiner must wait its own ProbeReadyWait from when it asked.
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock);
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        using var silence = clock.CreateTimer(_ => { }, null, TimeSpan.FromSeconds(45), Timeout.InfiniteTimeSpan);
+        while (clock.T < 45 && clock.NextDue is not null)
+            clock.AdvanceToNext();
+
+        // Act
+        var named = harvest.WaitForAsync("Chip B", CancellationToken.None);
+        await Task.Yield();
+
+        // Assert - not failed on arrival; fails only once it has itself waited ProbeReadyWait.
+        Assert.False(named.IsCompleted);
+        while (!named.IsCompleted && clock.NextDue is not null)
+        {
+            clock.AdvanceToNext();
+            await Task.Yield();
+        }
+
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => named);
+        Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
+        Assert.Equal(45 + harvest.ProbeReadyWait.TotalSeconds, clock.T, 3);
+    }
+
+    [Fact]
     public async Task IsChipReady_ChipSentLongAfterAStall_TurnsReadyAndSignalsChanged()
     {
         // Arrange - rule 7: a chip LocalService sends 50s after the chip list, with
