@@ -14,12 +14,12 @@ namespace VardyParty.Playback;
 public static class PlaylistReloadCoordinator
 {
     /// <summary>
-    /// Windows <c>DownloadRequested</c> deferral budget. Holding longer risks AMS
-    /// abandoning the request. If the next retry delay would exceed the remaining
-    /// budget, the coordinator serves <see cref="PlaylistReloadRequest.LastGoodPlaylist"/>
-    /// when it has one (documented escape; prefer holding otherwise).
+    /// Shared mid-play hold (see <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>).
+    /// If the next retry delay would exceed the remaining budget, give up as
+    /// CDN-unreachable so the session can switch (option 2). Never serve a stale
+    /// last-good playlist — that re-shows already-watched segments.
     /// </summary>
-    public static readonly TimeSpan WindowsDeferralBudget = PlaybackPolicy.WindowsPlaylistDeferralBudget;
+    public static readonly TimeSpan WindowsDeferralBudget = PlaybackPolicy.PlaylistReloadHoldBudget;
 
     public static async Task<PlaylistReloadOutcome> RunAsync(
         IPlaylistReloadRecoveryStrategy strategy,
@@ -73,22 +73,16 @@ public static class PlaylistReloadCoordinator
                 return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
             }
 
-            // Retry: maybe the Windows deferral budget cannot hold the delay.
+            // Retry: maybe the player request cannot hold the delay (Windows AMS
+            // deferral, Android Open). Never escape by serving a stale playlist.
             if (request.MaxHold is { } budget)
             {
                 var remaining = budget - (clock() - started);
                 if (remaining < decision.Delay)
                 {
-                    if (request.LastGoodPlaylist is { Length: > 0 } good)
-                    {
-                        request.Session?.NoteHeldLastGood(clock());
-                        Log(request, observation, decision, outcome: "serve-last-good (deferral budget)");
-                        return PlaylistReloadOutcome.ServeLastGood(good);
-                    }
-
                     var kind = PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
                     var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "deferral budget exhausted");
-                    Log(request, observation, decision, outcome: "give-up (deferral budget, no last-good)");
+                    Log(request, observation, decision, outcome: "give-up (deferral budget)");
                     request.Session?.NoteGiveUp(kind, message);
                     return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
                 }
@@ -146,6 +140,29 @@ public sealed class PlaylistReloadRequest
     /// </summary>
     public Action<bool, string>? Log { get; init; }
     public PlaylistReloadSession? Session { get; init; }
+
+    /// <summary>
+    /// Mid-play request used by Android, Windows, and Linux: no last-good
+    /// playlist, shared <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>.
+    /// </summary>
+    public static PlaylistReloadRequest MidPlay(
+        bool isFirstAttach,
+        PlaylistReloadSession? session,
+        string? row,
+        Action<bool, string>? log = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        Func<DateTimeOffset>? clock = null) =>
+        new()
+        {
+            IsFirstAttach = isFirstAttach,
+            LastGoodPlaylist = null,
+            MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
+            Row = row,
+            Session = session,
+            Log = log,
+            Delay = delay,
+            Clock = clock
+        };
 }
 
 public sealed class PlaylistReloadFetchResult
@@ -231,9 +248,9 @@ public static class PlaylistReloadLogging
     }
 
     /// <summary>
-    /// Routine first-try serves stay at Debug. Retries, give-up, last-good, and any
-    /// later attempt are Information — including a recovered <c>attempt=2 serve</c>.
-    /// Outcome is compared exactly to <c>serve</c>, so <c>serve-last-good</c> is Information.
+    /// Routine first-try serves stay at Debug. Retries, give-up, and any later
+    /// attempt are Information — including a recovered <c>attempt=2 serve</c>.
+    /// Outcome is compared exactly to <c>serve</c>.
     /// </summary>
     public static bool IsInfo(int attempt, string outcome) =>
         attempt > 1 || !string.Equals(outcome, "serve", StringComparison.Ordinal);

@@ -129,23 +129,17 @@ namespace VardyParty.Platforms.Android
         {
             var session = _playlistSession;
             var strategy = session?.Strategy ?? PlaylistReloadStrategies.Default;
-            var request = new PlaylistReloadRequest
-            {
-                IsFirstAttach = session is null || !session.FirstPlaylistCompleted,
-                // Never re-serve a stale playlist: that re-shows already-watched
-                // segments. When the hold budget is spent, give up and switch.
-                LastGoodPlaylist = null,
-                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
-                Row = session?.Row,
-                Session = session,
-                Log = (isInfo, line) =>
+            var request = PlaylistReloadRequest.MidPlay(
+                isFirstAttach: session is null || !session.FirstPlaylistCompleted,
+                session,
+                session?.Row,
+                log: (isInfo, line) =>
                 {
                     if (isInfo)
                         global::Android.Util.Log.Info("VardyParty", line);
                     else
                         global::Android.Util.Log.Debug("VardyParty", line);
-                }
-            };
+                });
 
             PlaylistReloadOutcome outcome;
             try

@@ -58,23 +58,28 @@ public static partial class PlaybackPolicy
     public const int MaxSameStreamRetries = 3;
 
     /// <summary>
-    /// Windows Adaptive Media Source <c>DownloadRequested</c> must complete the deferral
-    /// promptly. If a mid-play playlist retry delay would exceed this budget, serve the
-    /// last-good playlist when one exists (documented escape). Prefer holding otherwise.
+    /// Shared mid-play hold for every platform (Android ExoPlayer <c>Open</c>,
+    /// Windows AMS <c>DownloadRequested</c>, Linux loopback proxy). If the next
+    /// retry delay would exceed this budget, give up as
+    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> so the session can switch
+    /// and option 2 can return later. Never serve a stale last-good playlist.
+    /// 2s is short enough to avoid ExoPlayer <c>PlaylistStuckException</c>
+    /// (TV 257 at 20:20:21: two 3–4s 503s stalled the picture for ~8s) and is
+    /// well under the Windows AMS deferral deadline
+    /// (<see cref="WindowsPlaylistDeferralBudget"/>).
     /// </summary>
-    public static readonly TimeSpan WindowsPlaylistDeferralBudget = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan PlaylistReloadHoldBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>Same as <see cref="PlaylistReloadHoldBudget"/> (historical Android name).</summary>
+    public static readonly TimeSpan AndroidPlaylistHoldBudget = PlaylistReloadHoldBudget;
 
     /// <summary>
-    /// Android <c>UnwrappingDataSource</c> must not hold ExoPlayer's playlist
-    /// <c>Open</c> through multiple slow 5xx responses (a 503 often takes 3–4s;
-    /// two holds triggered <c>PlaylistStuckException</c> and an 8s stall on TV
-    /// 257 at 20:20:21 even though attempt 3 then recovered). Android never
-    /// re-serves a last-good (stale) playlist — that re-shows already-watched
-    /// segments. If the next retry would exceed this budget, give up as
-    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> so the session can switch
-    /// and option 2 can return later.
+    /// Windows Adaptive Media Source must finish a <c>DownloadRequested</c>
+    /// deferral within this engine deadline or AMS may abandon the request.
+    /// Mid-play retries use <see cref="PlaylistReloadHoldBudget"/>, which is
+    /// shorter, so give-up always completes the deferral in time.
     /// </summary>
-    public static readonly TimeSpan AndroidPlaylistHoldBudget = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan WindowsPlaylistDeferralBudget = TimeSpan.FromSeconds(8);
 
     /// <summary>
     /// Wall-clock budget for mid-play same-URL retries in one playback session.

@@ -640,9 +640,9 @@ namespace VardyParty.Platforms.Windows
 
                         var segmentToken = CurrentPlaybackDownloadToken;
                         // AMS already loaded the first playlist; DownloadRequested playlist
-                        // fetches are mid-play. Last-good is an escape if the deferral
-                        // budget (PlaybackPolicy.WindowsPlaylistDeferralBudget) would be
-                        // exceeded by the next retry delay.
+                        // fetches are mid-play. If the next retry would exceed the deferral
+                        // budget, give up as CDN-unreachable and switch — never serve a
+                        // stale last-good playlist (already-watched segments).
                         var playlistReload = new PlaylistReloadSession(
                             _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy,
                             PlaylistReloadRowName.ForUrl(switchingService, url))
@@ -670,21 +670,17 @@ namespace VardyParty.Platforms.Windows
                                 {
                                     var outcome = await PlaylistReloadCoordinator.RunAsync(
                                         playlistReload.Strategy,
-                                        new PlaylistReloadRequest
-                                        {
-                                            IsFirstAttach = !playlistReload.FirstPlaylistCompleted,
-                                            LastGoodPlaylist = playlistReload.LastGoodPlaylist,
-                                            MaxHold = PlaybackPolicy.WindowsPlaylistDeferralBudget,
-                                            Row = playlistReload.Row,
-                                            Session = playlistReload,
-                                            Log = (isInfo, line) =>
+                                        PlaylistReloadRequest.MidPlay(
+                                            isFirstAttach: !playlistReload.FirstPlaylistCompleted,
+                                            playlistReload,
+                                            playlistReload.Row,
+                                            log: (isInfo, line) =>
                                             {
                                                 if (isInfo)
                                                     _host._logger.LogInformation("{Line}", line);
                                                 else
                                                     _host._logger.LogDebug("{Line}", line);
-                                            }
-                                        },
+                                            }),
                                         async ct =>
                                         {
                                             using var req = new System.Net.Http.HttpRequestMessage(
@@ -702,8 +698,7 @@ namespace VardyParty.Platforms.Windows
                                         },
                                         segmentToken).ConfigureAwait(false);
 
-                                    if (outcome.Kind is PlaylistReloadOutcomeKind.Serve
-                                        or PlaylistReloadOutcomeKind.ServeLastGood)
+                                    if (outcome.Kind is PlaylistReloadOutcomeKind.Serve)
                                     {
                                         var playlistBody = outcome.Body ?? Array.Empty<byte>();
                                         var playlistType = PlaybackContentTypes.Resolve(

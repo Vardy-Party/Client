@@ -27,8 +27,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     private Task? _loop;
     private int _port;
     private bool _started;
-    private bool _firstPlaylistDone;
-    private byte[]? _lastGoodPlaylist;
+    private PlaylistReloadSession? _playlistSession;
     private string? _playlistRow;
 
     public LinuxHlsLocalProxy(
@@ -93,9 +92,8 @@ public sealed class LinuxHlsLocalProxy : IDisposable
 
         lock (_playlistStateLock)
         {
-            _firstPlaylistDone = false;
-            _lastGoodPlaylist = null;
             _playlistRow = string.IsNullOrWhiteSpace(row) ? null : row.Trim();
+            _playlistSession = new PlaylistReloadSession(_playlistReload, _playlistRow);
         }
 
         return new Uri(LinuxHlsPlaylistRewriter.ToProxyUrl(origin.AbsoluteUri, Prefix));
@@ -246,30 +244,25 @@ public sealed class LinuxHlsLocalProxy : IDisposable
 
     private async Task ServePlaylistWithRecoveryAsync(HttpListenerContext ctx, string target)
     {
-        bool firstAttach;
+        PlaylistReloadSession? session;
         string? row;
         lock (_playlistStateLock)
         {
-            firstAttach = !_firstPlaylistDone;
             row = _playlistRow;
+            session = _playlistSession ??= new PlaylistReloadSession(_playlistReload, row);
         }
 
-        var request = new PlaylistReloadRequest
-        {
-            IsFirstAttach = firstAttach,
-            // Last-good is not passed: serving a stale playlist can re-show
-            // already-watched segments. LibVLC holds the request; a failed
-            // outcome lets the session switch (option 2 may return).
-            LastGoodPlaylist = null,
-            Row = row,
-            Log = (isInfo, line) =>
+        var request = PlaylistReloadRequest.MidPlay(
+            isFirstAttach: !session.FirstPlaylistCompleted,
+            session,
+            row,
+            log: (isInfo, line) =>
             {
                 if (isInfo)
                     _logger?.LogInformation("{Line}", line);
                 else
                     _logger?.LogDebug("{Line}", line);
-            }
-        };
+            });
 
         var outcome = await PlaylistReloadCoordinator.RunAsync(
             _playlistReload,
@@ -286,13 +279,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         }
 
         if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
-        {
-            lock (_playlistStateLock)
-            {
-                _firstPlaylistDone = true;
-                _lastGoodPlaylist = outcome.Body;
-            }
-        }
+            session.NoteServed(outcome.Body ?? []);
 
         var text = Encoding.UTF8.GetString(outcome.Body ?? []);
         await WritePlaylistAsync(ctx, text, target).ConfigureAwait(false);

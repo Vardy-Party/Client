@@ -167,14 +167,13 @@ public class PlaylistReloadRecoveryStrategyTests
     }
 
     [Fact]
-    public async Task Coordinator_DeferralBudget_ServesLastGoodWhenDelayWouldExceed()
+    public async Task Coordinator_DeferralBudget_GivesUpAsCdnUnreachableEvenWhenLastGoodExists()
     {
         var fetches = new Queue<PlaylistReloadFetchResult>(
         [
             PlaylistReloadFetchResult.FromStatus(503, Html, "text/html"),
             PlaylistReloadFetchResult.FromStatus(503, Html, "text/html")
         ]);
-        var lastGood = Playable;
         var delays = new List<TimeSpan>();
         var logs = new List<string>();
 
@@ -183,13 +182,15 @@ public class PlaylistReloadRecoveryStrategyTests
             fetches,
             delays,
             logs,
-            lastGood,
+            lastGood: Playable,
             maxHold: TimeSpan.FromMilliseconds(100));
 
-        Assert.Equal(PlaylistReloadOutcomeKind.ServeLastGood, outcome.Kind);
-        Assert.Equal(lastGood, outcome.Body);
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.Contains("HTTP 503", outcome.Message, StringComparison.Ordinal);
         Assert.Equal([TimeSpan.Zero], delays);
-        Assert.Contains(logs, l => l.Contains("outcome=serve-last-good", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.Contains("outcome=give-up (deferral budget)", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, l => l.Contains("serve-last-good", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -210,6 +211,64 @@ public class PlaylistReloadRecoveryStrategyTests
         Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
         Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
         Assert.Contains("HTTP 503", outcome.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MidPlayRequest_IsSharedAcrossPlatforms_NoLastGoodAndSameHoldBudget()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(2), PlaybackPolicy.PlaylistReloadHoldBudget);
+        Assert.Equal(PlaybackPolicy.PlaylistReloadHoldBudget, PlaybackPolicy.AndroidPlaylistHoldBudget);
+        Assert.True(PlaybackPolicy.WindowsPlaylistDeferralBudget > PlaybackPolicy.PlaylistReloadHoldBudget);
+
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        session.FirstPlaylistCompleted = true;
+        var android = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
+        var windows = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
+        var linux = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
+
+        foreach (var request in new[] { android, windows, linux })
+        {
+            Assert.Null(request.LastGoodPlaylist);
+            Assert.Equal(PlaybackPolicy.PlaylistReloadHoldBudget, request.MaxHold);
+            Assert.False(request.IsFirstAttach);
+            Assert.Same(session, request.Session);
+            Assert.Equal("Match Wawes", request.Row);
+        }
+    }
+
+    [Fact]
+    public async Task MidPlay_Slow503_GivesUpAsCdnUnreachableWithoutServingLastGood()
+    {
+        var now = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        session.FirstPlaylistCompleted = true;
+        var logs = new List<string>();
+        var request = PlaylistReloadRequest.MidPlay(
+            isFirstAttach: false,
+            session,
+            "Match Wawes",
+            log: (isInfo, line) => logs.Add(isInfo ? $"INFO {line}" : $"DEBUG {line}"),
+            delay: (delay, _) =>
+            {
+                now += delay;
+                return Task.CompletedTask;
+            },
+            clock: () => now);
+
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ =>
+            {
+                now += TimeSpan.FromSeconds(3.3);
+                return Task.FromResult(PlaylistReloadFetchResult.FromStatus(503, Html, "text/html"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.DoesNotContain(logs, l => l.Contains("serve-last-good", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.Contains("give-up (deferral budget)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -234,7 +293,7 @@ public class PlaylistReloadRecoveryStrategyTests
     [InlineData(1, "serve", false)]
     [InlineData(1, "retry", true)]
     [InlineData(1, "give-up", true)]
-    [InlineData(1, "serve-last-good (deferral budget)", true)]
+    [InlineData(1, "give-up (deferral budget)", true)]
     [InlineData(2, "serve", true)]
     [InlineData(3, "serve", true)]
     public void Logging_IsInfo_OnlyWhenAttemptOverOneOrOutcomeIsNotServe(int attempt, string outcome, bool expected) =>
@@ -293,7 +352,7 @@ public class PlaylistReloadRecoveryStrategyTests
     }
 
     [Fact]
-    public async Task Coordinator_Slow503WithLastGood_ServesLastGoodWithinAndroidHoldBudget()
+    public async Task Coordinator_Slow503WithLastGood_GivesUpWithinHoldBudget()
     {
         var now = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
         var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
@@ -324,11 +383,11 @@ public class PlaylistReloadRecoveryStrategyTests
             },
             CancellationToken.None);
 
-        Assert.Equal(PlaylistReloadOutcomeKind.ServeLastGood, outcome.Kind);
-        Assert.Equal(Playable, outcome.Body);
-        Assert.NotNull(session.LastHeldLastGoodAt);
-        Assert.Contains(logs, l => l.Contains("serve-last-good", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
-        Assert.True(session.ShouldSuppressStuckPlaylistReload(now, PlaybackPolicy.PlaylistReloadGiveUpBudget));
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.Null(session.LastHeldLastGoodAt);
+        Assert.Contains(logs, l => l.Contains("give-up (deferral budget)", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(outcome.Message));
     }
 
     [Fact]
