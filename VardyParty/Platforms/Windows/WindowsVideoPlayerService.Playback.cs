@@ -193,6 +193,7 @@ namespace VardyParty.Platforms.Windows
             private void ClosePlayerSession(string message)
             {
                 if (cleanupInvoked) return;
+                switchBack?.Stop();
                 Restore();
                 _tcs.TrySetResult(PlaybackResult.Completed(message, true));
             }
@@ -399,6 +400,31 @@ namespace VardyParty.Platforms.Windows
                     string.Join(",", headers.Select(h => h.Key)));
             }
 
+            private SwitchBackRunner CreateSwitchBackRunner()
+                => new(
+                    session,
+                    () => SwitchBackCommands.FromRow(switchingService.GetCurrentStream(), null),
+                    SwitchBackPlaylistProbe.GetAsync,
+                    (candidate, reason, _) =>
+                    {
+                        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                        MainThread.BeginInvokeOnMainThread(() =>
+                        {
+                            try
+                            {
+                                if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(switchingService, candidate))
+                                    _host._logger.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
+                                tcs.TrySetResult(true);
+                            }
+                            catch (Exception ex)
+                            {
+                                tcs.TrySetException(ex);
+                            }
+                        });
+                        return tcs.Task;
+                    },
+                    msg => _host._logger.LogInformation("{Message}", msg));
+
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
             {
                 PlaybackCommandExecutor.Apply(cmd, new WindowsPlaybackCommandHost(this));
@@ -491,6 +517,9 @@ namespace VardyParty.Platforms.Windows
 
                 public void NotifyApplyFailed(Exception exception)
                     => session._host._logger.LogError(exception, "ApplyPlaybackCommand failed");
+
+                public void ConsiderSwitchBack(PlaybackCommand cmd)
+                    => session.switchBack?.Consider(cmd);
             }
 
             private async Task InvokeNextStreamAsync()

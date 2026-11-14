@@ -39,6 +39,8 @@ public sealed class PlaybackSessionController
     /// scrape advances immediately (no multi-minute EmptyFreshPlay loop).
     /// </summary>
     private bool _malformedPlaylistRecovery;
+    public SwitchBackSession SwitchBack { get; } = new();
+    public bool SwitchBackEnabled { get; set; } = true;
 
     // Same-stream recovery of a SWITCH TARGET (a row we switched to that has not
     // played yet, with a last-good stream to fall back on). A failure that is not
@@ -437,7 +439,11 @@ public sealed class PlaybackSessionController
     /// An index-driven switch (chip, Next, Prev) that started outside the engine
     /// event path replaces any same-stream retry in flight.
     /// </summary>
-    public void CancelSameStreamRecovery() => ResetSameStreamRecovery(clearBudget: true);
+    public void CancelSameStreamRecovery()
+    {
+        SwitchBack.Cancel("user picked another stream");
+        ResetSameStreamRecovery(clearBudget: true);
+    }
 
     /// <summary>
     /// A successful segment/manifest download resets the consecutive-failure counter.
@@ -743,7 +749,9 @@ public sealed class PlaybackSessionController
         if (!HasUntriedStream())
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: PlaybackPolicy.NoOtherWorkingStreamText)];
 
-        // The user picked another stream, so drop any same-stream retry.
+        // The user picked another stream, so drop any same-stream retry and
+        // cancel auto-return to a recovering row.
+        SwitchBack.Cancel(next ? "User next" : "User previous");
         ResetSameStreamRecovery(clearBudget: true);
 
         // Abandon a stuck/in-flight prepare so BeginAttach for the next URL is allowed.
@@ -1074,6 +1082,14 @@ public sealed class PlaybackSessionController
         // have not failed this cycle, so a pool of failed rows plus this one closes.
         if (_healthyStreamCount > 1 && _cdnUnreachableSkips < _healthyStreamCount && HasUntriedStream())
         {
+            // Only arm when a backup will actually start. The executor re-arms with
+            // the row name and last known height before this URL is cleared.
+            if (SwitchBackEnabled && !string.IsNullOrWhiteSpace(_currentUrl))
+            {
+                SwitchBack.Arm(
+                    new SwitchBackCandidate(_currentUrl, RowName: null, IdentityKey: _currentUrl, LastHeight: null, null, null),
+                    _clock());
+            }
             effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: message));
             return effects;
         }

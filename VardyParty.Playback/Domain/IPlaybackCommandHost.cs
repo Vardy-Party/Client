@@ -41,4 +41,10 @@ public interface IPlaybackCommandHost
     void SwitchPoolToNext();
     void SwitchPoolToPrevious();
     void NotifyApplyFailed(Exception exception);
+
+    /// <summary>
+    /// Option 2: arm or cancel auto-return from this command before the current
+    /// row's playlist URL is cleared. Default: no-op (Apple and tests).
+    /// </summary>
+    void ConsiderSwitchBack(PlaybackCommand cmd) { }
 }

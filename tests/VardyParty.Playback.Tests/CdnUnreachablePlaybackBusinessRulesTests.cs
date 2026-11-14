@@ -24,6 +24,7 @@ public class CdnUnreachablePlaybackBusinessRulesTests
     [InlineData("Source error [network connection timeout] SocketTimeoutException: connect timed out", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("SSLHandshakeException: Connection closed by peer", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("Connection reset by peer", PlaybackErrorKind.CdnUnreachable)]
+    [InlineData("Source error HlsPlaylistTracker$PlaylistStuckException", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("UnknownHostException: Unable to resolve host \"hls.gone\": No address associated with hostname", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("Response code: 404 for index.m3u8", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]

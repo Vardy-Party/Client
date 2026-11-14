@@ -60,6 +60,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly LinuxHlsLocalProxy? _hlsProxy;
     private readonly IPlaybackPlaylistProcessor? _playlistProcessor;
     private readonly PlaybackSessionController _session = new();
+    private SwitchBackRunner? _switchBack;
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
@@ -473,6 +474,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public void StopPlayback()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
+        _switchBack?.Stop();
         StopMetricsLoop();
         var closed = new PlaybackResult
         {
@@ -958,6 +960,25 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         RaisePlaybackLifecycleChanged();
     }
 
+    private SwitchBackRunner EnsureSwitchBackRunner()
+    {
+        if (_switchBack is not null)
+            return _switchBack;
+
+        _switchBack = new SwitchBackRunner(
+            _session,
+            () => SwitchBackCommands.FromRow(_switching.GetCurrentStream(), null),
+            SwitchBackPlaylistProbe.GetAsync,
+            (candidate, reason, _) =>
+            {
+                if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(_switching, candidate))
+                    _logger.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
+                return Task.CompletedTask;
+            },
+            msg => _logger.LogInformation("{Message}", msg));
+        return _switchBack;
+    }
+
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
     {
         PlaybackCommandExecutor.Apply(cmd, new LinuxPlaybackCommandHost(this));
@@ -1064,6 +1085,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         public void NotifyApplyFailed(Exception exception)
             => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
+
+        public void ConsiderSwitchBack(PlaybackCommand cmd)
+            => player.EnsureSwitchBackRunner().Consider(cmd);
     }
 
     private async Task AttachLibVlcAsync(
@@ -1423,6 +1447,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 if (frame is { Width: > 0, Height: > 0 })
                     resolution = frame;
             }
+
+            if (resolutionTrusted && resolution is { Height: > 0 } size)
+                _switchBack?.NoteBackupHeight(size.Height);
 
             // LibVLC media stats report demux/input rates in bytes/s.
             int? demuxKbps = null;

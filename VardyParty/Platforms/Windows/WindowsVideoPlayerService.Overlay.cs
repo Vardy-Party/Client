@@ -106,6 +106,8 @@ namespace VardyParty.Platforms.Windows
             {
                 var published = pictureSizeSettler.Observe(width, height);
                 measuredPictureConfirmed = published is not null;
+                if (published is { Height: > 0 } size)
+                    switchBack?.NoteBackupHeight(size.Height);
                 SchedulePictureSizeSettleTick();
             }
 
@@ -138,6 +140,8 @@ namespace VardyParty.Platforms.Windows
                     pictureSizeSettleTimer?.Stop();
                     var published = pictureSizeSettler.Tick();
                     measuredPictureConfirmed = published is not null;
+                    if (published is { Height: > 0 } size)
+                        switchBack?.NoteBackupHeight(size.Height);
                     if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                     {
                         _host.ExtractVideoMetadata(item, mediaPlayer);

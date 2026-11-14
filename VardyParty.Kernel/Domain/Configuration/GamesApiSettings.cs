@@ -19,11 +19,11 @@ public class GamesApiSettings
     public const int DefaultEarlyChipRetryDelaySeconds = 10;
 
     /// <summary>
-    /// Mid-play playlist reload recovery. Default is option 1,
-    /// <c>RetrySameUrl</c>: hold the player request and retry the same URL
-    /// (immediate, then 1s) before giving up. A later option (temporary
-    /// switch + auto-return) can be selected here without changing platform
-    /// fetch code. Unknown names fall back to option 1.
+    /// Mid-play playlist reload recovery. Default is option 1+2,
+    /// <c>RetrySameUrlThenSwitchBack</c>: retry the same URL in the fetch layer,
+    /// then switch to keep video going and auto-return when the user-chosen
+    /// stream recovers. Set <c>RetrySameUrl</c> for option 1 only. Unknown names
+    /// still use option 1 in the fetch layer and keep option 2 enabled.
     /// </summary>
-    public string PlaylistReloadStrategy { get; set; } = "RetrySameUrl";
+    public string PlaylistReloadStrategy { get; set; } = "RetrySameUrlThenSwitchBack";
 }

@@ -16,6 +16,7 @@ namespace VardyParty.Platforms.Android
         private readonly PlaybackSessionController _session = CreateSession();
         private long _videoSeenGeneration = -1;
         private PlaylistReloadSession? _playlistReloadSession;
+        private SwitchBackRunner? _switchBack;
 
         private static PlaybackSessionController CreateSession()
         {
@@ -37,6 +38,8 @@ namespace VardyParty.Platforms.Android
                 _logger?.LogInformation("[NativeVideoActivity] Video confirmed ({Signal})", signal);
                 EndStreamSwitchOverlayScrub();
             }
+            if (_videoHeight is > 0)
+                EnsureSwitchBackRunner().NoteBackupHeight(_videoHeight);
             ProbeVideo();
         }
 
@@ -111,6 +114,37 @@ namespace VardyParty.Platforms.Android
         {
             SyncHealthyStreamCount();
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.BeginAttach(url, usedCachedUrl, force)));
+        }
+
+        private SwitchBackRunner EnsureSwitchBackRunner()
+        {
+            if (_switchBack is not null)
+                return _switchBack;
+
+            _switchBack = new SwitchBackRunner(
+                _session,
+                () => SwitchBackCommands.FromRow(_switching?.GetCurrentStream(), _videoHeight is > 0 ? _videoHeight : null),
+                SwitchBackPlaylistProbe.GetAsync,
+                (candidate, reason, _) =>
+                {
+                    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    RunOnUiThread(() =>
+                    {
+                        try
+                        {
+                            if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(_switching, candidate))
+                                _logger?.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
+                            tcs.TrySetResult(true);
+                        }
+                        catch (Exception ex)
+                        {
+                            tcs.TrySetException(ex);
+                        }
+                    });
+                    return tcs.Task;
+                },
+                msg => _logger?.LogInformation("{Message}", msg));
+            return _switchBack;
         }
 
         private void ApplyPlaybackCommand(PlaybackCommand cmd)
@@ -202,6 +236,9 @@ namespace VardyParty.Platforms.Android
             public void NotifyApplyFailed(Exception exception)
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
 
+            public void ConsiderSwitchBack(PlaybackCommand cmd)
+                => activity.EnsureSwitchBackRunner().Consider(cmd);
+
             /// <summary>Short accurate failure text (e.g. "Stream refused (403) - trying the next stream").</summary>
             public void ShowFailureToUser(string userText)
             {
@@ -276,18 +313,14 @@ namespace VardyParty.Platforms.Android
                 error.Message,
                 DescribeCauses(error));
 
-            // Holding Open through slow 503s, or re-serving last-good, can make
-            // HlsPlaylistTracker raise PlaylistStuckException (TV 257 20:20:21).
-            // Reloading the MediaSource then caused an ~8s stall even though the
-            // playlist retry recovered. Swallow that while the hold is in budget.
-            if (stuckPlaylist
-                && _playlistReloadSession?.ShouldSuppressStuckPlaylistReload(
-                    DateTimeOffset.UtcNow,
-                    PlaybackPolicy.PlaylistReloadGiveUpBudget) == true)
+            // Reloading the MediaSource on PlaylistStuck (TV 257 20:20:21) froze
+            // the picture for ~8s and can re-show already-watched segments. Switch
+            // instead; option 2 keeps the row recovering.
+            if (stuckPlaylist)
             {
                 _logger?.LogInformation(
-                    "[NativeVideoActivity] Live HLS stall — ignoring PlaylistStuck during playlist-retry hold");
-                return true;
+                    "[NativeVideoActivity] Live HLS stall — switching rather than reloading a stuck playlist");
+                return false;
             }
 
             _behindLiveWindowRecoveries++;
@@ -300,18 +333,6 @@ namespace VardyParty.Platforms.Android
                 _isPreparing = true;
                 _playerFaulted = false;
                 _statusTracker.Reset();
-
-                if (stuckPlaylist)
-                {
-                    // Seek alone cannot unstick a frozen media playlist — rebuild the
-                    // MediaSource so ExoPlayer reloads it (same attach generation / budget).
-                    _logger?.LogWarning(
-                        "[NativeVideoActivity] Live HLS stall — reloading playlist (attempt {Attempt}/{Max})",
-                        _behindLiveWindowRecoveries,
-                        PlaybackPolicy.MaxLiveHlsRecoveries);
-                    AttachEngine(_m3u8Url);
-                    return true;
-                }
 
                 _logger?.LogWarning(
                     "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",

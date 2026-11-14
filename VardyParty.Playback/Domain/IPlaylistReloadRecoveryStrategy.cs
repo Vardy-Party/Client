@@ -8,8 +8,11 @@ namespace VardyParty.Playback;
 /// </summary>
 public static class PlaylistReloadStrategyNames
 {
-    /// <summary>Option 1: retry the same URL in the fetch layer (default).</summary>
+    /// <summary>Option 1: retry the same URL in the fetch layer only.</summary>
     public const string RetrySameUrl = "RetrySameUrl";
+
+    /// <summary>Option 1 then option 2: retry, switch to keep video going, then auto-return (default).</summary>
+    public const string RetrySameUrlThenSwitchBack = "RetrySameUrlThenSwitchBack";
 }
 
 public enum PlaylistReloadAction

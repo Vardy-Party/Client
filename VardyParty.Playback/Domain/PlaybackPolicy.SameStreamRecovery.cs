@@ -68,19 +68,42 @@ public static partial class PlaybackPolicy
     /// Android <c>UnwrappingDataSource</c> must not hold ExoPlayer's playlist
     /// <c>Open</c> through multiple slow 5xx responses (a 503 often takes 3–4s;
     /// two holds triggered <c>PlaylistStuckException</c> and an 8s stall on TV
-    /// 257 at 20:20:21 even though attempt 3 then recovered). If the next retry
-    /// would exceed this budget, serve the last-good playlist; the following
-    /// player reload retries. Longer than this, <see cref="PlaylistReloadGiveUpBudget"/>
-    /// still gives up so the session can switch.
+    /// 257 at 20:20:21 even though attempt 3 then recovered). Android never
+    /// re-serves a last-good (stale) playlist — that re-shows already-watched
+    /// segments. If the next retry would exceed this budget, give up as
+    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> so the session can switch
+    /// and option 2 can return later.
     /// </summary>
     public static readonly TimeSpan AndroidPlaylistHoldBudget = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// Wall-clock budget for mid-play same-URL retries across holds of the last-good
-    /// playlist. Three 503s of 3–4s cover about 12s; counting attempts per
-    /// <c>Open</c> is not enough once each Open serves last-good after the hold budget.
+    /// Wall-clock budget for mid-play same-URL retries in one playback session.
+    /// Three 503s of 3–4s cover about 12s; after this the row is kept as
+    /// CDN-unreachable and the session switches (option 2 may switch back).
     /// </summary>
     public static readonly TimeSpan PlaylistReloadGiveUpBudget = TimeSpan.FromSeconds(12);
+
+    /// <summary>Option 2 playlist-only re-probes: 5s, 15s, then 30s / 60s / 120s backoff.</summary>
+    public static readonly TimeSpan[] SwitchBackProbeSchedule =
+    [
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(15),
+        TimeSpan.FromSeconds(30),
+        TimeSpan.FromSeconds(60),
+        TimeSpan.FromSeconds(120)
+    ];
+
+    /// <summary>
+    /// Minimum time on the backup before auto-returning to a recovered user-chosen
+    /// stream that is not clearly higher resolution (flap guard).
+    /// </summary>
+    public static readonly TimeSpan SwitchBackMinBackupDwell = TimeSpan.FromSeconds(30);
+
+    public static bool IsUserNavigationReason(string? reason) =>
+        reason is not null
+        && (reason.Equals("User next", StringComparison.Ordinal)
+            || reason.Equals("User previous", StringComparison.Ordinal)
+            || reason.StartsWith("User ", StringComparison.Ordinal));
 
     /// <summary>
     /// Extra fresh <c>/play</c> attempts when a scrape returns no URL for a stream
@@ -182,7 +205,8 @@ public static partial class PlaybackPolicy
             || ContainsStatus(text, "500")
             || ContainsStatus(text, "502")
             || ContainsStatus(text, "503")
-            || ContainsStatus(text, "504"))
+            || ContainsStatus(text, "504")
+            || IsStuckLivePlaylistFailure(message))
         {
             return PlaybackErrorKind.CdnUnreachable;
         }

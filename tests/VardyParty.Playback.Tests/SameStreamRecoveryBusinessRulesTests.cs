@@ -51,6 +51,7 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("Media failed (source not supported): Unknown media error Forbidden (403). (0x80190193)", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
+    [InlineData("Source error HlsPlaylistTracker$PlaylistStuckException", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
     [InlineData(null, PlaybackErrorKind.Transient)]
     public void ClassifyPlaybackError_SeparatesTransientTokenAndDead(string? message, PlaybackErrorKind expected)

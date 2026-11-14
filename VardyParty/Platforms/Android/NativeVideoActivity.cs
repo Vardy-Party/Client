@@ -1268,6 +1268,7 @@ namespace VardyParty.Platforms.Android
                 RemoveCallback(_overlayHandler, _overlayHideRunnable);
                 MatchToastOnDestroy();
                 DisposeSubscriptions();
+                _switchBack?.Stop();
                 StopAndReleasePlayer(release: true);
                 try { _switching?.Cleanup(); } catch { }
                 ReportPlaybackClosed(PlaybackCloseReasons.ForDestroy(IsChangingConfigurations));

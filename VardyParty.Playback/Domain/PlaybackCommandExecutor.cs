@@ -14,6 +14,9 @@ public static class PlaybackCommandExecutor
         if (cmd.IsNoOp)
             return false;
 
+        // Before ClearResolvedUrl: the current row still has its playlist URL and height.
+        host.ConsiderSwitchBack(cmd);
+
         host.BeginIndexSwitchSuppression();
         try
         {

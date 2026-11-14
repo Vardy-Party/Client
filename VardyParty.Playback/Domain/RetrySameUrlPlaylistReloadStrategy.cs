@@ -45,15 +45,19 @@ public static class PlaylistReloadStrategies
 
     public static IPlaylistReloadRecoveryStrategy Resolve(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name)
-            || name.Equals(PlaylistReloadStrategyNames.RetrySameUrl, StringComparison.OrdinalIgnoreCase))
-        {
-            return Default;
-        }
-
-        // Unknown names fall back to option 1 so a typo cannot disable recovery.
+        // Fetch-layer Decide() is always option 1. Option 2 (switch-back) is
+        // selected alongside it via <see cref="IsSwitchBackEnabled"/>.
         return Default;
     }
+
+    /// <summary>
+    /// Option 2 is on for the default combination and for any unknown name
+    /// (a typo must not disable auto-return). Set
+    /// <see cref="PlaylistReloadStrategyNames.RetrySameUrl"/> to use option 1 only.
+    /// </summary>
+    public static bool IsSwitchBackEnabled(string? name) =>
+        string.IsNullOrWhiteSpace(name)
+        || !name.Equals(PlaylistReloadStrategyNames.RetrySameUrl, StringComparison.OrdinalIgnoreCase);
 }
 
 public static class PlaylistReloadEvaluation

@@ -132,10 +132,10 @@ namespace VardyParty.Platforms.Android
             var request = new PlaylistReloadRequest
             {
                 IsFirstAttach = session is null || !session.FirstPlaylistCompleted,
-                LastGoodPlaylist = session?.LastGoodPlaylist,
-                MaxHold = session?.LastGoodPlaylist is { Length: > 0 }
-                    ? PlaybackPolicy.AndroidPlaylistHoldBudget
-                    : null,
+                // Never re-serve a stale playlist: that re-shows already-watched
+                // segments. When the hold budget is spent, give up and switch.
+                LastGoodPlaylist = null,
+                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
                 Row = session?.Row,
                 Session = session,
                 Log = (isInfo, line) =>
@@ -162,10 +162,18 @@ namespace VardyParty.Platforms.Android
                 throw;
             }
 
-            if (outcome.Kind == PlaylistReloadOutcomeKind.Failed)
+            if (outcome.Kind == PlaylistReloadOutcomeKind.Failed
+                || outcome.Kind == PlaylistReloadOutcomeKind.ServeLastGood)
             {
                 ReportOpenOutcome(outcome.StatusCode, failed: true);
-                throw new Java.IO.IOException(outcome.Message ?? "playlist reload failed");
+                var message = outcome.Kind == PlaylistReloadOutcomeKind.ServeLastGood
+                    ? PlaylistReloadEvaluation.GiveUpMessage(
+                        PlaybackErrorKind.CdnUnreachable,
+                        outcome.StatusCode,
+                        "stale playlist not served")
+                    : (outcome.Message ?? "playlist reload failed");
+                session?.NoteGiveUp(PlaybackErrorKind.CdnUnreachable, message);
+                throw new Java.IO.IOException(message);
             }
 
             var served = outcome.Body ?? Array.Empty<byte>();

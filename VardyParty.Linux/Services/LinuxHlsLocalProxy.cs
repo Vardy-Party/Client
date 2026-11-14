@@ -247,19 +247,20 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     private async Task ServePlaylistWithRecoveryAsync(HttpListenerContext ctx, string target)
     {
         bool firstAttach;
-        byte[]? lastGood;
         string? row;
         lock (_playlistStateLock)
         {
             firstAttach = !_firstPlaylistDone;
-            lastGood = _lastGoodPlaylist;
             row = _playlistRow;
         }
 
         var request = new PlaylistReloadRequest
         {
             IsFirstAttach = firstAttach,
-            LastGoodPlaylist = lastGood,
+            // Last-good is not passed: serving a stale playlist can re-show
+            // already-watched segments. LibVLC holds the request; a failed
+            // outcome lets the session switch (option 2 may return).
+            LastGoodPlaylist = null,
             Row = row,
             Log = (isInfo, line) =>
             {

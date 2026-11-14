@@ -114,6 +114,7 @@ namespace VardyParty.Platforms.Windows
             private IStreamResolutionOrchestrator streamResolutionOrchestrator = null!;
             private PlaybackChromePresenter chrome = null!;
             private PlaybackSessionController session = null!;
+            private SwitchBackRunner? switchBack;
             private DelegatingMediaEngine engine = null!;
             private PlaybackPoolCommandActions pool = null!;
             private IDisposable? healthyStreamsSubscription;
@@ -264,6 +265,7 @@ namespace VardyParty.Platforms.Windows
                         cleanupPool: () => switchingService.Cleanup());
                     chrome.StateChanged += (_, __) => MainThread.BeginInvokeOnMainThread(ApplyChromeState);
                     session = new PlaybackSessionController();
+                    switchBack = CreateSwitchBackRunner();
                     engine = new DelegatingMediaEngine();
                     pool = new PlaybackPoolCommandActions(
                         session,
