@@ -21,25 +21,24 @@ flowchart LR
 Deep dive: [architecture/homepage-maui-avalonia.md](architecture/homepage-maui-avalonia.md).
 
 The Linux head targets **net11.0**. A .NET 10 SDK (Ubuntu apt or an old
-`~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 RC1 SDK**, same
-band as the Windows MAUI head: `11.0.100-rc.1` or later
-(`11.0.100-rc.1.26425.128` is the known-good pin).
+`~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 GA SDK**, same
+band as the Windows MAUI head: `11.0.100` or later.
 
-## Install the .NET 11 RC1 SDK (Ubuntu)
+## Install the .NET 11 SDK (Ubuntu)
 
-Do **not** retarget the repo to net10. Install the RC1 SDK locally so it
+Do **not** retarget the repo to net10. Install the .NET 11 SDK locally so it
 does not fight distro packages.
 
 ```bash
 curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 chmod +x /tmp/dotnet-install.sh
-/tmp/dotnet-install.sh --version 11.0.100-rc.1.26425.128 --install-dir "$HOME/.dotnet"
+/tmp/dotnet-install.sh --channel 11.0 --install-dir "$HOME/.dotnet"
 ```
 
 To pin the same SDK as Windows/CI:
 
 ```bash
-/tmp/dotnet-install.sh --version 11.0.100-rc.1.26425.128 --install-dir "$HOME/.dotnet"
+/tmp/dotnet-install.sh --channel 11.0 --install-dir "$HOME/.dotnet"
 ```
 
 Put that host **first** on `PATH` (otherwise `/usr/lib/dotnet` 10.x wins):
@@ -54,7 +53,7 @@ Check:
 
 ```bash
 which dotnet
-dotnet --version    # 11.0.100-rc.1… not 10.0.x
+dotnet --version    # 11.0.100… not 10.0.x
 dotnet --list-sdks
 ```
 

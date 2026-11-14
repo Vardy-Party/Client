@@ -5,11 +5,11 @@ target; native players own video. Built for **v2.0.0**.
 
 ## Install
 
-You need the **.NET 11 RC1 SDK** on every head (distro/apt .NET 10 fails with
+You need the **.NET 11 SDK** on every head (distro/apt .NET 10 fails with
 `NETSDK1045`). Start with the install doc for your machine:
 
 - **Linux / WSL** — [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md): install the
-  .NET 11 RC1 SDK, `dotnet workload install maui-tizen`, and pin
+  .NET 11 SDK, `dotnet workload install maui-tizen`, and pin
   `HomeUiTargetFrameworks=net11.0` for restore and run.
 - **Windows** — [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md)
 - **Android (mobile)** and **Android TV** — [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md)
@@ -22,7 +22,7 @@ Architecture, playback, versioning, and the merge playbook stay in the
 ## Highlights
 
 - **.NET 11** — MAUI and the Linux head both target `net11.0` / `net11.0-*`.
-  Install the RC1 SDK first (see [Install](#install)).
+  Install the .NET 11 SDK first (see [Install](#install)).
 - **Avalonia MAUI backend** — on Linux, the same `VardyParty.HomeUi` XAML is drawn by
   Avalonia (`UseAvaloniaApp` / `Avalonia.Controls.Maui.Desktop`), not a second UI stack.
   See [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md).
@@ -54,7 +54,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 | [docs/architecture/homepage-maui-avalonia.md](docs/architecture/homepage-maui-avalonia.md) | Shared homepage + Avalonia Linux backend |
 | [docs/STREAM_PLAYBACK_RULES.md](docs/STREAM_PLAYBACK_RULES.md) | Playback session / engine contract |
 | [docs/STREAM_HEALTH_PROTOCOL.md](docs/STREAM_HEALTH_PROTOCOL.md) | Health-check protocol |
-| [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 RC1 + run Desktop / WSL |
+| [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 SDK + run Desktop / WSL |
 | [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1 -Api preview`) |
 | [docs/REMOTE_COMPUTE_PREVIEW_USB.md](docs/REMOTE_COMPUTE_PREVIEW_USB.md) | Preview test with a phone on USB, Wi-Fi off |
 | [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md) | Windows install / sideload |
@@ -64,7 +64,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 
 ## Tech Stack
 
-- **.NET 11** (RC1) — shared libraries + MAUI hosts + Linux desktop
+- **.NET 11** — shared libraries + MAUI hosts + Linux desktop
 - **.NET MAUI** with a shared **MAUI XAML homepage** (`VardyParty.HomeUi`)
 - **Avalonia MAUI backend** (Avalonia 12 preview) draws that homepage on Linux
   (`VardyParty.Linux`)

@@ -572,9 +572,9 @@ Delivery matrix (surface × behaviour), gated by two Settings toggles:
 
 | Component | Version |
 |---|---|
-| .NET SDK | `11.0.x` in CI (latest on the channel). This table follows that channel; the RC2 package versions are in the rows below. |
-| `Microsoft.Maui.Controls` | `11.0.*-*` (nuget.org; RC2 `11.0.0-rc.2.26505.5` until `11.0.0`) |
-| `Avalonia.Controls.Maui.Desktop` | `11.0.*-*` (nuget.org; Avalonia 12 underneath) |
+| .NET SDK | `11.0.x` in CI (GA 11.0.100 and later patches). |
+| `Microsoft.Maui.Controls` | `11.0.*` (nuget.org; stable, currently 11.0.10) |
+| `Avalonia.Controls.Maui.Desktop` | `11.0.*-*` (no stable 11.0.x yet; latest is 11.0.0-rc.3; Avalonia 12 underneath) |
 | MAUI workload on Linux | `maui-tizen` (the only workload that carries the plain-TFM MAUI SDK on Linux) |
 | `Svg.Skia` | `5.2.2` |
 | `SkiaSharp.NativeAssets.Linux` | `4.151.0` (explicit pin, see gotchas) |

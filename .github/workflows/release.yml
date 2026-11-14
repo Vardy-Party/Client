@@ -1,7 +1,7 @@
 name: Release - Build & Package
 
 env:
-  # Latest SDK on the 11.0 channel, including release candidates until GA.
+  # Latest SDK on the 11.0 channel (GA 11.0.100 and later patches).
   DOTNET_VERSION: "11.0.x"
 
 on:
@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 RC1
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 RC1
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -144,7 +144,7 @@ jobs:
           xcodebuild -version
           xcodebuild -version | grep -q '^Xcode 27.0'
       
-      - name: Setup .NET 11 RC1
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -190,7 +190,7 @@ jobs:
           xcodebuild -version
           xcodebuild -version | grep -q '^Xcode 27.0'
       
-      - name: Setup .NET 11 RC1
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -239,7 +239,7 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       
-      - name: Setup .NET 11 RC1
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}

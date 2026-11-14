@@ -93,7 +93,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -381,7 +381,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -595,7 +595,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_27.0.app
           xcodebuild -version
           xcodebuild -version | grep -q '^Xcode 27.0'
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -726,7 +726,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_27.0.app
           xcodebuild -version
           xcodebuild -version | grep -q '^Xcode 27.0'
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -855,7 +855,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -1100,7 +1100,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
