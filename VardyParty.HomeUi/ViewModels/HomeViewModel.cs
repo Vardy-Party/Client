@@ -1130,7 +1130,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             row.Cards[i].IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game);
         }
 
-        row.Refresh(model.HasLiveGames);
+        row.Refresh(model.HasLiveGames, model.League);
     }
 
     private static int IndexOfCard(LeagueRowViewModel row, string key, int startAt)

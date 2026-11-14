@@ -395,6 +395,58 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Equal("1 - 0", card.ScoreText);
         Assert.Contains("23", card.StatusText);
     }
+    [Fact]
+    public void FlushPendingApply_Refresh_TitleCasesAllCapsApiLeagueInPlace()
+    {
+        _sut.UpdateGames(CatalogWithNamedLeague("UEFA NATIONS LEAGUE", bbcLeague: null, resolvedLeague: null));
+        _sut.FlushPendingApply();
+        var row = Assert.Single(_sut.Rows);
+        var card = Assert.Single(row.Cards);
+
+        Assert.Equal("UEFA Nations League", row.League);
+        Assert.Equal("UEFA NATIONS LEAGUE", card.Game.ApiLeague);
+        Assert.Equal("UEFA NATIONS LEAGUE", card.Game.League);
+
+        _sut.UpdateGames(CatalogWithNamedLeague(
+            "UEFA NATIONS LEAGUE",
+            bbcLeague: "UEFA Nations League",
+            resolvedLeague: "UEFA Nations League"));
+        _sut.FlushPendingApply();
+
+        Assert.Same(row, Assert.Single(_sut.Rows));
+        Assert.Same(card, Assert.Single(_sut.Rows[0].Cards));
+        Assert.Equal("UEFA Nations League", _sut.Rows[0].League);
+        Assert.Equal("UEFA NATIONS LEAGUE", _sut.Rows[0].Cards[0].Game.ApiLeague);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_UpdatesLeagueHeadingSpellingOnExistingRow()
+    {
+        _sut.UpdateGames(CatalogWithNamedLeague("premier league", bbcLeague: null, resolvedLeague: null));
+        _sut.FlushPendingApply();
+        var row = Assert.Single(_sut.Rows);
+        Assert.Equal("premier league", row.League);
+
+        string? changed = null;
+        row.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LeagueRowViewModel.League))
+            {
+                changed = e.PropertyName;
+            }
+        };
+
+        _sut.UpdateGames(CatalogWithNamedLeague(
+            "premier league",
+            bbcLeague: "Premier League",
+            resolvedLeague: "Premier League"));
+        _sut.FlushPendingApply();
+
+        Assert.Same(row, Assert.Single(_sut.Rows));
+        Assert.Equal("Premier League", row.League);
+        Assert.Equal(nameof(LeagueRowViewModel.League), changed);
+        Assert.Equal("premier league", row.Cards[0].Game.ApiLeague);
+    }
 
     [Fact]
     public void FlushPendingApply_Refresh_PreservesLoadedBadgesAndLeagueIcon()
@@ -1154,6 +1206,42 @@ public sealed class HomeViewModelTests : IDisposable
         };
     }
 
+    private Dictionary<string, List<Game>> CatalogWithNamedLeague(
+        string apiLeague,
+        string? bbcLeague,
+        string? resolvedLeague)
+    {
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Portugal")
+            .With(g => g.Away, "Denmark")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, apiLeague)
+            .With(g => g.ApiLeague, apiLeague)
+            .With(g => g.BBCLeague, bbcLeague ?? "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)76)
+            .With(g => g.HomeScore, (int?)0)
+            .With(g => g.AwayScore, (int?)4)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
+            .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+        if (!string.IsNullOrWhiteSpace(resolvedLeague))
+        {
+            game.ResolveLeague(resolvedLeague);
+        }
+
+        return new Dictionary<string, List<Game>>
+        {
+            [apiLeague] = [game],
+        };
+    }
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var i = 0; i < 50; i++)

@@ -124,6 +124,7 @@ public class HomeRowsBuilderTests
         // Assert
         var row = Assert.Single(rows);
         Assert.Equal(2, row.Games.Count);
+        Assert.Equal("League Alpha", row.League);
     }
 
     [Fact]
@@ -142,5 +143,49 @@ public class HomeRowsBuilderTests
         // Assert
         var row = Assert.Single(rows);
         Assert.Equal("Premier League", row.League);
+    }
+
+    [Fact]
+    public void Build_AllCapsApiLeague_IsTitleCasedForTheHeading_WithoutChangingApiLeague()
+    {
+        var game = new Game
+        {
+            League = "UEFA NATIONS LEAGUE",
+            ApiLeague = "UEFA NATIONS LEAGUE",
+            Start = new DateTime(2026, 11, 14, 19, 0, 0, DateTimeKind.Utc),
+        };
+
+        var row = Assert.Single(HomeRowsBuilder.Build(new[] { game }));
+
+        Assert.Equal("UEFA Nations League", row.League);
+        Assert.Same(game, Assert.Single(row.Games));
+        Assert.Equal("UEFA NATIONS LEAGUE", game.ApiLeague);
+        Assert.Equal("UEFA NATIONS LEAGUE", game.League);
+    }
+
+    [Fact]
+    public void Build_PrefersBbcSpellingWhenItDiffersOnlyByCaseFromTheApiKey()
+    {
+        var unmatched = new Game
+        {
+            League = "UEFA NATIONS LEAGUE",
+            ApiLeague = "UEFA NATIONS LEAGUE",
+            Start = new DateTime(2026, 11, 14, 19, 0, 0, DateTimeKind.Utc),
+        };
+        var matched = new Game
+        {
+            League = "UEFA NATIONS LEAGUE",
+            ApiLeague = "UEFA NATIONS LEAGUE",
+            BBCLeague = "UEFA Nations League",
+            Start = new DateTime(2026, 11, 14, 19, 45, 0, DateTimeKind.Utc),
+        };
+        matched.ResolveLeague("UEFA Nations League");
+
+        var row = Assert.Single(HomeRowsBuilder.Build(new[] { unmatched, matched }));
+
+        Assert.Equal("UEFA Nations League", row.League);
+        Assert.Equal(2, row.Games.Count);
+        Assert.Equal("UEFA NATIONS LEAGUE", unmatched.ApiLeague);
+        Assert.Equal("UEFA NATIONS LEAGUE", matched.ApiLeague);
     }
 }

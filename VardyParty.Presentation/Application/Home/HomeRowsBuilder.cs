@@ -12,6 +12,9 @@ public sealed record LeagueRowModel(string League, IReadOnlyList<Game> Games)
 /// Groups an already-filtered, already-ordered flat game list into league rows.
 /// Rows with live matches come first, then rows by earliest kick-off.
 /// Match order inside a row is preserved from the input (live → upcoming).
+/// Row titles use <see cref="LeagueDisplayName"/> so a case-insensitive group
+/// (API ALL CAPS plus a BBC title-case spelling) shows one preferred heading
+/// without changing <see cref="Game.ApiLeague"/>.
 /// </summary>
 public static class HomeRowsBuilder
 {
@@ -23,12 +26,10 @@ public static class HomeRowsBuilder
         if (list.Count == 0) return Array.Empty<LeagueRowModel>();
 
         return list
-            .GroupBy(
-                g => string.IsNullOrWhiteSpace(g.DisplayLeague) ? FallbackLeague : g.DisplayLeague,
-                StringComparer.OrdinalIgnoreCase)
+            .GroupBy(GroupingKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => new
             {
-                Row = new LeagueRowModel(group.Key, group.ToList()),
+                Row = new LeagueRowModel(LeagueDisplayName.ForRow(group), group.ToList()),
                 HasLive = group.Any(g => g.IsLiveForOrdering),
                 EarliestStart = group.Min(g => g.StartUtcForOrdering),
             })
@@ -38,4 +39,7 @@ public static class HomeRowsBuilder
             .Select(r => r.Row)
             .ToList();
     }
+
+    private static string GroupingKey(Game game) =>
+        string.IsNullOrWhiteSpace(game.DisplayLeague) ? FallbackLeague : game.DisplayLeague;
 }

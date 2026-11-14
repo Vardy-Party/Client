@@ -7,17 +7,19 @@ namespace VardyParty.HomeUi;
 /// One horizontally-scrolling league row on the homepage. Long-lived: catalog
 /// refreshes mutate <see cref="Cards"/> in place and call <see cref="Refresh"/>
 /// instead of replacing the row, so the materialized strip (and its league
-/// icon) survives every poll.
+/// icon) survives every poll. The heading can still change spelling (an
+/// ALL-CAPS API key becoming a BBC title-case name) without replacing the row.
 /// </summary>
 public sealed class LeagueRowViewModel : INotifyPropertyChanged
 {
+    private string _league;
     private ImageSource? _leagueIcon;
     private bool _hasLiveGames;
     private string _matchCountText = string.Empty;
 
     public LeagueRowViewModel(string league, bool hasLiveGames, IReadOnlyList<MatchCardViewModel> cards, HomeLayoutState layout)
     {
-        League = league;
+        _league = league;
         Layout = layout;
         Cards = new ObservableCollection<MatchCardViewModel>(cards);
         _hasLiveGames = hasLiveGames;
@@ -26,7 +28,17 @@ public sealed class LeagueRowViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public string League { get; }
+    public string League
+    {
+        get => _league;
+        private set
+        {
+            if (_league == value) return;
+            _league = value;
+            Raise(nameof(League));
+        }
+    }
+
     public HomeLayoutState Layout { get; }
     public ObservableCollection<MatchCardViewModel> Cards { get; }
 
@@ -67,8 +79,9 @@ public sealed class LeagueRowViewModel : INotifyPropertyChanged
     public bool HasLeagueIcon => _leagueIcon != null;
 
     /// <summary>Called after an in-place card diff so the header chips follow.</summary>
-    public void Refresh(bool hasLiveGames)
+    public void Refresh(bool hasLiveGames, string league)
     {
+        League = league;
         HasLiveGames = hasLiveGames;
         MatchCountText = FormatMatchCount(Cards.Count);
     }
