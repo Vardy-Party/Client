@@ -40,8 +40,9 @@ public class HlsUriResolutionBusinessRulesTests
 
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
         Assert.NotEqual(StreamHealthStatus.SegmentUnreachable, result.Status);
-        Assert.Contains(cdn.Requests, r => r == Segment);
-        Assert.All(cdn.Requests, r => Assert.True(HlsUriResolver.IsHttpUrl(r), r));
+        var requests = cdn.SnapshotRequests();
+        Assert.Contains(requests, r => r == Segment);
+        Assert.All(requests, r => Assert.True(HlsUriResolver.IsHttpUrl(r), r));
     }
 
     [Fact]
@@ -57,8 +58,9 @@ public class HlsUriResolutionBusinessRulesTests
         var result = await Checker(cdn).CheckStreamHealthAsync(Master, "https://page.example.invalid/");
 
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
-        Assert.Contains(cdn.Requests, r => r == Variant);
-        Assert.Contains(cdn.Requests, r => r == Segment);
+        var requests = cdn.SnapshotRequests();
+        Assert.Contains(requests, r => r == Variant);
+        Assert.Contains(requests, r => r == Segment);
     }
 
     [Fact]
@@ -72,7 +74,7 @@ public class HlsUriResolutionBusinessRulesTests
 
         // The CDN was actually asked (404): a real stream failure, not a client URI bug.
         Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
-        Assert.Contains(cdn.Requests, r => r == Segment);
+        Assert.Contains(cdn.SnapshotRequests(), r => r == Segment);
     }
 
     private static StreamHealthChecker Checker(Cdn cdn) =>
@@ -83,7 +85,19 @@ public class HlsUriResolutionBusinessRulesTests
     private sealed class Cdn : HttpMessageHandler
     {
         private readonly Dictionary<string, (string Type, byte[] Body)> _objects = new();
-        public List<string> Requests { get; } = [];
+        private readonly List<string> _requests = [];
+
+        /// <summary>
+        /// Copy under the same lock as <see cref="SendAsync"/>. After a Healthy
+        /// verdict the checker starts a sidecar bitstream-size GET; enumerating
+        /// the live list from the test thread races with that add
+        /// (CI Linux: <c>Collection was modified</c> at line 60).
+        /// </summary>
+        public IReadOnlyList<string> SnapshotRequests()
+        {
+            lock (_requests)
+                return _requests.ToArray();
+        }
 
         public void Add(string url, string type, string body) => Add(url, type, Encoding.UTF8.GetBytes(body));
         public void Add(string url, string type, byte[] body) => _objects[url] = (type, body);
@@ -91,8 +105,8 @@ public class HlsUriResolutionBusinessRulesTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var url = request.RequestUri!.AbsoluteUri;
-            lock (Requests)
-                Requests.Add(url);
+            lock (_requests)
+                _requests.Add(url);
 
             if (!_objects.TryGetValue(url, out var obj))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

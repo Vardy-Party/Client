@@ -459,7 +459,7 @@ public class StreamHealthCheckerTests
 
         // Assert
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
-        Assert.Contains(handler.Requests, r =>
+        Assert.Contains(handler.SnapshotRequests(), r =>
             r.RequestUri!.ToString() == manifestUrl
             && r.Headers.TryGetValues("Cookie", out var cookies)
             && cookies.Any(c => c.Contains("session=abc", StringComparison.Ordinal)));
@@ -468,7 +468,13 @@ public class StreamHealthCheckerTests
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new();
-        public List<HttpRequestMessage> Requests { get; } = [];
+        private readonly List<HttpRequestMessage> _requests = [];
+
+        public IReadOnlyList<HttpRequestMessage> SnapshotRequests()
+        {
+            lock (_requests)
+                return _requests.ToArray();
+        }
 
         public void AddResponse(string url, HttpResponseMessage response)
         {
@@ -478,7 +484,8 @@ public class StreamHealthCheckerTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            Requests.Add(request);
+            lock (_requests)
+                _requests.Add(request);
             var url = request.RequestUri?.ToString() ?? "";
 
             if (request.Method == HttpMethod.Head && _responses.TryGetValue($"HEAD:{url}", out var headResp))
