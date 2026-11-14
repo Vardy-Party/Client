@@ -713,10 +713,10 @@ namespace VardyParty.Platforms.Windows
                     mediaPlayer.PlaybackSession.NaturalVideoSizeChanged += naturalVideoSizeChangedHandler;
                     mediaPlayer.PlaybackSession.PositionChanged += positionChangedHandler;
 
-                    // Stream info display (top right — matches Android overlay placement)
+                    // Stream toast (top right). One-row identity: 1/2 · V1 · Fubo US · 720p.
                     streamInfoPanel = new Microsoft.UI.Xaml.Controls.StackPanel
                     {
-                        Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical,
+                        Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
                         HorizontalAlignment = WinHorizontalAlignment.Right,
                         VerticalAlignment = WinVerticalAlignment.Top,
                         Margin = new WinThickness(0, 48, 10, 0),
@@ -733,16 +733,19 @@ namespace VardyParty.Platforms.Windows
                         Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
                         FontSize = 14,
                         FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
+                        VerticalAlignment = WinVerticalAlignment.Center,
                         Text = ""
                     };
                     streamInfoPanel.Children.Add(streamCountText);
 
                     streamSourceBadge = new Microsoft.UI.Xaml.Controls.Border
                     {
-                        HorizontalAlignment = WinHorizontalAlignment.Right,
+                        HorizontalAlignment = WinHorizontalAlignment.Left,
+                        VerticalAlignment = WinVerticalAlignment.Center,
                         CornerRadius = new Microsoft.UI.Xaml.CornerRadius(999),
                         Padding = new WinThickness(6, 1, 6, 1),
-                        Margin = new WinThickness(0, 4, 0, 0),
+                        Margin = new WinThickness(0),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                     };
                     streamSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock

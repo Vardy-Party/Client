@@ -123,7 +123,10 @@ public partial class LinuxHomePage
         Dispatcher.Dispatch(() =>
         {
             SyncChromeContentStateFromPlayback();
+            PushOverlayInfoFromSwitching();
             ApplyPlayerChromeVisuals();
+            if (_playbackChrome?.IsVideoInfoVisible == true)
+                RefreshVideoInfoText();
         });
     }
 
@@ -224,23 +227,8 @@ public partial class LinuxHomePage
 
         StreamToastPanel.IsVisible = toastVisible;
         StreamToastLabel.Text = toast?.Text ?? string.Empty;
-
-        var badge = _switching.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel;
-        StreamSourceBadge.IsVisible = !string.IsNullOrWhiteSpace(badge) && toastVisible;
-        if (!string.IsNullOrWhiteSpace(badge))
-        {
-            StreamSourceBadgeLabel.Text = badge;
-            if (PlayerChromeText.IsFacebookSource(badge))
-            {
-                StreamSourceBadge.BackgroundColor = Color.FromRgba(0x1E, 0x3A, 0x5F, 0xFF);
-                StreamSourceBadgeLabel.TextColor = Color.FromRgba(0x93, 0xC5, 0xFD, 0xFF);
-            }
-            else
-            {
-                StreamSourceBadge.BackgroundColor = Color.FromRgba(0x3B, 0x07, 0x64, 0xFF);
-                StreamSourceBadgeLabel.TextColor = Color.FromRgba(0xD8, 0xB4, 0xFE, 0xFF);
-            }
-        }
+        // Chip / name / height live in the one-row toast text; hide the separate badge.
+        StreamSourceBadge.IsVisible = false;
 
         PlaybackBufferingIndicator.IsVisible = _isPlaybackBuffering;
         PlaybackBufferingIndicator.IsRunning = _isPlaybackBuffering;
@@ -364,6 +352,7 @@ public partial class LinuxHomePage
             Index = info.Index,
             Total = info.Total,
             Channel = info.Channel,
+            SourceLabel = info.SourceLabel,
             BitrateKbps = bitrateKbps,
             Resolution = resolution,
             FrameRate = metrics.Framerate ?? info.FrameRate,

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -55,25 +56,88 @@ public static class PlayerOverlayFormatter
         return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
     }
 
-    /// <summary>Extracts <c>1080p</c> from <c>1920x1080</c> (or spaced variants).</summary>
+    /// <summary>Extracts <c>1080p</c> from <c>1920x1080</c> (or spaced variants), or passes through <c>720p</c>.</summary>
     public static string? ExtractVerticalResolutionLabel(string? resolution)
     {
         if (string.IsNullOrWhiteSpace(resolution)) return null;
         var match = VerticalResolutionRegex.Match(resolution);
-        return match.Success ? $"{match.Groups[2].Value}p" : null;
+        if (match.Success) return $"{match.Groups[2].Value}p";
+        var trimmed = resolution.Trim();
+        return Regex.IsMatch(trimmed, @"^\d{3,4}p$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+            ? trimmed.ToLowerInvariant()
+            : null;
+    }
+
+    /// <summary>Max characters for the stream name on the identity / toast row (including ellipsis).</summary>
+    public const int StreamNameMaxLength = 32;
+
+    /// <summary>Trim and ellipsize a stream/channel name so the identity row stays on one line.</summary>
+    public static string? EllipsizeStreamName(string? name, int maxLength = StreamNameMaxLength)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var trimmed = name.Trim();
+        if (maxLength <= 0)
+            return null;
+        if (trimmed.Length <= maxLength)
+            return trimmed;
+        if (maxLength == 1)
+            return "…";
+
+        return trimmed[..(maxLength - 1)] + "…";
     }
 
     /// <summary>
-    /// Stream toast / flash copy while switching. Empty total → <c>Streams: 0</c>;
-    /// otherwise <c>Stream: i/n</c> only — no resolution or bitrate (those belong on
-    /// the video-info panel after the new picture is measured).
+    /// One-row stream identity, e.g. <c>1/2 · V1 · Fubo US · 720p</c>.
+    /// Omits the chip, the name, and/or the height when they are unknown.
+    /// Empty when <paramref name="total"/> is not positive.
     /// </summary>
-    /// <param name="verticalResolutionLabel">Ignored; kept so call sites stay stable.</param>
-    public static string FormatStreamToast(int index, int total, string? verticalResolutionLabel)
+    public static string FormatStreamIdentityLine(
+        int index,
+        int total,
+        string? sourceLabel = null,
+        string? channelName = null,
+        string? verticalResolutionLabel = null,
+        int maxNameLength = StreamNameMaxLength)
     {
-        _ = verticalResolutionLabel;
+        if (total <= 0)
+            return string.Empty;
+
+        var parts = new List<string> { $"{index}/{total}" };
+        if (!string.IsNullOrWhiteSpace(sourceLabel))
+            parts.Add(sourceLabel.Trim());
+
+        var name = EllipsizeStreamName(channelName, maxNameLength);
+        if (!string.IsNullOrEmpty(name)
+            && (string.IsNullOrWhiteSpace(sourceLabel)
+                || !string.Equals(name, sourceLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+            && !IsCatalogBadgeChannel(name))
+        {
+            parts.Add(name);
+        }
+
+        var height = ExtractVerticalResolutionLabel(verticalResolutionLabel);
+        if (!string.IsNullOrEmpty(height))
+            parts.Add(height);
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Stream toast copy. Empty total → <c>Streams: 0</c>; otherwise the same
+    /// one-row identity as the video-info panel (<c>1/2 · V1 · Fubo US · 720p</c>).
+    /// Height is included once known.
+    /// </summary>
+    public static string FormatStreamToast(
+        int index,
+        int total,
+        string? verticalResolutionLabel,
+        string? sourceLabel = null,
+        string? channelName = null)
+    {
         if (total <= 0) return "Streams: 0";
-        return $"Stream: {index}/{total}";
+        return FormatStreamIdentityLine(index, total, sourceLabel, channelName, verticalResolutionLabel);
     }
 
     public static string? MapCodecToFriendlyName(string? codec)
@@ -122,6 +186,7 @@ public static class PlayerOverlayFormatter
             Index = index,
             Total = total,
             Channel = chip,
+            SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
             Resolution = resolution,
             FrameRate = current?.Health?.FrameRate,

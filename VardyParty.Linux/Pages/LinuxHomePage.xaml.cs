@@ -1497,11 +1497,12 @@ public partial class LinuxHomePage : ContentPage
     {
         try
         {
-            var current = _switching.GetCurrentStream();
-            var total = _switching.GetHealthyStreams().Count;
-            var index = _switching.GetCurrentStreamIndex();
-            var info = PlayerOverlayFormatter.BuildOverlayInfo(
-                current, index, total, current?.Referer);
+            var info = BuildOverlaySnapshot()
+                ?? PlayerOverlayFormatter.BuildOverlayInfo(
+                    _switching.GetCurrentStream(),
+                    _switching.GetCurrentStreamIndex(),
+                    _switching.GetHealthyStreams().Count,
+                    _switching.GetCurrentStream()?.Referer);
             ApplyOverlayInfo(info);
         }
         catch (Exception ex)

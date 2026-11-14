@@ -20,19 +20,16 @@ public static class PlayerChromeText
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
-    /// Switch toast copy — index/total only. Resolution/bitrate stay off this flash
+    /// Switch toast copy — same one-row identity as the video-info panel
     /// (see <see cref="PlayerOverlayFormatter.FormatStreamToast"/>).
     /// </summary>
-    public static string FormatStreamCount(int index, int total, string? verticalResolution)
-    {
-        _ = verticalResolution;
-        if (total <= 0)
-        {
-            return "Streams: 0";
-        }
-
-        return $"Stream: {index}/{total}";
-    }
+    public static string FormatStreamCount(
+        int index,
+        int total,
+        string? verticalResolution,
+        string? sourceLabel = null,
+        string? channelName = null) =>
+        PlayerOverlayFormatter.FormatStreamToast(index, total, verticalResolution, sourceLabel, channelName);
 
     public static string FormatStreamHint(int index, int total) =>
         total > 0 ? $"{index}/{total}" : string.Empty;
@@ -217,7 +214,7 @@ public static class PlayerChromeText
         model.StreamTotal > 0 ? $"Stream: {model.StreamIndex}/{model.StreamTotal}" : string.Empty;
 
     /// <summary>Max characters for the stream name on the identity row (including ellipsis).</summary>
-    public const int StreamNameMaxLength = 32;
+    public const int StreamNameMaxLength = PlayerOverlayFormatter.StreamNameMaxLength;
 
     /// <summary>
     /// Compact position for the identity row, e.g. <c>2/9</c>. Empty when the pool has no streams.
@@ -226,21 +223,8 @@ public static class PlayerChromeText
         model.StreamTotal > 0 ? $"{model.StreamIndex}/{model.StreamTotal}" : string.Empty;
 
     /// <summary>Trim and ellipsize a stream/channel name so the identity row stays on one line.</summary>
-    public static string? EllipsizeStreamName(string? name, int maxLength = StreamNameMaxLength)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            return null;
-
-        var trimmed = name.Trim();
-        if (maxLength <= 0)
-            return null;
-        if (trimmed.Length <= maxLength)
-            return trimmed;
-        if (maxLength == 1)
-            return "…";
-
-        return trimmed[..(maxLength - 1)] + "…";
-    }
+    public static string? EllipsizeStreamName(string? name, int maxLength = StreamNameMaxLength) =>
+        PlayerOverlayFormatter.EllipsizeStreamName(name, maxLength);
 
     /// <summary>
     /// Vertical resolution for the identity row (e.g. <c>720p</c>). Omitted until known
@@ -282,19 +266,15 @@ public static class PlayerChromeText
         string? sourceLabel = null,
         bool whileSwitching = false)
     {
-        var index = FormatStreamIdentityIndex(model);
-        if (string.IsNullOrEmpty(index))
+        if (model.StreamTotal <= 0)
             return string.Empty;
 
-        var parts = new List<string> { index };
-        if (!string.IsNullOrWhiteSpace(sourceLabel))
-            parts.Add(sourceLabel.Trim());
-
-        var suffix = FormatStreamIdentitySuffix(model, whileSwitching);
-        if (!string.IsNullOrEmpty(suffix))
-            parts.Add(suffix);
-
-        return string.Join(" · ", parts);
+        return PlayerOverlayFormatter.FormatStreamIdentityLine(
+            model.StreamIndex,
+            model.StreamTotal,
+            sourceLabel,
+            model.Channel,
+            whileSwitching ? null : FormatIdentityResolution(model, whileSwitching: false));
     }
 
     /// <summary>

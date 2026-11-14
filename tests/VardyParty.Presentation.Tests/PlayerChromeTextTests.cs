@@ -11,8 +11,8 @@ public class PlayerChromeTextTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Theory]
-    [InlineData(2, 5, null, "Stream: 2/5")]
-    [InlineData(1, 3, "720p", "Stream: 1/3")] // resolution/bitrate stay off the switch toast
+    [InlineData(2, 5, null, "2/5")]
+    [InlineData(1, 3, "720p", "1/3 · 720p")]
     [InlineData(0, 0, null, "Streams: 0")]
     public void FormatStreamCount_MatchesWindowsAndroidToast(int index, int total, string? res, string expected)
     {

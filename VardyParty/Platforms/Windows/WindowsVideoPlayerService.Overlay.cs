@@ -16,8 +16,6 @@ namespace VardyParty.Platforms.Windows
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
-
                     var session = mediaPlayer.PlaybackSession;
                     var width = session.NaturalVideoWidth;
                     var height = session.NaturalVideoHeight;
@@ -53,6 +51,7 @@ namespace VardyParty.Platforms.Windows
                         Index = streamIndex,
                         Total = streamTotal,
                         Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
+                        SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
                         Resolution = width > 0 && height > 0
                             ? $"{width}x{height}"
                             : metrics?.Resolution is { } r ? $"{r.Width}x{r.Height}" : null,
@@ -77,6 +76,23 @@ namespace VardyParty.Platforms.Windows
                         sourceUrl: currentPlaybackUrl,
                         refererUrl: _refererUrl,
                         bufferPercent: overlay.BufferPercent);
+
+                    // Live-update the switch toast once the picture size is known, without
+                    // restarting its auto-hide timer (ApplyStreamToastHoldVisuals is not called).
+                    // This must run even when the full video-info panel is hidden — that is
+                    // when the toast is actually on screen.
+                    if (!chrome.IsVideoInfoVisible)
+                    {
+                        chrome.ApplyOverlayInfo(overlay);
+                        if (chrome.IsStreamToastVisible || chrome.ShouldHoldStreamToast)
+                        {
+                            streamCountText.Text = chrome.StreamToast?.Text ?? streamCountText.Text;
+                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        }
+                    }
+
+                    if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible)
+                        return;
 
                     ApplyVideoInfoPanel(model, streamSwitchInProgress, current?.Stream?.CatalogSourceBadgeLabel);
                 });
@@ -505,18 +521,18 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    // Video-info Resolution only — switch toast is index/total (no quality flash).
                     var resolutionForInfo = current?.Health?.Resolution
                         ?? current?.Stream?.Resolution
-                        ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
+                        ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item1}x{r.Item2}" : null);
 
                     var overlay = new PlayerOverlayInfo
                     {
                         Index = index,
                         Total = total,
-                        Channel = current?.Stream?.Channel,
+                        Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
+                        SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
                         Resolution = resolutionForInfo,
-                        Title = current?.Stream?.Channel
+                        Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream)
                     };
                     chrome.ApplyOverlayInfo(overlay);
                     chrome.NotifyHealthyCount(total);
@@ -524,35 +540,25 @@ namespace VardyParty.Platforms.Windows
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
                     lastStreamTotal = total;
                     lastStreamIndex = index;
-                    var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         ApplyNextButtonChrome();
 
-                        // Toast / badge stay hidden under the video-info panel.
+                        // Toast stays hidden under the video-info panel.
                         if (chrome.IsVideoInfoVisible)
                             return;
 
                         streamCountText.Text = chrome.StreamToast?.Text
-                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, null);
+                            ?? PlayerOverlayFormatter.FormatStreamToast(
+                                index, total, resolutionForInfo,
+                                overlay.SourceLabel, overlay.Channel);
+                        // Chip / name / height live in the one-row text; do not stack a badge below.
+                        streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
 
-                        var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
-                        if (badgeStyle is { } style && !string.IsNullOrWhiteSpace(sourceLabel))
-                        {
-                            streamSourceBadgeText.Text = sourceLabel;
-                            streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
-                            streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
-                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                        }
-                        else
-                        {
-                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        }
-
-                        // Index/total change or durable hold while awaiting playable content.
-                        if (total > 0 && (hasChanged || chrome.ShouldHoldStreamToast || chrome.IsStreamToastVisible))
+                        // Restart auto-hide only when the stream index/total changes, or
+                        // while awaiting playable content. Height-only refreshes already
+                        // updated the text above and must not reset the 10s timer.
+                        if (total > 0 && (hasChanged || chrome.ShouldHoldStreamToast))
                             ApplyStreamToastHoldVisuals();
                     });
                 }

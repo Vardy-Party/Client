@@ -97,6 +97,7 @@ namespace VardyParty.Kernel.Tests
         [Theory]
         [InlineData("1920x1080", "1080p")]
         [InlineData("1280 X 720", "720p")]
+        [InlineData("720p", "720p")]
         [InlineData("bad", null)]
         public void ExtractVerticalResolutionLabel_ParsesHeight(string? input, string? expected)
         {
@@ -110,8 +111,9 @@ namespace VardyParty.Kernel.Tests
 
         [Theory]
         [InlineData(1, 0, null, "Streams: 0")]
-        [InlineData(2, 5, null, "Stream: 2/5")]
-        [InlineData(2, 5, "720p", "Stream: 2/5")] // resolution ignored on switch toast
+        [InlineData(2, 5, null, "2/5")]
+        [InlineData(2, 5, "720p", "2/5 · 720p")]
+        [InlineData(2, 5, "1280x720", "2/5 · 720p")]
         public void FormatStreamToast_BuildsExpectedCopy(int index, int total, string? vertical, string expected)
         {
             // Arrange
@@ -120,6 +122,26 @@ namespace VardyParty.Kernel.Tests
 
             // Assert
             Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public void FormatStreamToast_IncludesChipNameAndResolution()
+        {
+            var actual = PlayerOverlayFormatter.FormatStreamToast(
+                index: 1, total: 2, verticalResolutionLabel: "1280x720",
+                sourceLabel: "V1", channelName: "Fubo US");
+
+            Assert.Equal("1/2 · V1 · Fubo US · 720p", actual);
+        }
+
+        [Fact]
+        public void FormatStreamToast_OmitsChannelWhenItDuplicatesTheChip()
+        {
+            var actual = PlayerOverlayFormatter.FormatStreamToast(
+                index: 1, total: 2, verticalResolutionLabel: "720p",
+                sourceLabel: "V1", channelName: "V1");
+
+            Assert.Equal("1/2 · V1 · 720p", actual);
         }
 
         [Theory]

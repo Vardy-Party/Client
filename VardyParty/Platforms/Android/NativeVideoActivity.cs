@@ -495,7 +495,7 @@ namespace VardyParty.Platforms.Android
             root.AddView(linear, overlayParams);
 
             // Stream toast — top-right, just below the detail overlay.
-            // Shows "Stream: x/y" briefly when a new healthy stream is found and the info overlay is hidden.
+            // Shows "1/2 · V1 · Fubo US · 720p" briefly when a new stream starts and the info overlay is hidden.
             _streamToastView = new TextView(this)
             {
                 Visibility = global::Android.Views.ViewStates.Gone

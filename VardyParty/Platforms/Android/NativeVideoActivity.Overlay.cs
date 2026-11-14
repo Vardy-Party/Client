@@ -22,6 +22,7 @@ namespace VardyParty.Platforms.Android
                 }
 
                 UpdateOverlayText(info);
+                ShowStreamToastIfNeeded();
             }
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }
         }
@@ -95,6 +96,7 @@ namespace VardyParty.Platforms.Android
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
                     Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
+                    SourceLabel = current.Stream?.CatalogSourceBadgeLabel,
                     BitrateKbps = bitrateKbps,
                     Resolution = resolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
@@ -354,32 +356,44 @@ namespace VardyParty.Platforms.Android
             var total = _switching.GetHealthyStreams().Count;
             if (total <= 0) return;
 
-            if (index == _lastToastIndex && total == _lastToastTotal) return;
-            _lastToastIndex = index;
-            _lastToastTotal = total;
-
             var current = _switching.GetCurrentStream();
-            string? vertRes = null;
+            string? resolution = null;
             try
             {
-                var res = current?.Health?.Resolution ?? current?.Stream?.Resolution;
-                vertRes = PlayerOverlayFormatter.ExtractVerticalResolutionLabel(res);
-                if (vertRes == null && _videoHeight.HasValue)
-                    vertRes = $"{_videoHeight}p";
+                resolution = _videoWidth is > 0 && _videoHeight is > 0
+                    ? $"{_videoWidth}x{_videoHeight}"
+                    : current?.Health?.Resolution ?? current?.Stream?.Resolution;
             }
             catch (Exception ex) { LogIgnored("ParseToastResolution", ex); }
 
+            var channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream);
+            var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
             chrome.ApplyOverlayInfo(new PlayerOverlayInfo
             {
                 Index = index,
                 Total = total,
-                Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? vertRes,
-                Channel = current?.Stream?.Channel,
-                Title = current?.Stream?.Channel
+                Resolution = resolution,
+                Channel = channel,
+                SourceLabel = sourceLabel,
+                Title = channel
             });
 
             _streamToastView.Text = chrome.StreamToast?.Text
-                ?? PlayerOverlayFormatter.FormatStreamToast(index, total, vertRes);
+                ?? PlayerOverlayFormatter.FormatStreamToast(index, total, resolution, sourceLabel, channel);
+
+            var indexChanged = index != _lastToastIndex || total != _lastToastTotal;
+            _lastToastIndex = index;
+            _lastToastTotal = total;
+
+            // Height/name-only: refresh the one-row text in place, do not restart auto-hide,
+            // and do not re-show a toast that already auto-hid.
+            if (!indexChanged && !chrome.ShouldHoldStreamToast)
+            {
+                if (_streamToastView.Visibility == global::Android.Views.ViewStates.Visible)
+                    return;
+                return;
+            }
+
             _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
             RemoveCallback(_streamToastHandler, _streamToastRunnable);
             PostDelayedCallback(_streamToastHandler, _streamToastRunnable, (int)PlaybackChromePresenter.StreamToastAutoHide.TotalMilliseconds);

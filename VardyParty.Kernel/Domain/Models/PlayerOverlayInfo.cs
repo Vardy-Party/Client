@@ -5,6 +5,8 @@ public class PlayerOverlayInfo
     public int Index { get; init; }
     public int Total { get; init; }
     public string? Channel { get; init; }
+    /// <summary>Catalog source badge, e.g. V1 or V2. Distinct from <see cref="Channel"/> (stream name).</summary>
+    public string? SourceLabel { get; init; }
     public int? BitrateKbps { get; init; }
     public string? Resolution { get; init; }
     public double? FrameRate { get; init; }
