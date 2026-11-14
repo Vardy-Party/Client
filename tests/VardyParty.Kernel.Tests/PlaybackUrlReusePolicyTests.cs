@@ -144,7 +144,8 @@ public class PlaybackUrlReusePolicyTests
         Assert.Equal(PlaybackSwitchKind.None, plainNoUrl.Kind);
         Assert.Equal(PlaybackSwitchKind.AttachCached, reusable.Kind);
         Assert.Equal(M3u8TokenExpiryTests.UzhiUrl, reusable.Url);
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, unknown.Kind);
+        // A V1 soak row with an unreadable expiry plays its probed link (round 12).
+        Assert.Equal(PlaybackSwitchKind.AttachCached, unknown.Kind);
         Assert.Equal(PlaybackSwitchKind.ResolveFresh, cookie.Kind);
         Assert.Contains("single-use", cookie.Reason);
     }

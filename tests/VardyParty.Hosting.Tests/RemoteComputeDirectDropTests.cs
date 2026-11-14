@@ -82,7 +82,7 @@ public class RemoteComputeDirectDropTests
     {
         // Arrange
         const string correlationId = "abc12345";
-        var harvest = new MpHarvestSession();
+        var harvest = new MpHarvestSession(mode: MpSeedMode.ProbeReadyOnly);
         var chips = MpNdjson.ParseLine("""{"type":"chips","streams":["Chip A"]}""");
         harvest.Apply(chips!);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));

@@ -714,9 +714,134 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
-    public async Task StartAsync_FasterLaterCandidate_PlaysEarlierCatalogIndex()
+    public async Task StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay()
     {
-        // Arrange
+        // Arrange - no recs: MP is tried first, but /mp is slow; a healthy FB
+        // at index 1 must open without waiting, and the MP joins the pool after.
+        const string fbUrl = "https://cdn.example.com/live/south.m3u8";
+        const string mpUrl = "https://cdn.example.com/live/chip-a.m3u8";
+        const string fbPage = "https://streams.example.com/match.html#south";
+        const string mpPage = "https://streams.example.com/mp-match.html";
+
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.ApiLeague, "league-alpha")
+            .With(g => g.League, "League Alpha")
+            .With(g => g.BBCHome, string.Empty)
+            .With(g => g.BBCAway, string.Empty)
+            .With(g => g.BBCLeague, string.Empty)
+            .Create();
+
+        var mpStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, mpPage)
+            .With(s => s.Channel, "Chip A")
+            .With(s => s.PlayerStream, "Chip A")
+            .With(s => s.ResolutionStrategy, "v2")
+            .With(s => s.Source, "mp")
+            .Create();
+        var fbStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, fbPage)
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.Source, "fb")
+            .Create();
+
+        var fb = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, fbStream)
+            .With(e => e.ResolvedM3U8Url, fbUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, fbPage)
+            .Create();
+        var mp = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, mpStream)
+            .With(e => e.ResolvedM3U8Url, mpUrl)
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, mpPage)
+            .Create();
+
+        var switching = _fixture.Create<StreamSwitchingService>();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.InitializeAsync(game, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, mpStream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, fbStream).Create()
+            });
+
+        var fbYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseMp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
+                YieldThenWait(fb, mp, fbYielded, releaseMp.Task, ct));
+
+        var playbackStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var player = _fixture.GetMock<INativeVideoPlayerService>();
+        player.Setup(p => p.PlayVideoAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Returns((string url, string _, string _, Func<Task>? _, string? _, string? _, string? _,
+                IReadOnlyDictionary<string, string>? _) =>
+            {
+                playbackStarted.TrySetResult(url);
+                return playbackGate.Task;
+            });
+
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        var startTask = sut.StartAsync(game, player.Object);
+
+        // Act - /mp is still in flight (releaseMp not set) when first play opens
+        var firstPlayedUrl = await playbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseMp.TrySetResult();
+        var poolCount = 0;
+        for (var i = 0; i < 50 && poolCount < 2; i++)
+        {
+            poolCount = switching.GetHealthyStreams().Count;
+            if (poolCount < 2)
+                await Task.Delay(20);
+        }
+
+        var pool = switching.GetHealthyStreams().Select(e => e.ResolvedM3U8Url).ToList();
+        playbackGate.SetResult(PlaybackResult.SuccessResult("Playing"));
+        var outcome = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert - FB opened first; MP appended after it (stable channel numbers)
+        Assert.Equal(fbUrl, firstPlayedUrl);
+        Assert.Equal([fbUrl, mpUrl], pool);
+        Assert.True(outcome.PlaybackResult?.Success);
+        player.Verify(
+            p => p.PlayVideoAsync(
+                mpUrl,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<Func<Task>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed()
+    {
+        // Arrange - rule 9 (Jon, 13 Nov 2026: "first come first served on playable
+        // streams"): the later catalog row turns healthy first, so it plays first and
+        // the earlier row never opens.
         const string earlierUrl = "https://cdn.example.com/live/north.m3u8";
         const string laterUrl = "https://cdn.example.com/live/south.m3u8";
         const string pageUrl = "https://streams.example.com/match.html";
@@ -794,10 +919,10 @@ public class StreamResolutionOrchestratorTests
 
         // Assert
         Assert.True(outcome.PlaybackResult?.Success);
-        Assert.Equal(earlierUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
+        Assert.Equal(laterUrl, switching.GetCurrentStream()?.ResolvedM3U8Url);
         player.Verify(
             p => p.PlayVideoAsync(
-                earlierUrl,
+                laterUrl,
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<Func<Task>?>(),
@@ -808,7 +933,7 @@ public class StreamResolutionOrchestratorTests
             Times.Once);
         player.Verify(
             p => p.PlayVideoAsync(
-                laterUrl,
+                earlierUrl,
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<Func<Task>?>(),
@@ -1140,11 +1265,16 @@ public class StreamResolutionOrchestratorTests
     [Fact]
     public async Task Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay()
     {
-        // Arrange — partner warmed during open-recommended; Next must ApplyWarmUnused
+        // Arrange — the start row is cookie-bound (single-use), so first play takes a
+        // fresh /play and warms the backup beside it; Next must ApplyWarmUnused
         // (no bare ResolveM3U8ForPlaybackAsync prefetch).
         const string warmUrl = "https://cdn.example.com/live/fresh.m3u8";
         var (game, first) = BuildGameAndHealthyStream();
-        first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/north" };
+        first.RequestHeaders = new Dictionary<string, string>
+        {
+            ["Referer"] = "https://player.example.test/north",
+            ["Cookie"] = "session=north",
+        };
         var second = _fixture.Build<EnrichedStream>()
             .With(e => e.Stream, _fixture.Build<StreamModel>()
                 .With(s => s.Url, "https://streams.example.com/south.html")
@@ -1217,7 +1347,7 @@ public class StreamResolutionOrchestratorTests
         _fixture.GetMock<IApiService>().Verify(
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        Assert.True(statuses.Contains("Switching to next stream"), string.Join(" | ", statuses));
         Assert.True(second.UnusedResolvedUrl, "Next must mark warm URL unused for AttachCached");
         Assert.Equal(warmUrl, second.ResolvedM3U8Url);
     }
@@ -1236,7 +1366,7 @@ public class StreamResolutionOrchestratorTests
             .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south-find-burned.m3u8")
             .With(e => e.Status, StreamResolutionStatus.Healthy)
             .With(e => e.Referer, "https://streams.example.com/south.html")
-            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south" })
+            .With(e => e.RequestHeaders, new Dictionary<string, string> { ["Referer"] = "https://player.example.test/south", ["Cookie"] = "s=1" }) // cookie-bound: still fresh in round 12
             .With(e => e.UnusedResolvedUrl, false)
             .Create();
         var firstYielded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1305,7 +1435,7 @@ public class StreamResolutionOrchestratorTests
         _fixture.GetMock<IApiService>().Verify(
             a => a.ResolveM3U8ForPlaybackAsync(It.IsAny<StreamModel>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        Assert.True(statuses.Contains("Switched to next stream"), string.Join(" | ", statuses));
+        Assert.True(statuses.Contains("Switching to next stream"), string.Join(" | ", statuses));
         Assert.True(
             kickCount > kicksBeforeNext,
             $"Next did not Kick prewarmer (before={kicksBeforeNext}, after={kickCount})");

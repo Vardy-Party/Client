@@ -16,7 +16,7 @@ namespace VardyParty.Streaming.Tests;
 public class StreamRecommendationBusinessRulesTests
 {
     [Fact]
-    public void EmptyRecDiscovery_DifferentSessionSalts_SpreadFirstFbTry()
+    public void EmptyRecDiscovery_MpFirst_DifferentSessionSalts_SpreadFirstFbTry()
     {
         var streams = new[]
         {
@@ -31,9 +31,9 @@ public class StreamRecommendationBusinessRulesTests
         var order1 = StreamRecommendationPolicy.SpreadDiscoveryOrder(
             streams.Length, i => streams[i], sessionSalt: 1);
 
-        // FCFS catalog indexes + rotate — no MP-before-FB bucket.
-        Assert.Equal([0, 1, 2, 3], order0);
-        Assert.Equal([1, 2, 3, 0], order1);
+        // MP first; only the FB rows rotate by the salt.
+        Assert.Equal([3, 0, 1, 2], order0);
+        Assert.Equal([3, 1, 2, 0], order1);
         Assert.Equal(4, order0.Count);
         Assert.Equal(order0.OrderBy(i => i), order1.OrderBy(i => i));
     }

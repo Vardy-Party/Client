@@ -107,6 +107,16 @@ public interface IStreamSwitchingService
     /// <summary>Clears the tried mark of <paramref name="row"/> and the failed mark of <paramref name="feedUrl"/>'s feed (it showed video).</summary>
     void ClearTriedInCycle(EnrichedStream? row, string? feedUrl) { }
 
+    /// <summary>
+    /// The player showed video on <paramref name="row"/>: the switch onto it really happened.
+    /// A pool index change is only a request; a switch that fails and stays on the playing
+    /// stream never reaches this (TV log 13 Nov 2026: three "switches" that never played).
+    /// </summary>
+    void ConfirmPlaying(EnrichedStream? row) { }
+
+    /// <summary>Rows the player confirmed video on (<see cref="ConfirmPlaying"/>); null when not tracked.</summary>
+    IObservable<EnrichedStream?>? PlayingConfirmed => null;
+
     /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, or its feed failed).</summary>
     bool IsSkippedInCycle(EnrichedStream? row) => false;
 
@@ -115,4 +125,19 @@ public interface IStreamSwitchingService
 
     /// <summary>True when Next has somewhere untried to go (another unskipped row, or untried fallbacks for the current one).</summary>
     bool HasUntriedOther() => true;
+
+    // Next, Previous, auto-advance and GetUpcoming walk channel numbers in order
+    // (docs/PROBE_SCHEDULING_RULES.md rule 11). Tiers do not change that order.
+    // SetBackupPreference is a no-op kept so existing callers compile.
+
+    /// <summary>No-op. Kept so existing callers compile; tiers do not change switch order.</summary>
+    void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf) { }
+
+    /// <summary>
+    /// Up to <paramref name="depth"/> rows Next would reach first, in channel order
+    /// (with wrap), skipping only the current row
+    /// (<see cref="PlaybackUrlReusePolicy.UpcomingInSwitchOrder"/>).
+    /// </summary>
+    IReadOnlyList<EnrichedStream> GetUpcoming(int depth) =>
+        PlaybackUrlReusePolicy.UpcomingInSwitchOrder(GetHealthyStreams(), GetCurrentStream(), depth);
 }

@@ -234,6 +234,8 @@ namespace VardyParty.Platforms.Android
         private TextView? _titleView;
         private TextView? _statusView;
         private TextView? _indexView;
+        private TextView? _identitySuffixView;
+        private LinearLayout? _identityRow;
         private TextView? _sourceBadgeView;
         private TextView? _qualityView;
         private TextView? _resBrView;
@@ -408,6 +410,8 @@ namespace VardyParty.Platforms.Android
             _indexView = new TextView(this);
             _indexView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _indexView.SetTextColor(global::Android.Graphics.Color.White);
+            _indexView.SetMaxLines(1);
+            _indexView.SetSingleLine(true);
 
             _sourceBadgeView = new TextView(this)
             {
@@ -417,12 +421,19 @@ namespace VardyParty.Platforms.Android
             _sourceBadgeView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
             _sourceBadgeView.SetPadding((int)(6 * density), (int)(1 * density), (int)(6 * density), (int)(1 * density));
 
+            _identitySuffixView = new TextView(this);
+            _identitySuffixView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+            _identitySuffixView.SetTextColor(global::Android.Graphics.Color.White);
+            _identitySuffixView.SetMaxLines(1);
+            _identitySuffixView.SetSingleLine(true);
+            _identitySuffixView.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
+
             _qualityView = new TextView(this);
             _qualityView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _qualityView.SetTextColor(global::Android.Graphics.Color.White);
 
             _resBrView = new TextView(this);
-            // Stream detail (resolution/bitrate/codecs/urls) should use a smaller font
+            // Stream detail (aspect/buffer/codecs/urls) should use a smaller font
             _resBrView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, smallSp);
             _resBrView.SetTextColor(global::Android.Graphics.Color.LightGray);
             _resBrView.SetMaxLines(8);
@@ -437,8 +448,36 @@ namespace VardyParty.Platforms.Android
             linear.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000"));
             linear.AddView(_titleView);
             linear.AddView(_statusView);
-            linear.AddView(_indexView);
-            linear.AddView(_sourceBadgeView);
+
+            _identityRow = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal
+            };
+            _identityRow.SetGravity(global::Android.Views.GravityFlags.CenterVertical);
+            var indexParams = new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical,
+                RightMargin = (int)(6 * density)
+            };
+            var badgeParams = new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical,
+                RightMargin = (int)(6 * density)
+            };
+            var suffixParams = new LinearLayout.LayoutParams(
+                0,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent, 1f)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical
+            };
+            _identityRow.AddView(_indexView, indexParams);
+            _identityRow.AddView(_sourceBadgeView, badgeParams);
+            _identityRow.AddView(_identitySuffixView, suffixParams);
+            linear.AddView(_identityRow);
             linear.AddView(_qualityView);
             linear.AddView(_resBrView);
             linear.Alpha = 0.95f;
@@ -946,7 +985,8 @@ namespace VardyParty.Platforms.Android
                 }
 
                 _logger?.LogInformation(
-                    "[NativeVideoActivity] Re-resolving one-shot FB/V1 m3u8 for {Channel}",
+                    "[NativeVideoActivity] Re-resolving {Kind} m3u8 for {Channel}",
+                    PlaybackUrlReusePolicy.IsMpRow(current) ? "MP chip (/mp)" : "one-shot FB/V1 (/play)",
                     current.Stream?.Channel ?? "(null)");
                 // Make-before-break: ExoPlayer keeps playing the current stream while
                 // /play (or the warm pre-resolve) runs; only the overlay changes.
@@ -972,27 +1012,26 @@ namespace VardyParty.Platforms.Android
 
                 if (string.IsNullOrWhiteSpace(url) && playing != null)
                 {
+                    // Not a switch: say so, then move on to the next untried row (the user
+                    // asked to leave this one); stay on the playing row only when nothing
+                    // else is left (PlaybackPoolCommandActions.SkipFailedSwitchTarget).
                     _logger?.LogWarning(
-                        "[NativeVideoActivity] Fresh /play returned no URL for {Channel} - staying on {Playing}",
+                        "[NativeVideoActivity] Fresh resolve returned no URL for {Channel} - not switched (playing {Playing})",
                         current.Stream?.Channel ?? "(null)",
                         playing.Stream?.Channel ?? "(null)");
-                    ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
                     EndIfOwned();
                     RunOnUiThread(() =>
                     {
-                        // TrySwitchToCurrentStream ignores the row that is already playing,
-                        // so moving the index back does not re-/play it.
-                        var healthy = _switching?.GetHealthyStreams();
-                        if (healthy == null || !ReferenceEquals(_switching?.GetCurrentStream(), current))
+                        if (!ReferenceEquals(_switching?.GetCurrentStream(), current))
                             return;
-                        for (var i = 0; i < healthy.Count; i++)
+                        if (_pool is { } pool)
                         {
-                            if (ReferenceEquals(healthy[i], playing))
-                            {
-                                _switching?.SwitchToStream(i);
-                                return;
-                            }
+                            pool.SkipFailedSwitchTarget(current, playingUrl, ShowSwitchStatusToast, RunWithIndexSwitchSuppressed);
+                            return;
                         }
+
+                        ShowSwitchStatusToast(PlaybackUrlReusePolicy.SwitchFailedText(current.Stream?.Channel));
+                        RevertIndexToPlaying();
                     });
                     return;
                 }
@@ -1828,6 +1867,11 @@ namespace VardyParty.Platforms.Android
                         return;
 
                     var message = BuildEngineErrorMessage(error);
+                    if (_activity.IsRefusalAlreadyHandled())
+                    {
+                        _activity._logger?.LogInformation("[NativeVideoActivity] Player error after refused downloads (already handled): {Message}", message);
+                        return;
+                    }
                     _activity._logger?.LogWarning("[NativeVideoActivity] Player error: {Message}", message);
                     _activity._anticipatingToken = false;
                     _activity._playerFaulted = true;

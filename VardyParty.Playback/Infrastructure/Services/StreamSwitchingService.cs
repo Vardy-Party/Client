@@ -13,6 +13,10 @@ namespace VardyParty.Playback;
 /// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
 /// later numbers down to close the gap. Merged duplicates never take a number; a
 /// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
+/// Next, Previous and auto-advance walk this order (with wrap), skipping only rows
+/// tried or failed this cycle (docs/STREAM_PLAYBACK_RULES.md). The prewarmer warms
+/// the next rows in the same order. Tiers are for LocalService scheduling only
+/// (docs/PROBE_SCHEDULING_RULES.md rule 1), not for which channel Next opens.
 /// </summary>
 public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = null)
     : IStreamSwitchingService, IDisposable
@@ -64,6 +68,22 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
     private readonly BehaviorSubject<EnrichedStream?> _currentStreamSubject = new(null);
     public IObservable<EnrichedStream?> CurrentStreamChanged => _currentStreamSubject;
+
+    private readonly Subject<EnrichedStream?> _playingConfirmedSubject = new();
+    public IObservable<EnrichedStream?>? PlayingConfirmed => _playingConfirmedSubject;
+
+    public void ConfirmPlaying(EnrichedStream? row)
+    {
+        if (row is null)
+            return;
+        try
+        {
+            _playingConfirmedSubject.OnNext(row);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
 
     private readonly BehaviorSubject<PlayerOverlayInfo?> _overlayInfoSubject = new(null);
     public IObservable<PlayerOverlayInfo?> OverlayInfoChanged => _overlayInfoSubject;
@@ -555,6 +575,29 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         }
     }
 
+    // Next, Previous, auto-advance and the prewarmer all use channel order
+    // (docs/PROBE_SCHEDULING_RULES.md rule 11). SetBackupPreference is kept so
+    // existing callers compile; it does not change switch order. Tiers are for
+    // LocalService slot scheduling only (rule 1).
+
+    public void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf)
+    {
+    }
+
+    public IReadOnlyList<EnrichedStream> GetUpcoming(int depth)
+    {
+        lock (_healthyStreams)
+        {
+            var current = _currentStreamIndex >= 0 && _currentStreamIndex < _healthyStreams.Count
+                ? _healthyStreams[_currentStreamIndex]
+                : null;
+            return PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
+                _healthyStreams.ToList(),
+                current,
+                depth);
+        }
+    }
+
     // ---- Tried-this-cycle (docs/STREAM_PLAYBACK_RULES.md "No loops") ----
 
     public void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason)
@@ -764,5 +807,6 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _healthyStreamsSubject?.Dispose();
         _currentIndexSubject?.Dispose();
         _currentStreamSubject?.Dispose();
+        _playingConfirmedSubject.Dispose();
     }
 }

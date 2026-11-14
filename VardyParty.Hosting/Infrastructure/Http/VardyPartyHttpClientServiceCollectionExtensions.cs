@@ -48,6 +48,8 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
             .ConfigureHttpClient(client => client.Timeout = PlaybackHttpClients.ProbeTimeout);
 
+        // LocalLanPlayService is a typed (transient) client: every consumer shares one /mp lane.
+        services.TryAddSingleton<MpHarvestHub>();
         services.AddHttpClient<ILocalLanPlayService, LocalLanPlayService>(LocalLanPlayHttpClient.Name)
             .AddHttpMessageHandler<Auth0ApiTokenHandler>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(3));

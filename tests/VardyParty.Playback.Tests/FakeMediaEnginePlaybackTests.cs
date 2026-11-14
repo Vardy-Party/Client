@@ -111,7 +111,8 @@ public class FakeMediaEnginePlaybackTests
         Assert.Equal(2, resolves);
         Assert.Single(host.Failed);
         Assert.Equal(next.Channel, pool.GetCurrentStream()!.Stream.Channel);
-        Assert.Contains(next.Channel, engine.LastAttached ?? next.Url);
+        // Round 12: the next row's probed link plays at once (no /play first).
+        Assert.Equal(next.Url, engine.LastAttached);
     }
 
     [Fact]

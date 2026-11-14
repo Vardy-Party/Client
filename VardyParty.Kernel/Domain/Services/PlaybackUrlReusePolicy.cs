@@ -173,6 +173,50 @@ public static class PlaybackUrlReusePolicy
         return !IsKnownSingleUse(stream) && HasComfortableLife(stream.ResolvedM3U8Url, now);
     }
 
+    /// <summary>
+    /// MP (V2) row: resolved through LocalService <c>/mp</c> (a chip of an MP page).
+    /// </summary>
+    public static bool IsMpRow(EnrichedStream? row)
+    {
+        if (row?.Stream is not { } stream)
+            return false;
+        return stream.RequiresV2StreamSelection
+            || string.Equals(stream.Source, "mp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Rule 12 on every switch onto an MP (V2) chip, not only the first picture (Jon,
+    /// 13 Nov 2026: "i am used to v2 switching being immediate"): a chip whose probed (or
+    /// harvested) link has an unreadable token expiry is played on that link straight away,
+    /// with no <c>/mp</c> round trip first. A link that genuinely cannot be reused goes
+    /// fresh: no link, a known single-use source, or a readable expiry without
+    /// <see cref="MinComfortableLife"/> (that case is <see cref="CanReuseCached"/>'s). A
+    /// failed start re-resolves once (<c>PlaybackSessionController</c>'s cached-URL retry),
+    /// then Next moves on.
+    /// <para>
+    /// FB/V1 rows follow the same rule (Jon, 13 Nov 2026: "there is a delay switching to
+    /// v1" - Windows 19:47:29 and 19:49:31, Next onto LiveStreams waited 11-12s on a fresh
+    /// <c>/play</c> while its probed link sat on the row). A V1 soak token the health check
+    /// already burned fails its start at once (a 403 in ~0.1s) and re-resolves once, so the
+    /// worst case costs what the fresh path always cost. Still fresh: no link, a cookie-bound
+    /// session, a registered single-use host (<see cref="IsKnownSingleUse"/>), and a readable
+    /// expiry without <see cref="MinComfortableLife"/>.
+    /// </para>
+    /// </summary>
+    public static bool CanTryProbedLink(EnrichedStream? row, DateTimeOffset now)
+    {
+        if (row?.Stream is null || string.IsNullOrWhiteSpace(row.ResolvedM3U8Url))
+            return false;
+        // A non-MP row carrying an old harvest (no UnusedResolvedUrl) stays fresh, so a stale
+        // harvest is not attached forever (CanReuseCached).
+        if (!IsMpRow(row) && MpRewrittenSegment.HasProbeReady(row.RewrittenSegments))
+            return false;
+        if (IsKnownSingleUse(row))
+            return false;
+        return M3u8TokenExpiry.RemainingLife(row.ResolvedM3U8Url, now) is null;
+    }
+
     /// <summary>Decision for an index-driven switch onto <paramref name="current"/>.</summary>
     public static PlaybackSwitchPlan PlanSwitch(EnrichedStream? current, DateTimeOffset now)
     {
@@ -213,6 +257,16 @@ public static class PlaybackUrlReusePolicy
                 $"token has {(int)left.TotalSeconds}s left");
         }
 
+        if (CanTryProbedLink(current, now))
+        {
+            return new PlaybackSwitchPlan(
+                PlaybackSwitchKind.AttachCached,
+                url,
+                IsMpRow(current)
+                    ? "probed MP chip link, expiry unknown: play it now; a failed start re-resolves once"
+                    : "probed link, expiry unknown: play it now; a failed start re-resolves once");
+        }
+
         var mpStale = MpRewrittenSegment.HasProbeReady(current.RewrittenSegments)
             && M3u8TokenExpiry.RemainingLife(url, now) is not null
             && !HasComfortableLife(url, now);
@@ -242,12 +296,16 @@ public static class PlaybackUrlReusePolicy
     /// Rows the background pre-resolver may keep warm. Probe-ready MP harvest is
     /// excluded — LocalService already streamed the playlist; re-fetching during
     /// the playback-priority window fights <see cref="FirstPlayOpenStrategy"/>.
+    /// An MP chip that already has its probed link is excluded too: Next plays that link at
+    /// once (<see cref="CanTryProbedLink"/>), and a pre-resolve would only start another
+    /// <c>POST /mp</c> beside the page's harvest (TV log 13 Nov 2026, 18:40:32).
     /// </summary>
     public static bool ShouldPrewarm(EnrichedStream? stream)
         => stream?.Stream is not null
             && RequiresFreshM3u8ForPlayback(stream)
             && !IsKnownSingleUse(stream)
-            && !MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments);
+            && !MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments)
+            && !(IsMpRow(stream) && !string.IsNullOrWhiteSpace(stream.ResolvedM3U8Url));
 
     /// <summary>
     /// Whether the pre-resolver should (re)resolve a candidate at <paramref name="depth"/>
@@ -310,11 +368,42 @@ public static class PlaybackUrlReusePolicy
         return result;
     }
 
+    /// <summary>
+    /// Best-tier order (High, then Medium, then finding; lowest channel number within a
+    /// tier). Not used for Next, auto-advance or prewarm — those use
+    /// <see cref="UpcomingInSwitchOrder"/>. With no <paramref name="tierOf"/> this is
+    /// <see cref="UpcomingInSwitchOrder"/>.
+    /// </summary>
+    public static IReadOnlyList<EnrichedStream> UpcomingInBackupOrder(
+        IReadOnlyList<EnrichedStream> healthy,
+        EnrichedStream? current,
+        int depth,
+        Func<EnrichedStream, StreamTier>? tierOf)
+    {
+        ArgumentNullException.ThrowIfNull(healthy);
+        if (tierOf is null)
+            return UpcomingInSwitchOrder(healthy, current, depth);
+        if (depth <= 0)
+            return new List<EnrichedStream>();
+
+        return healthy
+            .Select((row, index) => (Row: row, Index: index))
+            .Where(x => !ReferenceEquals(x.Row, current))
+            .OrderBy(x => tierOf(x.Row))
+            .ThenBy(x => x.Index)
+            .Select(x => x.Row)
+            .Take(depth)
+            .ToList();
+    }
+
     public static string SwitchPendingText(string? channel)
         => $"Switching to {Label(channel)}\u2026";
 
     public static string SwitchFailedText(string? channel)
         => $"Couldn't switch to {Label(channel)} - staying on the current stream";
+
+    public static string SwitchFailedMovingOnText(string? channel)
+        => $"Couldn't switch to {Label(channel)} - trying the next stream";
 
     private static string Label(string? channel)
         => string.IsNullOrWhiteSpace(channel) ? "next stream" : channel.Trim();

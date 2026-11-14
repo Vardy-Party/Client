@@ -82,7 +82,7 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 
 | Phase | Shared Core | Android / Windows / Linux | Notes |
 |-------|-------------|---------------------------|-------|
-| **Select / order** | Recommendations + catalog FCFS (FB and MP) | Uses Core | Keep in Core |
+| **Select / order** | Recommendations, then MP, then FB (catalog order; FB salted when no recs) | Uses Core | Keep in Core |
 | **Pre-play probe** | `StreamHealthChecker` | Uses Core | Keep in Core |
 | **Skip countdown** | `StreamResolver` skips `IsCountdown` | — | Keep |
 | **Start first healthy** | First healthy → `PlayVideoAsync`; continue testing | Attaches ExoPlayer / AdaptiveMediaSource / LibVLC | Keep |
@@ -106,7 +106,9 @@ Android phone and Android TV share the same ExoPlayer activity; TV differs mainl
 ### 1. Selection & pre-play (Core — keep)
 
 1. Build candidate queue (`StreamSelectionCoordinator`); apply crowd recommendations when confidence is high/medium.
-2. Expand V2 chips; keep catalog order (FB and MP both eligible — first healthy wins).
+2. Expand V2 chips. Try-order (`StreamTestOrderPolicy`): recommended streams first (confidence, then API order), then MP (V2) rows in catalog order, then FB rows in catalog order. With no matching recommendations: MP first, then FB rotated by the session salt. Try-order only decides what is probed first.
+   - Recommended tiers first (Jon, 13 Nov 2026: "highly recommended streams come before finding", "Top tier is High confidence only", "Option B, head start then overlap", "medium-confidence should NOT be disregarded", "high can occupy 2 slots on local-service / medium only one / then fit in v1 and v2 into gaps", "Medium limited to one slot always", "Let a second Medium use a slot only when nothing else is queued", "Let finding go before a third High"): High-confidence recommended rows may use both LocalService slots (the first two High rows running or found healthy; a third or later High row waits while an FB finding row or a harvested finding chip could take the slot), Medium-confidence rows one (every pass of the session, not only the first pass's 12s head start, `TopTierHeadStart.Duration`; a second Medium only takes a slot no finding row could take, and the cap lifts while a stream plays with no backup), and finding (Low recommendations, MP `/mp`, FB `/play`; MP lane first) fills every slot they leave from the first second. A slot a dead High row frees goes to the next High row, else to a Medium row. Chips of a High (Medium) MP page are High (Medium). After the 12s, first come, first served in try-order, with the same Medium rule. No High or Medium recommendation: unchanged. Details: docs/PROBE_SCHEDULING_RULES.md rule 1.
+   - First come, first served (Jon, 13 Nov 2026: "first come first served on playable streams"): no row holds first play. The first row - recommended or not, MP or FB - to get a healthy, playable verdict plays first, and every healthy row joins the pool as its verdict lands (appended, so channel numbers stay stable and follow verdict order). Rules: `StreamResolutionOrchestratorTests.StartAsync_FasterLaterCandidate_PlaysFirst_FirstComeFirstServed`, `StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay`; timeline cases "R1 R9" (docs/PROBE_SCHEDULING_RULES.md rule 9).
 3. Skip streams with countdown active on the page.
 4. Resolve M3U8 via LAN play service / API; probe with `StreamHealthChecker`.
 5. Probe outcomes: `Healthy` | `ManifestUnreachable` | `InvalidManifest` | `EmptyManifest` | `SegmentUnreachable`.
@@ -169,7 +171,7 @@ flowchart TD
 
 ### 6. Orchestrator start failure: the playback chain (Streaming)
 
-The first healthy row to clear the catalog frontier starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
+The first healthy row (first come, first served) starts `RunPlaybackChainAsync` **while candidate testing continues**. When a play returns `Success == false` (not viewer-left):
 
 1. Local service unavailable (no verdict): no report, nothing removed; the chain parks and the next row to join the pool starts playback.
 2. Otherwise report health `failed` once for the row that failed (the row tried if the player never opened, else the pool's current row) and remove it.
@@ -411,6 +413,7 @@ A channel number is the row's position in `StreamSwitchingService.GetHealthyStre
 5. **Wraparound:** Next on the last channel goes to channel 1; Previous on channel 1 goes to the last. Wraparound force-refreshes recommendations (chips and first pick) but does not jump to a "preferred recommended" stream and does not reorder. The old "switch to the preferred recommended stream on wraparound" behaviour was removed: it made Next land on an unexpected number.
 6. **Recommendations may jump** (chip selection selects the matching row) but never reorder.
 7. A switch that fails and reverts keeps the target in place (see "Failed switch: retry the target, keep it").
+8. **Next always walks channel numbers** (14 Nov 2026): Next, Previous and auto-advance go to the next (or previous) number, with wrap, skipping only rows tried or failed this cycle. Tiers do not change that order — they are for LocalService slot scheduling only (docs/PROBE_SCHEDULING_RULES.md rules 1 and 11). A later High or Medium row is appended and reached in number order (`BackupPreferenceBusinessRulesTests`).
 
 ## Switch speed: reuse, pre-resolve, make-before-break
 
@@ -451,6 +454,22 @@ re-ran `/play` (~10-15 s on V1). Rules (Kernel `PlaybackUrlReusePolicy`, `M3u8To
    playing while the target resolves, with "Switching to X..." shown; on failure the pool index is put
    back on the playing row **without re-attaching it** and "Couldn't switch to X - staying on the current
    stream" is shown. A newer switch supersedes an older pending one.
+8. **V2/MP chips switch immediately (13 Nov 2026).** Jon: "i am used to v2 switching being
+   immediate". A chip of an MP page (`PlaybackUrlReusePolicy.IsMpRow`) whose probed or harvested
+   link has an unreadable token expiry plays that link at once on Next, a chip pick and
+   auto-advance (`CanTryProbedLink`: `PlanSwitch` -> `AttachCached`, `PlanNextPrepare` ->
+   `AttachAsIs`, `AttachCurrentFromPoolAsync`). No `/mp` round trip first. A failed start gets the
+   session's one fresh re-resolve (`usedCachedUrl: true`), then Next moves on. Still fresh: no link,
+   Cookie-bound / single-use host, or a readable expiry under 60 s. FB/V1 rows keep rule 3 (unknown
+   expiry stays fresh; their soak tokens can be one-shot). The prewarmer skips MP chips that
+   already have a link (it only started a second `POST /mp`).
+9. **A switch that could not resolve is not a switch.** When the target's fresh resolve returns
+   nothing, the target is marked tried this cycle ("Couldn't switch"), the index goes back to the
+   playing row, and Next advances to the next untried row with "Couldn't switch to X - trying the
+   next stream". Only with no untried row left does it stay ("... staying on the current stream").
+   `[probe-timing] event=switch` (and its `switches=` count) is logged only when the new row shows
+   video (`IStreamSwitchingService.PlayingConfirmed`); an index change logs `event=switch-requested`.
+   The orchestrator says "Switch requested" / "Switching to next stream", never "Switched".
 
 Platform limits: a channel switch still cuts over once the new URL is resolved, because replacing the
 media source clears the picture. A playing-token refresh does not. Android keeps the same ExoPlayer and,
@@ -466,7 +485,9 @@ Tests: `M3u8TokenExpiryTests`, `PlaybackUrlReusePolicyTests`, `StreamSwitchReuse
 `StreamResolutionOrchestratorTests.Rule_NextOntoOneShotRow_DoesNotIssueBarePrefetchPlay`
 (warm → ApplyWarmUnused) and `Rule_NextOntoOneShotRow_NoWarm_ClearsAndKicks` (Streaming);
 `PlaybackUrlResolverWarmTests` (Hosting); `PlaybackSwitchMakeBeforeBreakTests`,
-`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback).
+`PlaylistReloadRedirectTests`, `UnplayedPlaylistTests` (Playback). Rules 8-9:
+`MpChipSwitchBusinessRulesTests` (Kernel), `MpChipSwitchPlaybackTests` (Playback),
+`ProbeTimingLogTests.SessionTrace_FailedSwitchThatStaysOnPlayingStream_IsNotCounted` (Streaming).
 
 ## First play open + early Next capacity (`FirstPlayOpenStrategy`)
 
@@ -474,40 +495,61 @@ Cross-platform policy in Kernel (`FirstPlayOpenStrategy`). Android, Windows, and
 all execute it through `StreamResolutionOrchestrator` + `PlaybackUrlResolver` — do not fork
 per OS. Tune the strategy type while experimenting.
 
-When nothing is playing yet and the start row needs a fresh `/play` (`PlaybackRacePolicy.NeedsFreshPlay`):
+The start row is the first healthy row (first come, first served). First play never waits for
+other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
 
-1. **Open recommended first.** One Chromium `/play` (and playlist probe) for the recommended
-   row. Picture opens as soon as that leg is video or unverified. The finding UI must not wait
-   on a dual-leg winner race (~25s stall measured on Bravia when both slots raced).
-2. **Partner warms for Next.** If the next switch-order row also needs fresh `/play`, it runs
-   on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not** awaited for first
-   picture. Immediate Next applies that warm as `UnusedResolvedUrl` (`PlanNextPrepare`) so
-   every platform's `PlanSwitch` can `AttachCached`.
-3. **Recommended empty / audio-only.** Report/remove as before. Prefer another pooled row that
+1. **Play the probed link.** When the row can play without a fresh `/play`
+   (`PlaybackRacePolicy.NeedsFreshPlay` is false) or is already warm, the existing path runs.
+   Otherwise, if `FirstPlayOpenStrategy.CanPlayProbedLink` (a link, not single-use, token not
+   already expired), the start plays the link the find-phase probe returned
+   (`StartKind.PlayProbedLink`): no second `/play`, no partner leg. A failed open re-`/play`s
+   once (`PlayStreamAsync`).
+2. **Fresh `/play` only when the link cannot be reused.** A cookie-bound or single-use-host
+   link, or an expired token (`StartKind.ResolveRecommendedOpenFirst`): one Chromium `/play` (and
+   playlist probe) for the start row; picture opens as soon as that leg is video or unverified.
+   `StartPlaybackChain` pauses new finding starts at once (`NeedsFreshStart`,
+   `ResolverRaceThrottle.BeginRace`) so this `/play` takes the next free slot; nothing is drained
+   (`DrainOthersAsync` is no longer called).
+3. **Next channel warms for Next.** On the fresh path, if the next channel in order also needs a
+   fresh `/play`, it runs on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not**
+   awaited for first picture. Immediate Next applies that warm as `UnusedResolvedUrl`
+   (`PlanNextPrepare`) so every platform's `PlanSwitch` can `AttachCached`. After first play the
+   prewarmer keeps the next `PrewarmDepth` rows in channel order warm
+   (`IStreamSwitchingService.GetUpcoming`).
+4. **Start empty / audio-only.** Report/remove as before. Prefer another pooled row that
    can play from cache; else await the partner warm leg and open that.
-4. **Recommended infrastructure is terminal for open-recommended.** After
-   `InfrastructureRetryPolicy` retries on the recommended leg, LocalServiceUnavailable
-   closes the start — do **not** `ReadyCachedRow` / partner-open as if empty/audio failed.
-   Infrastructure is still not a stream verdict (no report/remove). Partner warm stays
-   single-shot; only the recommended open-first leg shares the fresh-resolve retry loop.
-5. **Playback-priority window.** From first playback-chain start until
-   `PrewarmDepth` upcoming rows are warm (or `PlaybackPriorityTimeout` = 30s),
-   `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase `/play|/mp`. Attach and
-   prewarm use `MarkRaceLeg` so they still take slots. Logs: `[FirstPlayDelay] playback_priority_*`.
-6. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
+5. **Start infrastructure is terminal.** After `InfrastructureRetryPolicy` retries on the
+   fresh start leg, LocalServiceUnavailable closes the start — do **not** `ReadyCachedRow` /
+   partner-open as if empty/audio failed. Infrastructure is still not a stream verdict (no
+   report/remove). Partner warm stays single-shot.
+6. **Playback-priority window.** For `PlaybackPriorityTimeout` (30s) from first
+   playback-chain start, `ResolverRaceThrottle.BeginPlaybackPriority` pauses find-phase
+   `/play|/mp` only while a backup exists that the prewarmer still has to warm
+   (`FirstPlayOpenStrategy.CountBackupsNeedingWarm`, `PlaybackPriorityHolds`). No backup at first
+   play means finding carries on. Attach and prewarm use `MarkRaceLeg` so they still take slots.
+   Logs: `[FirstPlayDelay] playback_priority_*`.
+7. **Warm take order.** Always `TryTake` before `WaitForInFlight` (then take again) in
    orchestrator fresh resolve and `PlaybackUrlResolver` — a Kick must not block consuming
    a partner warm.
-7. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
+8. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
+
+Next, Previous, auto-advance and the prewarmer walk channel numbers in order (with wrap),
+skipping only tried or failed rows. Tiers (High, Medium, finding) are for LocalService slot
+scheduling only (docs/PROBE_SCHEDULING_RULES.md rule 1), not for which channel Next opens
+(`StreamSwitchingService.GetUpcoming`, `PlaybackUrlReusePolicy.UpcomingInSwitchOrder`;
+docs/PROBE_SCHEDULING_RULES.md rule 11). Channel numbers stay append-only.
 
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
-`RaceAsync` winner wait is no longer used for first picture.
+`RaceAsync` winner wait (and its 1.5s `RecommendedGrace`) is not used for first picture and has
+no production caller.
 
 Tests:
 - Unit: `FirstPlayOpenStrategyTests` (PlanStart / DecideAfter / PlanNext / priority helpers)
 - Business rules: `FirstPlayOpenBusinessRulesTests`, `StartupRaceBusinessRulesTests`
-  (two-healthy open without waiting partner; partner warm for Next; MP harvest;
-  audio-only / empty fallbacks; playback-priority hold)
+  (probed link plays without a second `/play`; single-use start takes one fresh `/play`;
+  partner warm for Next; MP harvest; audio-only / empty fallbacks)
+- Head start: `TopTierHeadStartTests`; timeline cases in `ProbeSchedulingScenarios` (rules 1, 11, 12)
 - Warm take order: `PlaybackUrlResolverWarmTests.Bind_ExistingWarm_TakesBeforeWaitingOnInFlightKick`
 - Also: `ResolverRaceThrottleTests`, `PlaybackRaceBusinessRulesTests`.
 
@@ -585,7 +627,7 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
 ### Resolver and orchestrator
 
 - `StreamResolver` retries `LocalServiceUnavailableException` after 2s and 5s; then the row is `StreamResolutionStatus.Deferred` ("Waiting for local service...") with no siblings.
-- `StreamResolutionOrchestrator` never reports a Deferred row. It counts as done for the first-play frontier, and is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
+- `StreamResolutionOrchestrator` never reports a Deferred row and never waits on it for first play; it is re-queued after 5s and 15s. Rows still deferred set `StreamResolutionOutcome.DeferredStreamCount`; with no healthy stream the outcome is `LocalServiceUnavailable`, not "no working streams".
 - Healthy rows are reported `working` (was `unknown`).
 
 ### `/mp` harvest (`LocalLanPlayService`, `MpHarvestSession`)
@@ -598,6 +640,8 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
   - 401/403 → `Unauthorized` (also on `/play`).
   - 503 "V2/MP scrape disabled on this local service" → `MpDisabled`. The client remembers it per endpoint for 60s (`MpDisabledMemory`), so other MP rows in the sweep are answered locally without a POST. The row is "unavailable here", not dead. The client never turns V2/MP on.
 - `MpDisabled` and `Unauthorized` are not retryable (`IsRetryable` false): the resolver defers them at once, without the 2s/5s retries.
+- **One harvest per app (13 Nov 2026).** `ILocalLanPlayService` is a transient typed HttpClient, so the resolver, `ApiService` (switch re-resolve) and the prewarmer each had their own `LocalLanPlayService` and their own harvest; a second `POST /mp` for the same page got nothing from LocalService and failed "sent nothing for 30s". The `/mp` lane state lives in the singleton `MpHarvestHub`, so every instance joins the running harvest (`LocalLanPlayServiceMpInfrastructureTests.Rule_TwoClientInstancesSharingTheHub_JoinOneHarvest_OnlyOnePostMp`).
+- **Late joiners get their own wait.** A chip waiter's stall deadline counts from `max(last progress, when it joined)`, so a caller arriving after a silence is not failed instantly (`MpHarvestSessionTests.WaitForAsync_NamedChip_JoiningAfterASilence_GetsItsOwnWait_NotAnInstantFailure`).
 
 ### First start and in-player fresh `/play` (`ApiService`, `InfrastructureRetryPolicy`)
 
@@ -625,9 +669,9 @@ From 19:02 to 19:44 UK time on 31 Oct 2026 the MSI's IP was blocked by the CDN. 
 2. **Still dead** (Failed, reported, dropped): manifest 404/410 (`StreamHealthStatus.ManifestNotFound`), "M3U8 not Found" with no connect evidence, decoy or non-video segments and segment HTTP errors (`SegmentUnreachable`), empty or invalid manifests, and DNS `NAME_NOT_RESOLVED` / `UnknownHostException` (`HostNotResolved`). DNS stays dead by choice: a name that does not resolve is almost always a retired or fake host, and keeping it would recheck it all game.
 3. Health check (`StreamHealthChecker`): transport exceptions go through `CdnReachabilityPolicy.ClassifyTransportFailure` (DNS → `HostNotResolved`, connect/TLS/timeout → `CdnUnreachable`); anything else keeps the old status. The caller cancelling is no verdict.
 4. Resolver (`StreamResolver`): `CdnUnreachable` or `ManifestUnreachable` health, or `LocalServiceUnavailableException(CdnUnreachable)` from `/play`, makes the row `Deferred` with `DeferReason = CdnUnreachable` and the message "CDN unreachable, rechecking". No 2s/5s infrastructure retries (`IsRetryable` false).
-5. Orchestrator (`StreamResolutionOrchestrator`, `CdnUnreachableRecheckLoop`): a CDN-deferred row is never reported and never dropped. It is rechecked after **2 min, then 5 min, then every 10 min** (`CdnReachabilityPolicy.RecheckDelays`) while the game is live (`ShouldKeepRechecking`: not finished, and within 4h of kick-off). Rechecks run alongside playback. A row that comes back Healthy goes through the normal accept path: reported `working`, appended to the pool, stable channel number; if nothing is playing it starts playback. A recheck that now proves the row dead reports it as usual. With no healthy row at the end the status is "CDN unreachable, rechecking" (`StreamResolutionOutcome.CdnUnreachableStreamCount`).
+5. Orchestrator (`StreamResolutionOrchestrator`, `CdnUnreachableRecheckLoop`): a CDN-deferred row is never reported and never dropped. It is rechecked after **2 min, then 5 min, then every 10 min** (`CdnReachabilityPolicy.RecheckDelays`) while the game is live; while the viewer has fewer than two playable streams the first recheck waits **30s** instead (Jon, 13 Nov 2026, `CdnReachabilityPolicy.FirstRecheckWithoutBackup`; risk accepted: the 2-minute wait was chosen after the 31 Oct 2026 IP block, so a sooner recheck could prolong or trip a block) (`ShouldKeepRechecking`: not finished, and within 4h of kick-off). Rechecks run alongside playback. A row that comes back Healthy goes through the normal accept path: reported `working`, appended to the pool, stable channel number; if nothing is playing it starts playback. A recheck that now proves the row dead reports it as usual. With no healthy row at the end the status is "CDN unreachable, rechecking" (`StreamResolutionOutcome.CdnUnreachableStreamCount`).
 6. Player (`PlaybackPolicy.ClassifyPlaybackError` → `PlaybackErrorKind.CdnUnreachable`): retried like `Transient` (reload first, then fresh `/play`). When the budget is spent, on an established stream or a first start, `PlaybackSessionController` keeps the row: no `ReportFailed`, no `RemoveCurrentFromPool`, its resolved URL is cleared, and the session advances to the next row. With one row, or after a full lap of the pool with nothing reaching Ready, it closes with `PlaybackCloseReasons.CdnUnreachable`. `PlaybackResult.IsLocalServiceUnavailable` is true for that reason, so every orchestrator and host path treats it as no verdict.
-7. When the player gives up on its last row(s) as CDN unreachable (`PlaybackCloseReasons.CdnUnreachable`), the orchestrator puts every row still in the pool on the same background recheck (2 min, 5 min, then every 10 min while the game is live). A row that comes back healthy is reported `working` and playback restarts on that same pool row (same channel number, fresh `/play`); a recheck that proves the row dead (404/410, decoy, DNS) reports and drops it; a row still unreachable waits for the next round. Nothing is reported or dropped for being unreachable. Tests: `CdnUnreachablePoolRecheckTests`.
+7. When the player gives up on its last row(s) as CDN unreachable (`PlaybackCloseReasons.CdnUnreachable`), the orchestrator puts every row still in the pool on the same background recheck (2 min, 5 min, then every 10 min while the game is live; the 30s first recheck does not apply here, since every pool row is failing at once, the pattern of an IP block). A row that comes back healthy is reported `working` and playback restarts on that same pool row (same channel number, fresh `/play`); a recheck that proves the row dead (404/410, decoy, DNS) reports and drops it; a row still unreachable waits for the next round. Nothing is reported or dropped for being unreachable. Tests: `CdnUnreachablePoolRecheckTests`.
 
 ## `/play` timeout budget (31 Oct 2026)
 

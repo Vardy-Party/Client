@@ -89,6 +89,7 @@ public static class PlaybackRacePolicy
         if (!NeedsFreshPlay(recommended, now))
             return null;
 
+        // The partner is the next channel in switch order (the one Next will open).
         var next = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(healthy, recommended, 1);
         if (next.Count == 0)
             return null;

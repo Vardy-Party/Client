@@ -12,7 +12,7 @@ namespace VardyParty.Kernel;
 /// <item>cowedd: <c>?t=&lt;unix&gt;.&lt;hex sig&gt;</c>.</item>
 /// <item>Generic query keys <c>e</c>, <c>exp</c>, <c>expires</c>, <c>expiry</c>, <c>expire</c>, <c>x-expires</c>
 /// (unix seconds or milliseconds).</item>
-/// <item>JWT-shaped query values with an <c>exp</c> claim (sporty-aoura <c>token=</c>).</item>
+/// <item>JWT-shaped query values with an <c>exp</c> claim (sporty-aoura <c>token=</c>), and two-part signed-JSON tokens <c>&lt;base64 json&gt;.&lt;sig&gt;</c> (sharpnessonline <c>token=</c>).</item>
 /// <item>uzhi: a 10-digit unix path segment, e.g. <c>/main/secure/&lt;hex&gt;/&lt;unix&gt;/file.m3u8</c>.</item>
 /// </list>
 /// Values outside a plausible unix window never count, so ids and bitrates are not read as expiry.
@@ -123,12 +123,20 @@ public static class M3u8TokenExpiry
         expiry = default;
         foreach (var (_, value) in query)
         {
+            // header.payload.signature (JWT) or payload.signature (a signed-JSON token,
+            // e.g. sharpnessonline "token=<base64 {stream,ip,exp,rand}>.<hex sig>").
             var parts = value.Split('.');
-            if (parts.Length != 3 || parts[1].Length < 8)
+            var claims = parts.Length switch
+            {
+                3 => parts[1],
+                2 => parts[0],
+                _ => null,
+            };
+            if (claims is null || claims.Length < 8)
                 continue;
             try
             {
-                var payload = parts[1].Replace('-', '+').Replace('_', '/');
+                var payload = claims.Replace('-', '+').Replace('_', '/');
                 payload = payload.PadRight(payload.Length + ((4 - (payload.Length % 4)) % 4), '=');
                 using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
                 if (doc.RootElement.ValueKind == JsonValueKind.Object

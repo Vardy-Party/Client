@@ -430,6 +430,10 @@ public class StreamResolverTests
         _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(page, null, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(first);
+        // The seed row is re-queued as its first chip and reads it by label (rule 6).
+        _localLanPlay
+            .Setup(s => s.ResolveM3U8UrlAsync(page, "Chip A", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(first);
         _localLanPlay
             .Setup(s => s.ResolveM3U8UrlAsync(page, "Chip B", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(async (string _, string? _, string? _, string? _, CancellationToken token) =>

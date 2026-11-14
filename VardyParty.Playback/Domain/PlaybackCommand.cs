@@ -41,6 +41,13 @@ public sealed record PlaybackCommand(
         && !ReportWorking
         && !MarkEstablished;
 
+    /// <summary>
+    /// What the user is told about a failure: short and accurate, with " - trying the next
+    /// stream" when this command moves on (never the raw engine text).
+    /// </summary>
+    public string UserFacingFailureText
+        => PlaybackPolicy.UserFacingStreamError(Reason, movingOn: SwitchPoolToNext || AttachCurrentAfterRemove);
+
     public static PlaybackCommand FromEffects(IReadOnlyList<PlaybackEffect> effects)
     {
         if (effects.Count == 0)

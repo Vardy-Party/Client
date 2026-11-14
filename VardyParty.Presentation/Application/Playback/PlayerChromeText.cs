@@ -6,8 +6,8 @@ namespace VardyParty.Presentation;
 
 /// <summary>
 /// Shared in-player chrome copy: stream-count toast and video-info panel.
-/// Windows and Android build the same strings; Linux uses this helper so
-/// the wording stays aligned without a third hand-rolled formatter.
+/// Windows, Android (including TV), and Linux all use these strings so the
+/// identity row and detail block stay aligned.
 /// </summary>
 public static class PlayerChromeText
 {
@@ -216,23 +216,124 @@ public static class PlayerChromeText
     public static string FormatStreamIndexLine(VideoInfoPanelModel model) =>
         model.StreamTotal > 0 ? $"Stream: {model.StreamIndex}/{model.StreamTotal}" : string.Empty;
 
+    /// <summary>Max characters for the stream name on the identity row (including ellipsis).</summary>
+    public const int StreamNameMaxLength = 32;
+
     /// <summary>
-    /// Detail block under quality (Android <c>_resBrView</c>): channel, aspect, buffer,
-    /// codecs, source URL, referer. Empty while switching.
+    /// Compact position for the identity row, e.g. <c>2/9</c>. Empty when the pool has no streams.
+    /// </summary>
+    public static string FormatStreamIdentityIndex(VideoInfoPanelModel model) =>
+        model.StreamTotal > 0 ? $"{model.StreamIndex}/{model.StreamTotal}" : string.Empty;
+
+    /// <summary>Trim and ellipsize a stream/channel name so the identity row stays on one line.</summary>
+    public static string? EllipsizeStreamName(string? name, int maxLength = StreamNameMaxLength)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var trimmed = name.Trim();
+        if (maxLength <= 0)
+            return null;
+        if (trimmed.Length <= maxLength)
+            return trimmed;
+        if (maxLength == 1)
+            return "…";
+
+        return trimmed[..(maxLength - 1)] + "…";
+    }
+
+    /// <summary>
+    /// Vertical resolution for the identity row (e.g. <c>720p</c>). Omitted until known
+    /// and while a switch is in flight so the previous picture size cannot flash.
+    /// </summary>
+    public static string? FormatIdentityResolution(VideoInfoPanelModel model, bool whileSwitching = false)
+    {
+        if (whileSwitching)
+            return null;
+
+        return ExtractVerticalResolution(model.Resolution);
+    }
+
+    /// <summary>
+    /// Text after the index and V1/V2 chip on the identity row, e.g. <c>Fubo US · 720p</c>.
+    /// Hosts with a visual chip render this beside the badge; Linux inlines the chip in
+    /// <see cref="FormatStreamIdentityLine"/>.
+    /// </summary>
+    public static string FormatStreamIdentitySuffix(VideoInfoPanelModel model, bool whileSwitching = false)
+    {
+        var parts = new List<string>();
+        var name = EllipsizeStreamName(model.Channel);
+        if (!string.IsNullOrEmpty(name))
+            parts.Add(name);
+
+        var resolution = FormatIdentityResolution(model, whileSwitching);
+        if (!string.IsNullOrEmpty(resolution))
+            parts.Add(resolution);
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Full identity line for text-only hosts (Linux): <c>2/9 · V2 · Fubo US · 720p</c>.
+    /// Omits the chip, the name, and/or the resolution when they are unknown.
+    /// </summary>
+    public static string FormatStreamIdentityLine(
+        VideoInfoPanelModel model,
+        string? sourceLabel = null,
+        bool whileSwitching = false)
+    {
+        var index = FormatStreamIdentityIndex(model);
+        if (string.IsNullOrEmpty(index))
+            return string.Empty;
+
+        var parts = new List<string> { index };
+        if (!string.IsNullOrWhiteSpace(sourceLabel))
+            parts.Add(sourceLabel.Trim());
+
+        var suffix = FormatStreamIdentitySuffix(model, whileSwitching);
+        if (!string.IsNullOrEmpty(suffix))
+            parts.Add(suffix);
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Quality line under the identity row. When the vertical resolution is already on
+    /// that row, the height prefix is stripped so <c>720p 3.4 Mbps</c> becomes <c>3.4 Mbps</c>.
+    /// Empty while switching or when nothing remains.
+    /// </summary>
+    public static string FormatQualityLine(VideoInfoPanelModel model, bool whileSwitching = false)
+    {
+        if (whileSwitching || string.IsNullOrWhiteSpace(model.Quality))
+            return string.Empty;
+
+        var quality = model.Quality.Trim();
+        var height = FormatIdentityResolution(model, whileSwitching: false);
+        if (string.IsNullOrEmpty(height))
+            return quality;
+
+        if (quality.Equals(height, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        if (quality.StartsWith(height, StringComparison.OrdinalIgnoreCase))
+            return quality[height.Length..].TrimStart();
+
+        return quality;
+    }
+
+    /// <summary>
+    /// Detail block under quality (Android <c>_resBrView</c>): aspect, buffer,
+    /// codecs, source URL, referer. Channel and resolution live on the identity row,
+    /// so they are omitted here. Empty while switching.
     /// </summary>
     public static string FormatVideoInfoDetail(VideoInfoPanelModel model, bool whileSwitching = false)
     {
-        // Keep channel while switching; drop measured telemetry/URLs until the new stream settles.
+        // Drop measured telemetry/URLs until the new stream settles. The identity row
+        // already keeps the stream name and badge while switching.
         if (whileSwitching)
-        {
-            return !string.IsNullOrWhiteSpace(model.Channel)
-                ? $"Channel: {model.Channel}"
-                : string.Empty;
-        }
+            return string.Empty;
 
         var lines = new List<string>();
-        if (!string.IsNullOrWhiteSpace(model.Channel))
-            lines.Add($"Channel: {model.Channel}");
         if (!string.IsNullOrWhiteSpace(model.AspectRatio))
             lines.Add($"Aspect ratio: {model.AspectRatio}");
         // Always keep the Buffer row when known (including "Buffer 0%") so the panel
@@ -259,11 +360,12 @@ public static class PlayerChromeText
     /// <param name="whileSwitching">
     /// When true (Next/Prev/chip in flight), omit measured stream telemetry and URLs so
     /// the video-info overlay does not flash the previous stream's size/bitrate/m3u8.
-    /// Keeps status, index, channel, source badge, and game title.
+    /// Keeps status, the identity row (index, source badge, stream name), and game title.
     /// </param>
     /// <remarks>
-    /// Field order matches the Android multi-line panel (title, status, stream, channel via
-    /// detail, quality, aspect/buffer/codecs/urls). Single-block hosts (Linux) use this dump.
+    /// Field order matches the Android/Windows multi-line panel (title, status, identity
+    /// row, quality remainder, aspect/buffer/codecs/urls). Single-block hosts (Linux) use
+    /// this dump, with the V1/V2 chip inlined as text.
     /// </remarks>
     public static string FormatVideoInfo(VideoInfoPanelModel model, bool whileSwitching = false)
     {
@@ -273,15 +375,13 @@ public static class PlayerChromeText
 
         sb.AppendLine(FormatStatusLine(model, whileSwitching));
 
-        var indexLine = FormatStreamIndexLine(model);
-        if (!string.IsNullOrEmpty(indexLine))
-            sb.AppendLine(indexLine);
+        var identity = FormatStreamIdentityLine(model, model.SourceLabel, whileSwitching);
+        if (!string.IsNullOrEmpty(identity))
+            sb.AppendLine(identity);
 
-        if (!string.IsNullOrWhiteSpace(model.SourceLabel))
-            sb.AppendLine($"Source: {model.SourceLabel}");
-
-        if (!whileSwitching && !string.IsNullOrWhiteSpace(model.Quality))
-            sb.AppendLine(model.Quality);
+        var quality = FormatQualityLine(model, whileSwitching);
+        if (!string.IsNullOrEmpty(quality))
+            sb.AppendLine(quality);
 
         var detail = FormatVideoInfoDetail(model, whileSwitching);
         if (!string.IsNullOrEmpty(detail))

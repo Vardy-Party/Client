@@ -48,8 +48,12 @@ public class LocalLanPlayService(
     IStreamHealthDataCollectionPreferencesStore? streamHealthDataCollection = null,
     IOptions<APISettings>? apiSettings = null,
     SelectionState? selectionState = null,
-    IStreamHealthClientEnvironment? clientEnvironment = null) : ILocalLanPlayService
+    IStreamHealthClientEnvironment? clientEnvironment = null,
+    MpHarvestHub? mpHub = null) : ILocalLanPlayService, IMpHarvestProbe
 {
+    /// <summary>Shared <c>/mp</c> lane state (<see cref="MpHarvestHub"/>): one per app, not per instance.</summary>
+    private readonly MpHarvestHub _mp = mpHub ?? new MpHarvestHub();
+
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
     /// <summary>
@@ -82,6 +86,17 @@ public class LocalLanPlayService(
     private readonly TimeSpan _m3u8CallTimeout = LocalServicePlayBudget.BaseTimeout(
         gamesApiSettings.Value is { } settings ? TimeSpan.FromSeconds(settings.M3U8CallTimeoutSeconds) : null);
 
+    /// <summary>
+    /// Rule 7 early-chip retry delay (Jon, 13 Nov 2026): <c>GamesApi:EarlyChipRetryDelaySeconds</c>,
+    /// 10s when unset. Settable for tests.
+    /// </summary>
+    internal TimeSpan EarlyChipRetryDelay { get; set; } = TimeSpan.FromSeconds(
+        gamesApiSettings.Value is { EarlyChipRetryDelaySeconds: >= 0 } retrySettings
+            ? retrySettings.EarlyChipRetryDelaySeconds
+            : GamesApiSettings.DefaultEarlyChipRetryDelaySeconds);
+
+    private ProbeTimingLog Timing => raceThrottle?.Timing ?? ProbeTimingLog.Detached;
+
     private readonly LocalServiceEndpointCache _endpoints = new(DiscoveryCacheTtl, DiscoveryFailureCacheTtl);
 
     internal LocalServiceEndpointCache EndpointsForTests => _endpoints;
@@ -103,9 +118,35 @@ public class LocalLanPlayService(
     private string[] _cachedCapabilities = [];
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
-    private readonly object _mpHarvestGate = new();
-    private MpHarvestSession? _mpHarvest;
-    private string? _mpHarvestPage;
+    private object _mpHarvestGate => _mp.Gate;
+    private MpHarvestSession? _mpHarvest { get => _mp.Harvest; set => _mp.Harvest = value; }
+    private string? _mpHarvestPage { get => _mp.Page; set => _mp.Page = value; }
+    private TaskCompletionSource _mpHarvestStarted { get => _mp.Started; set => _mp.Started = value; }
+
+    /// <summary>
+    /// Owns the running harvest's lifetime (not any one caller's token): cancelled only
+    /// when every caller and resolver run that wanted the page has been cancelled.
+    /// </summary>
+    private CancellationTokenSource? _mpHarvestCts { get => _mp.Cts; set => _mp.Cts = value; }
+
+    /// <summary>
+    /// Who still wants each MP page: <see cref="CallMpEndpointAsync"/> callers while they
+    /// wait, and resolver runs (<see cref="WantMpPage"/>) until they end. Guarded by
+    /// <see cref="_mpHarvestGate"/>.
+    /// </summary>
+    private Dictionary<string, int> _mpWants => _mp.Wants;
+
+    /// <summary>
+    /// LocalService runs one <c>POST /mp</c> at a time. Held from the POST until that
+    /// harvest ends (not until its seed returns), so the MP lane stays single-flight
+    /// at LocalService after the seed hands its chips to the resolver (rule 3, rule 5).
+    /// The harvest also holds one <see cref="ResolverRaceThrottle"/> slot, but only
+    /// until LocalService lists the page's chips (rule 2).
+    /// </summary>
+    private SemaphoreSlim _mpPostGate => _mp.PostGate;
+
+    /// <summary>Test seam: clock for the <c>/mp</c> harvest (seed deadline, our harvest timeout).</summary>
+    internal TimeProvider Time { get; set; } = TimeProvider.System;
 
     /// <summary>
     /// After <c>/mp rejected: V2/MP scrape disabled</c>, MP rows on that
@@ -408,21 +449,158 @@ public class LocalLanPlayService(
         // time; every dead stream then caused a re-discovery
         // (16:51:43-16:53:03 UK time on 31 Oct 2026) and a double /play
         // (techydeals at 16:49:54 and 16:50:14).
-        // One slot per browser /play or /mp. A startup race holds both slots; other
+        // /mp has its own lane (docs/PROBE_SCHEDULING_RULES.md rules 2-5): a new
+        // harvest takes a /play slot only until LocalService lists the page's chips,
+        // then two FB probes run beside the background harvest. _mpPostGate keeps
+        // /mp single-flight for the whole harvest.
+        if (useMp)
+        {
+            return await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken);
+        }
+
+        // One slot per browser /play. A startup race holds both slots; other
         // callers wait so candidate testing cannot double the Chromium load.
         if (raceThrottle is null)
         {
-            return useMp
-                ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
-                : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
+            return await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
         }
 
         using (await raceThrottle.EnterAsync(cancellationToken).ConfigureAwait(false))
         {
-            return useMp
-                ? await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken)
-                : await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
+            return await CallPlayEndpointAsync(baseUrl, streamUrl, effectiveStreamName, key, cancellationToken);
         }
+    }
+
+    /// <inheritdoc />
+    public bool IsMpChipReady(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest
+                   && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                   && harvest.IsChipReady(chip);
+        }
+    }
+
+    /// <inheritdoc />
+    public bool RetryEarlyMpChip(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest
+                   && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                   && harvest.RetryEarlyChip(chip, EarlyChipRetryDelay);
+        }
+    }
+
+    /// <inheritdoc />
+    public string? MpChipHandover(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                ? harvest.HandoverOf(chip)
+                : null;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool CanStartMp(string pageUrl, string? chip)
+    {
+        lock (_mpHarvestGate)
+        {
+            // A chip waiting for its early-chip retry (rule 7) would only wait in the lane.
+            if (_mpHarvest is { } retrying && retrying.CanReuseFor(_mpHarvestPage, pageUrl) && retrying.IsRetryWaiting(chip))
+                return false;
+            // No harvest running: a reuse from a finished one, or a new POST, decides.
+            if (_mpHarvest is not { } harvest || harvest.IsCompleted)
+                return true;
+            // Another page's harvest holds the single /mp: a POST would only wait on
+            // _mpPostGate inside the MP lane, holding it for that whole harvest.
+            if (!string.Equals(_mpHarvestPage, pageUrl, StringComparison.OrdinalIgnoreCase))
+                return false;
+            // Same page: a seed answers within ProbeReadyWait; a chip only once the
+            // harvest can answer it (rule 7), so nothing sits in the lane waiting.
+            return string.IsNullOrWhiteSpace(chip) || harvest.IsChipReady(chip);
+        }
+    }
+
+    /// <inheritdoc />
+    public IDisposable WantMpPage(string pageUrl, CancellationToken runToken)
+    {
+        AddMpWant(pageUrl);
+        return new MpWant(this, pageUrl, runToken);
+    }
+
+    private void AddMpWant(string pageUrl)
+    {
+        lock (_mpHarvestGate)
+            _mpWants[pageUrl] = _mpWants.TryGetValue(pageUrl, out var n) ? n + 1 : 1;
+    }
+
+    /// <summary>
+    /// One caller or run no longer wants <paramref name="pageUrl"/>. When the last one
+    /// went away because it was cancelled, the page's running harvest is cancelled so
+    /// LocalService's single <c>/mp</c> (and <see cref="_mpPostGate"/>) is free for the
+    /// next page. A caller that finished normally leaves the harvest running, as before.
+    /// </summary>
+    private void ReleaseMpWant(string pageUrl, bool cancelled)
+    {
+        CancellationTokenSource? cancel = null;
+        lock (_mpHarvestGate)
+        {
+            if (_mpWants.TryGetValue(pageUrl, out var n))
+            {
+                if (n <= 1)
+                    _mpWants.Remove(pageUrl);
+                else
+                    _mpWants[pageUrl] = n - 1;
+            }
+
+            if (cancelled
+                && !_mpWants.ContainsKey(pageUrl)
+                && _mpHarvest is { IsCompleted: false }
+                && string.Equals(_mpHarvestPage, pageUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                cancel = _mpHarvestCts;
+            }
+        }
+
+        if (cancel is null)
+            return;
+        logger.LogInformation("[LocalLanPlay] Nobody wants the MP harvest for {StreamUrl} any more; cancelling it", pageUrl);
+        try
+        {
+            cancel.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private sealed class MpWant(LocalLanPlayService owner, string pageUrl, CancellationToken runToken) : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+                owner.ReleaseMpWant(pageUrl, runToken.IsCancellationRequested);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken)
+    {
+        Task changed;
+        lock (_mpHarvestGate)
+        {
+            changed = _mpHarvest is { } harvest
+                ? Task.WhenAny(harvest.Changed, _mpHarvestStarted.Task)
+                : _mpHarvestStarted.Task;
+        }
+
+        return changed.WaitAsync(cancellationToken);
     }
 
     /// <summary>Test seam: mark a resolve key slow, as our own <c>/play</c> timeout does.</summary>
@@ -729,7 +907,7 @@ public class LocalLanPlayService(
     /// <summary>Our own cap on one /mp harvest (settable for tests).</summary>
     internal TimeSpan MpHarvestTimeout { get; set; } = TimeSpan.FromSeconds(330);
 
-    private Task<M3U8Response?> CallMpEndpointAsync(
+    private async Task<M3U8Response?> CallMpEndpointAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
@@ -737,35 +915,159 @@ public class LocalLanPlayService(
     {
         if (IsMpDisabledRemembered(baseUrl))
         {
-            return Task.FromException<M3U8Response?>(MpDisabledException());
+            throw MpDisabledException();
         }
 
-        lock (_mpHarvestGate)
+        // This caller wants the page while it waits. Its cancel cancels the harvest
+        // only if nobody else (another caller, a resolver run) still wants it.
+        AddMpWant(streamUrl);
+        try
         {
-            if (_mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true)
-            {
-                return _mpHarvest.WaitForAsync(playerStreamName, cancellationToken);
-            }
+            return await CallMpEndpointCoreAsync(baseUrl, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
-
-        return StartMpHarvestAsync(baseUrl, streamUrl, playerStreamName, cancellationToken);
+        finally
+        {
+            ReleaseMpWant(streamUrl, cancellationToken.IsCancellationRequested);
+        }
     }
 
-    private async Task<M3U8Response?> StartMpHarvestAsync(
+    private async Task<M3U8Response?> CallMpEndpointCoreAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
         CancellationToken cancellationToken)
     {
-        var harvest = new MpHarvestSession();
-        lock (_mpHarvestGate)
+        if (TryReuseMpHarvest(streamUrl) is { } running)
         {
-            _mpHarvest = harvest;
-            _mpHarvestPage = streamUrl;
+            return await HandOverAsync(running, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
 
-        _ = ReadMpHarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, cancellationToken);
-        return await harvest.WaitForAsync(playerStreamName, cancellationToken).ConfigureAwait(false);
+        // One POST /mp at LocalService at a time; the gate is released when that
+        // harvest ends (ReadMpHarvestAsync finally), not when its seed returns.
+        await _mpPostGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var reused = TryReuseMpHarvest(streamUrl);
+        IDisposable? slot = null;
+        if (reused is null && !IsMpDisabledRemembered(baseUrl) && raceThrottle is not null)
+        {
+            // Rule 2: a new harvest counts as a LocalService session until the page's
+            // chips are listed (ReleaseSlotWhenListedAsync), so LocalService never runs
+            // more than 2 sessions while the page loads.
+            try
+            {
+                slot = await raceThrottle.EnterAsync(cancellationToken).ConfigureAwait(false);
+                Timing.Log(logger, "slot-grant", ("lane", "mp-seed"), ("page", ProbeTimingLog.Host(streamUrl)));
+            }
+            catch
+            {
+                _mpPostGate.Release();
+                throw;
+            }
+        }
+
+        MpHarvestSession? harvest = null;
+        CancellationTokenSource? harvestCts = null;
+        TaskCompletionSource? started = null;
+        lock (_mpHarvestGate)
+        {
+            if (reused is null && !IsMpDisabledRemembered(baseUrl))
+            {
+                // Rule 7: while a stream plays with no backup (BackupWanted), playlist-only
+                // chips are handed over at once instead of after ProbeReadyWait.
+                var throttle = raceThrottle;
+                harvest = new MpHarvestSession(Time, handOverPlaylistOnlyNow: () => throttle?.BackupWanted == true);
+                harvestCts = new CancellationTokenSource();
+                _mpHarvest = harvest;
+                _mpHarvestPage = streamUrl;
+                _mpHarvestCts = harvestCts;
+                started = _mpHarvestStarted;
+                _mpHarvestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        if (harvest is null)
+        {
+            // Another caller started this page's harvest while we waited, or MP was
+            // switched off meanwhile: no POST from us.
+            slot?.Dispose();
+            _mpPostGate.Release();
+            if (reused is null)
+                throw MpDisabledException();
+            return await HandOverAsync(reused, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
+        }
+
+        started!.TrySetResult();
+        _ = ReadMpHarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, harvestCts!, slot);
+        return await HandOverAsync(harvest, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>A labeled wait on the harvest, logged as a <c>[probe-timing]</c> chip handover.</summary>
+    private async Task<M3U8Response?> HandOverAsync(
+        MpHarvestSession harvest,
+        string streamUrl,
+        string? label,
+        CancellationToken cancellationToken)
+    {
+        var response = await harvest.WaitForAsync(label, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(label) && response is not null)
+        {
+            Timing.Log(logger, "chip-handover",
+                ("chip", label.Trim()),
+                ("page", ProbeTimingLog.Host(streamUrl)),
+                ("handover", harvest.HandoverOf(label) ?? "unknown"),
+                ("playlist", !string.IsNullOrWhiteSpace(response.Url)),
+                ("cdn", ProbeTimingLog.Host(response.Url)));
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// Rule 2: give the harvest's throttle slot back once LocalService has listed the
+    /// page's chips (or sent a chip, or the harvest ended), or when the seed gives up
+    /// after <see cref="MpHarvestSession.ProbeReadyWait"/>. The harvest carries on in
+    /// the background on <see cref="_mpPostGate"/> alone.
+    /// </summary>
+    private async Task ReleaseSlotWhenListedAsync(MpHarvestSession harvest, IDisposable slot, string streamUrl)
+    {
+        var reason = "listed";
+        try
+        {
+            await harvest.Listed.WaitAsync(harvest.ProbeReadyWait, Time).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            reason = "timeout";
+        }
+        finally
+        {
+            slot.Dispose();
+            Timing.Log(logger, "slot-release", ("lane", "mp-seed"), ("page", ProbeTimingLog.Host(streamUrl)), ("reason", reason));
+        }
+    }
+
+    /// <summary><c>[probe-timing]</c>: when the page listed its chips and when each chip line arrived.</summary>
+    private void LogHarvestLine(string streamUrl, MpPlayEvent ev)
+    {
+        if (ev.Type == "chips" && ev.Streams is { Count: > 0 } chips)
+        {
+            Timing.Log(logger, "mp-chips", ("page", ProbeTimingLog.Host(streamUrl)), ("count", chips.Count), ("chips", string.Join(",", chips)));
+        }
+        else if (ev.Type == "chip")
+        {
+            Timing.Log(logger, "chip-listed",
+                ("chip", (ev.SelectedStream ?? ev.Label)?.Trim()),
+                ("page", ProbeTimingLog.Host(streamUrl)),
+                ("playlist", !string.IsNullOrWhiteSpace(ev.Url)),
+                ("probe_ready", MpRewrittenSegment.HasProbeReady(ev.RewrittenSegments)));
+        }
+    }
+
+    private MpHarvestSession? TryReuseMpHarvest(string streamUrl)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true ? _mpHarvest : null;
+        }
     }
 
     private async Task ReadMpHarvestAsync(
@@ -773,13 +1075,19 @@ public class LocalLanPlayService(
         string streamUrl,
         string? playerStreamName,
         MpHarvestSession harvest,
-        CancellationToken cancellationToken)
+        CancellationTokenSource harvestCts,
+        IDisposable? slot)
     {
         var url = $"{baseUrl.TrimEnd('/')}/mp";
+        // The harvest's own lifetime: cancelled only when nobody wants the page any
+        // more (ReleaseMpWant), never by one caller among several.
+        var cancellationToken = harvestCts.Token;
+        if (slot is not null)
+            _ = ReleaseSlotWhenListedAsync(harvest, slot, streamUrl);
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(MpHarvestTimeout);
+            using var harvestTimeout = new CancellationTokenSource(MpHarvestTimeout, Time);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, harvestTimeout.Token);
 
             var payload = JsonSerializer.Serialize(new
             {
@@ -889,6 +1197,7 @@ public class LocalLanPlayService(
                 if (ev is not null)
                 {
                     harvest.Apply(ev);
+                    LogHarvestLine(streamUrl, ev);
                 }
             }
 
@@ -954,6 +1263,21 @@ public class LocalLanPlayService(
             harvest.Fail(new LocalServiceUnavailableException(
                 LocalServiceUnavailableReason.ConnectionFailed,
                 "POST /mp failed", ex));
+        }
+        finally
+        {
+            // Every path above ends the harvest; make sure, then free the slot (if the
+            // chip list never came) and the /mp lane.
+            if (!harvest.IsCompleted)
+                harvest.Complete(failed: true);
+            slot?.Dispose();
+            lock (_mpHarvestGate)
+            {
+                if (ReferenceEquals(_mpHarvestCts, harvestCts))
+                    _mpHarvestCts = null;
+            }
+
+            _mpPostGate.Release();
         }
     }
 

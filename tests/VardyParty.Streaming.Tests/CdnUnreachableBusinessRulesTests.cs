@@ -254,18 +254,35 @@ public class CdnUnreachableBusinessRulesTests
 
     private (StreamResolutionOrchestrator Sut, List<StreamHealthReport> Reports, List<TimeSpan> RecheckDelays, List<TimeSpan> LsDelays)
         Orchestrator(StreamModel stream, Func<int, EnrichedStream> resolveCall, Func<DateTime>? clock = null,
-            Action<TimeSpan>? onRecheckDelay = null)
+            Action<TimeSpan>? onRecheckDelay = null, StreamModel[]? alsoHealthy = null)
     {
         ResolverMocks();
+        alsoHealthy ??= [];
         _fixture.GetMock<IStreamSelectionCoordinator>()
             .Setup(c => c.GetOrderedCandidates())
-            .Returns([_fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, stream).Create()]);
+            .Returns(alsoHealthy.Prepend(stream)
+                .Select(s => _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, s).Create())
+                .ToList());
         _fixture.Inject<IStreamSwitchingService>(_fixture.Create<StreamSwitchingService>());
         var resolves = 0;
+        // The first pass also yields alsoHealthy as healthy rows (a backup in the pool).
         _fixture.GetMock<IStreamResolver>()
             .Setup(r => r.ResolveStreamsIncrementallyAsync(It.IsAny<List<StreamModel>>(), It.IsAny<int>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
-            .Returns(() => Yield(resolveCall(++resolves)));
+            .Returns(() =>
+            {
+                var call = ++resolves;
+                var healthy = call == 1
+                    ? alsoHealthy.Select((s, i) => new EnrichedStream
+                    {
+                        Stream = s,
+                        Status = StreamResolutionStatus.Healthy,
+                        ResolvedM3U8Url = $"https://backup{i}.example.test/live/index.m3u8",
+                        Referer = s.Url
+                    })
+                    : [];
+                return Yield(healthy.Append(resolveCall(call)).ToArray());
+            });
         var reports = new List<StreamHealthReport>();
         _fixture.GetMock<IStreamHealthService>()
             .Setup(s => s.ReportHealthAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
@@ -304,7 +321,7 @@ public class CdnUnreachableBusinessRulesTests
         _fixture.Build<Game>().With(g => g.Start, kickOff).With(g => g.IsFinished, false).Create();
 
     [Fact]
-    public async Task Orchestrator_CdnUnreachableRow_RecheckedAfterTwoMinutes_JoinsPoolWhenHealthy_NeverReportedFailed()
+    public async Task Orchestrator_CdnUnreachableRow_NoBackup_RecheckedAfter30s_JoinsPoolWhenHealthy_NeverReportedFailed()
     {
         var kickOff = DateTime.UtcNow.AddMinutes(-50);
         var stream = CreateStream();
@@ -320,7 +337,9 @@ public class CdnUnreachableBusinessRulesTests
 
         var outcome = await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object);
 
-        Assert.Equal([TimeSpan.FromMinutes(2)], recheckDelays);
+        // Jon, 13 Nov 2026: no backup stream, so the first recheck waits 30s, not 2 min.
+        Assert.Equal([CdnReachabilityPolicy.FirstRecheckWithoutBackup], recheckDelays);
+        Assert.Equal(TimeSpan.FromSeconds(30), CdnReachabilityPolicy.FirstRecheckWithoutBackup);
         Assert.Empty(lsDelays);
         Assert.Equal(0, outcome.CdnUnreachableStreamCount);
         Assert.False(outcome.LocalServiceUnavailable);
@@ -331,7 +350,33 @@ public class CdnUnreachableBusinessRulesTests
     }
 
     [Fact]
-    public async Task Orchestrator_CdnStaysUnreachable_RechecksTwoFiveThenTen_UntilGameNoLongerLive_NeverReportedOrDropped()
+    public async Task Orchestrator_CdnUnreachable_WithBackupInPool_FirstRecheckStillWaitsTwoMinutes()
+    {
+        var kickOff = DateTime.UtcNow.AddMinutes(-50);
+        var stream = CreateStream();
+        var backups = new[]
+        {
+            CreateStream("https://streams.example.test/2", "lshls 2"),
+            CreateStream("https://streams.example.test/3", "lshls 3")
+        };
+        var (sut, _, recheckDelays, _) = Orchestrator(stream, call => call == 1
+            ? CdnDeferred(stream)
+            : new EnrichedStream
+            {
+                Stream = stream,
+                Status = StreamResolutionStatus.Healthy,
+                ResolvedM3U8Url = Manifest,
+                Referer = stream.Url
+            },
+            alsoHealthy: backups);
+
+        await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object);
+
+        Assert.Equal([TimeSpan.FromMinutes(2)], recheckDelays);
+    }
+
+    [Fact]
+    public async Task Orchestrator_CdnStaysUnreachable_NoBackup_Rechecks30sFiveThenTen_UntilGameNoLongerLive_NeverReportedOrDropped()
     {
         var kickOff = new DateTime(2026, 10, 31, 19, 0, 0, DateTimeKind.Utc);
         var now = kickOff.AddMinutes(2);
@@ -345,7 +390,8 @@ public class CdnUnreachableBusinessRulesTests
 
         var outcome = await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object);
 
-        Assert.Equal(TimeSpan.FromMinutes(2), recheckDelays[0]);
+        // The shorter wait replaces only the first recheck; the back-off then carries on.
+        Assert.Equal(TimeSpan.FromSeconds(30), recheckDelays[0]);
         Assert.Equal(TimeSpan.FromMinutes(5), recheckDelays[1]);
         Assert.All(recheckDelays.Skip(2), d => Assert.Equal(TimeSpan.FromMinutes(10), d));
         Assert.True(now > kickOff + CdnReachabilityPolicy.MaxLiveWindow);

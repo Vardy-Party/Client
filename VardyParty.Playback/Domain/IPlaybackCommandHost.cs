@@ -14,6 +14,13 @@ public interface IPlaybackCommandHost
     void SyncHealthyStreamCount();
     void ReportFailed(string? reason);
     void ReportDeclined(string? reason);
+
+    /// <summary>
+    /// Show the user why the stream failed (<see cref="PlaybackCommand.UserFacingFailureText"/>,
+    /// e.g. "Stream refused (403) - trying the next stream"). Runs after
+    /// <see cref="ReportFailed"/> / <see cref="ReportDeclined"/>. Default: nothing.
+    /// </summary>
+    void ShowFailureToUser(string userText) { }
     void ReportWorking();
     void MarkEstablished();
     void RaiseBuffering(bool isBuffering);

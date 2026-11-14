@@ -61,9 +61,29 @@ public static class CdnReachabilityPolicy
     /// </summary>
     public static readonly TimeSpan MaxLiveWindow = TimeSpan.FromHours(4);
 
+    /// <summary>
+    /// The first recheck while the viewer has no backup stream (Jon, 13 Nov 2026: "Use a
+    /// shorter first CDN recheck while there's no backup"). 30s: long enough for the
+    /// transient causes (a connection reset, a TLS or routing blip, a CDN edge restarting)
+    /// to clear, the same order as the other waits a viewer already sits through (rule 7's
+    /// 30s), and only one extra request per deferred row per session, since every later
+    /// recheck keeps the 5/10-minute back-off. The risk Jon accepted: the 2-minute first
+    /// recheck was chosen after the 31 Oct 2026 IP block, so rechecking sooner could keep a
+    /// block alive or trip another one.
+    /// </summary>
+    public static readonly TimeSpan FirstRecheckWithoutBackup = TimeSpan.FromSeconds(30);
+
     /// <summary>The delay before recheck number <paramref name="attempt"/> (0-based).</summary>
     public static TimeSpan RecheckDelay(int attempt) =>
         RecheckDelays[Math.Clamp(attempt, 0, RecheckDelays.Count - 1)];
+
+    /// <summary>
+    /// The delay before recheck number <paramref name="attempt"/> (0-based): the first one is
+    /// <see cref="FirstRecheckWithoutBackup"/> while <paramref name="noBackup"/> (the viewer has
+    /// fewer than two playable streams); otherwise, and for every later one, <see cref="RecheckDelays"/>.
+    /// </summary>
+    public static TimeSpan RecheckDelay(int attempt, bool noBackup) =>
+        attempt <= 0 && noBackup ? FirstRecheckWithoutBackup : RecheckDelay(attempt);
 
     /// <summary>
     /// Keep rechecking while the game is live: not finished and within

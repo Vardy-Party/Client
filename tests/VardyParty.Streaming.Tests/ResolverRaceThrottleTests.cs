@@ -108,6 +108,25 @@ public class ResolverRaceThrottleTests
     }
 
     [Fact]
+    public void SetBackupWanted_WakesWaitersOnlyWhenTheValueChanges()
+    {
+        // Arrange
+        var throttle = new ResolverRaceThrottle();
+        var first = throttle.WaitForBackupWantedChangeAsync(CancellationToken.None);
+
+        // Act
+        throttle.SetBackupWanted(false);
+        var unchanged = first.IsCompleted;
+        throttle.SetBackupWanted(true);
+
+        // Assert
+        Assert.False(unchanged);
+        Assert.True(first.IsCompleted);
+        Assert.True(throttle.BackupWanted);
+        Assert.False(throttle.WaitForBackupWantedChangeAsync(CancellationToken.None).IsCompleted);
+    }
+
+    [Fact]
     public void PlaybackPriorityTimeout_ComesFromFirstPlayOpenStrategy()
     {
         Assert.Equal(

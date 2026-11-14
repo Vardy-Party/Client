@@ -144,7 +144,9 @@ namespace VardyParty.Platforms.Android
                 if (_titleView != null) _titleView.Text = string.Empty;
                 if (_statusView != null) _statusView.Text = string.Empty;
                 if (_indexView != null) _indexView.Text = string.Empty;
+                if (_identitySuffixView != null) _identitySuffixView.Text = string.Empty;
                 if (_sourceBadgeView != null) _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
+                if (_identityRow != null) _identityRow.Visibility = global::Android.Views.ViewStates.Gone;
                 if (_qualityView != null) _qualityView.Text = string.Empty;
                 if (_resBrView != null) _resBrView.Text = string.Empty;
                 return;
@@ -165,10 +167,34 @@ namespace VardyParty.Platforms.Android
 
             if (_titleView != null) _titleView.Text = model.Title ?? string.Empty;
             if (_statusView != null) _statusView.Text = PlayerChromeText.FormatStatusLine(model, _streamSwitchInProgress);
-            if (_indexView != null) _indexView.Text = PlayerChromeText.FormatStreamIndexLine(model);
+            var indexText = PlayerChromeText.FormatStreamIdentityIndex(model);
+            if (_indexView != null)
+            {
+                _indexView.Text = indexText;
+                _indexView.Visibility = string.IsNullOrEmpty(indexText)
+                    ? global::Android.Views.ViewStates.Gone
+                    : global::Android.Views.ViewStates.Visible;
+            }
             ApplySourceBadge(current?.Stream?.CatalogSourceBadgeLabel);
+            var suffix = PlayerChromeText.FormatStreamIdentitySuffix(model, _streamSwitchInProgress);
+            if (_identitySuffixView != null)
+            {
+                _identitySuffixView.Text = suffix;
+                _identitySuffixView.Visibility = string.IsNullOrEmpty(suffix)
+                    ? global::Android.Views.ViewStates.Gone
+                    : global::Android.Views.ViewStates.Visible;
+            }
+            if (_identityRow != null)
+            {
+                var identityVisible = !string.IsNullOrEmpty(indexText)
+                    || (_sourceBadgeView?.Visibility == global::Android.Views.ViewStates.Visible)
+                    || !string.IsNullOrEmpty(suffix);
+                _identityRow.Visibility = identityVisible
+                    ? global::Android.Views.ViewStates.Visible
+                    : global::Android.Views.ViewStates.Gone;
+            }
             if (_qualityView != null)
-                _qualityView.Text = _streamSwitchInProgress ? string.Empty : (model.Quality ?? string.Empty);
+                _qualityView.Text = PlayerChromeText.FormatQualityLine(model, _streamSwitchInProgress);
             if (_resBrView != null)
                 _resBrView.Text = PlayerChromeText.FormatVideoInfoDetail(model, _streamSwitchInProgress);
 

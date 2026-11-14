@@ -65,11 +65,19 @@ public sealed class LocalServiceUnavailableException(
     public LocalServiceUnavailableReason Reason { get; } = reason;
 
     /// <summary>
+    /// The answer came from a finished <c>/mp</c> harvest that is still reused for its
+    /// page, so asking again at once would only replay it. Not retried in place: the
+    /// row is Deferred and the orchestrator's re-queue asks again later.
+    /// </summary>
+    public bool FromFinishedHarvest { get; init; }
+
+    /// <summary>
     /// MP-disabled and auth rejections do not clear up in seconds. Nor does an
     /// unreachable CDN: that row waits for the minutes-long recheck instead.
     /// </summary>
     public override bool IsRetryable =>
-        Reason is not (LocalServiceUnavailableReason.MpDisabled
+        !FromFinishedHarvest
+        && Reason is not (LocalServiceUnavailableReason.MpDisabled
             or LocalServiceUnavailableReason.Unauthorized
             or LocalServiceUnavailableReason.CdnUnreachable);
 }

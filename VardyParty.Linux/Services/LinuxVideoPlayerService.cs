@@ -75,6 +75,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private bool _initFailed;
     private string? _refererUrl;
     private IReadOnlyDictionary<string, string>? _requestHeaders;
+
+    private const string LinuxBrowserUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private Timer? _metricsTimer;
     private int _playbackSessionId;
     private string? _playbackTitle;
@@ -439,9 +442,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
                 true,
                 current?.Stream?.Channel ?? "(unknown)");
-            _requestHeaders = current?.RequestHeaders ?? _requestHeaders;
-            if (!string.IsNullOrWhiteSpace(current?.Referer))
-                _refererUrl = current.Referer;
+            if (current is not null)
+                ApplyRequestContext(PlaybackRowRequestContext.ForRow(current));
             AttachViaSession(url, usedCachedUrl: false, force: true);
             if (!_session.Snapshot.IsPreparing)
                 SetStreamSwitchInProgress(false);
@@ -901,15 +903,27 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// </summary>
     private void AttachPoolUrl(string url, bool usedCachedUrl, bool force)
     {
-        var current = _switching.GetCurrentStream();
-        if (current != null && string.Equals(current.ResolvedM3U8Url, url, StringComparison.OrdinalIgnoreCase))
-        {
-            _requestHeaders = current.RequestHeaders ?? _requestHeaders;
-            if (!string.IsNullOrWhiteSpace(current.Referer))
-                _refererUrl = current.Referer;
-        }
-
+        ApplyRequestContextForUrl(url);
         AttachViaSession(url, usedCachedUrl, force);
+    }
+
+    /// <summary>
+    /// Every attach (switch, revert, retry) sends the headers of the row whose URL is attached
+    /// (<see cref="PlaybackRowRequestContext"/>, as Windows and Android); a URL of no pool row
+    /// keeps the current ones. Before round 13 a row with no headers / Referer kept the
+    /// previous stream's, and the LibVLC attach always took the CURRENT row's (a revert to the
+    /// last good stream sent the failed row's Referer).
+    /// </summary>
+    private void ApplyRequestContextForUrl(string url)
+        => ApplyRequestContext(PlaybackRowRequestContext.ForUrl(
+            _switching,
+            url,
+            new PlaybackRequestContext(_refererUrl ?? string.Empty, _requestHeaders)));
+
+    private void ApplyRequestContext(PlaybackRequestContext context)
+    {
+        _refererUrl = context.Referer;
+        _requestHeaders = context.Headers;
     }
 
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
@@ -999,6 +1013,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             if (isRevert)
                 player._logger.LogWarning("[LinuxVideoPlayerService] Reverting to last good stream: {Url}", url);
+            player.ApplyRequestContextForUrl(url);
             _ = player._engine.AttachAsync(url, player._requestHeaders);
         }
 
@@ -1068,15 +1083,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
-        var current = _switching.GetCurrentStream();
-        if (current?.RequestHeaders is { Count: > 0 })
-            requestHeaders = current.RequestHeaders;
-        if (!string.IsNullOrWhiteSpace(current?.Referer))
-            _refererUrl = current.Referer;
-
+        // The row whose URL this is (not the current row: a revert attaches the last good
+        // one), with UA / Referer / Origin filled in by the shared rule.
+        var context = PlaybackRowRequestContext.ForUrl(
+            _switching,
+            m3u8Url,
+            new PlaybackRequestContext(_refererUrl ?? string.Empty, requestHeaders));
+        _refererUrl = context.Referer;
+        var resolvedHeaders = PlaybackRequestHeaders.ForContext(context, LinuxBrowserUserAgent);
+        requestHeaders = resolvedHeaders;
         var referer = ResolveHeader(requestHeaders, "referer") ?? _refererUrl;
-        var userAgent = ResolveHeader(requestHeaders, "user-agent")
-            ?? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        var userAgent = ResolveHeader(requestHeaders, "user-agent") ?? LinuxBrowserUserAgent;
         var origin = ResolveHeader(requestHeaders, "origin");
 
         // LibVLC's C HTTP stack cannot use DualStack/DoH and prefers AAAA on

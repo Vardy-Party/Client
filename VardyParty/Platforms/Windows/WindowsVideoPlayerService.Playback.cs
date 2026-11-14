@@ -314,6 +314,91 @@ namespace VardyParty.Platforms.Windows
                     detailMessage: detail);
             }
 
+            /// <summary>How long an attach may go without reaching Playing before it counts as a failed start.</summary>
+            private static readonly TimeSpan StartWithoutPictureTimeout = TimeSpan.FromSeconds(20);
+
+            /// <summary>
+            /// Ready means "the picture is playing": PlaybackSession reached Playing. It used to be
+            /// raised as soon as the MediaPlaybackItem was assigned, before a single segment, so a
+            /// stream whose segments were all 403 counted as established and working (last good,
+            /// ReportWorking, and three same-stream retries instead of one fresh resolve and Next;
+            /// Windows log 13 Nov 2026 19:55:26-31).
+            /// </summary>
+            private void ArmReadyOnPlaying()
+            {
+                var generation = session.Snapshot.AttachGeneration;
+                Interlocked.Exchange(ref readyPendingGeneration, generation);
+                lastDownloadFailureStatus = 0;
+                CancelReadyWatchdog();
+                var cts = new CancellationTokenSource();
+                readyWatchdogCts = cts;
+                _ = WatchStartAsync(generation, cts.Token);
+            }
+
+            private async Task WatchStartAsync(long generation, CancellationToken cancellationToken)
+            {
+                try
+                {
+                    await Task.Delay(StartWithoutPictureTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref readyPendingGeneration, -1, generation) != generation
+                    || cleanupInvoked)
+                    return;
+                _host._logger.LogWarning(
+                    "No picture {Seconds}s after attach (generation {Generation}) - failing the start",
+                    (int)StartWithoutPictureTimeout.TotalSeconds,
+                    generation);
+                var refused = lastDownloadFailureStatus;
+                engine.Raise(MediaEngineEvent.Error(
+                    generation,
+                    PlaybackPolicy.IsRefusedStatus(refused)
+                        ? PlaybackPolicy.RefusedDownloadReason(refused)
+                        : $"Start timed out: no picture after {(int)StartWithoutPictureTimeout.TotalSeconds}s"));
+            }
+
+            private void RaiseReadyIfPending()
+            {
+                var generation = Interlocked.Exchange(ref readyPendingGeneration, -1);
+                if (generation < 0 || generation != session.Snapshot.AttachGeneration)
+                    return;
+                CancelReadyWatchdog();
+                engine.Raise(MediaEngineEvent.Ready(generation));
+            }
+
+            private void CancelReadyWatchdog()
+            {
+                var cts = Interlocked.Exchange(ref readyWatchdogCts, null);
+                if (cts is null)
+                    return;
+                try { cts.Cancel(); } catch { }
+                cts.Dispose();
+            }
+
+            /// <summary>
+            /// Once per attached URL: which headers the segment requests carry (names, plus the
+            /// Referer/Origin values; never cookie values), so a 403 can be matched to them in the log.
+            /// </summary>
+            private void LogSegmentHeadersOnce(Uri segmentUri, string referer, IReadOnlyDictionary<string, string>? requestHeaders)
+            {
+                var key = currentPlaybackUrl ?? segmentUri.Host;
+                if (string.Equals(Volatile.Read(ref segmentHeadersLoggedFor), key, StringComparison.Ordinal))
+                    return;
+                Volatile.Write(ref segmentHeadersLoggedFor, key);
+                var headers = PlaybackRequestHeaders.Resolve(referer, requestHeaders);
+                string? Value(string name) => headers.FirstOrDefault(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+                _host._logger.LogInformation(
+                    "Segment headers for {Host}: Referer={Referer} Origin={Origin} names=[{Names}]",
+                    segmentUri.Host,
+                    Value("Referer") ?? "(none)",
+                    Value("Origin") ?? "(none)",
+                    string.Join(",", headers.Select(h => h.Key)));
+            }
+
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
             {
                 PlaybackCommandExecutor.Apply(cmd, new WindowsPlaybackCommandHost(this));
@@ -331,9 +416,14 @@ namespace VardyParty.Platforms.Windows
 
                 public void SyncHealthyStreamCount() => session.pool.SyncHealthyStreamCount();
 
-                public void ReportFailed(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+                public void ReportFailed(string? reason) =>
+                    session._host._logger.LogInformation("Stream failed: {Reason}", reason ?? "Playback error");
 
-                public void ReportDeclined(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+                public void ReportDeclined(string? reason) =>
+                    session._host._logger.LogInformation("Stream declined: {Reason}", reason ?? "Health declined");
+
+                /// <summary>Short, accurate text (never the raw Media Foundation message).</summary>
+                public void ShowFailureToUser(string userText) => session.ShowStreamError(userText);
 
                 public void ReportWorking()
                 {
@@ -361,6 +451,9 @@ namespace VardyParty.Platforms.Windows
                 {
                     if (isRevert)
                         session._host._logger.LogWarning("Reverting to last good stream: {Url}", url);
+                    // Each row's CDN checks its own Referer: send the attached row's, never the
+                    // opening stream's (403 on Next, Windows log 13 Nov 2026 19:41:33).
+                    session.ApplyRequestContextForUrl(url);
                     _ = session.engine.AttachAsync(url, session._requestHeaders);
                 }
 
@@ -433,6 +526,24 @@ namespace VardyParty.Platforms.Windows
                 catch { }
             }
 
+            private void ApplyRequestContextForUrl(string url)
+            {
+                var context = PlaybackRowRequestContext.ForUrl(
+                    switchingService,
+                    url,
+                    new PlaybackRequestContext(_refererUrl, _requestHeaders));
+                if (!string.Equals(context.Referer, _refererUrl, StringComparison.Ordinal))
+                {
+                    _host._logger.LogInformation(
+                        "Playback Referer for {Host}: {Referer}",
+                        Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host : "(relative)",
+                        context.Referer);
+                }
+
+                _refererUrl = context.Referer;
+                _requestHeaders = context.Headers;
+            }
+
             private bool IsStaleAttach(int generation) =>
                 cleanupInvoked || generation != (int)session.Snapshot.AttachGeneration;
 
@@ -462,11 +573,14 @@ namespace VardyParty.Platforms.Windows
                     var managedHttp = _host._httpClientFactory.CreateClient(PlaybackHttpClients.Media);
                     var uri = new Uri(url);
                     var manifestToken = CurrentPlaybackDownloadToken;
+                    // This attach's headers: a later switch must not change an older source's.
+                    var referer = _refererUrl;
+                    var requestHeaders = _requestHeaders;
                     var created = await _host.CreateAdaptiveMediaSourceAsync(
                         managedHttp,
                         uri,
-                        _refererUrl,
-                        _requestHeaders,
+                        referer,
+                        requestHeaders,
                         manifestToken);
                     var adaptiveResult = created.Result;
                     var manifestStream = created.ManifestStream;
@@ -512,8 +626,10 @@ namespace VardyParty.Platforms.Windows
                                 managedRequest = new System.Net.Http.HttpRequestMessage(
                                     System.Net.Http.HttpMethod.Get,
                                     args.ResourceUri.ToString());
-                                ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
+                                ApplyManagedPlaybackHeaders(managedRequest, referer, requestHeaders);
                                 ApplyResourceByteRange(managedRequest, args);
+                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment && lastDownloadFailureStatus == 0)
+                                    LogSegmentHeadersOnce(args.ResourceUri, referer, requestHeaders);
 
                                 managedResponse = await managedHttp.SendAsync(
                                     managedRequest,
@@ -562,6 +678,7 @@ namespace VardyParty.Platforms.Windows
 
                                 args.Result.InputStream = winrtStream.GetInputStreamAt(0);
                                 args.Result.ContentType = contentType;
+                                lastDownloadFailureStatus = 0;
                                 session.NotifyDownloadSuccess();
                             }
                             catch (OperationCanceledException) when (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
@@ -581,10 +698,11 @@ namespace VardyParty.Platforms.Windows
                                     statusCode,
                                     args.ResourceUri);
 
+                                lastDownloadFailureStatus = statusCode;
                                 var failureMessage =
                                     $"Segment download failed ({args.ResourceType}, status={statusCode})";
                                 var downloadCmd = PlaybackCommand.FromEffects(
-                                    session.NotifyDownloadFailure(failureMessage));
+                                    session.NotifyDownloadFailure(failureMessage, statusCode));
                                 if (!downloadCmd.IsNoOp)
                                 {
                                     MainThread.BeginInvokeOnMainThread(() =>
@@ -604,11 +722,13 @@ namespace VardyParty.Platforms.Windows
 
                                 try
                                 {
-                                    args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
+                                    // A failure HRESULT (HTTP_E_STATUS_*), not the bare HTTP status:
+                                    // WinRT threw "The parameter is incorrect" for 403 on 13 Nov.
+                                    args.Result.ExtendedStatus = PlaybackPolicy.WindowsDownloadFailureStatus(statusCode);
                                 }
                                 catch (Exception statusEx)
                                 {
-                                    _host._logger.LogWarning(statusEx, "Failed to set download extended status");
+                                    _host._logger.LogDebug(statusEx, "Failed to set download extended status");
                                 }
                             }
                             finally
@@ -637,6 +757,7 @@ namespace VardyParty.Platforms.Windows
                                 if (IsStaleAttach(generation))
                                     return;
 
+                                ArmReadyOnPlaying();
                                 mediaPlayer.Source = playbackItem;
                                 _host._currentPlaybackItem = playbackItem;
 
@@ -655,11 +776,10 @@ namespace VardyParty.Platforms.Windows
                                 }
 
                                 currentPlaybackUrl = url;
-                                // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
-                                // MediaPlaybackItem is assigned (before sustained play). Reset only in
-                                // AttachViaSession (intentional switch/start). Network-only recoverable
-                                // classification + this counter keeps MaxLiveHlsRecoveries effective.
-                                engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
+                                // Do NOT zero liveHlsRecoveries here. Reset only in AttachViaSession
+                                // (intentional switch/start). Network-only recoverable classification +
+                                // this counter keeps MaxLiveHlsRecoveries effective.
+                                // Ready waits for the picture (PlaybackState Playing): see ArmReadyOnPlaying.
 
                                 // Ensure the grid is visible and hit testable
                                 if (playerGrid is { } overlay)

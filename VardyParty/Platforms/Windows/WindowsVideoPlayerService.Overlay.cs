@@ -86,8 +86,10 @@ namespace VardyParty.Platforms.Windows
             {
                 infoGameTitleText.Text = model.Title ?? string.Empty;
                 infoStatusText.Text = PlayerChromeText.FormatStatusLine(model, whileSwitching);
-                infoStreamIndexText.Text = PlayerChromeText.FormatStreamIndexLine(model);
-                infoStreamIndexText.Visibility = string.IsNullOrEmpty(infoStreamIndexText.Text)
+
+                var indexText = PlayerChromeText.FormatStreamIdentityIndex(model);
+                infoStreamIndexText.Text = indexText;
+                infoStreamIndexText.Visibility = string.IsNullOrEmpty(indexText)
                     ? Microsoft.UI.Xaml.Visibility.Collapsed
                     : Microsoft.UI.Xaml.Visibility.Visible;
 
@@ -106,7 +108,20 @@ namespace VardyParty.Platforms.Windows
                     infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 }
 
-                infoQualityText.Text = whileSwitching ? string.Empty : (model.Quality ?? string.Empty);
+                var suffix = PlayerChromeText.FormatStreamIdentitySuffix(model, whileSwitching);
+                infoIdentitySuffixText.Text = suffix;
+                infoIdentitySuffixText.Visibility = string.IsNullOrEmpty(suffix)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
+
+                var identityVisible = infoStreamIndexText.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                    || infoSourceBadge.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                    || infoIdentitySuffixText.Visibility == Microsoft.UI.Xaml.Visibility.Visible;
+                infoIdentityRow.Visibility = identityVisible
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                infoQualityText.Text = PlayerChromeText.FormatQualityLine(model, whileSwitching);
                 infoQualityText.Visibility = string.IsNullOrEmpty(infoQualityText.Text)
                     ? Microsoft.UI.Xaml.Visibility.Collapsed
                     : Microsoft.UI.Xaml.Visibility.Visible;
@@ -139,6 +154,9 @@ namespace VardyParty.Platforms.Windows
                         infoStreamIndexText.Text = string.Empty;
                         infoStreamIndexText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoIdentitySuffixText.Text = string.Empty;
+                        infoIdentitySuffixText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoIdentityRow.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoQualityText.Text = string.Empty;
                         infoQualityText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoDetailText.Text = string.Empty;

@@ -165,6 +165,39 @@ public class StreamSelectionCoordinatorTests
     }
 
     [Fact]
+    public async Task InitializeAsync_RecommendedFb_ThenMp_ThenFbRemainder_IsTryOrder()
+    {
+        // Arrange
+        var streams = new List<StreamModel>
+        {
+            Fb("https://streams.example.com/alpha", "Channel Alpha"),
+            Fb("https://streams.example.com/bravo", "Channel Bravo"),
+            Mp("https://mpoutqn.example.com/east", "Channel East"),
+            Fb("https://streams.example.com/northgate", "Channel North")
+        };
+        var game = MatchGame();
+        SetupCatalog(streams);
+        _fixture.GetMock<IStreamHealthService>()
+            .Setup(h => h.GetRecommendationsAsync(
+                game.ApiLeague,
+                game.Home,
+                game.Away,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Recs(
+                RecommendationConfidence.Low,
+                RecItem("https://streams.example.com/northgate", RecommendationConfidence.Low)));
+        var sut = _fixture.Create<StreamSelectionCoordinator>();
+
+        // Act
+        await sut.InitializeAsync(game);
+
+        // Assert
+        Assert.Equal(
+            ["Channel North", "Channel East", "Channel Alpha", "Channel Bravo"],
+            sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList());
+    }
+
+    [Fact]
     public async Task InitializeAsync_HighThenLowThenUnbadgedRemainder_IsTryOrder()
     {
         // Arrange
@@ -301,8 +334,9 @@ public class StreamSelectionCoordinatorTests
         // Act
         await sut.InitializeAsync(game);
 
-        // Assert — all sources kept; order is a rotate of catalog indexes (salt random)
+        // Assert — all sources kept; MP first, FB rows rotated (salt random)
         var channels = sut.GetOrderedCandidates().Select(c => c.Stream.Channel).ToList();
+        Assert.Equal("Channel East", channels[0]);
         Assert.Equal(
             new HashSet<string> { "Channel East", "Channel North", "Channel South" },
             channels.ToHashSet());

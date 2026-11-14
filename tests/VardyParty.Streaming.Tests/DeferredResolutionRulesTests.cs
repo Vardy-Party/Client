@@ -176,6 +176,9 @@ public class DeferredResolutionRulesTests
                 It.IsAny<StreamHealthReport>(), It.IsAny<CancellationToken>()))
             .Callback<string, string, string, StreamHealthReport, CancellationToken>((_, _, _, r, _) => { lock (reports) reports.Add(r); })
             .Returns(Task.CompletedTask);
+        // The player opens and plays (explicit: an auto-generated result would make
+        // Success depend on how many booleans the fixture handed out before).
+        _fixture.Inject(PlaybackResult.SuccessResult("played"));
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.DelayAsync = (_, _) => Task.CompletedTask;
 

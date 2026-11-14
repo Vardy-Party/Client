@@ -3,22 +3,99 @@ using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 
+/// <summary>How the unlabeled seed wait of an <see cref="MpHarvestSession"/> answers.</summary>
+public enum MpSeedMode
+{
+    /// <summary>
+    /// Rules 5-7: the chip list (or the first chip) releases the seed with every label,
+    /// and no waiter holds out more than <see cref="MpHarvestSession.ProbeReadyWait"/>
+    /// for probe-ready segments or for a stalled harvest. The LAN resolver queues each
+    /// chip as a row.
+    /// </summary>
+    ChipList,
+
+    /// <summary>
+    /// The seed waits for a probe-ready chip and is null when the harvest ends without
+    /// one; no deadlines. For callers that read an empty URL as a miss (remote compute).
+    /// </summary>
+    ProbeReadyOnly
+}
+
 /// <summary>
-/// Collects streamed <c>/mp</c> chip events so the first playlist can return
-/// while later labels wait on the same Chrome session.
+/// Collects streamed <c>/mp</c> chip events so the seed can return as soon as the page
+/// lists its chips while later labels wait on the same Chrome session
+/// (docs/PROBE_SCHEDULING_RULES.md rules 5-7).
 /// </summary>
 public sealed class MpHarvestSession
 {
+    /// <summary>Default for <see cref="ProbeReadyWait"/> (rule 7).</summary>
+    public static readonly TimeSpan DefaultProbeReadyWait = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How long a finished, fault-free harvest keeps answering for its page from its
+    /// own verdicts (a cached miss, or null for a label it never sent) instead of a new
+    /// <c>POST /mp</c>. Long enough for one resolution pass to drain its chip rows;
+    /// short enough that a later tap asks LocalService again.
+    /// </summary>
+    public static readonly TimeSpan VerdictMemory = TimeSpan.FromSeconds(60);
+
     private readonly ConcurrentDictionary<string, M3U8Response> _byLabel = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<M3U8Response?>> _waiters = new(StringComparer.OrdinalIgnoreCase);
-    private readonly TaskCompletionSource<M3U8Response?> _firstChip = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _cachedAt = new(StringComparer.OrdinalIgnoreCase);
     private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _listed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _gate = new();
+    private readonly TimeProvider _time;
+    private readonly DateTimeOffset _startedAt;
+    private readonly List<ITimer> _wakeTimers = [];
+    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private List<string> _streams = [];
+    private M3U8Response? _seed;
     private string? _error;
     private LocalServiceUnavailableException? _fault;
-    private bool _done;
-    private bool _cancelled;
+    private DateTimeOffset _lastProgressAt;
+    private DateTimeOffset? _completedAt;
+    private ITimer? _stallTimer;
+    private volatile bool _done;
+    private volatile bool _cancelled;
+    private bool _legacy;
+    private readonly bool _chipListSeed;
+    private readonly Func<bool>? _handOverPlaylistOnlyNow;
+    // Rule 7 early-chip retry (Jon, 13 Nov 2026): chips handed over early because no backup
+    // existed, the time each retried chip is due, and how each label was last handed over.
+    private readonly ConcurrentDictionary<string, bool> _handedEarly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _handover = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ITimer> _retryTimers = [];
+
+    /// <param name="time">The clock.</param>
+    /// <param name="mode">How the seed answers.</param>
+    /// <param name="probeReadyWait">Overrides <see cref="DefaultProbeReadyWait"/>.</param>
+    /// <param name="handOverPlaylistOnlyNow">
+    /// True while a playlist-only chip should be handed over at once instead of after
+    /// <see cref="ProbeReadyWait"/> (rule 7, Jon 13 Nov 2026: while no backup exists).
+    /// </param>
+    public MpHarvestSession(
+        TimeProvider? time = null,
+        MpSeedMode mode = MpSeedMode.ChipList,
+        TimeSpan? probeReadyWait = null,
+        Func<bool>? handOverPlaylistOnlyNow = null)
+    {
+        _handOverPlaylistOnlyNow = handOverPlaylistOnlyNow;
+        _time = time ?? TimeProvider.System;
+        _startedAt = _time.GetUtcNow();
+        _lastProgressAt = _startedAt;
+        _chipListSeed = mode == MpSeedMode.ChipList;
+        _legacy = !_chipListSeed;
+        ProbeReadyWait = probeReadyWait ?? DefaultProbeReadyWait;
+    }
+
+    /// <summary>
+    /// Longest a waiter holds out (rule 7): the seed counts from the POST; a chip that
+    /// only has a playlist counts from its playlist line; a listed chip LocalService has
+    /// not sent counts from the harvest's last line (chips event or chip), so a harvest
+    /// that makes no progress for this long is treated as stalled (infrastructure).
+    /// </summary>
+    public TimeSpan ProbeReadyWait { get; }
 
     public IReadOnlyList<string> Streams
     {
@@ -42,18 +119,120 @@ public sealed class MpHarvestSession
 
     public bool IsCompleted => _completed.Task.IsCompleted;
 
+    public bool IsCancelled => _cancelled;
+
     public bool HasPlaylist => _byLabel.Values.Any(r => !string.IsNullOrWhiteSpace(r.Url));
 
     /// <summary>
-    /// Keep one Chrome harvest for the same page while it is still running or
-    /// already has a playlist. A completed miss must not block the next tap.
+    /// Keep one Chrome harvest for the same page while it is still running, already
+    /// has a playlist, or finished fault-free less than <see cref="VerdictMemory"/>
+    /// ago (its chips are verdicts: no re-POST per chip). An older completed miss must
+    /// not block the next tap.
     /// </summary>
     public bool CanReuseFor(string? page, string streamUrl) =>
         !_cancelled
         && string.Equals(page, streamUrl, StringComparison.OrdinalIgnoreCase)
-        && (!IsCompleted || HasPlaylist);
+        && (!IsCompleted || (HasPlaylist && (_fault is null || WithinVerdictMemory)) || AnswersFromVerdicts);
 
     public Task WhenCompleted => _completed.Task;
+
+    /// <summary>
+    /// Completes once LocalService has listed the page's chips (or sent a first chip),
+    /// or the harvest ended. <c>LocalLanPlayService</c> holds its throttle slot until
+    /// then (rule 2).
+    /// </summary>
+    public Task Listed => _listed.Task;
+
+    /// <summary>Completes on the next chip event, completion, failure, cancel or deadline.</summary>
+    public Task Changed
+    {
+        get
+        {
+            lock (_gate)
+                return _changed.Task;
+        }
+    }
+
+    /// <summary>
+    /// A labeled wait for <paramref name="label"/> would answer now with something to
+    /// probe or a verdict: a probe-ready playlist, a miss, a playlist-only chip past its
+    /// deadline, or a finished harvest. The resolver starts an MP chip row only when
+    /// this is true while its page's harvest runs (rule 7), and may do so in the
+    /// priority window (rule 11). A listed chip LocalService has not sent is not ready
+    /// even once the harvest has been silent for <see cref="ProbeReadyWait"/>: the row
+    /// stays queued (outside the MP lane) and is woken by <see cref="Changed"/> when the
+    /// chip arrives or the harvest ends, instead of being Deferred by the stall deadline
+    /// and missing a chip that arrives later. The stall deadline still bounds a caller
+    /// that waits directly (<see cref="WaitForAsync"/> throws).
+    /// </summary>
+    public bool IsChipReady(string? label)
+    {
+        if (_cancelled || string.IsNullOrWhiteSpace(label))
+            return false;
+        var key = label.Trim();
+        if (_byLabel.TryGetValue(key, out var cached) && _retryAt.TryGetValue(key, out var retryAt))
+            return IsReadyForWaiter(cached) || _time.GetUtcNow() >= retryAt;
+        if (_done)
+            return true;
+        if (cached is not null)
+            return IsReadyForWaiter(cached) || PlaylistWaitOver(key);
+        return false;
+    }
+
+    /// <summary>
+    /// Rule 7 early-chip retry (Jon, 13 Nov 2026: "Give an early playlist chip that fails one
+    /// more try before marking it dead"; the delay is configurable, 10s by default). A chip
+    /// this harvest handed over early, because no backup existed, failed its health check:
+    /// it is handed over once more <paramref name="delay"/> from now, or sooner if its
+    /// probe-ready line arrives, even if the harvest has ended meanwhile. True when the retry
+    /// is scheduled; false for a chip that was not handed over early or was already retried
+    /// (its verdict stands). Nothing is held while the retry waits.
+    /// </summary>
+    public bool RetryEarlyChip(string? label, TimeSpan delay)
+    {
+        if (_cancelled || !_chipListSeed || string.IsNullOrWhiteSpace(label))
+            return false;
+        var key = label.Trim();
+        if (!_handedEarly.ContainsKey(key) || !_byLabel.ContainsKey(key))
+            return false;
+        if (delay < TimeSpan.Zero)
+            delay = TimeSpan.Zero;
+        if (!_retryAt.TryAdd(key, _time.GetUtcNow() + delay))
+            return false;
+        lock (_gate)
+            _retryTimers.Add(_time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, delay, Timeout.InfiniteTimeSpan));
+        Signal();
+        return true;
+    }
+
+    /// <summary>
+    /// How the last labeled wait for <paramref name="label"/> was answered, for the
+    /// <c>[probe-timing]</c> log: <c>probe-ready</c>, <c>early</c> (playlist-only, no backup),
+    /// <c>playlist-wait</c> (playlist-only after <see cref="ProbeReadyWait"/>),
+    /// <c>harvest-end</c>, or <c>retry</c> (the early-chip retry). Null before any answer.
+    /// </summary>
+    public string? HandoverOf(string? label) =>
+        !string.IsNullOrWhiteSpace(label) && _handover.TryGetValue(label.Trim(), out var kind) ? kind : null;
+
+    /// <summary>
+    /// The early-chip retry for <paramref name="label"/> is scheduled and not due yet: a
+    /// resolve now would only wait, so the row must stay queued (out of the MP lane).
+    /// </summary>
+    public bool IsRetryWaiting(string? label)
+    {
+        if (_cancelled || string.IsNullOrWhiteSpace(label))
+            return false;
+        var key = label.Trim();
+        return _retryAt.TryGetValue(key, out var retryAt)
+               && _time.GetUtcNow() < retryAt
+               && !(_byLabel.TryGetValue(key, out var cached) && IsReadyForWaiter(cached));
+    }
+
+    private M3U8Response? Handed(string key, string kind, M3U8Response? response)
+    {
+        _handover[key] = _retryAt.ContainsKey(key) ? "retry" : kind;
+        return response;
+    }
 
     public void Apply(MpPlayEvent ev)
     {
@@ -65,9 +244,17 @@ public sealed class MpHarvestSession
                     if (ev.Streams is { Count: > 0 })
                     {
                         _streams = ev.Streams.ToList();
+                        // Rule 5: the chip list releases the seed; every listed chip
+                        // becomes its own row while the harvest carries on.
+                        if (!_legacy)
+                            _seed ??= ChipList(null);
+                        Progress();
                     }
                 }
 
+                if (ev.Streams is { Count: > 0 })
+                    _listed.TrySetResult();
+                Signal();
                 break;
 
             case "chip":
@@ -80,26 +267,33 @@ public sealed class MpHarvestSession
                 var label = response.SelectedStream ?? ev.Label ?? "";
                 if (!string.IsNullOrWhiteSpace(label))
                 {
-                    _byLabel[label] = response;
-                    // Named sibling waits need rewritten segment samples for MP
-                    // health. ReleaseChipThenSoak emits playlist-first then an
-                    // enriched line — do not complete labeled waiters on the
-                    // early line or siblings fail health and never reach the UI.
-                    if (IsReadyForWaiter(response)
-                        && _waiters.TryRemove(label, out var waiter))
+                    var key = label.Trim();
+                    _byLabel[key] = response;
+                    if (!string.IsNullOrWhiteSpace(response.Url) && !_cachedAt.ContainsKey(key))
                     {
-                        waiter.TrySetResult(response);
+                        _cachedAt[key] = _time.GetUtcNow();
+                        // A playlist-only chip turns ready ProbeReadyWait later: wake the
+                        // resolver then, not on the next unrelated line (rule 7).
+                        if (!MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
+                            ScheduleWake(ProbeReadyWait);
                     }
                 }
 
-                // Seed wait needs probe-ready rewritten segments only — an
-                // empty-URL miss must not finish catalog fan-out while another
-                // chip may still be soaking. Complete() unblocks with null.
-                if (MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
+                lock (_gate)
                 {
-                    _firstChip.TrySetResult(response);
+                    // A probe-ready chip can seed directly. Otherwise the first chip
+                    // releases the seed as a chip list (rule 5) - an empty-URL miss
+                    // or a playlist still soaking is never the seed's verdict.
+                    if (MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
+                        _seed ??= response;
+                    else if (!_legacy && !string.IsNullOrWhiteSpace(label))
+                        _seed ??= ChipList(label.Trim());
+                    Progress();
                 }
 
+                if (!string.IsNullOrWhiteSpace(label) || !string.IsNullOrWhiteSpace(response.Url))
+                    _listed.TrySetResult();
+                Signal();
                 break;
 
             case "error":
@@ -128,6 +322,9 @@ public sealed class MpHarvestSession
 
     public void ApplyLegacy(M3U8Response result)
     {
+        lock (_gate)
+            _legacy = true;
+
         if (result.Streams is { Count: > 0 })
         {
             Apply(new MpPlayEvent { Type = "chips", Streams = result.Streams, SelectedStream = result.SelectedStream });
@@ -149,75 +346,138 @@ public sealed class MpHarvestSession
         Complete(failed: string.IsNullOrWhiteSpace(result.Url));
     }
 
+    /// <summary>
+    /// <paramref name="label"/> null is the seed: it answers with the first probe-ready
+    /// chip, or with a chip list (no URL) once LocalService lists chips or sends its
+    /// first chip, or with whatever the harvest has after <see cref="ProbeReadyWait"/>.
+    /// A finished harvest with no playlist at all answers the seed with null: every
+    /// chip already has its verdict, so queueing them would only re-ask (rule 6).
+    /// A label answers with its playlist once it is probe-ready, once the harvest ends,
+    /// or <see cref="ProbeReadyWait"/> after its playlist-only line arrived. A label
+    /// LocalService has not sent throws a retryable <see cref="LocalServiceUnavailableException"/>
+    /// once the harvest has made no progress for <see cref="ProbeReadyWait"/> (rule 7:
+    /// Deferred, never Failed).
+    /// </summary>
     public async Task<M3U8Response?> WaitForAsync(string? label, CancellationToken cancellationToken)
     {
         ThrowIfCancelled(cancellationToken);
-
-        if (string.IsNullOrWhiteSpace(label))
+        var key = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
+        // A waiter that joins a running harvest gets its own ProbeReadyWait before the
+        // stall deadline can fail it: "sent nothing for 30s" must be true for this waiter,
+        // never an instant replay of a silence that happened before it asked (TV log
+        // 13 Nov 2026, 18:41:08: NW IT and TD Arabic failed within 1ms).
+        var joinedAt = _time.GetUtcNow();
+        while (true)
         {
-            return await _firstChip.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var key = label.Trim();
-        if (_byLabel.TryGetValue(key, out var cached) && IsReadyForWaiter(cached))
-        {
-            return cached;
-        }
-
-        if (_done)
-        {
+            var changed = Changed;
             ThrowIfCancelled(cancellationToken);
-            if (_byLabel.TryGetValue(key, out var late))
-                return late;
-            if (_fault is not null)
-                throw _fault;
-            return null;
-        }
 
-        var waiter = _waiters.GetOrAdd(
-            key,
-            _ => new TaskCompletionSource<M3U8Response?>(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (_byLabel.TryGetValue(key, out cached) && IsReadyForWaiter(cached))
-        {
-            waiter.TrySetResult(cached);
-        }
-        else if (_cancelled)
-        {
-            waiter.TrySetCanceled(cancellationToken);
-        }
-        else if (_done)
-        {
-            if (_byLabel.TryGetValue(key, out var afterClear))
-                waiter.TrySetResult(afterClear);
-            else if (_fault is not null)
-                waiter.TrySetException(_fault);
+            TimeSpan wait;
+            if (key is null)
+            {
+                // A probe-ready chip beats a bare chip list when both are in by now,
+                // and a harvest that already failed is the seed's answer, not a list
+                // of chips that would each hit the same fault.
+                if (FirstProbeReady() is { } ready)
+                    return ready;
+                if (_done && _fault is not null)
+                    throw FaultForWaiter();
+                if (_done && _chipListSeed && !HasPlaylist)
+                    return null;
+
+                lock (_gate)
+                {
+                    if (_seed is not null)
+                        return _seed;
+                }
+
+                if (_done)
+                    return _chipListSeed ? SeedFallback() : null;
+
+                wait = _chipListSeed ? ProbeReadyWait - (_time.GetUtcNow() - _startedAt) : Timeout.InfiniteTimeSpan;
+                if (_chipListSeed && wait <= TimeSpan.Zero)
+                    return SeedFallback() ?? throw SeedTimedOut();
+            }
             else
-                waiter.TrySetResult(null);
-        }
+            {
+                _byLabel.TryGetValue(key, out var cached);
+                if (cached is not null && IsReadyForWaiter(cached))
+                    return Handed(key, string.IsNullOrWhiteSpace(cached.Url) ? "miss" : "probe-ready", cached);
+                if (cached is not null && _retryAt.TryGetValue(key, out var retryAt))
+                {
+                    // The early-chip retry waits for its own time, even after the harvest ended.
+                    wait = retryAt - _time.GetUtcNow();
+                    if (wait <= TimeSpan.Zero)
+                        return Handed(key, "retry", cached);
+                }
+                else if (_done)
+                {
+                    if (cached is not null)
+                        return Handed(key, "harvest-end", cached);
+                    if (_fault is not null)
+                        throw FaultForWaiter();
+                    return null;
+                }
+                else
+                {
+                    wait = Timeout.InfiniteTimeSpan;
+                    if (_chipListSeed && cached is not null && _cachedAt.TryGetValue(key, out var at))
+                    {
+                        wait = ProbeReadyWait - (_time.GetUtcNow() - at);
+                        if (wait <= TimeSpan.Zero)
+                            return Handed(key, "playlist-wait", cached);
+                        if (HandOverPlaylistOnlyNow)
+                        {
+                            // Handed over early (no backup): a failed check gets one retry.
+                            _handedEarly[key] = true;
+                            return Handed(key, "early", cached);
+                        }
+                    }
+                    else if (_chipListSeed && cached is null)
+                    {
+                        var lastProgress = LastProgressAt;
+                        var silentSince = lastProgress > joinedAt ? lastProgress : joinedAt;
+                        wait = ProbeReadyWait - (_time.GetUtcNow() - silentSince);
+                        if (wait <= TimeSpan.Zero)
+                            throw ChipTimedOut(key);
+                    }
+                }
+            }
 
-        return await waiter.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await changed.WaitAsync(wait, _time, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Deadline reached: the loop answers with what the harvest has.
+            }
+        }
     }
 
     /// <summary>
-    /// Caller cancelled the harvest. Waiters throw instead of observing a
-    /// failed playlist, so the caller does not invalidate discovery.
+    /// The harvest was cancelled (every caller that wanted it went away). Waiters throw
+    /// instead of observing a failed playlist, so the caller does not invalidate discovery.
     /// </summary>
     public void Cancel()
     {
         _cancelled = true;
         _done = true;
-        _firstChip.TrySetCanceled();
-        foreach (var waiter in _waiters.Values)
+        List<ITimer> retryTimers;
+        lock (_gate)
         {
-            waiter.TrySetCanceled();
+            retryTimers = _retryTimers.ToList();
+            _retryTimers.Clear();
         }
 
-        _waiters.Clear();
-        _completed.TrySetResult();
+        foreach (var timer in retryTimers)
+            timer.Dispose();
+        MarkCompleted();
     }
 
     private void ThrowIfCancelled(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_cancelled)
             throw new OperationCanceledException(cancellationToken);
     }
@@ -230,20 +490,7 @@ public sealed class MpHarvestSession
         }
 
         _done = true;
-        if (!_firstChip.Task.IsCompleted)
-        {
-            _firstChip.TrySetResult(null);
-        }
-
-        foreach (var pair in _waiters)
-        {
-            // Prefer any playlist-only cache over null when soak never enriched.
-            pair.Value.TrySetResult(
-                _byLabel.TryGetValue(pair.Key, out var cached) ? cached : null);
-        }
-
-        _waiters.Clear();
-        _completed.TrySetResult();
+        MarkCompleted();
     }
 
     /// <summary>
@@ -261,29 +508,169 @@ public sealed class MpHarvestSession
         _fault = fault;
         _error = fault.Message;
         _done = true;
-        if (_firstChip.TrySetException(fault))
+        MarkCompleted();
+    }
+
+    private void MarkCompleted()
+    {
+        List<ITimer> timers;
+        lock (_gate)
         {
-            // Nobody may be waiting on the seed; observe it so the fault is not
-            // raised as an unobserved task exception.
-            _ = _firstChip.Task.Exception;
+            _completedAt ??= _time.GetUtcNow();
+            timers = _wakeTimers.ToList();
+            _wakeTimers.Clear();
+            if (_stallTimer is not null)
+                timers.Add(_stallTimer);
+            _stallTimer = null;
         }
 
-        foreach (var pair in _waiters)
-        {
-            if (_byLabel.TryGetValue(pair.Key, out var cached))
-                pair.Value.TrySetResult(cached);
-            else
-                pair.Value.TrySetException(fault);
-        }
-
-        _waiters.Clear();
+        foreach (var timer in timers)
+            timer.Dispose();
         _completed.TrySetResult();
+        _listed.TrySetResult();
+        Signal();
+    }
+
+    private void Signal()
+    {
+        TaskCompletionSource old;
+        lock (_gate)
+        {
+            old = _changed;
+            _changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        old.TrySetResult();
+    }
+
+    /// <summary>A harvest line arrived: restart the stall clock (caller holds <see cref="_gate"/>).</summary>
+    private void Progress()
+    {
+        _lastProgressAt = _time.GetUtcNow();
+        if (!_chipListSeed || _done)
+            return;
+        _stallTimer?.Dispose();
+        _stallTimer = _time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, ProbeReadyWait, Timeout.InfiniteTimeSpan);
+    }
+
+    private void ScheduleWake(TimeSpan due)
+    {
+        if (!_chipListSeed)
+            return;
+        lock (_gate)
+        {
+            if (_done)
+                return;
+            _wakeTimers.Add(_time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, due, Timeout.InfiniteTimeSpan));
+        }
+    }
+
+    private DateTimeOffset LastProgressAt
+    {
+        get
+        {
+            lock (_gate)
+                return _lastProgressAt;
+        }
+    }
+
+    private bool AnswersFromVerdicts => _chipListSeed && _fault is null && WithinVerdictMemory;
+
+    private bool WithinVerdictMemory => _completedAt is { } at && _time.GetUtcNow() - at < VerdictMemory;
+
+    /// <summary>
+    /// The fault for a waiter on a finished harvest. While the harvest is reused for
+    /// its page (it has a playlist), asking again at once would only replay this
+    /// fault, so the row goes straight to Deferred and the orchestrator's re-queue asks
+    /// again later; with no playlist the harvest is not reused and a retry re-POSTs.
+    /// </summary>
+    private LocalServiceUnavailableException FaultForWaiter()
+    {
+        var fault = _fault!;
+        return HasPlaylist
+            ? new LocalServiceUnavailableException(fault.Reason, fault.Message, fault) { FromFinishedHarvest = true }
+            : fault;
+    }
+
+    private M3U8Response? FirstProbeReady()
+    {
+        lock (_gate)
+        {
+            if (_seed is not null && MpRewrittenSegment.HasProbeReady(_seed.RewrittenSegments))
+                return _seed;
+        }
+
+        foreach (var label in Streams)
+        {
+            if (_byLabel.TryGetValue(label, out var r) && MpRewrittenSegment.HasProbeReady(r.RewrittenSegments))
+                return r;
+        }
+
+        return _byLabel.Values.FirstOrDefault(r => MpRewrittenSegment.HasProbeReady(r.RewrittenSegments));
+    }
+
+    private bool PlaylistWaitOver(string key) =>
+        _chipListSeed
+        && _cachedAt.TryGetValue(key, out var at)
+        && (HandOverPlaylistOnlyNow || _time.GetUtcNow() - at >= ProbeReadyWait);
+
+    /// <summary>Rule 7: while no backup exists a playlist-only chip is handed over at once.</summary>
+    private bool HandOverPlaylistOnlyNow => _handOverPlaylistOnlyNow?.Invoke() == true;
+
+    /// <summary>
+    /// Seed deadline passed with nothing listed while the harvest still runs: we know
+    /// nothing about the page yet, so it is infrastructure (the row is retried, then
+    /// Deferred and re-queued, and the next ask picks up the chip list), never a miss.
+    /// </summary>
+    private LocalServiceUnavailableException SeedTimedOut() =>
+        new(LocalServiceUnavailableReason.CallTimeout,
+            $"POST /mp listed no chip within {ProbeReadyWait.TotalSeconds:F0}s");
+
+    /// <summary>
+    /// A label LocalService has not sent while the harvest made no progress for
+    /// <see cref="ProbeReadyWait"/>: the harvest is stalled, which says nothing about
+    /// the chip, so the row is retried, then Deferred (rule 7, rule 13).
+    /// </summary>
+    private LocalServiceUnavailableException ChipTimedOut(string label) =>
+        new(LocalServiceUnavailableReason.CallTimeout,
+            $"POST /mp sent nothing for {ProbeReadyWait.TotalSeconds:F0}s; chip {label} not harvested yet");
+
+    /// <summary>Seed answer once the harvest is over or the seed deadline passed (rule 6).</summary>
+    private M3U8Response? SeedFallback()
+    {
+        lock (_gate)
+        {
+            if (_seed is not null)
+                return _seed;
+        }
+
+        if (Streams.Count == 0)
+            return null;
+
+        // Prefer a chip that already has a playlist as the first row.
+        var withPlaylist = Streams.FirstOrDefault(s =>
+            _byLabel.TryGetValue(s, out var r) && !string.IsNullOrWhiteSpace(r.Url));
+        lock (_gate)
+            return ChipList(withPlaylist);
+    }
+
+    /// <summary>A seed answer with no URL: the page's chips, each to be queued as its own row.</summary>
+    private M3U8Response ChipList(string? first)
+    {
+        var streams = _streams.Count > 0 ? _streams.ToList() : first is null ? [] : [first];
+        return new M3U8Response
+        {
+            Url = "",
+            Streams = streams,
+            SelectedStream = first
+        };
     }
 
     /// <summary>
     /// Named waiters accept a definitive miss (no URL) or a playlist that
-    /// already carries probe-shaped rewritten segment samples. Seed
-    /// (<c>_firstChip</c>) uses <see cref="MpRewrittenSegment.HasProbeReady"/> only.
+    /// already carries probe-shaped rewritten segment samples (ReleaseChipThenSoak
+    /// emits playlist-first then an enriched line - answering on the early line
+    /// fails sibling health), unless <see cref="ProbeReadyWait"/> has passed.
     /// </summary>
     private static bool IsReadyForWaiter(M3U8Response response) =>
         string.IsNullOrWhiteSpace(response.Url)

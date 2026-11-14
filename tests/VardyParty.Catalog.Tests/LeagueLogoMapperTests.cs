@@ -77,6 +77,7 @@ namespace VardyParty.Catalog.Tests
         [InlineData("Brazil Cup", "/images/leagues/Copa_do_Brasil_logo_2018.svg")]
         [InlineData("Copa do Brasil", "/images/leagues/Copa_do_Brasil_logo_2018.svg")]
         [InlineData("Copa Brasil", "/images/leagues/Copa_do_Brasil_logo_2018.svg")]
+        [InlineData("Copa del Rey", "/images/leagues/copa-del-rey-logo-brandlogos.net_m45f1l7mv.svg")]
         [InlineData("Slovak Nike League", "/images/leagues/nike-liga.svg")]
         [InlineData("Niké Liga", "/images/leagues/nike-liga.svg")]
         [InlineData("Nike Liga", "/images/leagues/nike-liga.svg")]

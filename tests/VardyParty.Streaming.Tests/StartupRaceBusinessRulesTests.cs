@@ -200,6 +200,69 @@ public class StartupRaceBusinessRulesTests
         await start.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task Rule_StartRowWithReusableProbedLink_PlaysItWithoutASecondPlay()
+    {
+        // Arrange — rule 12: a Referer soak row the probe just resolved plays that link;
+        // no fresh /play, no wait for other probes.
+        const string probed = "https://cdn.example.com/live/north-probed.m3u8";
+        var first = Soak("north");
+        first.ResolvedM3U8Url = probed;
+        Candidates(first);
+        ResolverYields(_ => Yield(first));
+        var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var player = Player((url, _) =>
+        {
+            played.TrySetResult(url);
+            return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        });
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var start = sut.StartAsync(_game, player.Object);
+        var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(probed, url);
+        _fixture.GetMock<IApiService>().Verify(a => a.GetM3U8UrlAsync(
+                first.Stream.Url, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Rule_SingleUseStartRow_FreshPlayBeforeOpening()
+    {
+        // Arrange — a cookie-bound probe link is burned: one fresh /play, then open.
+        const string fresh = "https://cdn.example.com/live/north-fresh.m3u8";
+        var first = Soak("north");
+        first.ResolvedM3U8Url = "https://cdn.example.com/live/north-probed.m3u8";
+        first.RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl, ["Cookie"] = "session=north" };
+        Candidates(first);
+        FreshPlay(first, () => Task.FromResult<M3U8Response?>(new M3U8Response
+        {
+            Url = fresh,
+            RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl, ["Cookie"] = "session=north2" },
+        }));
+        _fixture.Inject<IRacePlaylistProbe>(new StubProbe(_ => PlaylistVideoVerdict.Video));
+        ResolverYields(_ => Yield(first));
+        var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var player = Player((url, _) =>
+        {
+            played.TrySetResult(url);
+            return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        });
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+
+        // Act
+        var start = sut.StartAsync(_game, player.Object);
+        var url = await played.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await start.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal(fresh, url);
+    }
+
     private EnrichedStream Soak(string name)
     {
         var stream = _fixture.Build<StreamModel>()
