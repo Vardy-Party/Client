@@ -369,11 +369,10 @@ public static class PlaybackUrlReusePolicy
     }
 
     /// <summary>
-    /// Backup order (docs/PROBE_SCHEDULING_RULES.md rule 11): up to <paramref name="depth"/>
-    /// pool rows other than <paramref name="current"/>, best tier first (High, then Medium,
-    /// then finding) and, within a tier, by channel number (the first to become playable).
-    /// Channel numbers do not change; only which row is the backup. With no
-    /// <paramref name="tierOf"/> this is <see cref="UpcomingInSwitchOrder"/>.
+    /// Best-tier order (High, then Medium, then finding; lowest channel number within a
+    /// tier). Not used for Next, auto-advance or prewarm — those use
+    /// <see cref="UpcomingInSwitchOrder"/>. With no <paramref name="tierOf"/> this is
+    /// <see cref="UpcomingInSwitchOrder"/>.
     /// </summary>
     public static IReadOnlyList<EnrichedStream> UpcomingInBackupOrder(
         IReadOnlyList<EnrichedStream> healthy,

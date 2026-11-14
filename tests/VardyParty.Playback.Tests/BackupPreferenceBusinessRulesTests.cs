@@ -8,11 +8,11 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Playback.Tests;
 
 /// <summary>
-/// Backup preference (docs/PROBE_SCHEDULING_RULES.md rule 11): while the start row (the
-/// first to play) plays, the backup - where Next and auto-advance go, and what the
-/// prewarmer warms first - is the second playable High row, then the first playable
-/// Medium row, then the first playable finding row, whatever the channel numbers. The
-/// numbers never change; from any other row Next walks them as before.
+/// Next, Previous and auto-advance walk channel numbers in order (with wrap),
+/// skipping only rows tried or failed this cycle (docs/PROBE_SCHEDULING_RULES.md
+/// rule 11; docs/STREAM_PLAYBACK_RULES.md). Tiers do not change switch order:
+/// they are for LocalService slot scheduling only. The prewarmer follows the
+/// same order (<see cref="StreamSwitchingService.GetUpcoming"/>).
 /// </summary>
 public class BackupPreferenceBusinessRulesTests
 {
@@ -45,9 +45,9 @@ public class BackupPreferenceBusinessRulesTests
         pool.GetHealthyStreams().Select(s => s.Stream.Channel!).ToList();
 
     [Fact]
-    public void Rule_NextFromTheStartRow_GoesToTheSecondHighAheadOfAnEarlierFindingRow()
+    public void Rule_NextFromTheStartRow_GoesToTheNextChannelEvenWhenAHighIsLater()
     {
-        // Arrange — #1 High plays; #2 is a finding row that turned playable first; #3 is High.
+        // Arrange — #1 High plays; #2 is a finding row; #3 is High.
         var h1 = Row("H1", StreamTier.High);
         var f1 = Row("F1");
         var h2 = Row("H2", StreamTier.High);
@@ -58,15 +58,15 @@ public class BackupPreferenceBusinessRulesTests
         var upcoming = pool.GetUpcoming(1);
         var switched = pool.SwitchToNextStream();
 
-        // Assert — Next lands on H2, and the channel numbers are unchanged.
-        Assert.Same(h2, upcoming.Single());
+        // Assert — Next lands on #2, and the channel numbers are unchanged.
+        Assert.Same(f1, upcoming.Single());
         Assert.True(switched);
-        Assert.Same(h2, pool.GetCurrentStream());
+        Assert.Same(f1, pool.GetCurrentStream());
         Assert.Equal(["H1", "F1", "H2"], Channels(pool));
     }
 
     [Fact]
-    public void Rule_ABetterTierRowThatTurnsPlayableLater_ReplacesAFindingBackup()
+    public void Rule_ALaterBetterTierRow_DoesNotReplaceTheNextChannel()
     {
         // Arrange
         var h1 = Row("H1", StreamTier.High);
@@ -80,35 +80,38 @@ public class BackupPreferenceBusinessRulesTests
         pool.AddHealthyStream(m1);
         var after = pool.GetNextHealthyStream();
 
-        // Assert
+        // Assert — auto-advance and GetUpcoming stay on #2, even after a Medium joins as #3.
         Assert.Same(f1, before);
-        Assert.Same(m1, after);
+        Assert.Same(f1, after);
+        Assert.Same(f1, pool.GetUpcoming(1).Single());
         Assert.Equal(["H1", "F1", "M1"], Channels(pool));
     }
 
     [Fact]
     public void Rule_FromAnyOtherRow_NextWalksChannelNumbers()
     {
-        // Arrange — after the first Next the user is on H2 (#3); Next wraps to #1 as before.
+        // Arrange
         var h1 = Row("H1", StreamTier.High);
         var f1 = Row("F1");
         var h2 = Row("H2", StreamTier.High);
         var pool = Pool(h1, f1, h2);
         pool.SetBackupPreference(h1, TierOf);
-        pool.SwitchToNextStream();
 
         // Act
+        pool.SwitchToNextStream();
+        var afterFirst = pool.GetCurrentStream();
         pool.SwitchToNextStream();
         var afterSecond = pool.GetCurrentStream();
         pool.SwitchToNextStream();
 
-        // Assert — H2 -> H1 (wrap) -> back on the start row, so the backup again: H2.
-        Assert.Same(h1, afterSecond);
-        Assert.Same(h2, pool.GetCurrentStream());
+        // Assert — H1 -> F1 -> H2 -> wrap to H1.
+        Assert.Same(f1, afterFirst);
+        Assert.Same(h2, afterSecond);
+        Assert.Same(h1, pool.GetCurrentStream());
     }
 
     [Fact]
-    public void Rule_ABackupSkippedThisCycle_IsPassedOverForTheNextBestTier()
+    public void Rule_ASkippedNextChannel_IsPassedOver()
     {
         // Arrange
         var h1 = Row("H1", StreamTier.High);
@@ -117,19 +120,19 @@ public class BackupPreferenceBusinessRulesTests
         var h2 = Row("H2", StreamTier.High);
         var pool = Pool(h1, f1, m1, h2);
         pool.SetBackupPreference(h1, TierOf);
-        pool.MarkTriedInCycle(h2, null, "No video (audio only)");
+        pool.MarkTriedInCycle(f1, null, "No video (audio only)");
 
         // Act
         pool.SwitchToNextStream();
 
-        // Assert
+        // Assert — #2 was tried this cycle, so Next goes to #3.
         Assert.Same(m1, pool.GetCurrentStream());
     }
 
     [Fact]
-    public void Rule_NoPreference_NextWalksChannelNumbers()
+    public void Rule_SetBackupPreference_DoesNotChangeSwitchOrder()
     {
-        // Arrange — no tiers (nothing recommended), or a new session.
+        // Arrange — calling SetBackupPreference must not make Next jump to a later High.
         var h1 = Row("H1", StreamTier.High);
         var f1 = Row("F1");
         var h2 = Row("H2", StreamTier.High);
@@ -139,6 +142,7 @@ public class BackupPreferenceBusinessRulesTests
         // Act
         var next = pool.GetNextHealthyStream();
         pool.SetBackupPreference(h1, TierOf);
+        var afterPreference = pool.GetNextHealthyStream();
         pool.Initialize("Premier League", "Home United", "Away City");
         pool.AddHealthyStream(h1);
         pool.AddHealthyStream(f1);
@@ -147,26 +151,46 @@ public class BackupPreferenceBusinessRulesTests
 
         // Assert
         Assert.Same(f1, next);
+        Assert.Same(f1, afterPreference);
         Assert.Same(f1, afterNewSession);
     }
 
     [Fact]
-    public void Rule_WouldWrapOnNext_FollowsTheBackup()
+    public void Rule_WouldWrapOnNext_FollowsChannelOrder()
     {
-        // Arrange — the start row is #2; the backup (Medium) is #1, so Next wraps.
+        // Arrange — from #2 Next is #3 (no wrap); from #3 Next wraps to #1.
         var m1 = Row("M1", StreamTier.Medium);
         var h1 = Row("H1", StreamTier.High);
         var f2 = Row("F2");
         var pool = Pool(m1, h1, f2);
         pool.SwitchToStream(1);
-        pool.SetBackupPreference(h1, TierOf);
+
+        // Act / Assert
+        Assert.False(pool.WouldWrapOnNext());
+        Assert.Same(f2, pool.GetNextHealthyStream());
+        Assert.True(pool.SwitchToPreviousStream());
+        Assert.Same(m1, pool.GetCurrentStream());
+        pool.SwitchToStream(2);
+        Assert.True(pool.WouldWrapOnNext());
+        Assert.Same(m1, pool.GetNextHealthyStream());
+    }
+
+    [Fact]
+    public void Rule_GetUpcoming_MatchesWhereNextGoes()
+    {
+        // Arrange
+        var h1 = Row("H1", StreamTier.High);
+        var f1 = Row("F1");
+        var h2 = Row("H2", StreamTier.High);
+        var pool = Pool(h1, f1, h2);
 
         // Act
-        var wraps = pool.WouldWrapOnNext();
-        var next = pool.GetNextHealthyStream();
+        var fromStart = pool.GetUpcoming(2).ToList();
+        pool.SwitchToNextStream();
+        var fromSecond = pool.GetUpcoming(2).ToList();
 
         // Assert
-        Assert.True(wraps);
-        Assert.Same(m1, next);
+        Assert.Equal([f1, h2], fromStart);
+        Assert.Equal([h2, h1], fromSecond);
     }
 }

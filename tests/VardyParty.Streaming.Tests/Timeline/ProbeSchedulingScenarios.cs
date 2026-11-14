@@ -175,7 +175,7 @@ internal static class ProbeSchedulingScenarios
     /// Rule 11: the second High row is slow (healthy at 26s); a finding FB row turns
     /// playable first (13s) and is the backup only until the High row replaces it.
     /// </summary>
-    public static ProbeScenario EarlyFbBeforeLateHigh() => ProbeScenario.Named("Early FB backup replaced by a later High row")
+    public static ProbeScenario EarlyFbBeforeLateHigh() => ProbeScenario.Named("Early FB stays the next channel when a later High joins")
         .Fb("h1", Play.HealthyAt(8))
         .Fb("h2", Play.HealthyAt(25))
         .Fb("f1", Play.HealthyAt(3))
@@ -183,7 +183,7 @@ internal static class ProbeSchedulingScenarios
         .Recommend("h1").Recommend("h2");
 
     /// <summary>Rule 11: as <see cref="EarlyFbBeforeLateHigh"/>, with a slow Medium row in place of the second High.</summary>
-    public static ProbeScenario EarlyFbBeforeLateMedium() => ProbeScenario.Named("Early FB backup replaced by a later Medium row")
+    public static ProbeScenario EarlyFbBeforeLateMedium() => ProbeScenario.Named("Early FB stays the next channel when a later Medium joins")
         .Fb("h1", Play.HealthyAt(8))
         .Fb("m1", Play.HealthyAt(25))
         .Fb("f1", Play.HealthyAt(3))
@@ -206,7 +206,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>
     /// Rule 1: the chips of a High-recommended MP page are High rows. Chip B is sent late
-    /// (20s): it still replaces the earlier finding FB row as the backup (rule 11).
+    /// (20s) and is appended; Next from the start row still goes to the earlier finding FB row (rule 11).
     /// </summary>
     public static ProbeScenario HighMpChips() => ProbeScenario.Named("High MP page: its chips are High")
         .Fb("h1", Play.HealthyAt(25))
@@ -731,7 +731,7 @@ internal static class ProbeSchedulingScenarios
             TopTierIs("h1"),
             PostStartsBetween("mp", 0, 0.001), StartsBy("f1", 0.001),
             FirstPlayOn("mp"), FirstPlayBy(11.001),
-            BackupReplaced("mp:B", "h1"),
+            BackupIs("mp:B"),
             RowEnds("h1", StreamResolutionStatus.Healthy, 30.9, 31.1),
             TopTierHeadStartHeld()),
 
@@ -751,11 +751,12 @@ internal static class ProbeSchedulingScenarios
             // with h1 still running: h3 is a third High, so f1 takes h2's slot (backup at 14s)
             // and h3 takes f1's at 14s. h4 (the last High FB row) starts when h1 dies (20s);
             // until then the MP page waits (a later High yields to one-probe finding only).
+            // Next and the prewarmer stay on f1 (the next channel); h3 is appended later.
             StartsBy("f1", 10.001), StartsNotBefore("f1", 10),
             StartsBy("h3", 14.001), StartsNotBefore("h3", 14),
             StartsNotBefore("mp", 20), StartsBy("mp", 20.001),
             NoFindingStartsBefore(10),
-            BackupReplaced("f1", "h3"), BackupIs("h3"), BackupReadyBy(21.001),
+            BackupIs("f1"), BackupReadyBy(14.001),
             TopTierHeadStartHeld()),
 
         new("R1 R11 High-recommended MP page takes the MP lane at 0s; finding fills the gap and plays first; the page is the backup", "R1 R4 R11",
@@ -765,7 +766,7 @@ internal static class ProbeSchedulingScenarios
             HighTierIncludes("mp", "mp:B", "mp:C"),
             StartsBy("mp:B", 11.001),
             FirstPlayOn("f1"), FirstPlayBy(4.001),
-            // f1 plays; the backup is the first playable High row, not the next channel.
+            // f1 plays; the next channel (and prewarm target) is mp, which happens to be High.
             BackupIs("mp"),
             TopTierHeadStartHeld()),
 
@@ -827,7 +828,7 @@ internal static class ProbeSchedulingScenarios
             NthCallStartsBetween("m2", 2, 65, 65.001),
             MediumRunningNeverExceeds(2),
             PoolOrder("f2", "f1", "m1", "m2"),
-            BackupReplaced("f1", "m1")),
+            BackupIs("f1")),
 
         new("R1 two Medium rows and nothing else: the second takes the free slot at 0s", "R1",
             MediumOnlyNoFinding,
@@ -886,16 +887,16 @@ internal static class ProbeSchedulingScenarios
             FirstPlayOn("fb-north"), FirstPlayBy(13.001),
             BackupReadyBy(19.601), BackupIs("mp-north")),
 
-        new("R11 an early FB row is the backup only until the second High row is playable", "R1 R11",
+        new("R11 Next stays on the next channel when a later High joins", "R1 R11",
             EarlyFbBeforeLateHigh,
             FirstPlayOn("h1"), FirstPlayBy(9.001),
-            BackupReplaced("f1", "h2"), BackupIs("h2"),
+            BackupIs("f1"),
             PoolOrder("h1", "f1", "h2")),
 
-        new("R11 an early FB row is the backup only until the Medium row is playable", "R1 R11",
+        new("R11 Next stays on the next channel when a later Medium joins", "R1 R11",
             EarlyFbBeforeLateMedium,
             FirstPlayOn("h1"), FirstPlayBy(9.001),
-            BackupReplaced("f1", "m1"), BackupIs("m1"),
+            BackupIs("f1"),
             PoolOrder("h1", "f1", "m1")),
 
         new("R1 a dead High row's slot goes to the Medium row at once", "R1",
@@ -907,13 +908,13 @@ internal static class ProbeSchedulingScenarios
             NoFindingStartsBefore(10),
             MediumRunningNeverExceeds(1)),
 
-        new("R1 R11 the chips of a High MP page are High: probed as High, a late chip replaces a finding backup", "R1 R6 R11",
+        new("R1 R11 the chips of a High MP page are High: probed as High, a late chip is appended", "R1 R6 R11",
             HighMpChips,
             TopTierIs("h1", "mp"),
             HighTierIncludes("mp", "mp:B"),
             FirstPlayOn("mp"), FirstPlayBy(10.001),
             StartsBy("mp:B", 20.001),
-            BackupReplaced("f1", "mp:B"), BackupIs("mp:B"),
+            BackupIs("f1"),
             PoolOrder("mp", "f1", "mp:B")),
 
         new("R1 no recommendations: no head start, behaviour unchanged", "R1 R4 R9",

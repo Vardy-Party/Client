@@ -126,20 +126,17 @@ public interface IStreamSwitchingService
     /// <summary>True when Next has somewhere untried to go (another unskipped row, or untried fallbacks for the current one).</summary>
     bool HasUntriedOther() => true;
 
-    // ---- Backup preference (docs/PROBE_SCHEDULING_RULES.md rule 11) ----
-    // While the start row (the first to play) is playing, the backup - where Next and
-    // auto-advance go, and what the prewarmer warms first - is the best-tier other row:
-    // the second playable High, then the first playable Medium, then the first playable
-    // finding row. Channel numbers never change; from any other row Next walks them as
-    // before. Defaults keep other implementations unchanged.
+    // Next, Previous, auto-advance and GetUpcoming walk channel numbers in order
+    // (docs/PROBE_SCHEDULING_RULES.md rule 11). Tiers do not change that order.
+    // SetBackupPreference is a no-op kept so existing callers compile.
 
-    /// <summary>Sets the start row and how to read a row's tier; null for either clears the preference.</summary>
+    /// <summary>No-op. Kept so existing callers compile; tiers do not change switch order.</summary>
     void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf) { }
 
     /// <summary>
-    /// Up to <paramref name="depth"/> rows Next would reach first: backup order while the
-    /// start row plays (<see cref="PlaybackUrlReusePolicy.UpcomingInBackupOrder"/>), else
-    /// switch order.
+    /// Up to <paramref name="depth"/> rows Next would reach first, in channel order
+    /// (with wrap), skipping only the current row
+    /// (<see cref="PlaybackUrlReusePolicy.UpcomingInSwitchOrder"/>).
     /// </summary>
     IReadOnlyList<EnrichedStream> GetUpcoming(int depth) =>
         PlaybackUrlReusePolicy.UpcomingInSwitchOrder(GetHealthyStreams(), GetCurrentStream(), depth);

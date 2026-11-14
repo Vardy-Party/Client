@@ -94,8 +94,7 @@ public static class FirstPlayOpenStrategy
         EnrichedStream recommended,
         IReadOnlyList<EnrichedStream> healthy,
         DateTimeOffset now,
-        Func<EnrichedStream, bool>? isWarmOrInFlight = null,
-        Func<EnrichedStream, StreamTier>? tierOf = null)
+        Func<EnrichedStream, bool>? isWarmOrInFlight = null)
     {
         ArgumentNullException.ThrowIfNull(recommended);
         ArgumentNullException.ThrowIfNull(healthy);
@@ -125,7 +124,7 @@ public static class FirstPlayOpenStrategy
         }
 
         var partner = PlaybackRacePolicy.PickPartner(
-            healthy, recommended, now, isWarmOrInFlight, tierOf);
+            healthy, recommended, now, isWarmOrInFlight);
 
         return new StartPlan(
             StartKind.ResolveRecommendedOpenFirst,
@@ -184,7 +183,7 @@ public static class FirstPlayOpenStrategy
 
     /// <summary>
     /// As above, for the rows the prewarmer would look at, in the order it looks
-    /// (<c>IStreamSwitchingService.GetUpcoming</c>: backup order while the start row plays).
+    /// (<c>IStreamSwitchingService.GetUpcoming</c>: the next rows in channel order).
     /// </summary>
     public static int CountBackupsNeedingWarm(
         IReadOnlyList<EnrichedStream> upcoming,

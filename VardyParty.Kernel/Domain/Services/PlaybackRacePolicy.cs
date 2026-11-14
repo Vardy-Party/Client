@@ -82,16 +82,15 @@ public static class PlaybackRacePolicy
         IReadOnlyList<EnrichedStream> healthy,
         EnrichedStream recommended,
         DateTimeOffset now,
-        Func<EnrichedStream, bool>? isWarmOrInFlight = null,
-        Func<EnrichedStream, StreamTier>? tierOf = null)
+        Func<EnrichedStream, bool>? isWarmOrInFlight = null)
     {
         ArgumentNullException.ThrowIfNull(healthy);
         ArgumentNullException.ThrowIfNull(recommended);
         if (!NeedsFreshPlay(recommended, now))
             return null;
 
-        // With recommended tiers the partner is the backup (rule 11: best tier first).
-        var next = PlaybackUrlReusePolicy.UpcomingInBackupOrder(healthy, recommended, 1, tierOf);
+        // The partner is the next channel in switch order (the one Next will open).
+        var next = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(healthy, recommended, 1);
         if (next.Count == 0)
             return null;
 

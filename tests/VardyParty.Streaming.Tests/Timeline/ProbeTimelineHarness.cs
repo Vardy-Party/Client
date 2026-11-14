@@ -489,9 +489,7 @@ internal static class ProbeTimelineHarness
             // StartPlaybackChain: the priority window begins, then RaceStartAsync plans the open.
             _hasPlayed = true;
             _playing = row;
-            // Rule 11: while the start row plays, the backup is the best-tier other row.
-            if (TierOf is { } tierOf)
-                _pool.SetBackupPreference(row, tierOf);
+            // Rule 11: Next and the prewarmer follow channel order.
             if (_scenario.PriorityWindowAfterFirstPlay)
             {
                 _windowOpen = true;
@@ -511,8 +509,7 @@ internal static class ProbeTimelineHarness
 
             var plan = FirstPlayOpenStrategy.PlanStart(
                 row, _pool.GetHealthyStreams(), _clock.GetUtcNow(),
-                r => _warm.ContainsKey(r) || _warmInFlight.Contains(r),
-                TierOf);
+                r => _warm.ContainsKey(r) || _warmInFlight.Contains(r));
             _tl.FirstPlayKind = plan.Kind;
             if (plan.Kind != FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst)
             {
@@ -569,13 +566,13 @@ internal static class ProbeTimelineHarness
             UpdatePriorityHold();
         }
 
-        // Where Next would go from the start row: the pool's backup order (rule 11).
+        // Where Next would go from the playing row: the next channel in order (rule 11).
         private EnrichedStream? CurrentBackup() => _pool.GetUpcoming(1).FirstOrDefault();
 
         private bool NeedsWarm(EnrichedStream row) =>
             PlaybackUrlReusePolicy.ShouldPrewarm(row) && !_warm.ContainsKey(row);
 
-        // The backup can change: a better-tier row that turns playable later replaces it.
+        // The next channel can change when a row is appended, dropped, or skipped.
         private void TrackBackup()
         {
             if (!ReferenceEquals(_pool.GetCurrentStream(), _playing))

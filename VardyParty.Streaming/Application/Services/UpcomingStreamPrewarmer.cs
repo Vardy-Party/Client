@@ -70,7 +70,7 @@ public sealed class UpcomingStreamPrewarmer(
         {
             var healthy = switching.GetHealthyStreams();
             cache.Prune(healthy.ToList());
-            // Next order: the backup first while the start row plays (rule 11).
+            // Next order: the next channels in number order (rule 11).
             var upcoming = switching.GetUpcoming(PlaybackUrlReusePolicy.PrewarmDepth)
                 ?? PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
                     healthy,

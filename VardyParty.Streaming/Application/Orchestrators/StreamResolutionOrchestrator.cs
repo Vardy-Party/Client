@@ -256,10 +256,7 @@ public class StreamResolutionOrchestrator(
         void StartPlaybackChain(EnrichedStream first)
         {
             firstPlayDiag.MarkPlaybackChainStarted(first.Stream?.Channel);
-            // Rule 11: while this start row plays, the backup (Next, auto-advance and the
-            // prewarmer's first target) is the best-tier other row, whatever its channel number.
-            if (_tiers is not null)
-                streamSwitchingService.SetBackupPreference(first, TierOf);
+            // Rule 11: Next, auto-advance and the prewarmer follow channel order.
             BeginPlaybackPriorityWindow(cancellationToken);
             // Rule 12: a start row whose probed link cannot be reused needs one fresh
             // /play. Pause new finding starts now, before the resolver fills its next
@@ -1378,7 +1375,7 @@ public class StreamResolutionOrchestrator(
             healthy = streamSwitchingService.GetHealthyStreams();
 
         var plan = FirstPlayOpenStrategy.PlanStart(
-            stream, healthy, now, warmUrls.IsWarmOrInFlight, TierOf);
+            stream, healthy, now, warmUrls.IsWarmOrInFlight);
         if (plan.Kind == FirstPlayOpenStrategy.StartKind.UseExisting)
             return new RaceStart(false, null, null);
 
@@ -1649,8 +1646,7 @@ public class StreamResolutionOrchestrator(
                 first,
                 streamSwitchingService.GetHealthyStreams(),
                 DateTimeOffset.UtcNow,
-                warmUrls.IsWarmOrInFlight,
-                TierOf).Kind
+                warmUrls.IsWarmOrInFlight).Kind
             == FirstPlayOpenStrategy.StartKind.ResolveRecommendedOpenFirst;
     }
 

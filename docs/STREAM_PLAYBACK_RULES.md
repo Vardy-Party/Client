@@ -413,7 +413,7 @@ A channel number is the row's position in `StreamSwitchingService.GetHealthyStre
 5. **Wraparound:** Next on the last channel goes to channel 1; Previous on channel 1 goes to the last. Wraparound force-refreshes recommendations (chips and first pick) but does not jump to a "preferred recommended" stream and does not reorder. The old "switch to the preferred recommended stream on wraparound" behaviour was removed: it made Next land on an unexpected number.
 6. **Recommendations may jump** (chip selection selects the matching row) but never reorder.
 7. A switch that fails and reverts keeps the target in place (see "Failed switch: retry the target, keep it").
-8. **Next from the start row goes to the backup** (13 Nov 2026): while the first row to play is playing, Next and auto-advance go to the best-tier other row (second High, then first Medium, then first finding; docs/PROBE_SCHEDULING_RULES.md rule 11), which may not be the next number. Nothing is renumbered, and from any other row Next walks the numbers as in rule 1 (`BackupPreferenceBusinessRulesTests`).
+8. **Next always walks channel numbers** (14 Nov 2026): Next, Previous and auto-advance go to the next (or previous) number, with wrap, skipping only rows tried or failed this cycle. Tiers do not change that order — they are for LocalService slot scheduling only (docs/PROBE_SCHEDULING_RULES.md rules 1 and 11). A later High or Medium row is appended and reached in number order (`BackupPreferenceBusinessRulesTests`).
 
 ## Switch speed: reuse, pre-resolve, make-before-break
 
@@ -510,11 +510,11 @@ other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
    `StartPlaybackChain` pauses new finding starts at once (`NeedsFreshStart`,
    `ResolverRaceThrottle.BeginRace`) so this `/play` takes the next free slot; nothing is drained
    (`DrainOthersAsync` is no longer called).
-3. **Backup warms for Next.** On the fresh path, if the backup (rule below) also needs a
+3. **Next channel warms for Next.** On the fresh path, if the next channel in order also needs a
    fresh `/play`, it runs on the second slot into `WarmPlaybackUrlCache.PutUntil` and is **not**
    awaited for first picture. Immediate Next applies that warm as `UnusedResolvedUrl`
    (`PlanNextPrepare`) so every platform's `PlanSwitch` can `AttachCached`. After first play the
-   prewarmer keeps the next `PrewarmDepth` rows warm, backup first
+   prewarmer keeps the next `PrewarmDepth` rows in channel order warm
    (`IStreamSwitchingService.GetUpcoming`).
 4. **Start empty / audio-only.** Report/remove as before. Prefer another pooled row that
    can play from cache; else await the partner warm leg and open that.
@@ -533,13 +533,11 @@ other probes (Jon, 13 Nov 2026: "Yes, cut the startup drain and second /play"):
    a partner warm.
 8. **Chromium stays capped at 2.** Same `ResolverRaceThrottle` as before.
 
-The backup is chosen by tier, not channel number (Jon, 13 Nov 2026): while the start row (the
-first to play) plays, Next, auto-advance and the prewarmer go first to the second playable High
-row, then the first playable Medium row, then the first playable finding row (lowest channel
-number within a tier). A better-tier row that turns playable later replaces a finding backup.
-Channel numbers stay append-only; from any other row Next walks them as before
-(`StreamSwitchingService.SetBackupPreference`, `PlaybackUrlReusePolicy.UpcomingInBackupOrder`;
-docs/PROBE_SCHEDULING_RULES.md rule 11).
+Next, Previous, auto-advance and the prewarmer walk channel numbers in order (with wrap),
+skipping only tried or failed rows. Tiers (High, Medium, finding) are for LocalService slot
+scheduling only (docs/PROBE_SCHEDULING_RULES.md rule 1), not for which channel Next opens
+(`StreamSwitchingService.GetUpcoming`, `PlaybackUrlReusePolicy.UpcomingInSwitchOrder`;
+docs/PROBE_SCHEDULING_RULES.md rule 11). Channel numbers stay append-only.
 
 `PlaybackRacePolicy` / `PlaybackUrlRacer` remain for playlist classification helpers
 (`NeedsFreshPlay`, `PickPartner`, `LoserTakeBy`, `RaceLegState`). The blocking dual-leg
