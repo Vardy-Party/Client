@@ -645,7 +645,7 @@ On the Android TV on 31 Oct 2026 a premium261 feed played sound with no picture 
 
 1. **Video confirmation (every platform).** `EnableVideoConfirmation()` is on for Android, Windows, and Linux (same `PlaybackPolicy.NoVideoTimeout`, 8s). Ready alone is "established, not working". The host raises `MediaEngineEvent.VideoProbe(generation, hasVideo)` on Ready, on the first rendered frame or a non-zero video size, and on a periodic tick until confirmed. The first probe with video after Ready sends `ReportWorking` once and sets last good. Windows still has a separate 20s attach-to-Playing AMS failsafe; the 8s no-picture clock starts only after Playing/Ready.
 2. **No picture = stream failure.** `NoVideoTimeout` (default 8 s, configurable) after Ready with no video fails the stream with `"No video (audio only)"`: reported failed (never working), its feed is marked failed, no same-stream retry. It reverts to an eligible last good on another feed, otherwise advances to an untried stream, otherwise stops.
-3. **Windows, Linux and Apple keep confirmation off**: Ready still reports working and sets last good there. Their hosts do not raise `VideoProbe` yet.
+3. **Apple keeps confirmation off.** Ready still reports working and sets last good on iOS/Mac Catalyst; those hosts do not raise `VideoProbe` yet. Vardy Party does not ship there.
 
 ### No loops (31 Oct 2026, v224)
 

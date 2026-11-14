@@ -129,7 +129,9 @@ jobs:
   build-ios-release:
     name: Build & Package iOS (IPA)
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    # .NET 11 RC2 requires Xcode 27.0 exactly. The xcode-27 image default is 27.1.
+    # .NET 11 GA Apple workloads (27.2.11039, workload set 11.0.100.1)
+    # require Xcode 27.2. The xcode-27 image includes that app at
+    # /Applications/Xcode_27.2.app. Workload installs are pinned to 11.0.100.1.
     runs-on: xcode-27
     needs: create-release
     steps:
@@ -138,11 +140,11 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
 
-      - name: Select Xcode 27.0
+      - name: Select Xcode 27.2
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.0.app
+          sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 27.0'
+          xcodebuild -version | grep -q '^Xcode 27.2'
       
       - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
@@ -152,9 +154,11 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       
-      - name: Restore workloads
-        run: dotnet workload restore
-      
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
+          dotnet workload install ios --version 11.0.100.1 --ignore-failed-sources
+
       - name: Restore dependencies
         run: dotnet restore
       
@@ -175,7 +179,7 @@ jobs:
   build-macos-release:
     name: Build & Package macOS
     if: always() && (github.event_name == 'push' || inputs.linux_only != true) && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success')
-    # Same Xcode 27.0 pin as the iOS release job.
+    # Same Xcode 27.2 and workload-set pin as the iOS release job.
     runs-on: xcode-27
     needs: create-release
     steps:
@@ -184,11 +188,11 @@ jobs:
         shell: bash
         run: echo "RELEASE_ASSET_TAG=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
 
-      - name: Select Xcode 27.0
+      - name: Select Xcode 27.2
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.0.app
+          sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 27.0'
+          xcodebuild -version | grep -q '^Xcode 27.2'
       
       - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
@@ -198,9 +202,11 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       
-      - name: Restore workloads
-        run: dotnet workload restore
-      
+      - name: Install MAUI workloads
+        run: |
+          dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
+          dotnet workload install maccatalyst --version 11.0.100.1 --ignore-failed-sources
+
       - name: Restore dependencies
         run: dotnet restore
       
