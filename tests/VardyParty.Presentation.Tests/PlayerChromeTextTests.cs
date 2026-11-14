@@ -124,16 +124,18 @@ public class PlayerChromeTextTests
         // Act
         var text = PlayerChromeText.FormatVideoInfo(model);
 
-        // Assert — Android panel order: title, status, stream, source badge, quality, detail
+        // Assert — title, status, identity row (index · chip · name · height), quality remainder, detail
         Assert.StartsWith("Home United vs Away City", text);
         Assert.Contains("Status: Playing", text);
-        Assert.Contains("Stream: 2/5", text);
-        Assert.Contains("Source: V1", text);
-        Assert.Contains("1080p 60fps", text);
+        Assert.Contains("2/5 · V1 · Channel North · 1080p", text);
+        Assert.DoesNotContain("Stream: 2/5", text);
+        Assert.DoesNotContain("Source: V1", text);
+        Assert.Contains("60fps", text);
+        Assert.DoesNotContain("1080p 60fps", text);
         Assert.DoesNotContain("Quality:", text);
         Assert.DoesNotContain("Resolution:", text);
         Assert.DoesNotContain("Bitrate:", text);
-        Assert.Contains("Channel: Channel North", text);
+        Assert.DoesNotContain("Channel: Channel North", text);
         Assert.Contains("Aspect ratio: 16:9", text);
         Assert.Contains("Video: H.264", text);
         Assert.Contains("Audio: AAC", text);
@@ -169,12 +171,14 @@ public class PlayerChromeTextTests
         // Act
         var text = PlayerChromeText.FormatVideoInfo(model, whileSwitching: true);
 
-        // Assert
+        // Assert — identity row keeps index, chip, and name; measured size stays off until settled
         Assert.Contains("Status: Switching", text);
         Assert.DoesNotContain("Status: Playing", text);
-        Assert.Contains("Stream: 3/5", text);
-        Assert.Contains("Channel: Channel North", text);
-        Assert.Contains("Source: V1", text);
+        Assert.Contains("3/5 · V1 · Channel North", text);
+        Assert.DoesNotContain("Stream: 3/5", text);
+        Assert.DoesNotContain("540p", text);
+        Assert.DoesNotContain("Source: V1", text);
+        Assert.DoesNotContain("Channel: Channel North", text);
         Assert.Contains("Home United vs Away City", text);
         Assert.DoesNotContain("540p 1.8 Mbps", text);
         Assert.DoesNotContain("Aspect ratio:", text);
@@ -203,8 +207,9 @@ public class PlayerChromeTextTests
         // Assert
         Assert.Contains("Buffer 0%", detail);
         var lines = detail.Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal("Aspect ratio: 16:9", lines[1]);
-        Assert.Equal("Buffer 0%", lines[2]);
+        Assert.Equal("Aspect ratio: 16:9", lines[0]);
+        Assert.Equal("Buffer 0%", lines[1]);
+        Assert.DoesNotContain("Channel:", detail);
     }
 
     [Fact]
@@ -224,16 +229,13 @@ public class PlayerChromeTextTests
         Assert.Equal("Buffer 0%", model.Buffer);
     }
 
-    [Theory]
-    [InlineData("Channel North", "Channel: Channel North")]
-    [InlineData(null, "")]
-    [InlineData("  ", "")]
-    public void FormatVideoInfoDetail_WhileSwitching_ReturnsOnlyChannel(string? channel, string expected)
+    [Fact]
+    public void FormatVideoInfoDetail_WhileSwitching_IsEmpty()
     {
-        // Arrange
+        // Arrange — channel now lives on the identity row, so detail stays blank while switching
         var model = new VideoInfoPanelModel
         {
-            Channel = channel,
+            Channel = "Channel North",
             AspectRatio = "16:9",
             Buffer = "Buffer 80%",
             VideoCodec = "H.264",
@@ -246,7 +248,7 @@ public class PlayerChromeTextTests
         var detail = PlayerChromeText.FormatVideoInfoDetail(model, whileSwitching: true);
 
         // Assert
-        Assert.Equal(expected, detail);
+        Assert.Equal(string.Empty, detail);
     }
 
     [Theory]
@@ -263,6 +265,128 @@ public class PlayerChromeTextTests
 
         // Assert
         Assert.Equal(expected, line);
+    }
+
+    [Theory]
+    [InlineData(2, 9, "V2", "Fubo US", "1280x720", false, "2/9 · V2 · Fubo US · 720p")]
+    [InlineData(2, 9, null, "Fubo US", "1280x720", false, "2/9 · Fubo US · 720p")]
+    [InlineData(2, 9, "V1", null, "1280x720", false, "2/9 · V1 · 720p")]
+    [InlineData(2, 9, "V2", "Fubo US", null, false, "2/9 · V2 · Fubo US")]
+    [InlineData(2, 9, "V2", "Fubo US", "1280x720", true, "2/9 · V2 · Fubo US")]
+    [InlineData(1, 0, "V2", "Fubo US", "1280x720", false, "")]
+    public void FormatStreamIdentityLine_JoinsIndexChipNameAndResolution(
+        int index,
+        int total,
+        string? sourceLabel,
+        string? channel,
+        string? resolution,
+        bool whileSwitching,
+        string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel
+        {
+            StreamIndex = index,
+            StreamTotal = total,
+            Channel = channel,
+            Resolution = resolution,
+            SourceLabel = sourceLabel
+        };
+
+        // Act
+        var line = PlayerChromeText.FormatStreamIdentityLine(model, sourceLabel, whileSwitching);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Fact]
+    public void EllipsizeStreamName_TrimsAndTruncatesLongNames()
+    {
+        // Arrange
+        const string longName = "A very long stream name that exceeds thirty-two characters";
+
+        // Act
+        var shortened = PlayerChromeText.EllipsizeStreamName(longName);
+        var blank = PlayerChromeText.EllipsizeStreamName("   ");
+        var shortName = PlayerChromeText.EllipsizeStreamName("  Fubo US  ");
+
+        // Assert
+        Assert.Equal(PlayerChromeText.StreamNameMaxLength, shortened!.Length);
+        Assert.EndsWith("…", shortened);
+        Assert.StartsWith("A very long stream name that e", shortened);
+        Assert.Null(blank);
+        Assert.Equal("Fubo US", shortName);
+    }
+
+    [Fact]
+    public void FormatStreamIdentityLine_EllipsizesLongChannelName()
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel
+        {
+            StreamIndex = 1,
+            StreamTotal = 3,
+            Channel = "A very long stream name that exceeds thirty-two characters",
+            Resolution = "1920x1080"
+        };
+
+        // Act
+        var line = PlayerChromeText.FormatStreamIdentityLine(model, sourceLabel: "V2");
+
+        // Assert
+        Assert.StartsWith("1/3 · V2 · ", line);
+        Assert.EndsWith(" · 1080p", line);
+        Assert.Contains("…", line);
+        Assert.DoesNotContain("thirty-two characters", line);
+    }
+
+    [Theory]
+    [InlineData("1280x720", "720p 3.4 Mbps", "3.4 Mbps")]
+    [InlineData("1280x720", "720p", "")]
+    [InlineData("1920x1080", "1080p 60fps", "60fps")]
+    [InlineData(null, "1080p 60fps 5000kbps", "1080p 60fps 5000kbps")]
+    [InlineData("960x540", "540p 1.8 Mbps", "1.8 Mbps")]
+    public void FormatQualityLine_StripsHeightAlreadyOnIdentityRow(
+        string? resolution,
+        string? quality,
+        string expected)
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { Resolution = resolution, Quality = quality };
+
+        // Act
+        var line = PlayerChromeText.FormatQualityLine(model);
+
+        // Assert
+        Assert.Equal(expected, line);
+    }
+
+    [Fact]
+    public void FormatQualityLine_WhileSwitching_IsEmpty()
+    {
+        // Arrange
+        var model = new VideoInfoPanelModel { Resolution = "1280x720", Quality = "720p 3.4 Mbps" };
+
+        // Act
+        var line = PlayerChromeText.FormatQualityLine(model, whileSwitching: true);
+
+        // Assert
+        Assert.Equal(string.Empty, line);
+    }
+
+    [Fact]
+    public void FormatStreamIdentitySuffix_OmitsResolutionUntilKnown()
+    {
+        // Arrange
+        var without = new VideoInfoPanelModel { Channel = "Fubo US", Resolution = null };
+        var withRes = new VideoInfoPanelModel { Channel = "Fubo US", Resolution = "1280x720" };
+
+        // Act
+        // Assert
+        Assert.Equal("Fubo US", PlayerChromeText.FormatStreamIdentitySuffix(without));
+        Assert.Equal("Fubo US · 720p", PlayerChromeText.FormatStreamIdentitySuffix(withRes));
+        Assert.Equal("Fubo US", PlayerChromeText.FormatStreamIdentitySuffix(withRes, whileSwitching: true));
     }
 
     [Theory]

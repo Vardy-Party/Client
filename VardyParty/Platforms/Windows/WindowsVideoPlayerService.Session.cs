@@ -93,9 +93,11 @@ namespace VardyParty.Platforms.Windows
             private Microsoft.UI.Xaml.Controls.Grid infoPanel = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoGameTitleText = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoStatusText = null!;
+            private Microsoft.UI.Xaml.Controls.Grid infoIdentityRow = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoStreamIndexText = null!;
             private Microsoft.UI.Xaml.Controls.Border infoSourceBadge = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoSourceBadgeText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock infoIdentitySuffixText = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoQualityText = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock infoDetailText = null!;
             private WinButton infoCloseButton = null!;
@@ -448,7 +450,7 @@ namespace VardyParty.Platforms.Windows
 
                     // Info overlay — top-right so broadcaster score bugs (usually top-left) stay visible.
                     // Same look as Android: #99000000 panel, game title as header, sans-serif body,
-                    // smaller muted detail (status → stream → badge → quality → detail).
+                    // smaller muted detail (status → identity row → quality remainder → detail).
                     infoPanel = new Microsoft.UI.Xaml.Controls.Grid
                     {
                         HorizontalAlignment = WinHorizontalAlignment.Right,
@@ -519,6 +521,10 @@ namespace VardyParty.Platforms.Windows
 
                     infoStatusText = CreateInfoLine(12);
                     infoStreamIndexText = CreateInfoLine(12);
+                    infoStreamIndexText.TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap;
+                    infoStreamIndexText.VerticalAlignment = WinVerticalAlignment.Center;
+                    infoStreamIndexText.Margin = new WinThickness(0, 0, 6, 0);
+
                     infoSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock
                     {
                         FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
@@ -532,15 +538,32 @@ namespace VardyParty.Platforms.Windows
                         Padding = new WinThickness(6, 1, 6, 1),
                         CornerRadius = new Microsoft.UI.Xaml.CornerRadius(2),
                         HorizontalAlignment = WinHorizontalAlignment.Left,
+                        VerticalAlignment = WinVerticalAlignment.Center,
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-                        Margin = new WinThickness(0, 2, 0, 2)
+                        Margin = new WinThickness(0, 0, 6, 0)
                     };
+
+                    infoIdentitySuffixText = CreateInfoLine(12);
+                    infoIdentitySuffixText.TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap;
+                    infoIdentitySuffixText.TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis;
+                    infoIdentitySuffixText.VerticalAlignment = WinVerticalAlignment.Center;
+
+                    infoIdentityRow = new WinGrid { VerticalAlignment = WinVerticalAlignment.Center };
+                    infoIdentityRow.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
+                    infoIdentityRow.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Auto) });
+                    infoIdentityRow.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+                    WinGrid.SetColumn(infoStreamIndexText, 0);
+                    WinGrid.SetColumn(infoSourceBadge, 1);
+                    WinGrid.SetColumn(infoIdentitySuffixText, 2);
+                    infoIdentityRow.Children.Add(infoStreamIndexText);
+                    infoIdentityRow.Children.Add(infoSourceBadge);
+                    infoIdentityRow.Children.Add(infoIdentitySuffixText);
+
                     infoQualityText = CreateInfoLine(12);
                     infoDetailText = CreateInfoLine(10, muted: true);
 
                     infoBody.Children.Add(infoStatusText);
-                    infoBody.Children.Add(infoStreamIndexText);
-                    infoBody.Children.Add(infoSourceBadge);
+                    infoBody.Children.Add(infoIdentityRow);
                     infoBody.Children.Add(infoQualityText);
                     infoBody.Children.Add(infoDetailText);
                     WinGrid.SetRow(infoBody, 1);

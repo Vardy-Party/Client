@@ -234,6 +234,8 @@ namespace VardyParty.Platforms.Android
         private TextView? _titleView;
         private TextView? _statusView;
         private TextView? _indexView;
+        private TextView? _identitySuffixView;
+        private LinearLayout? _identityRow;
         private TextView? _sourceBadgeView;
         private TextView? _qualityView;
         private TextView? _resBrView;
@@ -408,6 +410,8 @@ namespace VardyParty.Platforms.Android
             _indexView = new TextView(this);
             _indexView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _indexView.SetTextColor(global::Android.Graphics.Color.White);
+            _indexView.SetMaxLines(1);
+            _indexView.SetSingleLine(true);
 
             _sourceBadgeView = new TextView(this)
             {
@@ -417,12 +421,19 @@ namespace VardyParty.Platforms.Android
             _sourceBadgeView.SetTypeface(global::Android.Graphics.Typeface.DefaultBold, global::Android.Graphics.TypefaceStyle.Bold);
             _sourceBadgeView.SetPadding((int)(6 * density), (int)(1 * density), (int)(6 * density), (int)(1 * density));
 
+            _identitySuffixView = new TextView(this);
+            _identitySuffixView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
+            _identitySuffixView.SetTextColor(global::Android.Graphics.Color.White);
+            _identitySuffixView.SetMaxLines(1);
+            _identitySuffixView.SetSingleLine(true);
+            _identitySuffixView.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
+
             _qualityView = new TextView(this);
             _qualityView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, bodySp);
             _qualityView.SetTextColor(global::Android.Graphics.Color.White);
 
             _resBrView = new TextView(this);
-            // Stream detail (resolution/bitrate/codecs/urls) should use a smaller font
+            // Stream detail (aspect/buffer/codecs/urls) should use a smaller font
             _resBrView.SetTextSize(global::Android.Util.ComplexUnitType.Sp, smallSp);
             _resBrView.SetTextColor(global::Android.Graphics.Color.LightGray);
             _resBrView.SetMaxLines(8);
@@ -437,8 +448,36 @@ namespace VardyParty.Platforms.Android
             linear.Background = new global::Android.Graphics.Drawables.ColorDrawable(global::Android.Graphics.Color.ParseColor("#99000000"));
             linear.AddView(_titleView);
             linear.AddView(_statusView);
-            linear.AddView(_indexView);
-            linear.AddView(_sourceBadgeView);
+
+            _identityRow = new LinearLayout(this)
+            {
+                Orientation = Orientation.Horizontal
+            };
+            _identityRow.SetGravity(global::Android.Views.GravityFlags.CenterVertical);
+            var indexParams = new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical,
+                RightMargin = (int)(6 * density)
+            };
+            var badgeParams = new LinearLayout.LayoutParams(
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical,
+                RightMargin = (int)(6 * density)
+            };
+            var suffixParams = new LinearLayout.LayoutParams(
+                0,
+                global::Android.Views.ViewGroup.LayoutParams.WrapContent, 1f)
+            {
+                Gravity = global::Android.Views.GravityFlags.CenterVertical
+            };
+            _identityRow.AddView(_indexView, indexParams);
+            _identityRow.AddView(_sourceBadgeView, badgeParams);
+            _identityRow.AddView(_identitySuffixView, suffixParams);
+            linear.AddView(_identityRow);
             linear.AddView(_qualityView);
             linear.AddView(_resBrView);
             linear.Alpha = 0.95f;
