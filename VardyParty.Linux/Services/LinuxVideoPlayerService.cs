@@ -132,7 +132,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         ResolveFreshPlaybackUrlAsync resolveFresh,
         IStreamHealthReporter healthReporter,
         IHttpClientFactory? httpClientFactory = null,
-        IPlaybackPlaylistProcessor? playlistProcessor = null)
+        IPlaybackPlaylistProcessor? playlistProcessor = null,
+        IPlaylistReloadRecoveryStrategy? playlistReload = null)
     {
         _logger = logger;
         _switching = switching;
@@ -142,7 +143,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _hlsProxy = new LinuxHlsLocalProxy(
                 httpClientFactory.CreateClient(VardyParty.Hosting.PlaybackHttpClients.Media),
-                logger);
+                logger,
+                playlistReload);
             if (_playlistProcessor is not null)
                 _hlsProxy.SetPlaylistTransform(_playlistProcessor.Process);
         }

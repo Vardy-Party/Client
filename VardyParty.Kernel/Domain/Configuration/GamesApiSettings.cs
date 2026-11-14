@@ -17,4 +17,13 @@ public class GamesApiSettings
 
     /// <summary>Default for <see cref="EarlyChipRetryDelaySeconds"/>: 10s (Jon: "30s is too long").</summary>
     public const int DefaultEarlyChipRetryDelaySeconds = 10;
+
+    /// <summary>
+    /// Mid-play playlist reload recovery. Default is option 1,
+    /// <c>RetrySameUrl</c>: hold the player request and retry the same URL
+    /// (immediate, then 1s) before giving up. A later option (temporary
+    /// switch + auto-return) can be selected here without changing platform
+    /// fetch code. Unknown names fall back to option 1.
+    /// </summary>
+    public string PlaylistReloadStrategy { get; set; } = "RetrySameUrl";
 }

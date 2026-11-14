@@ -610,6 +610,15 @@ namespace VardyParty.Platforms.Windows
                         manifestStream = null;
 
                         var segmentToken = CurrentPlaybackDownloadToken;
+                        // AMS already loaded the first playlist; DownloadRequested playlist
+                        // fetches are mid-play. Last-good is an escape if the deferral
+                        // budget (PlaybackPolicy.WindowsPlaylistDeferralBudget) would be
+                        // exceeded by the next retry delay.
+                        var playlistReload = new PlaylistReloadSession(
+                            _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy)
+                        {
+                            FirstPlaylistCompleted = true
+                        };
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
                             if (IsStaleAttach(generation))
@@ -622,6 +631,76 @@ namespace VardyParty.Platforms.Windows
                             {
                                 if (IsStaleAttach(generation))
                                     return;
+
+                                var resourceUrl = args.ResourceUri.ToString();
+                                var isPlaylist = args.ResourceType == AdaptiveMediaSourceResourceType.Manifest
+                                    || PlaylistReloadEvaluation.IsPlaylistUrl(resourceUrl);
+                                if (isPlaylist)
+                                {
+                                    var outcome = await PlaylistReloadCoordinator.RunAsync(
+                                        playlistReload.Strategy,
+                                        new PlaylistReloadRequest
+                                        {
+                                            IsFirstAttach = !playlistReload.FirstPlaylistCompleted,
+                                            LastGoodPlaylist = playlistReload.LastGoodPlaylist,
+                                            MaxHold = PlaybackPolicy.WindowsPlaylistDeferralBudget,
+                                            Row = playlistReload.Row,
+                                            Log = line => _host._logger.LogInformation("{Line}", line)
+                                        },
+                                        async ct =>
+                                        {
+                                            using var req = new System.Net.Http.HttpRequestMessage(
+                                                System.Net.Http.HttpMethod.Get, resourceUrl);
+                                            ApplyManagedPlaybackHeaders(req, referer, requestHeaders);
+                                            using var resp = await managedHttp.SendAsync(
+                                                req,
+                                                System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                                                ct).ConfigureAwait(false);
+                                            var bodyBytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                                            return new PlaylistReloadFetchResult
+                                            {
+                                                StatusCode = (int)resp.StatusCode,
+                                                Body = bodyBytes,
+                                                ContentType = resp.Content.Headers.ContentType?.MediaType
+                                            };
+                                        },
+                                        segmentToken).ConfigureAwait(false);
+
+                                    if (outcome.Kind is PlaylistReloadOutcomeKind.Serve
+                                        or PlaylistReloadOutcomeKind.ServeLastGood)
+                                    {
+                                        var playlistBody = outcome.Body ?? Array.Empty<byte>();
+                                        var playlistType = PlaybackContentTypes.Resolve(
+                                            outcome.ContentType,
+                                            args.ResourceUri.AbsolutePath,
+                                            ToPlaybackResourceKind(args.ResourceType));
+                                        transferMeter.Add(playlistBody.Length, Environment.TickCount64);
+                                        var playlistStream = await CopyToRandomAccessStreamAsync(playlistBody);
+                                        if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                                        {
+                                            playlistStream.Dispose();
+                                            return;
+                                        }
+
+                                        if (!TryRootPlaybackStream(playlistStream, generation))
+                                            return;
+
+                                        args.Result.InputStream = playlistStream.GetInputStreamAt(0);
+                                        args.Result.ContentType = playlistType;
+                                        if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
+                                            playlistReload.NoteServed(playlistBody);
+                                        lastDownloadFailureStatus = 0;
+                                        session.NotifyDownloadSuccess();
+                                        return;
+                                    }
+
+                                    throw new System.Net.Http.HttpRequestException(
+                                        outcome.Message ?? $"HTTP {outcome.StatusCode} playlist reload failed",
+                                        inner: null,
+                                        statusCode: outcome.StatusCode is >= 100 and <= 599
+                                            ? (System.Net.HttpStatusCode)outcome.StatusCode
+                                            : null);
+                                }
 
                                 managedRequest = new System.Net.Http.HttpRequestMessage(
                                     System.Net.Http.HttpMethod.Get,

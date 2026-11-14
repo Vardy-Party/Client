@@ -16,12 +16,13 @@
 | Effects / events | `PlaybackEffect.cs`, `MediaEngineEvent.cs` | Host executes effects; engine emits facts |
 | `PlaybackCommandExecutor` | `VardyParty.Playback/Domain/PlaybackCommandExecutor.cs` | Interprets flags; every OS host uses this |
 | `PlaybackPoolCommandActions` | `VardyParty.Playback/Domain/PlaybackPoolCommandActions.cs` | Pool clear/remove/retry/attach-current for **every** host; fresh URL accept uses `PlaybackPolicy.ShouldAcceptFreshM3U8` against session current URL |
+| `IPlaylistReloadRecoveryStrategy` | `VardyParty.Playback/Domain/IPlaylistReloadRecoveryStrategy.cs` | Mid-play playlist recovery; default option 1 `RetrySameUrl` holds and retries the same URL. Selected via `GamesApi:PlaylistReloadStrategy`. |
 | Android host | `Platforms/Android/NativeVideoActivity.Playback.cs` | ExoPlayer facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Windows host | `Platforms/Windows/WindowsVideoPlayerService.Playback.cs` | WinUI facts → same loop; pool via `PlaybackPoolCommandActions` |
 | Linux host | `VardyParty.Linux/Services/LinuxVideoPlayerService.cs` | LibVLC facts → same loop; software-frame compositing into Avalonia Image so chrome overlays video; standalone libvlc window fallback |
 | iOS host | `Platforms/iOS/IOSVideoPlayerService.cs` | AVPlayer asset; session/executor/pool in `AppleVideoPlayerServiceBase` (`#if IOS \|\| MACCATALYST`, namespace `VardyParty`) |
 | MacCatalyst host | `Platforms/MacCatalyst/MacCatalystVideoPlayerService.cs` | AVPlayer asset; same shared Apple base |
-| Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry |
+| Tests | `tests/VardyParty.Playback.Tests/Playback*.cs`, `FakeMediaEnginePlaybackTests.cs`, `StreamMetricsWindowTests.cs`, `DelegatingMediaEngineTests.cs`, `PlaylistReloadRecoveryStrategyTests.cs`; orchestrator cache retry in `tests/VardyParty.Streaming.Tests/StreamResolutionOrchestratorTests.cs`; health identity/reporter in `tests/VardyParty.Streaming.Tests/`; Linux proxy mid-play retry in `tests/VardyParty.Linux.Tests/LinuxHlsLocalProxyTests.cs` | Policy + session + command collapse + fake `IMediaEngine` host loop + orchestrator cache retry + mid-play playlist strategy |
 
 ---
 
@@ -585,6 +586,20 @@ Hosts must put the error-code name and cause chain into the Error message (`Play
 - A stream that never started gets one fresh `/play` before it is dropped, unless the error is `ConfirmedDead`.
 - A failed switch gets the same budget for its target before reverting to last-good (next section).
 - User Next/Prev cancels recovery; the new stream starts with a full budget.
+
+### Mid-play playlist reload strategy (14 Nov 2026)
+
+A transitory mid-play playlist 503 (or a non-`#EXTM3U` body) used to be handed to the player as "this isn't a playlist", classified as `TokenOrPlaylistInvalid`, and — with another healthy row in the pool — advanced immediately (Hadcrack / 8 Nov Bravia rule). The same URL was often fine again a few seconds later.
+
+Platforms already fetch playlists themselves (Android `UnwrappingDataSource`, Windows `AdaptiveMediaSource.DownloadRequested`, Linux `LinuxHlsLocalProxy`) before the player sees them. Recovery is therefore a shared strategy, not a player-engine change.
+
+- Contract: `IPlaylistReloadRecoveryStrategy.Decide` on each mid-play playlist fetch (`status`, body, content-type, attempt). The coordinator (`PlaylistReloadCoordinator`) loops; platforms must not hand a rejected body to the player. A later option (temporary switch + auto-return) can be selected by name without changing those fetchers.
+- Setting: `GamesApi:PlaylistReloadStrategy` (default `RetrySameUrl`). Unknown names fall back to option 1. Registered in `AddVardyParty`.
+- **Option 1 (`RetrySameUrl`)**: mid-play only (the first attach of a URL is not retried). On HTTP 5xx or a non-`#EXTM3U` body, hold the player request and retry the same URL immediately, then after 1s (`PlaybackPolicy.SameStreamRetryBackoff`; the 3s slot is unused unless the cap is raised). Give up after `MaxSameStreamRetries` (3) consecutive bad reloads and surface a classified error (`CdnUnreachable` for 5xx / connect failure, `TokenOrPlaylistInvalid` for a persistent HTML/non-HLS body) so the existing session rules apply (`KeepCdnUnreachableAndMoveOn`, Hadcrack immediate-advance). 401/403/442 and playlist 404/410 give up at once — the same URL cannot help. Segments are unchanged.
+- Prefer holding over re-serving a stale playlist. Windows `DownloadRequested` must complete its deferral promptly (`PlaybackPolicy.WindowsPlaylistDeferralBudget`, 8s). If the next retry delay would exceed the remaining budget, serve the last-good playlist when one exists (documented escape); if there is no last-good, give up. Linux and Android hold the request and do not use this escape.
+- Give-up and engine error messages keep `HTTP {code}` for 4xx/5xx so `ClassifyPlaybackError` remains a backstop if a bad body still reaches the player.
+- Logs: `[playlist-retry] row="..." attempt=N status=... content-type=... body="..." outcome=retry|serve|give-up|serve-last-good` with a short sanitized body prefix (URLs and tokens stripped).
+- Tests: `PlaylistReloadRecoveryStrategyTests` (fake fetch + fake clock) and Linux `LinuxHlsLocalProxyTests` mid-play 503→200 / first-attach / three-503 cases.
 
 ### Failed switch: retry the target, keep it (31 Oct 2026)
 

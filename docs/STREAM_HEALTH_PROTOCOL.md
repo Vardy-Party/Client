@@ -1,4 +1,4 @@
-﻿# Stream Health Protocol
+# Stream Health Protocol
 
 **VERSION:** 1.0  
 **AUDIENCE:** AI assistants working on client applications that consume the headless-m3u8 API  
@@ -840,6 +840,8 @@ If primary stream recovers:
 - Do NOT switch back unless user requests
 - Keep backup ready
 - Report recovery to backend
+
+Mid-play playlist recovery (14 Nov 2026) is option 1 (`RetrySameUrl`) in the player fetch layer: a transitory 5xx or non-HLS playlist is retried on the same URL while the player keeps its buffer. It does not switch away, so this "do not switch back" rule is unchanged. A later option 2 (temporary switch + auto-return) would be a deliberate, documented exception and is not implemented.
 
 ---
 

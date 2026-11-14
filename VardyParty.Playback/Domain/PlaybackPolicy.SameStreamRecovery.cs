@@ -58,6 +58,13 @@ public static partial class PlaybackPolicy
     public const int MaxSameStreamRetries = 3;
 
     /// <summary>
+    /// Windows Adaptive Media Source <c>DownloadRequested</c> must complete the deferral
+    /// promptly. If a mid-play playlist retry delay would exceed this budget, serve the
+    /// last-good playlist when one exists (documented escape). Prefer holding otherwise.
+    /// </summary>
+    public static readonly TimeSpan WindowsPlaylistDeferralBudget = TimeSpan.FromSeconds(8);
+
+    /// <summary>
     /// Extra fresh <c>/play</c> attempts when a scrape returns no URL for a stream
     /// that was already playing. A wedd/premium page often emits an unsigned
     /// playlist first (rejected: no video bytes) and a signed one on the next

@@ -44,6 +44,20 @@ public static class VardyPartyServiceCollectionExtensions
         services.AddSingleton<SelectionState>();
         services.AddSingleton<ILocalLanServiceAvailabilityMonitor, LocalLanServiceAvailabilityMonitor>();
         services.AddSingleton<IStreamResolver, StreamResolver>();
+        services.AddSingleton<IPlaylistReloadRecoveryStrategy>(sp =>
+        {
+            string? name = null;
+            try
+            {
+                name = sp.GetService<Microsoft.Extensions.Options.IOptions<GamesApiSettings>>()?.Value.PlaylistReloadStrategy;
+            }
+            catch
+            {
+                // Hosts without a bound GamesApi section keep the default.
+            }
+
+            return PlaylistReloadStrategies.Resolve(name);
+        });
         return services;
     }
 }

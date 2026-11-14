@@ -581,7 +581,8 @@ namespace VardyParty.Platforms.Android
                             var customFactory = new UnwrappingDataSourceFactory(
                                 ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled),
                                 _transferMeter,
-                                DownloadOutcomeReporter(CurrentAttachGeneration));
+                                DownloadOutcomeReporter(CurrentAttachGeneration),
+                                CreatePlaylistReloadSession());
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -630,7 +631,7 @@ namespace VardyParty.Platforms.Android
                         ApplyLiveBackoff(fallbackBuilder);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter, DownloadOutcomeReporter(CurrentAttachGeneration)))
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter, DownloadOutcomeReporter(CurrentAttachGeneration), CreatePlaylistReloadSession()))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 
@@ -662,6 +663,17 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogError(ex, "[NativeVideoActivity] AttachEngine outer exception");
             }
+        }
+
+        private static PlaylistReloadSession CreatePlaylistReloadSession()
+        {
+            IPlaylistReloadRecoveryStrategy? strategy = null;
+            try
+            {
+                strategy = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy;
+            }
+            catch { /* default strategy */ }
+            return new PlaylistReloadSession(strategy);
         }
     }
 }

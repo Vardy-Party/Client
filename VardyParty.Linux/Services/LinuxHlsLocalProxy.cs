@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using VardyParty.Playback;
 using VardyParty.Streaming;
 
 namespace VardyParty.Linux.Services;
@@ -15,6 +16,8 @@ public sealed class LinuxHlsLocalProxy : IDisposable
 {
     private readonly HttpClient _http;
     private readonly ILogger? _logger;
+    private readonly IPlaylistReloadRecoveryStrategy _playlistReload;
+    private readonly object _playlistStateLock = new();
     private readonly HttpListener _listener = new();
     private readonly CancellationTokenSource _cts = new();
     private IReadOnlyDictionary<string, string>? _headers;
@@ -24,11 +27,17 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     private Task? _loop;
     private int _port;
     private bool _started;
+    private bool _firstPlaylistDone;
+    private byte[]? _lastGoodPlaylist;
 
-    public LinuxHlsLocalProxy(HttpClient http, ILogger? logger = null)
+    public LinuxHlsLocalProxy(
+        HttpClient http,
+        ILogger? logger = null,
+        IPlaylistReloadRecoveryStrategy? playlistReload = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _logger = logger;
+        _playlistReload = playlistReload ?? PlaylistReloadStrategies.Default;
     }
 
     public int Port => _port;
@@ -79,6 +88,12 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         if (!VardyParty.Kernel.HlsUriResolver.TryGetHttpUrl(originUrl, out var origin))
         {
             throw new ArgumentException("originUrl must be an absolute http(s) URI.", nameof(originUrl));
+        }
+
+        lock (_playlistStateLock)
+        {
+            _firstPlaylistDone = false;
+            _lastGoodPlaylist = null;
         }
 
         return new Uri(LinuxHlsPlaylistRewriter.ToProxyUrl(origin.AbsoluteUri, Prefix));
@@ -132,6 +147,12 @@ public sealed class LinuxHlsLocalProxy : IDisposable
             }
 
             target = decoded;
+
+            if (PlaylistReloadEvaluation.IsPlaylistUrl(target))
+            {
+                await ServePlaylistWithRecoveryAsync(ctx, target).ConfigureAwait(false);
+                return;
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
             ApplyHeaders(request);
@@ -219,6 +240,97 @@ public sealed class LinuxHlsLocalProxy : IDisposable
             try { ctx.Response.OutputStream.Close(); } catch { /* ignore */ }
             try { ctx.Response.Close(); } catch { /* ignore */ }
         }
+    }
+
+    private async Task ServePlaylistWithRecoveryAsync(HttpListenerContext ctx, string target)
+    {
+        bool firstAttach;
+        byte[]? lastGood;
+        lock (_playlistStateLock)
+        {
+            firstAttach = !_firstPlaylistDone;
+            lastGood = _lastGoodPlaylist;
+        }
+
+        var request = new PlaylistReloadRequest
+        {
+            IsFirstAttach = firstAttach,
+            LastGoodPlaylist = lastGood,
+            Row = null,
+            Log = line => _logger?.LogInformation("{Line}", line)
+        };
+
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            _playlistReload,
+            request,
+            ct => FetchPlaylistOnceAsync(target, ct),
+            _cts.Token).ConfigureAwait(false);
+
+        if (outcome.Kind == PlaylistReloadOutcomeKind.Failed)
+        {
+            ctx.Response.StatusCode = outcome.StatusCode is >= 400 and <= 599
+                ? outcome.StatusCode
+                : 502;
+            return;
+        }
+
+        if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
+        {
+            lock (_playlistStateLock)
+            {
+                _firstPlaylistDone = true;
+                _lastGoodPlaylist = outcome.Body;
+            }
+        }
+
+        var text = Encoding.UTF8.GetString(outcome.Body ?? []);
+        await WritePlaylistAsync(ctx, text, target).ConfigureAwait(false);
+    }
+
+    private async Task<PlaylistReloadFetchResult> FetchPlaylistOnceAsync(string target, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, target);
+        ApplyHeaders(request);
+        _logger?.LogDebug("[LinuxHlsProxy] GET {Target}", target);
+        using var response = await _http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        var body = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        return new PlaylistReloadFetchResult
+        {
+            StatusCode = (int)response.StatusCode,
+            Body = body,
+            ContentType = mediaType
+        };
+    }
+
+    private async Task WritePlaylistAsync(HttpListenerContext ctx, string text, string target)
+    {
+        if (_playlistTransform is not null)
+        {
+            var transformed = _playlistTransform(text);
+            if (!string.Equals(transformed, text, StringComparison.Ordinal))
+            {
+                _logger?.LogInformation("[LinuxHlsProxy] Applied transport playlist rewrite");
+                text = transformed;
+            }
+        }
+
+        var substituted = LinuxHlsPlaylistRewriter.SubstitutePlayableSegments(text, _rewrittenSegments);
+        if (!string.Equals(substituted, text, StringComparison.Ordinal))
+        {
+            _logger?.LogInformation("[LinuxHlsProxy] Substituted captured rewritten segment URLs");
+            text = substituted;
+        }
+
+        var rewritten = LinuxHlsPlaylistRewriter.Rewrite(text, target, Prefix);
+        var bytes = Encoding.UTF8.GetBytes(rewritten);
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/vnd.apple.mpegurl";
+        ctx.Response.ContentLength64 = bytes.Length;
+        await ctx.Response.OutputStream.WriteAsync(bytes, _cts.Token).ConfigureAwait(false);
     }
 
     private void ApplyHeaders(HttpRequestMessage request)
