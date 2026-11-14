@@ -258,6 +258,9 @@ namespace VardyParty.Platforms.Android
         private readonly PlaybackTransferMeter _transferMeter = new();
         private bool _anticipatingToken;
         private int? _videoHeight;
+        private readonly DecodedPictureSizeSettler _pictureSizeSettler = new();
+        private global::Android.OS.Handler? _pictureSizeSettleHandler;
+        private Java.Lang.IRunnable? _pictureSizeSettleRunnable;
         private string _m3u8Url = string.Empty;
         private string? _refererUrl;
         private IReadOnlyDictionary<string, string>? _requestHeaders;
@@ -1100,6 +1103,8 @@ namespace VardyParty.Platforms.Android
         {
             // Drop the previous picture size immediately so the toast / info row
             // cannot flash the last stream's height before the new one confirms.
+            _pictureSizeSettler.Reset();
+            CancelPictureSizeSettleTick();
             _videoWidth = null;
             _videoHeight = null;
             if (!_streamSwitchInProgress)
@@ -1262,6 +1267,7 @@ namespace VardyParty.Platforms.Android
                 RemoveCallback(_tickerHandler, _tickerRunnable);
                 StopStatusWatchdog();
                 RemoveCallback(_streamToastHandler, _streamToastRunnable);
+                CancelPictureSizeSettleTick();
                 StopVideoInfoRefreshLoop();
                 _healthReportTimer?.Dispose();
                 _healthReportTimer = null;
@@ -1650,7 +1656,7 @@ namespace VardyParty.Platforms.Android
                 {
                     LogIgnored("StartHealthReporting", ex);
                 }
-            }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+            }, null, PlaybackPolicy.HealthMetricsInterval, PlaybackPolicy.HealthMetricsInterval);
         }
 
         private void ReportPlaybackStarted()
@@ -1825,10 +1831,14 @@ namespace VardyParty.Platforms.Android
                 {
                     if (videoSize is { Width: > 0, Height: > 0 })
                     {
-                        _activity._videoWidth = videoSize.Width;
-                        _activity._videoHeight = videoSize.Height;
+                        // Confirm a picture immediately; publish the size to the overlay
+                        // only after the shared 1s settler so a first-sample flash cannot show.
                         _activity.NoteVideoSeen("size " + videoSize.Width + "x" + videoSize.Height);
-                        _activity.RunOnUiThread(_activity.UpdateOverlayFromCurrentStream);
+                        _activity.RunOnUiThread(() =>
+                        {
+                            _activity.ObserveDecodedPictureSize(videoSize.Width, videoSize.Height);
+                            _activity.UpdateOverlayFromCurrentStream();
+                        });
                     }
                 }
                 catch (Exception ex) { _activity.LogIgnored("OnVideoSizeChanged", ex); }

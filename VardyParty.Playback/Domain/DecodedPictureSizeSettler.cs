@@ -4,12 +4,13 @@ namespace VardyParty.Playback;
 /// Holds back a decoded picture size until it has stayed the same for
 /// <see cref="Settle"/>. Windows MediaPlayer / AMS often reports 1920x1080
 /// for 100–200ms before the real size arrives; publishing that first sample
-/// flashes 1080p on the overlay. Until a size settles, the overlay should
-/// keep showing a bitstream-probed height if one exists.
+/// flashes 1080p on the overlay. Android and Linux use the same rule so a
+/// first-size flash cannot appear on any platform. Until a size settles,
+/// the overlay should keep showing a bitstream-probed height if one exists.
 /// </summary>
 public sealed class DecodedPictureSizeSettler
 {
-    public static readonly TimeSpan Settle = TimeSpan.FromSeconds(1);
+    public static readonly TimeSpan Settle = PlaybackPolicy.DecodedPictureSettle;
 
     private readonly Func<DateTimeOffset> _clock;
     private int _pendingWidth;
@@ -30,6 +31,9 @@ public sealed class DecodedPictureSizeSettler
         _published ? (_publishedWidth, _publishedHeight) : null;
 
     public bool HasPublished => _published;
+
+    /// <summary>True while a sample is waiting to stay unchanged for <see cref="Settle"/>.</summary>
+    public bool NeedsTick => _hasPending && !_published;
 
     /// <summary>Drop pending and published sizes (call at the start of a switch / new attach).</summary>
     public void Reset()

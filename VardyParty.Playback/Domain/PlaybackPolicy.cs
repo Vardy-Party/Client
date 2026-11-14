@@ -99,11 +99,40 @@ public static partial class PlaybackPolicy
     public const int MaxLiveHlsRecoveries = 5;
 
     /// <summary>
-    /// Live-edge backoff (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
-    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>. Larger = more
-    /// media held behind the edge (the only place a live buffer can exist).
+    /// Shared live-buffer target (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
+    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>; Linux overlay
+    /// accounting when a buffer-ahead can be measured. Larger = more media held
+    /// behind the edge (the only place a live buffer can exist). LibVLC has no
+    /// live-edge offset API — do not map this 25s value onto
+    /// <c>--network-caching</c> (see <see cref="LibVlcNetworkCachingMs"/>).
     /// </summary>
     public const int DesiredLiveOffsetSeconds = 25;
+
+    /// <summary>
+    /// Closest LibVLC input-cache that does not delay the first picture.
+    /// Mapping <see cref="DesiredLiveOffsetSeconds"/> (25s) to
+    /// <c>--network-caching</c> / <c>--live-caching</c> would stall start by
+    /// about 25s: those options are a pre-roll cache, not a live-edge offset.
+    /// Desktop Linux therefore uses this value. Overlay still treats
+    /// <see cref="DesiredLiveOffsetSeconds"/> as the shared product target.
+    /// </summary>
+    public const int LibVlcNetworkCachingMs = 4_000;
+
+    /// <summary>
+    /// WSL/test-host only: extra cache for software present delay. Not a
+    /// second product live-buffer target.
+    /// </summary>
+    public const int LibVlcTestHostNetworkCachingMs = 12_000;
+
+    /// <summary>LibVLC cache for a desktop product build, or the WSL test-host override.</summary>
+    public static int ResolveLibVlcNetworkCachingMs(bool conservativeTestHost)
+        => conservativeTestHost ? LibVlcTestHostNetworkCachingMs : LibVlcNetworkCachingMs;
+
+    /// <summary>
+    /// Period for crowd-health <c>PlaybackMetrics</c> reports on Android,
+    /// Windows, and Linux. Never surface bitrate in the player UI from these samples.
+    /// </summary>
+    public static readonly TimeSpan HealthMetricsInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms) — how much to keep

@@ -59,7 +59,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly IStreamHealthReporter _healthReporter;
     private readonly LinuxHlsLocalProxy? _hlsProxy;
     private readonly IPlaybackPlaylistProcessor? _playlistProcessor;
-    private readonly PlaybackSessionController _session = new();
+    private readonly PlaybackSessionController _session = CreateSession();
+    private readonly DecodedPictureSizeSettler _pictureSizeSettler = new();
+    private Timer? _pictureTickTimer;
     private SwitchBackRunner? _switchBack;
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
@@ -367,6 +369,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _pictureFormatGenerationAtSwitch = _current?.FrameSink?.FormatGeneration ?? 0;
             _playerResolutionTrusted = false;
+            _pictureSizeSettler.Reset();
         }
         if (StreamSwitchInProgress == value)
             return;
@@ -475,6 +478,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
         _switchBack?.Stop();
+        StopPictureTick();
         StopMetricsLoop();
         var closed = new PlaybackResult
         {
@@ -1210,7 +1214,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+            var deadline = DateTime.UtcNow + PlaybackPolicy.NoVideoTimeout;
             while (DateTime.UtcNow < deadline)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
@@ -1282,6 +1286,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         SetBufferingState(false);
         _engine.Raise(MediaEngineEvent.Ready(_session.Snapshot.AttachGeneration));
         StartMetricsLoop();
+        StartPictureTick();
+        ProbeVideo();
+    }
+
+    private static PlaybackSessionController CreateSession()
+    {
+        var session = new PlaybackSessionController();
+        session.EnableVideoConfirmation();
+        return session;
     }
 
     private static string? ResolveHeader(IReadOnlyDictionary<string, string>? headers, string name)
@@ -1341,6 +1354,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
+        StopPictureTick();
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Error(_session.Snapshot.AttachGeneration, "Stream playback failed"));
     }
@@ -1353,6 +1367,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Playback ended");
+        StopPictureTick();
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Ended(_session.Snapshot.AttachGeneration));
         PlaybackVisibilityChanged?.Invoke(this, false);
@@ -1448,8 +1463,14 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     resolution = frame;
             }
 
-            if (resolutionTrusted && resolution is { Height: > 0 } size)
-                _switchBack?.NoteBackupHeight(size.Height);
+            // Overlay and health metrics publish only after the shared 1s settle.
+            if (resolutionTrusted && resolution is { Width: > 0, Height: > 0 } raw)
+            {
+                var published = _pictureSizeSettler.Observe(raw.Width, raw.Height);
+                resolution = published;
+                if (published is { Height: > 0 } size)
+                    _switchBack?.NoteBackupHeight(size.Height);
+            }
 
             // LibVLC media stats report demux/input rates in bytes/s.
             int? demuxKbps = null;
@@ -1534,7 +1555,86 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _logger.LogDebug(ex, "[LinuxVideoPlayerService] Metrics raise failed");
             }
-        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }, null, PlaybackPolicy.HealthMetricsInterval, PlaybackPolicy.HealthMetricsInterval);
+    }
+
+    private void StartPictureTick()
+    {
+        StopPictureTick();
+        _pictureTickTimer = new Timer(_ =>
+        {
+            try
+            {
+                _pictureSizeSettler.Tick();
+                ProbeVideo();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Picture tick failed");
+            }
+        }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void StopPictureTick()
+    {
+        _pictureTickTimer?.Dispose();
+        _pictureTickTimer = null;
+    }
+
+    /// <summary>
+    /// Tells the session whether this attach has shown video. Called on Ready
+    /// and on every picture tick until confirmed; the session fails the stream
+    /// with "No video (audio only)" after <see cref="PlaybackPolicy.NoVideoTimeout"/>.
+    /// A first-frame size confirms the picture immediately; the overlay still
+    /// waits for <see cref="DecodedPictureSizeSettler"/> to settle.
+    /// </summary>
+    private void ProbeVideo()
+    {
+        try
+        {
+            if (_session.Snapshot.IsVideoConfirmed)
+            {
+                if (!_pictureSizeSettler.NeedsTick)
+                    StopPictureTick();
+                return;
+            }
+
+            var hasVideo = TryGetRawTrustedPictureSize() is { Height: > 0 };
+            _engine.Raise(MediaEngineEvent.VideoProbe(_session.Snapshot.AttachGeneration, hasVideo));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] ProbeVideo failed");
+        }
+    }
+
+    private (int Width, int Height)? TryGetRawTrustedPictureSize()
+    {
+        if (!IsPlayerResolutionTrusted())
+            return null;
+
+        var vlc = _current;
+        if (vlc is not { Abandoned: false })
+            return null;
+
+        var media = vlc.Player.Media ?? _currentMedia;
+        if (media != null)
+        {
+            foreach (var track in media.Tracks)
+            {
+                if (track.TrackType != TrackType.Video)
+                    continue;
+                var video = track.Data.Video;
+                if (video.Width > 0 && video.Height > 0)
+                    return ((int)video.Width, (int)video.Height);
+            }
+        }
+
+        var frame = vlc.FrameSink?.LastFrameSize;
+        if (frame is { Width: > 0, Height: > 0 })
+            return frame;
+
+        return null;
     }
 
     private void StopMetricsLoop()

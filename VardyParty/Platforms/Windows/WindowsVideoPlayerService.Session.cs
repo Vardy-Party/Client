@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml.Controls;
@@ -134,6 +135,8 @@ namespace VardyParty.Platforms.Windows
             private bool measuredPictureConfirmed;
             private readonly DecodedPictureSizeSettler pictureSizeSettler = new();
             private Microsoft.UI.Xaml.DispatcherTimer? pictureSizeSettleTimer;
+            private Microsoft.UI.Xaml.DispatcherTimer? videoProbeTimer;
+            private Timer? healthMetricsTimer;
             private DateTime lastMetricsRaiseUtc = DateTime.MinValue;
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;
@@ -265,6 +268,7 @@ namespace VardyParty.Platforms.Windows
                         cleanupPool: () => switchingService.Cleanup());
                     chrome.StateChanged += (_, __) => MainThread.BeginInvokeOnMainThread(ApplyChromeState);
                     session = new PlaybackSessionController();
+                    session.EnableVideoConfirmation();
                     switchBack = CreateSwitchBackRunner();
                     engine = new DelegatingMediaEngine();
                     pool = new PlaybackPoolCommandActions(

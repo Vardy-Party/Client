@@ -142,6 +142,7 @@ namespace VardyParty.Platforms.Windows
                     measuredPictureConfirmed = published is not null;
                     if (published is { Height: > 0 } size)
                         switchBack?.NoteBackupHeight(size.Height);
+                    ProbeVideo();
                     if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                     {
                         _host.ExtractVideoMetadata(item, mediaPlayer);

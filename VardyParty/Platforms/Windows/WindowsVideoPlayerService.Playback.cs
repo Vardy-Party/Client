@@ -104,6 +104,8 @@ namespace VardyParty.Platforms.Windows
             {
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
+                StopVideoProbe();
+                StopHealthMetricsLoop();
                 CancelPlaybackDownloads();
                 _host.UnbindTransferMeter(transferMeter);
                 transferMeter.Reset();
@@ -315,7 +317,13 @@ namespace VardyParty.Platforms.Windows
                     detailMessage: detail);
             }
 
-            /// <summary>How long an attach may go without reaching Playing before it counts as a failed start.</summary>
+            /// <summary>
+            /// How long an attach may go without reaching <c>Playing</c> before it
+            /// counts as a failed start. This is an AMS engine failsafe, not the
+            /// shared no-picture check: <see cref="PlaybackPolicy.NoVideoTimeout"/>
+            /// (8s) starts once Ready/Playing is raised. AMS can take longer than
+            /// 8s to reach Playing, so this remains 20s.
+            /// </summary>
             private static readonly TimeSpan StartWithoutPictureTimeout = TimeSpan.FromSeconds(20);
 
             /// <summary>
@@ -369,6 +377,129 @@ namespace VardyParty.Platforms.Windows
                     return;
                 CancelReadyWatchdog();
                 engine.Raise(MediaEngineEvent.Ready(generation));
+                ArmVideoProbe();
+                ProbeVideo();
+            }
+
+            private (string? Url, string? Name) CurrentHealthIdentity()
+                => StreamHealthIdentity.ResolvePlaybackReportIdentity(
+                    switchingService?.GetCurrentStream(),
+                    session.Snapshot.CurrentUrl,
+                    _refererUrl);
+
+            private void PostHealthError(string? error)
+            {
+                try
+                {
+                    var (url, name) = CurrentHealthIdentity();
+                    _ = _host._healthReporter.ReportPlaybackErrorAsync(url, _refererUrl, name, error: error);
+                }
+                catch (Exception ex) { _host.LogIgnored("ReportPlaybackError", ex); }
+            }
+
+            private void PostHealthBuffering()
+            {
+                try
+                {
+                    var metrics = _host.GetCurrentMetrics();
+                    if (metrics != null)
+                        metrics.IsBuffering = true;
+                    var (url, name) = CurrentHealthIdentity();
+                    _ = _host._healthReporter.ReportBufferingAsync(url, _refererUrl, name, metrics: metrics);
+                }
+                catch (Exception ex) { _host.LogIgnored("ReportBuffering", ex); }
+            }
+
+            private void StartHealthMetricsLoop()
+            {
+                StopHealthMetricsLoop();
+                healthMetricsTimer = new Timer(_ =>
+                {
+                    try
+                    {
+                        var queue = nativeWindow?.DispatcherQueue;
+                        if (queue != null && !queue.HasThreadAccess)
+                        {
+                            queue.TryEnqueue(PostHealthMetrics);
+                            return;
+                        }
+                        PostHealthMetrics();
+                    }
+                    catch (Exception ex) { _host.LogIgnored("HealthMetricsTimer", ex); }
+                }, null, PlaybackPolicy.HealthMetricsInterval, PlaybackPolicy.HealthMetricsInterval);
+            }
+
+            private void StopHealthMetricsLoop()
+            {
+                var timer = Interlocked.Exchange(ref healthMetricsTimer, null);
+                try { timer?.Dispose(); } catch (Exception ex) { _host.LogIgnored("StopHealthMetricsLoop", ex); }
+            }
+
+            private void PostHealthMetrics()
+            {
+                if (cleanupInvoked)
+                    return;
+                var metrics = _host.GetCurrentMetrics();
+                var (url, name) = CurrentHealthIdentity();
+                _ = _host._healthReporter.ReportPlaybackMetricsAsync(url, _refererUrl, name, metrics: metrics);
+                var buffering = false;
+                try { buffering = mediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Buffering; }
+                catch { }
+                engine.Raise(MediaEngineEvent.Metrics(session.Snapshot.AttachGeneration, metrics?.BitrateKbps, buffering));
+            }
+
+            /// <summary>
+            /// Tells the session whether this attach has shown video. A natural
+            /// size confirms the picture immediately; the overlay still waits
+            /// for <see cref="DecodedPictureSizeSettler"/> to settle.
+            /// </summary>
+            private void ProbeVideo()
+            {
+                try
+                {
+                    if (cleanupInvoked || session.Snapshot.IsVideoConfirmed)
+                    {
+                        StopVideoProbe();
+                        return;
+                    }
+
+                    var width = 0;
+                    var height = 0;
+                    try
+                    {
+                        width = (int)mediaPlayer.PlaybackSession.NaturalVideoWidth;
+                        height = (int)mediaPlayer.PlaybackSession.NaturalVideoHeight;
+                    }
+                    catch { }
+
+                    engine.Raise(MediaEngineEvent.VideoProbe(
+                        session.Snapshot.AttachGeneration,
+                        width > 0 && height > 0));
+                }
+                catch (Exception ex) { _host.LogIgnored("ProbeVideo", ex); }
+            }
+
+            private void ArmVideoProbe()
+            {
+                try
+                {
+                    if (videoProbeTimer is null)
+                    {
+                        videoProbeTimer = new Microsoft.UI.Xaml.DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromSeconds(1)
+                        };
+                        videoProbeTimer.Tick += (_, _) => ProbeVideo();
+                    }
+                    videoProbeTimer.Start();
+                }
+                catch (Exception ex) { _host.LogIgnored("ArmVideoProbe", ex); }
+            }
+
+            private void StopVideoProbe()
+            {
+                try { videoProbeTimer?.Stop(); }
+                catch (Exception ex) { _host.LogIgnored("StopVideoProbe", ex); }
             }
 
             private void CancelReadyWatchdog()
@@ -442,11 +573,17 @@ namespace VardyParty.Platforms.Windows
 
                 public void SyncHealthyStreamCount() => session.pool.SyncHealthyStreamCount();
 
-                public void ReportFailed(string? reason) =>
+                public void ReportFailed(string? reason)
+                {
                     session._host._logger.LogInformation("Stream failed: {Reason}", reason ?? "Playback error");
+                    session.PostHealthError(reason);
+                }
 
-                public void ReportDeclined(string? reason) =>
+                public void ReportDeclined(string? reason)
+                {
                     session._host._logger.LogInformation("Stream declined: {Reason}", reason ?? "Health declined");
+                    session.PostHealthError(reason);
+                }
 
                 /// <summary>Short, accurate text (never the raw Media Foundation message).</summary>
                 public void ShowFailureToUser(string userText) => session.ShowStreamError(userText);
@@ -463,6 +600,7 @@ namespace VardyParty.Platforms.Windows
                         session._refererUrl,
                         streamName,
                         metrics: session._host.GetCurrentMetrics());
+                    session.StartHealthMetricsLoop();
                 }
 
                 public void MarkEstablished()
@@ -471,7 +609,11 @@ namespace VardyParty.Platforms.Windows
                 }
 
                 public void RaiseBuffering(bool isBuffering)
-                    => session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
+                {
+                    session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
+                    if (isBuffering)
+                        session.PostHealthBuffering();
+                }
 
                 public void Attach(string url, bool isRevert)
                 {

@@ -25,6 +25,58 @@ namespace VardyParty.Platforms.Android
             return session;
         }
 
+        private void ObserveDecodedPictureSize(int width, int height)
+        {
+            var published = _pictureSizeSettler.Observe(width, height);
+            ApplySettledPictureSize(published);
+            SchedulePictureSizeSettleTick();
+        }
+
+        private void ApplySettledPictureSize((int Width, int Height)? published)
+        {
+            if (published is { } size)
+            {
+                _videoWidth = size.Width;
+                _videoHeight = size.Height;
+            }
+            else
+            {
+                _videoWidth = null;
+                _videoHeight = null;
+            }
+        }
+
+        private void SchedulePictureSizeSettleTick()
+        {
+            CancelPictureSizeSettleTick();
+            if (!_pictureSizeSettler.NeedsTick)
+                return;
+            _pictureSizeSettleHandler ??= new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+            _pictureSizeSettleRunnable ??= new Java.Lang.Runnable(PictureSizeSettleTick);
+            _pictureSizeSettleHandler.PostDelayed(
+                _pictureSizeSettleRunnable,
+                (long)DecodedPictureSizeSettler.Settle.TotalMilliseconds);
+        }
+
+        private void PictureSizeSettleTick()
+        {
+            try
+            {
+                ApplySettledPictureSize(_pictureSizeSettler.Tick());
+                if (_pictureSizeSettler.NeedsTick)
+                    SchedulePictureSizeSettleTick();
+                UpdateOverlayFromCurrentStream();
+            }
+            catch (Exception ex) { LogIgnored("PictureSizeSettleTick", ex); }
+        }
+
+        private void CancelPictureSizeSettleTick()
+        {
+            if (_pictureSizeSettleHandler is null || _pictureSizeSettleRunnable is null)
+                return;
+            _pictureSizeSettleHandler.RemoveCallbacks(_pictureSizeSettleRunnable);
+        }
+
         /// <summary>ExoPlayer showed a picture for the current attach (first frame or a real video size).</summary>
         private void NoteVideoSeen(string signal)
         {

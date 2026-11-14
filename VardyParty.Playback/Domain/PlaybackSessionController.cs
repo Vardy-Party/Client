@@ -499,9 +499,10 @@ public sealed class PlaybackSessionController
 
         if (!RequireVideoConfirmation)
         {
-            // Hosts without video confirmation (Windows, Linux, Apple): Ready is the
-            // picture, so it is also the "stream confirmed" moment. Without this the pool
-            // never cleared tried-this-cycle marks there and the switch counter/trace
+            // Hosts without video confirmation (Apple, or a host that has not
+            // called EnableVideoConfirmation): Ready is the picture, so it is also
+            // the "stream confirmed" moment. Without this the pool never cleared
+            // tried-this-cycle marks there and the switch counter/trace
             // (IStreamSwitchingService.PlayingConfirmed) never saw a switch (Windows log
             // 13 Nov 2026 19:41:28: LiveStreams played, from_row stayed techydeals).
             _lastGoodUrl = _currentUrl;
