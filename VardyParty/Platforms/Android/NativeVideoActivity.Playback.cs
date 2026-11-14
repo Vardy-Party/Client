@@ -15,6 +15,7 @@ namespace VardyParty.Platforms.Android
         // "working" once it shows a picture (docs/STREAM_PLAYBACK_RULES.md "Audio-only streams").
         private readonly PlaybackSessionController _session = CreateSession();
         private long _videoSeenGeneration = -1;
+        private PlaylistReloadSession? _playlistReloadSession;
 
         private static PlaybackSessionController CreateSession()
         {
@@ -271,12 +272,26 @@ namespace VardyParty.Platforms.Android
             if (_player == null || string.IsNullOrWhiteSpace(_m3u8Url))
                 return false;
 
-            _behindLiveWindowRecoveries++;
-            PlayedSegmentMemory.ArmTrimOnce();
-
             var stuckPlaylist = PlaybackPolicy.IsStuckLivePlaylistFailure(
                 error.Message,
                 DescribeCauses(error));
+
+            // Holding Open through slow 503s, or re-serving last-good, can make
+            // HlsPlaylistTracker raise PlaylistStuckException (TV 257 20:20:21).
+            // Reloading the MediaSource then caused an ~8s stall even though the
+            // playlist retry recovered. Swallow that while the hold is in budget.
+            if (stuckPlaylist
+                && _playlistReloadSession?.ShouldSuppressStuckPlaylistReload(
+                    DateTimeOffset.UtcNow,
+                    PlaybackPolicy.PlaylistReloadGiveUpBudget) == true)
+            {
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Live HLS stall — ignoring PlaylistStuck during playlist-retry hold");
+                return true;
+            }
+
+            _behindLiveWindowRecoveries++;
+            PlayedSegmentMemory.ArmTrimOnce();
 
             try
             {
@@ -582,7 +597,7 @@ namespace VardyParty.Platforms.Android
                                 ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled),
                                 _transferMeter,
                                 DownloadOutcomeReporter(CurrentAttachGeneration),
-                                CreatePlaylistReloadSession());
+                                CreatePlaylistReloadSession(m3u8Url));
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -631,7 +646,7 @@ namespace VardyParty.Platforms.Android
                         ApplyLiveBackoff(fallbackBuilder);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter, DownloadOutcomeReporter(CurrentAttachGeneration), CreatePlaylistReloadSession()))
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter, DownloadOutcomeReporter(CurrentAttachGeneration), CreatePlaylistReloadSession(m3u8Url)))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 
@@ -665,7 +680,7 @@ namespace VardyParty.Platforms.Android
             }
         }
 
-        private static PlaylistReloadSession CreatePlaylistReloadSession()
+        private PlaylistReloadSession CreatePlaylistReloadSession(string? m3u8Url)
         {
             IPlaylistReloadRecoveryStrategy? strategy = null;
             try
@@ -673,7 +688,9 @@ namespace VardyParty.Platforms.Android
                 strategy = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy;
             }
             catch { /* default strategy */ }
-            return new PlaylistReloadSession(strategy);
+            var created = new PlaylistReloadSession(strategy, PlaylistReloadRowName.ForUrl(_switching, m3u8Url));
+            _playlistReloadSession = created;
+            return created;
         }
     }
 }

@@ -334,19 +334,19 @@ public partial class LinuxHomePage
         if (info is null)
             return null;
 
-        // Same as Android/Windows: prefer live player metrics over find-phase health.
+        // Same as Android/Windows: prefer live player metrics over a bitstream
+        // probe, and never playlist RESOLUTION. Ignore player size until the
+        // new attach confirms a picture.
         var linux = _videoPlayer as LinuxVideoPlayerService;
         var metrics = linux?.GetCurrentMetrics();
-        if (metrics is null)
-            return info;
-
-        var resolution = metrics.Resolution is { } size
+        var measured = linux?.IsPlayerResolutionTrusted() == true
+            && metrics?.Resolution is { } size
             ? $"{size.Width}x{size.Height}"
-            : info.Resolution;
+            : null;
         var bitrateKbps = MeasuredBitrate.ResolveKbps(
             info.BitrateKbps,
             amsBitsPerSecond: 0,
-            metrics.BitrateKbps);
+            metrics?.BitrateKbps);
         return new PlayerOverlayInfo
         {
             Index = info.Index,
@@ -354,11 +354,15 @@ public partial class LinuxHomePage
             Channel = info.Channel,
             SourceLabel = info.SourceLabel,
             BitrateKbps = bitrateKbps,
-            Resolution = resolution,
-            FrameRate = metrics.Framerate ?? info.FrameRate,
-            VideoCodec = metrics.VideoCodec ?? info.VideoCodec,
-            AudioCodec = metrics.AudioCodec ?? info.AudioCodec,
-            AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution) ?? info.AspectRatio,
+            Resolution = measured,
+            ProbedResolution = info.ProbedResolution
+                ?? _switching.GetCurrentStream()?.Health?.GetProbedResolution(),
+            FrameRate = metrics?.Framerate ?? info.FrameRate,
+            VideoCodec = metrics?.VideoCodec ?? info.VideoCodec,
+            AudioCodec = metrics?.AudioCodec ?? info.AudioCodec,
+            AspectRatio = PlayerOverlayFormatter.BuildAspect(measured)
+                ?? PlayerOverlayFormatter.BuildAspect(info.ProbedResolution)
+                ?? info.AspectRatio,
             BufferPercent = linux?.BufferPercent ?? info.BufferPercent,
             M3u8Url = info.M3u8Url,
             RefererUrl = info.RefererUrl,

@@ -40,6 +40,31 @@ public class StreamHealth
     public string? AudioCodec { get; set; }
 
     /// <summary>
+    /// Picture size parsed from a media segment or init bitstream (SPS),
+    /// never from playlist RESOLUTION metadata. Null until the health check
+    /// has seen enough bytes, or if the stream is encrypted / unreadable.
+    /// </summary>
+    public int? ProbedVideoWidth { get; set; }
+
+    /// <summary>Vertical size companion to <see cref="ProbedVideoWidth"/>.</summary>
+    public int? ProbedVideoHeight { get; set; }
+
+    /// <summary>
+    /// Completes when the non-blocking bitstream size probe has finished
+    /// (parsed, skipped, or failed). Already completed when the size was
+    /// read from bytes the health check already had, or no probe was started.
+    /// </summary>
+    public Task WhenBitstreamSizeProbed { get; set; } = Task.CompletedTask;
+
+    /// <summary><c>1920x1080</c> when both probed dimensions are known.</summary>
+    public string? GetProbedResolution()
+    {
+        if (ProbedVideoWidth is > 0 && ProbedVideoHeight is > 0)
+            return $"{ProbedVideoWidth}x{ProbedVideoHeight}";
+        return ProbedVideoHeight is > 0 ? $"{ProbedVideoHeight}p" : null;
+    }
+
+    /// <summary>
     /// What the passing media playlist looked like (segment names, 90 kHz numbers,
     /// PROGRAM-DATE-TIME, target duration, when it was read). Only set when the check
     /// passed. <see cref="MirrorProofPolicy"/> uses it to prove two URLs are one stream.

@@ -615,10 +615,12 @@ namespace VardyParty.Platforms.Windows
                         // budget (PlaybackPolicy.WindowsPlaylistDeferralBudget) would be
                         // exceeded by the next retry delay.
                         var playlistReload = new PlaylistReloadSession(
-                            _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy)
+                            _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy,
+                            PlaylistReloadRowName.ForUrl(switchingService, url))
                         {
                             FirstPlaylistCompleted = true
                         };
+                        playlistReloadSession = playlistReload;
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
                             if (IsStaleAttach(generation))
@@ -645,7 +647,14 @@ namespace VardyParty.Platforms.Windows
                                             LastGoodPlaylist = playlistReload.LastGoodPlaylist,
                                             MaxHold = PlaybackPolicy.WindowsPlaylistDeferralBudget,
                                             Row = playlistReload.Row,
-                                            Log = line => _host._logger.LogInformation("{Line}", line)
+                                            Session = playlistReload,
+                                            Log = (isInfo, line) =>
+                                            {
+                                                if (isInfo)
+                                                    _host._logger.LogInformation("{Line}", line);
+                                                else
+                                                    _host._logger.LogDebug("{Line}", line);
+                                            }
                                         },
                                         async ct =>
                                         {
@@ -657,12 +666,10 @@ namespace VardyParty.Platforms.Windows
                                                 System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
                                                 ct).ConfigureAwait(false);
                                             var bodyBytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-                                            return new PlaylistReloadFetchResult
-                                            {
-                                                StatusCode = (int)resp.StatusCode,
-                                                Body = bodyBytes,
-                                                ContentType = resp.Content.Headers.ContentType?.MediaType
-                                            };
+                                            return PlaylistReloadFetchResult.FromHttp(
+                                                (int)resp.StatusCode,
+                                                bodyBytes,
+                                                resp.Content.Headers.ContentType?.MediaType);
                                         },
                                         segmentToken).ConfigureAwait(false);
 
@@ -956,6 +963,10 @@ namespace VardyParty.Platforms.Windows
                         plan.Reason);
 
                     streamSwitchInProgress = true;
+                    pictureSizeSettler.Reset();
+                    measuredPictureConfirmed = false;
+                    try { pictureSizeSettleTimer?.Stop(); }
+                    catch (Exception ex) { _host.LogIgnored("StopPictureSizeSettleTimer", ex); }
                     transferMeter.Reset();
                     MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     UpdateInfo();

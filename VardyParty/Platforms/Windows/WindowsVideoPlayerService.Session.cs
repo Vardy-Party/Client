@@ -126,6 +126,13 @@ namespace VardyParty.Platforms.Windows
             private bool suppressIndexDrivenSwitch;
             /// <summary>True from switch status until the new attach finishes — video-info hides telemetry/URLs.</summary>
             private bool streamSwitchInProgress;
+            /// <summary>
+            /// True after a decoded size has stayed the same for
+            /// <see cref="DecodedPictureSizeSettler.Settle"/>. Cleared on switch.
+            /// </summary>
+            private bool measuredPictureConfirmed;
+            private readonly DecodedPictureSizeSettler pictureSizeSettler = new();
+            private Microsoft.UI.Xaml.DispatcherTimer? pictureSizeSettleTimer;
             private DateTime lastMetricsRaiseUtc = DateTime.MinValue;
             private SemaphoreSlim playbackSwitchLock = null!;
             private AdaptiveMediaSource? activeAdaptiveMediaSource;
@@ -143,6 +150,7 @@ namespace VardyParty.Platforms.Windows
             private readonly PlaybackTransferMeter transferMeter = new();
             /// <summary>HTTP status of the last failed download of this attach (0 after a success).</summary>
             private volatile int lastDownloadFailureStatus;
+        private PlaylistReloadSession? playlistReloadSession;
             /// <summary>Attach generation waiting for its first Playing state to raise Ready.</summary>
             private long readyPendingGeneration = -1;
             private CancellationTokenSource? readyWatchdogCts;
@@ -635,6 +643,7 @@ namespace VardyParty.Platforms.Windows
                             var refusedStatus = lastDownloadFailureStatus;
                             if (PlaybackPolicy.IsRefusedStatus(refusedStatus))
                                 detail = $"{PlaybackPolicy.RefusedDownloadReason(refusedStatus)}: {detail}";
+                            detail = PlaybackPolicy.ResolvePlayerErrorAfterPlaylistGiveUp(detail, playlistReloadSession);
                             CancelReadyWatchdog();
                             engine.Raise(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, detail));
                         }
@@ -664,8 +673,16 @@ namespace VardyParty.Platforms.Windows
                     // Hook into playback session changes to update info if visible
                     naturalVideoSizeChangedHandler = (s, e) =>
                     {
-                        // Extract metadata when format is decoded
-                        if (mediaPlayer.Source is MediaPlaybackItem item)
+                        try
+                        {
+                            var session = mediaPlayer.PlaybackSession;
+                            ObserveDecodedPictureSize((int)session.NaturalVideoWidth, (int)session.NaturalVideoHeight);
+                        }
+                        catch (Exception ex) { _host.LogIgnored("ConfirmNaturalVideoSize", ex); }
+
+                        // Extract metadata only after the size has settled, so a
+                        // brief default 1920x1080 is not stored as the picture size.
+                        if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                         {
                             _host.ExtractVideoMetadata(item, mediaPlayer);
                             _host.UpdateBitrateFromAdaptiveSource(item);  // Refresh bitrate

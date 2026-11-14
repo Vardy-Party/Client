@@ -29,6 +29,14 @@ namespace VardyParty.Platforms.Android
         private long _bytesRemaining = C.LengthUnset;
         private byte[] _scratch = new byte[16 * 1024];
 
+        /// <summary>HTTP status of the last <see cref="Open"/> (0 when unknown).</summary>
+        public int LastOpenStatus { get; private set; }
+
+        /// <summary>Error-response body captured when <see cref="Open"/> got a non-success status.</summary>
+        public byte[] LastErrorBody { get; private set; } = Array.Empty<byte>();
+
+        public string? LastErrorContentType { get; private set; }
+
         public ManagedHttpDataSource(HttpClient http, IDictionary<string, string?> headers)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
@@ -48,6 +56,9 @@ namespace VardyParty.Platforms.Android
             {
                 _uri = dataSpec.Uri;
                 _javaResponseHeaders = null;
+                LastOpenStatus = 0;
+                LastErrorBody = Array.Empty<byte>();
+                LastErrorContentType = null;
                 var request = new HttpRequestMessage(HttpMethod.Get, _uri.ToString());
                 foreach (var kv in _headers)
                 {
@@ -73,6 +84,22 @@ namespace VardyParty.Platforms.Android
                 if (!_response.IsSuccessStatusCode && _response.StatusCode != System.Net.HttpStatusCode.PartialContent)
                 {
                     var code = (int)_response.StatusCode;
+                    LastOpenStatus = code;
+                    LastErrorContentType = _response.Content.Headers.ContentType?.MediaType;
+                    try
+                    {
+                        var raw = _response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                        if (raw is { Length: > 0 })
+                        {
+                            const int maxBytes = 64 * 1024;
+                            LastErrorBody = raw.Length <= maxBytes ? raw : raw[..maxBytes];
+                        }
+                    }
+                    catch
+                    {
+                        // Status still wins even if the error body cannot be read.
+                    }
+
                     _response.Dispose();
                     _response = null;
                     _javaResponseHeaders = null;
@@ -91,6 +118,7 @@ namespace VardyParty.Platforms.Android
             }
             catch (Exception ex) when (ex is not IOException)
             {
+                LastOpenStatus = VardyParty.Playback.PlaybackPolicy.HttpStatusFromException(ex);
                 throw new IOException(ex.ToString());
             }
         }

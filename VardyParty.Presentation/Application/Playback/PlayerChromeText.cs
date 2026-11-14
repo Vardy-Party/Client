@@ -164,9 +164,9 @@ public static class PlayerChromeText
             quality = null;
         }
 
-        var resolution = overlay?.Resolution
-            ?? current?.Health?.Resolution
-            ?? current?.Stream?.Resolution;
+        // Player-measured size only — never playlist / catalog RESOLUTION.
+        var resolution = overlay?.Resolution;
+        var probed = overlay?.ProbedResolution ?? current?.Health?.GetProbedResolution();
         double? frameRate = overlay?.FrameRate;
         if (frameRate is null && current?.Health?.FrameRate is { } fps)
         {
@@ -190,6 +190,7 @@ public static class PlayerChromeText
             SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
             Quality = quality,
             Resolution = resolution,
+            ProbedResolution = probed,
             FrameRate = frameRate.HasValue ? $"{frameRate:0.##} fps" : null,
             AspectRatio = overlay?.AspectRatio ?? BuildAspectRatio(resolution),
             Bitrate = bitrate is > 0 ? FormatBitrateMbps(bitrate.Value) : null,
@@ -227,16 +228,25 @@ public static class PlayerChromeText
         PlayerOverlayFormatter.EllipsizeStreamName(name, maxLength);
 
     /// <summary>
-    /// Vertical resolution for the identity row (e.g. <c>720p</c>). Omitted until known
-    /// and while a switch is in flight so the previous picture size cannot flash.
+    /// Vertical resolution for the identity row (e.g. <c>720p</c>).
+    /// Player-measured size is omitted while a switch is in flight so the
+    /// previous picture cannot flash. A bitstream-probed height for the
+    /// target row may still be shown. Playlist metadata is never used.
     /// </summary>
-    public static string? FormatIdentityResolution(VideoInfoPanelModel model, bool whileSwitching = false)
+    public static string? FormatIdentityResolution(string? measured, string? probed, bool whileSwitching = false)
     {
-        if (whileSwitching)
-            return null;
+        if (!whileSwitching)
+        {
+            var label = ExtractVerticalResolution(measured);
+            if (!string.IsNullOrEmpty(label))
+                return label;
+        }
 
-        return ExtractVerticalResolution(model.Resolution);
+        return ExtractVerticalResolution(probed);
     }
+
+    public static string? FormatIdentityResolution(VideoInfoPanelModel model, bool whileSwitching = false) =>
+        FormatIdentityResolution(model.Resolution, model.ProbedResolution, whileSwitching);
 
     /// <summary>
     /// Text after the index and V1/V2 chip on the identity row, e.g. <c>Fubo US · 720p</c>.
@@ -274,7 +284,7 @@ public static class PlayerChromeText
             model.StreamTotal,
             sourceLabel,
             model.Channel,
-            whileSwitching ? null : FormatIdentityResolution(model, whileSwitching: false));
+            FormatIdentityResolution(model, whileSwitching));
     }
 
     /// <summary>
@@ -404,6 +414,8 @@ public sealed class VideoInfoPanelModel
     public string? SourceLabel { get; init; }
     public string? Quality { get; init; }
     public string? Resolution { get; init; }
+    /// <summary>Bitstream-probed size for the target row, e.g. <c>1920x1080</c>.</summary>
+    public string? ProbedResolution { get; init; }
     public string? FrameRate { get; init; }
     public string? AspectRatio { get; init; }
     public string? Bitrate { get; init; }

@@ -65,6 +65,24 @@ public static partial class PlaybackPolicy
     public static readonly TimeSpan WindowsPlaylistDeferralBudget = TimeSpan.FromSeconds(8);
 
     /// <summary>
+    /// Android <c>UnwrappingDataSource</c> must not hold ExoPlayer's playlist
+    /// <c>Open</c> through multiple slow 5xx responses (a 503 often takes 3–4s;
+    /// two holds triggered <c>PlaylistStuckException</c> and an 8s stall on TV
+    /// 257 at 20:20:21 even though attempt 3 then recovered). If the next retry
+    /// would exceed this budget, serve the last-good playlist; the following
+    /// player reload retries. Longer than this, <see cref="PlaylistReloadGiveUpBudget"/>
+    /// still gives up so the session can switch.
+    /// </summary>
+    public static readonly TimeSpan AndroidPlaylistHoldBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Wall-clock budget for mid-play same-URL retries across holds of the last-good
+    /// playlist. Three 503s of 3–4s cover about 12s; counting attempts per
+    /// <c>Open</c> is not enough once each Open serves last-good after the hold budget.
+    /// </summary>
+    public static readonly TimeSpan PlaylistReloadGiveUpBudget = TimeSpan.FromSeconds(12);
+
+    /// <summary>
     /// Extra fresh <c>/play</c> attempts when a scrape returns no URL for a stream
     /// that was already playing. A wedd/premium page often emits an unsigned
     /// playlist first (rejected: no video bytes) and a signed one on the next
@@ -249,6 +267,27 @@ public static partial class PlaybackPolicy
         if (!string.IsNullOrWhiteSpace(causeSummary))
             parts.Add(causeSummary.Trim());
         return string.Join(' ', parts);
+    }
+
+    /// <summary>
+    /// After a mid-play playlist give-up classified as CDN-unreachable, the
+    /// player may keep playing the live buffer (~<see cref="DesiredLiveOffsetSeconds"/>)
+    /// and then surface a parse error ("not #EXTM3U") when the buffer runs out —
+    /// often because Media3 retried the open and read an empty body. Prefer the
+    /// give-up wording so <see cref="ClassifyPlaybackError"/> stays
+    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> and the row is kept for a recheck,
+    /// not marked tried+failed.
+    /// </summary>
+    public static string ResolvePlayerErrorAfterPlaylistGiveUp(string builtMessage, PlaylistReloadSession? session)
+    {
+        if (session?.LastGiveUpKind == PlaybackErrorKind.CdnUnreachable
+            && !string.IsNullOrWhiteSpace(session.LastGiveUpMessage)
+            && ClassifyPlaybackError(builtMessage) == PlaybackErrorKind.TokenOrPlaylistInvalid)
+        {
+            return session.LastGiveUpMessage!;
+        }
+
+        return builtMessage;
     }
 
     /// <summary>

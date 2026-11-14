@@ -202,7 +202,7 @@ namespace VardyParty.Kernel.Tests
         }
 
         [Fact]
-        public void BuildOverlayInfo_PrefersHealthResolutionAndMapsCodecs()
+        public void BuildOverlayInfo_UsesBitstreamProbeNotPlaylistResolution()
         {
             // Arrange
             var stream = _fixture.Build<Stream>()
@@ -213,6 +213,8 @@ namespace VardyParty.Kernel.Tests
                 .Create();
             var health = _fixture.Build<StreamHealth>()
                 .With(h => h.Resolution, "1920x1080")
+                .With(h => h.ProbedVideoWidth, 1920)
+                .With(h => h.ProbedVideoHeight, 1080)
                 .With(h => h.FrameRate, 50)
                 .With(h => h.VideoCodec, "avc1.4d401f")
                 .With(h => h.AudioCodec, "mp4a.40.2")
@@ -234,7 +236,8 @@ namespace VardyParty.Kernel.Tests
             Assert.Equal(2, info!.Index);
             Assert.Equal(4, info.Total);
             Assert.Equal("Channel North", info.Channel);
-            Assert.Equal("1920x1080", info.Resolution);
+            Assert.Null(info.Resolution);
+            Assert.Equal("1920x1080", info.ProbedResolution);
             Assert.Equal(50, info.FrameRate);
             Assert.Equal("H.264", info.VideoCodec);
             Assert.Equal("AAC", info.AudioCodec);

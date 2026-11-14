@@ -165,9 +165,11 @@ public static class PlayerOverlayFormatter
     }
 
     /// <summary>
-    /// Shared overlay payload for stream switching and host chrome. Prefers
-    /// health resolution/codecs; maps codec tokens via
-    /// <see cref="MapCodecToFriendlyName"/>.
+    /// Shared overlay payload for stream switching and host chrome. Maps codec
+    /// tokens via <see cref="MapCodecToFriendlyName"/>. The identity row never
+    /// uses playlist or catalog RESOLUTION — only a bitstream probe
+    /// (<see cref="PlayerOverlayInfo.ProbedResolution"/>) or a later
+    /// player-measured size filled in by the host.
     /// </summary>
     public static PlayerOverlayInfo? BuildOverlayInfo(
         EnrichedStream? current,
@@ -179,7 +181,7 @@ public static class PlayerOverlayFormatter
         if (current is null && total <= 0)
             return null;
 
-        var resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution;
+        var probed = current?.Health?.GetProbedResolution();
         var chip = ResolveChipOrChannelLabel(current?.Stream);
         return new PlayerOverlayInfo
         {
@@ -188,11 +190,12 @@ public static class PlayerOverlayFormatter
             Channel = chip,
             SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
-            Resolution = resolution,
+            Resolution = null,
+            ProbedResolution = probed,
             FrameRate = current?.Health?.FrameRate,
             VideoCodec = MapCodecToFriendlyName(current?.Health?.VideoCodec),
             AudioCodec = MapCodecToFriendlyName(current?.Health?.AudioCodec),
-            AspectRatio = BuildAspect(resolution),
+            AspectRatio = BuildAspect(probed),
             M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
             RefererUrl = refererUrl,
             // Hosts supply the game title separately; keep chip identity on Channel.

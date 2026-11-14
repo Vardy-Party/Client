@@ -452,4 +452,53 @@ public class PlaybackChromePresenterTests
         // Assert
         Assert.Equal(proposed, next);
     }
+
+    [Fact]
+    public void ApplyOverlayInfo_WhileSwitching_OmitsPreviousMeasuredHeight()
+    {
+        var sut = new PlaybackChromePresenter();
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 1,
+            Total = 2,
+            Channel = "Fubo US",
+            SourceLabel = "V1",
+            Resolution = "1280x720"
+        });
+        Assert.Equal("1/2 · V1 · Fubo US · 720p", sut.StreamToast!.Text);
+
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 2,
+            Total = 2,
+            Channel = "Match Wawes",
+            SourceLabel = "V1",
+            Resolution = "1280x720"
+        }, whileSwitching: true);
+
+        Assert.Equal("2/2 · V1 · Match Wawes", sut.StreamToast!.Text);
+        Assert.Null(sut.StreamToast.VerticalResolutionLabel);
+        Assert.True(sut.IsStreamToastVisible);
+    }
+
+    [Fact]
+    public void ApplyOverlayInfo_WhileSwitching_ShowsTargetBitstreamProbe()
+    {
+        var sut = new PlaybackChromePresenter();
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 2,
+            Total = 2,
+            Channel = "Match Wawes",
+            SourceLabel = "V1",
+            Resolution = "960x540",
+            ProbedResolution = "1920x1080"
+        }, whileSwitching: true);
+
+        Assert.Equal("2/2 · V1 · Match Wawes · 1080p", sut.StreamToast!.Text);
+        Assert.Equal("1080p", sut.StreamToast.VerticalResolutionLabel);
+        Assert.DoesNotContain("540p", sut.StreamToast.Text);
+    }
 }

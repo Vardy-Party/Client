@@ -37,14 +37,20 @@ public class StreamHealthChecker(
             // We'll enforce a specific timeout for the HTTP calls if needed.
 
             var evidence = new StrongBox<MirrorEvidence?>();
+            var bitstream = new BitstreamProbeTarget();
             health.Status = await CheckRecursivelyAsync(m3u8Url, refererUrl, 0, probe, cancellationToken,
-                m3u8Url, evidence);
+                m3u8Url, evidence, bitstream);
             if (health.Status == StreamHealthStatus.Healthy)
                 health.MirrorEvidence = evidence.Value;
 
             // Extract metadata from the manifest if check was successful
             if (health.Status == StreamHealthStatus.Healthy)
+            {
                 await ExtractMetadataAsync(m3u8Url, refererUrl, health, cancellationToken);
+                // Bitstream height is a sidecar: never delay the Healthy verdict
+                // (time-to-first-picture) or change the status if the parse fails.
+                BeginBitstreamSizeProbe(health, bitstream, refererUrl, probe, cancellationToken);
+            }
         }
         catch (Exception ex)
         {
@@ -143,7 +149,8 @@ public class StreamHealthChecker(
         StreamHealthProbe? probe,
         CancellationToken ct,
         string sourceUrl,
-        StrongBox<MirrorEvidence?> evidence)
+        StrongBox<MirrorEvidence?> evidence,
+        BitstreamProbeTarget bitstream)
     {
         if (depth > MaxRecursionDepth)
         {
@@ -198,7 +205,7 @@ public class StreamHealthChecker(
         {
             var nextUrl = ExtractFirstStreamUrl(content, url);
             if (string.IsNullOrEmpty(nextUrl)) return StreamHealthStatus.InvalidManifest;
-            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct, sourceUrl, evidence);
+            return await CheckRecursivelyAsync(nextUrl, refererUrl, depth + 1, probe, ct, sourceUrl, evidence, bitstream);
         }
 
         // Media playlist contains EXTINF
@@ -207,6 +214,8 @@ public class StreamHealthChecker(
             // Mirror evidence is read from the playlist that is about to pass; the caller
             // keeps it only when the status ends up Healthy (docs "Proven mirrors").
             evidence.Value = CaptureMirrorEvidence(content, url, sourceUrl);
+            bitstream.Encrypted = PlaylistLooksEncrypted(content);
+            bitstream.MapUrl = ExtractMapUrl(content, url);
             var rewritten = probe?.RewrittenSegmentUrls?
                 .FirstOrDefault(segment => !string.IsNullOrWhiteSpace(segment));
             if (!string.IsNullOrEmpty(rewritten))
@@ -214,7 +223,7 @@ public class StreamHealthChecker(
                 logger.LogInformation(
                     "[StreamHealthChecker] Probing MP rewritten segment instead of playlist-relative URI: {Url}",
                     rewritten);
-                return await CheckSegmentAsync(rewritten, refererUrl, ct, probe, skipUrlExtensionCheck: true);
+                return await CheckSegmentAsync(rewritten, refererUrl, ct, probe, bitstream, skipUrlExtensionCheck: true);
             }
             var segmentUrls = EnumerateSegmentUrls(content, url).ToList();
             if (segmentUrls.Count == 0) return StreamHealthStatus.EmptyManifest;
@@ -229,10 +238,10 @@ public class StreamHealthChecker(
                 logger.LogInformation(
                     "[StreamHealthChecker] Media playlist lists only image-like segments for {Url}; classifying bytes",
                     url);
-                return await ClassifySegmentBytesAsync(segmentUrls[0], refererUrl, ct, probe);
+                return await ClassifySegmentBytesAsync(segmentUrls[0], refererUrl, ct, probe, bitstream);
             }
 
-            return await CheckSegmentAsync(segmentUrl, refererUrl, ct, probe);
+            return await CheckSegmentAsync(segmentUrl, refererUrl, ct, probe, bitstream);
         }
 
         // If it starts with #EXTM3U but has neither stream nor inf, it might be empty or valid but with no segments yet (live)
@@ -325,9 +334,11 @@ public class StreamHealthChecker(
         string url,
         string refererUrl,
         CancellationToken ct,
-        StreamHealthProbe? probe = null,
+        StreamHealthProbe? probe,
+        BitstreamProbeTarget bitstream,
         bool skipUrlExtensionCheck = false)
     {
+        bitstream.SegmentUrl ??= url;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -362,7 +373,7 @@ public class StreamHealthChecker(
 
         // Header checks failed (often image/* Content-Type on a PNG-wrapped TS
         // segment). The bytes decide: wrapped TS / TS / fMP4 are playable.
-        return await ClassifySegmentBytesAsync(url, refererUrl, ct, probe);
+        return await ClassifySegmentBytesAsync(url, refererUrl, ct, probe, bitstream);
     }
 
     /// <summary>
@@ -374,8 +385,10 @@ public class StreamHealthChecker(
         string url,
         string? refererUrl,
         CancellationToken ct,
-        StreamHealthProbe? probe)
+        StreamHealthProbe? probe,
+        BitstreamProbeTarget bitstream)
     {
+        bitstream.SegmentUrl ??= url;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -397,6 +410,7 @@ public class StreamHealthChecker(
             var kind = SegmentPayload.Classify(prefix);
             if (SegmentPayload.IsPlayable(kind))
             {
+                bitstream.Prefix = prefix;
                 logger.LogInformation("[StreamHealthChecker] Segment {Url} classified {Kind} — healthy", url, kind);
                 return StreamHealthStatus.Healthy;
             }
@@ -533,4 +547,154 @@ public class StreamHealthChecker(
 
         return null;
     }
+
+    private sealed class BitstreamProbeTarget
+    {
+        public string? SegmentUrl;
+        public string? MapUrl;
+        public bool Encrypted;
+        public byte[]? Prefix;
+    }
+
+    /// <summary>
+    /// Parse SPS height from bytes already in hand, or start a single ranged GET
+    /// (init MAP preferred, else one media segment prefix) after the verdict so
+    /// time-to-first-picture is unchanged. One GET, no retry; never changes Status.
+    /// </summary>
+    private void BeginBitstreamSizeProbe(
+        StreamHealth health,
+        BitstreamProbeTarget target,
+        string refererUrl,
+        StreamHealthProbe? probe,
+        CancellationToken cancellationToken)
+    {
+        if (TryApplyBitstreamSize(health, target.Prefix))
+        {
+            health.WhenBitstreamSizeProbed = Task.CompletedTask;
+            return;
+        }
+
+        // Prefix already fetched and unreadable — don't hit the same segment
+        // again. A distinct init MAP can still be tried.
+        if (target.Prefix is { Length: > 0 } && string.IsNullOrEmpty(target.MapUrl))
+        {
+            health.WhenBitstreamSizeProbed = Task.CompletedTask;
+            return;
+        }
+
+        if (target.Encrypted
+            || (string.IsNullOrEmpty(target.MapUrl) && string.IsNullOrEmpty(target.SegmentUrl)))
+        {
+            health.WhenBitstreamSizeProbed = Task.CompletedTask;
+            return;
+        }
+
+        health.WhenBitstreamSizeProbed = ProbeBitstreamSizeAsync(
+            health, target, refererUrl, probe, cancellationToken);
+    }
+
+    private async Task ProbeBitstreamSizeAsync(
+        StreamHealth health,
+        BitstreamProbeTarget target,
+        string refererUrl,
+        StreamHealthProbe? probe,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Yield so the Healthy verdict (and first picture) is never held
+            // on this GET — SendAsync on some handlers/clients runs sync
+            // until the first await.
+            await Task.Yield();
+
+            if (await TryProbeBitstreamUrlAsync(health, target.MapUrl, refererUrl, probe, cancellationToken)
+                    .ConfigureAwait(false))
+                return;
+
+            await TryProbeBitstreamUrlAsync(health, target.SegmentUrl, refererUrl, probe, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[StreamHealthChecker] Bitstream size probe failed for {Url}", health.Url);
+        }
+    }
+
+    private async Task<bool> TryProbeBitstreamUrlAsync(
+        StreamHealth health,
+        string? url,
+        string refererUrl,
+        StreamHealthProbe? probe,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(StreamHealthOptions.SegmentTimeoutSeconds));
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        ApplyPlaybackHeaders(request, refererUrl, probe?.RequestHeaders);
+        request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, SegmentPayload.ProbeBytes - 1);
+
+        using var response = await httpClient
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogDebug(
+                "[StreamHealthChecker] Bitstream size probe returned {StatusCode} for {Url}",
+                response.StatusCode, url);
+            return false;
+        }
+
+        var prefix = await ReadPrefixAsync(response.Content, SegmentPayload.ProbeBytes, cts.Token)
+            .ConfigureAwait(false);
+        return TryApplyBitstreamSize(health, prefix);
+    }
+
+    private bool TryApplyBitstreamSize(StreamHealth health, byte[]? prefix)
+    {
+        if (prefix is not { Length: > 0 } || !VideoBitstreamSize.TryRead(prefix, out var size))
+            return false;
+
+        health.ProbedVideoWidth = size.Width;
+        health.ProbedVideoHeight = size.Height;
+        logger.LogInformation(
+            "[StreamHealthChecker] Probed bitstream size {Width}x{Height} for {Url}",
+            size.Width, size.Height, health.Url);
+        return true;
+    }
+
+    private static bool PlaylistLooksEncrypted(string content)
+    {
+        foreach (var raw in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("#EXT-X-KEY", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var match = Regex.Match(line, @"METHOD=([^,\s]+)", RegexOptions.IgnoreCase);
+            if (match.Success
+                && !match.Groups[1].Value.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string? ExtractMapUrl(string content, string baseUrl)
+    {
+        foreach (var raw in content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("#EXT-X-MAP", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var match = Regex.Match(line, @"URI=""([^""]+)""", RegexOptions.IgnoreCase);
+            if (match.Success)
+                return ResolveUrl(baseUrl, match.Groups[1].Value);
+        }
+
+        return null;
+    }
+
 }

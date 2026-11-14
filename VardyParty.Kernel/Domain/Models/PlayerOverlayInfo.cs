@@ -9,6 +9,12 @@ public class PlayerOverlayInfo
     public string? SourceLabel { get; init; }
     public int? BitrateKbps { get; init; }
     public string? Resolution { get; init; }
+    /// <summary>
+    /// Height/size parsed from a media segment bitstream during the client
+    /// health check. Distinct from <see cref="Resolution"/>, which is the
+    /// player-measured picture size of the stream currently on screen.
+    /// </summary>
+    public string? ProbedResolution { get; init; }
     public double? FrameRate { get; init; }
     public string? VideoCodec { get; init; }
     public string? AudioCodec { get; init; }

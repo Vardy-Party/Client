@@ -142,6 +142,7 @@ public class CrossPlatformRequestContextBusinessRulesTests
     [InlineData("Response code: 403", 403)]
     [InlineData("Segment download failed (MediaSegment, status=403)", 403)]
     [InlineData("HTTP/1.1 403 Forbidden", 403)]
+    [InlineData("Response status code does not indicate success: 503 (Service Unavailable).", 503)]
     [InlineData("Unable to connect to cdn.oak.test", 0)]
     [InlineData("HTTP 9999", 0)]
     [InlineData(null, 0)]
@@ -152,6 +153,20 @@ public class CrossPlatformRequestContextBusinessRulesTests
 
         // Assert
         Assert.Equal(expected, status);
+    }
+
+    [Fact]
+    public void HttpStatusFromException_ReadsHttpRequestExceptionStatusCode()
+    {
+        var http = new System.Net.Http.HttpRequestException(
+            "Response status code does not indicate success: 503 (Service Unavailable).",
+            inner: null,
+            statusCode: System.Net.HttpStatusCode.ServiceUnavailable);
+        var wrapped = new InvalidOperationException("playlist open failed", http);
+
+        Assert.Equal(503, PlaybackPolicy.HttpStatusFromException(http));
+        Assert.Equal(503, PlaybackPolicy.HttpStatusFromException(wrapped));
+        Assert.Equal(0, PlaybackPolicy.HttpStatusFromException(new InvalidOperationException("Unable to connect")));
     }
 
     [Fact]

@@ -29,6 +29,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     private bool _started;
     private bool _firstPlaylistDone;
     private byte[]? _lastGoodPlaylist;
+    private string? _playlistRow;
 
     public LinuxHlsLocalProxy(
         HttpClient http,
@@ -83,7 +84,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         _rewrittenSegments = urls;
 
     /// <summary>Local playlist URI LibVLC should open (IPv4 loopback, never localhost).</summary>
-    public Uri Wrap(string originUrl)
+    public Uri Wrap(string originUrl, string? row = null)
     {
         if (!VardyParty.Kernel.HlsUriResolver.TryGetHttpUrl(originUrl, out var origin))
         {
@@ -94,6 +95,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         {
             _firstPlaylistDone = false;
             _lastGoodPlaylist = null;
+            _playlistRow = string.IsNullOrWhiteSpace(row) ? null : row.Trim();
         }
 
         return new Uri(LinuxHlsPlaylistRewriter.ToProxyUrl(origin.AbsoluteUri, Prefix));
@@ -246,18 +248,26 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     {
         bool firstAttach;
         byte[]? lastGood;
+        string? row;
         lock (_playlistStateLock)
         {
             firstAttach = !_firstPlaylistDone;
             lastGood = _lastGoodPlaylist;
+            row = _playlistRow;
         }
 
         var request = new PlaylistReloadRequest
         {
             IsFirstAttach = firstAttach,
             LastGoodPlaylist = lastGood,
-            Row = null,
-            Log = line => _logger?.LogInformation("{Line}", line)
+            Row = row,
+            Log = (isInfo, line) =>
+            {
+                if (isInfo)
+                    _logger?.LogInformation("{Line}", line);
+                else
+                    _logger?.LogDebug("{Line}", line);
+            }
         };
 
         var outcome = await PlaylistReloadCoordinator.RunAsync(
@@ -298,12 +308,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
             cancellationToken).ConfigureAwait(false);
         var mediaType = response.Content.Headers.ContentType?.MediaType;
         var body = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-        return new PlaylistReloadFetchResult
-        {
-            StatusCode = (int)response.StatusCode,
-            Body = body,
-            ContentType = mediaType
-        };
+        return PlaylistReloadFetchResult.FromHttp((int)response.StatusCode, body, mediaType);
     }
 
     private async Task WritePlaylistAsync(HttpListenerContext ctx, string text, string target)

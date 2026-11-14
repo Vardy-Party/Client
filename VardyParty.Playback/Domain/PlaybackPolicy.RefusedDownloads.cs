@@ -46,7 +46,37 @@ public static partial class PlaybackPolicy
             : 0;
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"(?:\bHTTP(?:/\d(?:\.\d)?)?|\bResponse code:?|\bstatus\s*[=:]?)\s*(\d{3})\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    /// <summary>
+    /// Walks <paramref name="exception"/> (message, <c>ToString()</c>, inner
+    /// exceptions, and <see cref="System.Net.Http.HttpRequestException.StatusCode"/>)
+    /// for an HTTP status. Used when a transport logs 503 but the thrown
+    /// message is "Response status code does not indicate success: 503 (...)"
+    /// or the status lives only on the inner exception.
+    /// </summary>
+    public static int HttpStatusFromException(System.Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is System.Net.Http.HttpRequestException http
+                && http.StatusCode is { } status
+                && (int)status is >= 100 and <= 599)
+            {
+                return (int)status;
+            }
+
+            var fromMessage = HttpStatusFromErrorText(current.Message);
+            if (fromMessage != 0)
+                return fromMessage;
+
+            var fromText = HttpStatusFromErrorText(current.ToString());
+            if (fromText != 0)
+                return fromText;
+        }
+
+        return 0;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:\bHTTP(?:/\d(?:\.\d)?)?|\bResponse code:?|\bstatus\s*[=:]?|\bsuccess:)\s*(\d{3})\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
     private static partial System.Text.RegularExpressions.Regex HttpStatusPattern();
 
     /// <summary>

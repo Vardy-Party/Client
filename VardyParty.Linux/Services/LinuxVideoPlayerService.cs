@@ -87,6 +87,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private bool _isNextStreamRequestInProgress;
     /// <summary>True while Next/Prev attach is in flight — video-info omits telemetry/URLs.</summary>
     public bool StreamSwitchInProgress { get; private set; }
+    private int _pictureFormatGenerationAtSwitch;
+    private bool _playerResolutionTrusted = true;
     /// <summary>
     /// When true, <see cref="CurrentStreamIndexChanged"/> must not re-attach —
     /// the session command path already owns Attach (same as Windows/Android).
@@ -360,6 +362,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private void SetStreamSwitchInProgress(bool value)
     {
+        if (value)
+        {
+            _pictureFormatGenerationAtSwitch = _current?.FrameSink?.FormatGeneration ?? 0;
+            _playerResolutionTrusted = false;
+        }
         if (StreamSwitchInProgress == value)
             return;
         StreamSwitchInProgress = value;
@@ -888,6 +895,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     || engineEvent.Kind == MediaEngineEventKind.Error))
             {
                 SetStreamSwitchInProgress(false);
+                // No software-frame sink means no FormatGeneration bump — Ready
+                // is the best confirm we have. With a sink, wait for a new format.
+                if (engineEvent.Kind == MediaEngineEventKind.Ready
+                    && _current?.FrameSink is null)
+                    _playerResolutionTrusted = true;
             }
             else
             {
@@ -1109,7 +1121,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _hlsProxy.SetPlaybackHeaders(requestHeaders, referer);
                 _hlsProxy.SetRewrittenSegments(_switching.GetCurrentStream()?.RewrittenSegments);
-                playUrl = _hlsProxy.Wrap(m3u8Url).AbsoluteUri;
+                playUrl = _hlsProxy.Wrap(m3u8Url, PlaylistReloadRowName.ForUrl(_switching, m3u8Url)).AbsoluteUri;
                 playViaProxy = true;
                 _logger.LogInformation(
                     "[LinuxVideoPlayerService] HLS via loopback proxy {ProxyUrl} (origin {Origin})",
@@ -1343,6 +1355,26 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
     }
 
+    /// <summary>
+    /// True once the current attach has produced a new picture format (or Ready
+    /// when there is no software-frame sink). False during and after a switch
+    /// until then, so the previous stream's size cannot flash on the overlay.
+    /// </summary>
+    public bool IsPlayerResolutionTrusted()
+    {
+        if (_playerResolutionTrusted)
+            return true;
+
+        var generation = _current?.FrameSink?.FormatGeneration ?? 0;
+        if (generation > _pictureFormatGenerationAtSwitch)
+        {
+            _playerResolutionTrusted = true;
+            return true;
+        }
+
+        return false;
+    }
+
     public PlaybackMetrics? GetCurrentMetrics()
     {
         var vlc = _current;
@@ -1359,6 +1391,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 return null;
             }
 
+            var resolutionTrusted = IsPlayerResolutionTrusted();
             (int Width, int Height)? resolution = null;
             int? framerate = null;
             int? trackBitrateKbps = null;
@@ -1370,7 +1403,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     continue;
 
                 var video = track.Data.Video;
-                if (video.Width > 0 && video.Height > 0)
+                if (resolutionTrusted && video.Width > 0 && video.Height > 0)
                     resolution = ((int)video.Width, (int)video.Height);
 
                 if (video.FrameRateNum > 0 && video.FrameRateDen > 0)
@@ -1384,7 +1417,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             }
 
             // Soft-present size is a fallback (WSL may cap width); prefer track geometry.
-            if (resolution is null)
+            if (resolutionTrusted && resolution is null)
             {
                 var frame = vlc.FrameSink?.LastFrameSize;
                 if (frame is { Width: > 0, Height: > 0 })

@@ -23,12 +23,34 @@ namespace VardyParty.Playback.Tests
                 .With(s => s.Resolution, resolution)
                 .Create();
 
-            return _fixture.Build<EnrichedStream>()
+            StreamHealth? health = null;
+            if (!string.IsNullOrWhiteSpace(resolution))
+            {
+                health = new StreamHealth();
+                var trimmed = resolution.Trim();
+                if (trimmed.EndsWith("p", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(trimmed.TrimEnd('p', 'P'), out var height) && height > 0)
+                {
+                    health.ProbedVideoHeight = height;
+                }
+                else
+                {
+                    var parts = trimmed.Split('x', 'X');
+                    if (parts.Length == 2
+                        && int.TryParse(parts[0], out var width) && width > 0
+                        && int.TryParse(parts[1], out var pairHeight) && pairHeight > 0)
+                    {
+                        health.ProbedVideoWidth = width;
+                        health.ProbedVideoHeight = pairHeight;
+                    }
+                }
+            }
+
+            var built = _fixture.Build<EnrichedStream>()
                 .With(e => e.Stream, stream)
                 .With(e => e.ResolvedM3U8Url, url)
-                .With(e => e.Status, StreamResolutionStatus.Healthy)
-                .Without(e => e.Health)
-                .Create();
+                .With(e => e.Status, StreamResolutionStatus.Healthy);
+            return health is null ? built.Without(e => e.Health).Create() : built.With(e => e.Health, health).Create();
         }
 
         private EnrichedStream MakeStream(string sourceUrl, string refererUrl, string channel)
@@ -106,7 +128,8 @@ namespace VardyParty.Playback.Tests
             Assert.Equal(1, lastOverlay.Total);
             Assert.Equal("ChannelA", lastOverlay.Channel);
             Assert.Equal(2500, lastOverlay.BitrateKbps);
-            Assert.Equal("1080p", lastOverlay.Resolution);
+            Assert.Null(lastOverlay.Resolution);
+            Assert.Equal("1080p", lastOverlay.ProbedResolution);
         }
 
         [Fact]
@@ -132,7 +155,8 @@ namespace VardyParty.Playback.Tests
             Assert.Equal(2, lastOverlay.Total);
             Assert.Equal("ChannelB", lastOverlay.Channel);
             Assert.Equal(1500, lastOverlay.BitrateKbps);
-            Assert.Equal("720p", lastOverlay.Resolution);
+            Assert.Null(lastOverlay.Resolution);
+            Assert.Equal("720p", lastOverlay.ProbedResolution);
         }
 
         [Fact]
@@ -299,6 +323,8 @@ namespace VardyParty.Playback.Tests
                 .Create();
             var health = _fixture.Build<StreamHealth>()
                 .With(h => h.Resolution, "1280x720")
+                .With(h => h.ProbedVideoWidth, 1280)
+                .With(h => h.ProbedVideoHeight, 720)
                 .With(h => h.VideoCodec, "avc1.4d401f")
                 .With(h => h.AudioCodec, "mp4a.40.2")
                 .With(h => h.Bitrate, 2500)
@@ -315,7 +341,8 @@ namespace VardyParty.Playback.Tests
 
             // Assert
             Assert.NotNull(lastOverlay);
-            Assert.Equal("1280x720", lastOverlay!.Resolution);
+            Assert.Null(lastOverlay!.Resolution);
+            Assert.Equal("1280x720", lastOverlay.ProbedResolution);
             Assert.Equal("H.264", lastOverlay.VideoCodec);
             Assert.Equal("AAC", lastOverlay.AudioCodec);
             Assert.Equal("16:9", lastOverlay.AspectRatio);

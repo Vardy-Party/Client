@@ -389,6 +389,46 @@ public class PlayerChromeTextTests
         Assert.Equal("Fubo US", PlayerChromeText.FormatStreamIdentitySuffix(withRes, whileSwitching: true));
     }
 
+    [Fact]
+    public void FormatIdentityResolution_WhileSwitching_OmitsPreviousMeasuredSize()
+    {
+        var model = new VideoInfoPanelModel { Resolution = "1280x720" };
+
+        Assert.Equal("720p", PlayerChromeText.FormatIdentityResolution(model));
+        Assert.Null(PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true));
+    }
+
+    [Fact]
+    public void FormatIdentityResolution_WhileSwitching_ShowsTargetBitstreamProbe()
+    {
+        var model = new VideoInfoPanelModel
+        {
+            Resolution = "960x540",
+            ProbedResolution = "1920x1080"
+        };
+
+        Assert.Equal("540p", PlayerChromeText.FormatIdentityResolution(model));
+        Assert.Equal("1080p", PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true));
+    }
+
+    [Fact]
+    public void FormatStreamIdentityLine_WhileSwitching_UsesProbedHeightWhenKnown()
+    {
+        var model = new VideoInfoPanelModel
+        {
+            StreamIndex = 2,
+            StreamTotal = 9,
+            Channel = "Match Wawes",
+            Resolution = "960x540",
+            ProbedResolution = "1920x1080"
+        };
+
+        var line = PlayerChromeText.FormatStreamIdentityLine(model, "V1", whileSwitching: true);
+
+        Assert.Equal("2/9 · V1 · Match Wawes · 1080p", line);
+        Assert.DoesNotContain("540p", line);
+    }
+
     [Theory]
     [InlineData("Playing", false, "Status: Playing")]
     [InlineData("Playing", true, "Status: Switching")]

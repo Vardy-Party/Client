@@ -19,9 +19,10 @@ namespace VardyParty.Platforms.Windows
                     var session = mediaPlayer.PlaybackSession;
                     var width = session.NaturalVideoWidth;
                     var height = session.NaturalVideoHeight;
+                    ObserveDecodedPictureSize((int)width, (int)height);
                     var state = session.PlaybackState.ToString();
 
-                    if (mediaPlayer.Source is MediaPlaybackItem item)
+                    if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                         _host.ExtractVideoMetadata(item, mediaPlayer);
 
                     AdaptiveMediaSource? ams = null;
@@ -46,22 +47,24 @@ namespace VardyParty.Platforms.Windows
                     var bitrateKbps = _host.ResolveBitrateKbps(ams, transferMeter);
 
                     var metrics = _host.GetCurrentMetrics();
+                    var measured = pictureSizeSettler.Published is { } size
+                        ? $"{size.Width}x{size.Height}"
+                        : null;
                     var overlay = new PlayerOverlayInfo
                     {
                         Index = streamIndex,
                         Total = streamTotal,
                         Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
                         SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
-                        Resolution = width > 0 && height > 0
-                            ? $"{width}x{height}"
-                            : metrics?.Resolution is { } r ? $"{r.Width}x{r.Height}" : null,
+                        Resolution = measured,
+                        ProbedResolution = current?.Health?.GetProbedResolution(),
                         BitrateKbps = bitrateKbps ?? metrics?.BitrateKbps,
                         FrameRate = metrics?.Framerate is int fps ? fps : null,
                         VideoCodec = metrics?.VideoCodec,
                         AudioCodec = metrics?.AudioCodec,
-                        AspectRatio = width > 0 && height > 0
-                            ? PlayerOverlayFormatter.BuildAspect(width, height)
-                            : null,
+                        AspectRatio = pictureSizeSettler.Published is { } aspect
+                            ? PlayerOverlayFormatter.BuildAspect((uint)aspect.Width, (uint)aspect.Height)
+                            : PlayerOverlayFormatter.BuildAspect(current?.Health?.GetProbedResolution()),
                         // Live HLS leaves BufferingProgress at 0 while playing — use ranges.
                         BufferPercent = ReadPlaybackBufferPercent(session),
                         M3u8Url = currentPlaybackUrl,
@@ -83,7 +86,7 @@ namespace VardyParty.Platforms.Windows
                     // when the toast is actually on screen.
                     if (!chrome.IsVideoInfoVisible)
                     {
-                        chrome.ApplyOverlayInfo(overlay);
+                        chrome.ApplyOverlayInfo(overlay, streamSwitchInProgress);
                         if (chrome.IsStreamToastVisible || chrome.ShouldHoldStreamToast)
                         {
                             streamCountText.Text = chrome.StreamToast?.Text ?? streamCountText.Text;
@@ -96,6 +99,53 @@ namespace VardyParty.Platforms.Windows
 
                     ApplyVideoInfoPanel(model, streamSwitchInProgress, current?.Stream?.CatalogSourceBadgeLabel);
                 });
+            }
+
+
+            private void ObserveDecodedPictureSize(int width, int height)
+            {
+                var published = pictureSizeSettler.Observe(width, height);
+                measuredPictureConfirmed = published is not null;
+                SchedulePictureSizeSettleTick();
+            }
+
+            private void SchedulePictureSizeSettleTick()
+            {
+                try
+                {
+                    pictureSizeSettleTimer?.Stop();
+                    if (pictureSizeSettler.HasPublished)
+                        return;
+
+                    if (pictureSizeSettleTimer is null)
+                    {
+                        pictureSizeSettleTimer = new Microsoft.UI.Xaml.DispatcherTimer
+                        {
+                            Interval = DecodedPictureSizeSettler.Settle
+                        };
+                        pictureSizeSettleTimer.Tick += PictureSizeSettleTick;
+                    }
+
+                    pictureSizeSettleTimer.Start();
+                }
+                catch (Exception ex) { _host.LogIgnored("SchedulePictureSizeSettleTick", ex); }
+            }
+
+            private void PictureSizeSettleTick(object? sender, object e)
+            {
+                try
+                {
+                    pictureSizeSettleTimer?.Stop();
+                    var published = pictureSizeSettler.Tick();
+                    measuredPictureConfirmed = published is not null;
+                    if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
+                    {
+                        _host.ExtractVideoMetadata(item, mediaPlayer);
+                        _host.UpdateBitrateFromAdaptiveSource(item);
+                    }
+                    UpdateInfo();
+                }
+                catch (Exception ex) { _host.LogIgnored("PictureSizeSettleTick", ex); }
             }
 
             private void ApplyVideoInfoPanel(VideoInfoPanelModel model, bool whileSwitching, string? sourceLabel)
@@ -521,9 +571,9 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    var resolutionForInfo = current?.Health?.Resolution
-                        ?? current?.Stream?.Resolution
-                        ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item1}x{r.Item2}" : null);
+                    var measured = pictureSizeSettler.Published is { } settled
+                        ? $"{settled.Width}x{settled.Height}"
+                        : null;
 
                     var overlay = new PlayerOverlayInfo
                     {
@@ -531,10 +581,11 @@ namespace VardyParty.Platforms.Windows
                         Total = total,
                         Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
                         SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
-                        Resolution = resolutionForInfo,
+                        Resolution = measured,
+                        ProbedResolution = current?.Health?.GetProbedResolution(),
                         Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream)
                     };
-                    chrome.ApplyOverlayInfo(overlay);
+                    chrome.ApplyOverlayInfo(overlay, streamSwitchInProgress);
                     chrome.NotifyHealthyCount(total);
 
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
@@ -550,7 +601,7 @@ namespace VardyParty.Platforms.Windows
 
                         streamCountText.Text = chrome.StreamToast?.Text
                             ?? PlayerOverlayFormatter.FormatStreamToast(
-                                index, total, resolutionForInfo,
+                                index, total, measured ?? overlay.ProbedResolution,
                                 overlay.SourceLabel, overlay.Channel);
                         // Chip / name / height live in the one-row text; do not stack a badge below.
                         streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;

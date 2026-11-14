@@ -83,9 +83,8 @@ namespace VardyParty.Platforms.Android
                 var measuredResolution = _videoWidth is > 0 && _videoHeight is > 0
                     ? $"{_videoWidth}x{_videoHeight}"
                     : null;
-                var resolution = measuredResolution
-                    ?? current.Stream?.Resolution
-                    ?? current.Health?.Resolution;
+                var probedResolution = current.Health?.GetProbedResolution();
+                var resolution = measuredResolution;
                 // Match Windows: MeasuredBitrate so video-info and /health share one number.
                 var bitrateKbps = MeasuredBitrate.ResolveKbps(
                     current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
@@ -99,6 +98,7 @@ namespace VardyParty.Platforms.Android
                     SourceLabel = current.Stream?.CatalogSourceBadgeLabel,
                     BitrateKbps = bitrateKbps,
                     Resolution = resolution,
+                    ProbedResolution = probedResolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
                     BufferPercent = ReadPlaybackBufferPercent(),
@@ -108,7 +108,7 @@ namespace VardyParty.Platforms.Android
                     AspectRatio = PlayerOverlayFormatter.BuildAspect(
                         _videoWidth is > 0 && _videoHeight is > 0
                             ? $"{_videoWidth}x{_videoHeight}"
-                            : resolution ?? current.Stream?.Resolution ?? current.Health?.Resolution),
+                            : probedResolution),
                     Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream)
                 };
             }
@@ -358,11 +358,13 @@ namespace VardyParty.Platforms.Android
 
             var current = _switching.GetCurrentStream();
             string? resolution = null;
+            string? probedResolution = null;
             try
             {
                 resolution = _videoWidth is > 0 && _videoHeight is > 0
                     ? $"{_videoWidth}x{_videoHeight}"
-                    : current?.Health?.Resolution ?? current?.Stream?.Resolution;
+                    : null;
+                probedResolution = current?.Health?.GetProbedResolution();
             }
             catch (Exception ex) { LogIgnored("ParseToastResolution", ex); }
 
@@ -373,10 +375,11 @@ namespace VardyParty.Platforms.Android
                 Index = index,
                 Total = total,
                 Resolution = resolution,
+                ProbedResolution = probedResolution,
                 Channel = channel,
                 SourceLabel = sourceLabel,
                 Title = channel
-            });
+            }, _streamSwitchInProgress);
 
             _streamToastView.Text = chrome.StreamToast?.Text
                 ?? PlayerOverlayFormatter.FormatStreamToast(index, total, resolution, sourceLabel, channel);

@@ -1098,10 +1098,15 @@ namespace VardyParty.Platforms.Android
 
         private void BeginStreamSwitchOverlayScrub()
         {
-            if (_streamSwitchInProgress)
-                return;
-            _streamSwitchInProgress = true;
-            ScheduleStreamSwitchScrubTimeout();
+            // Drop the previous picture size immediately so the toast / info row
+            // cannot flash the last stream's height before the new one confirms.
+            _videoWidth = null;
+            _videoHeight = null;
+            if (!_streamSwitchInProgress)
+            {
+                _streamSwitchInProgress = true;
+                ScheduleStreamSwitchScrubTimeout();
+            }
             RunOnUiThread(UpdateOverlayFromCurrentStream);
         }
 
@@ -1769,17 +1774,8 @@ namespace VardyParty.Platforms.Android
                     var info = _activity.BuildOverlayInfoFromCurrentStream();
                     if (info != null)
                     {
-                        // capture video size from player if available
-                        try
-                        {
-                            var videoSize = _activity._player?.VideoSize;
-                            if (videoSize != null)
-                            {
-                                _activity._videoWidth = videoSize.Width;
-                                _activity._videoHeight = videoSize.Height;
-                            }
-                        }
-                        catch (Exception ex) { _activity.LogIgnored("CaptureVideoSize", ex); }
+                        // Do not copy player.VideoSize here: on READY it can still
+                        // be the previous stream. OnVideoSizeChanged is the confirm.
                         _activity.RunOnUiThread(() => _activity.UpdateOverlayText(info));
                     }
                 }
@@ -1866,7 +1862,9 @@ namespace VardyParty.Platforms.Android
                     if (_activity.TryRecoverBehindLiveWindow(error))
                         return;
 
-                    var message = BuildEngineErrorMessage(error);
+                    var message = PlaybackPolicy.ResolvePlayerErrorAfterPlaylistGiveUp(
+                        BuildEngineErrorMessage(error),
+                        _activity._playlistReloadSession);
                     if (_activity.IsRefusalAlreadyHandled())
                     {
                         _activity._logger?.LogInformation("[NativeVideoActivity] Player error after refused downloads (already handled): {Message}", message);

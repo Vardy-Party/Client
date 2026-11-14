@@ -133,8 +133,18 @@ namespace VardyParty.Platforms.Android
             {
                 IsFirstAttach = session is null || !session.FirstPlaylistCompleted,
                 LastGoodPlaylist = session?.LastGoodPlaylist,
+                MaxHold = session?.LastGoodPlaylist is { Length: > 0 }
+                    ? PlaybackPolicy.AndroidPlaylistHoldBudget
+                    : null,
                 Row = session?.Row,
-                Log = line => global::Android.Util.Log.Info("VardyParty", line)
+                Session = session,
+                Log = (isInfo, line) =>
+                {
+                    if (isInfo)
+                        global::Android.Util.Log.Info("VardyParty", line);
+                    else
+                        global::Android.Util.Log.Debug("VardyParty", line);
+                }
             };
 
             PlaylistReloadOutcome outcome;
@@ -179,23 +189,21 @@ namespace VardyParty.Platforms.Android
                 var body = ReadUpstreamBody();
                 var contentType = ContentTypeOf(_upstream);
                 try { _upstream.Close(); } catch { /* next attempt reopens */ }
-                return new PlaylistReloadFetchResult
-                {
-                    StatusCode = 200,
-                    Body = body,
-                    ContentType = contentType
-                };
+                return PlaylistReloadFetchResult.FromHttp(200, body, contentType);
             }
             catch (Exception ex)
             {
                 try { _upstream.Close(); } catch { /* next attempt reopens */ }
-                var status = PlaybackPolicy.HttpStatusFromErrorText(ex.Message);
-                return new PlaylistReloadFetchResult
+                if (_upstream is ManagedHttpDataSource managed && managed.LastOpenStatus is >= 100 and <= 599)
                 {
-                    StatusCode = status,
-                    Body = [],
-                    ContentType = null
-                };
+                    return PlaylistReloadFetchResult.FromHttp(
+                        managed.LastOpenStatus,
+                        managed.LastErrorBody,
+                        managed.LastErrorContentType);
+                }
+
+                var status = PlaybackPolicy.HttpStatusFromException(ex);
+                return PlaylistReloadFetchResult.FromHttp(status, [], null);
             }
         }
 

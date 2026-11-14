@@ -71,10 +71,46 @@ public sealed class PlaylistReloadSession
     public string? Row { get; set; }
     public bool FirstPlaylistCompleted { get; set; }
     public byte[]? LastGoodPlaylist { get; set; }
+    public PlaybackErrorKind? LastGiveUpKind { get; private set; }
+    public string? LastGiveUpMessage { get; private set; }
+    public DateTimeOffset? FirstUnresolvedFailureAt { get; private set; }
+    public DateTimeOffset? LastHeldLastGoodAt { get; private set; }
 
     public void NoteServed(byte[] body)
     {
         FirstPlaylistCompleted = true;
         LastGoodPlaylist = body;
+        LastGiveUpKind = null;
+        LastGiveUpMessage = null;
+        FirstUnresolvedFailureAt = null;
+        LastHeldLastGoodAt = null;
     }
+
+    public void NoteGiveUp(PlaybackErrorKind kind, string? message)
+    {
+        LastGiveUpKind = kind;
+        LastGiveUpMessage = message;
+    }
+
+    public void NoteFailure(DateTimeOffset now) =>
+        FirstUnresolvedFailureAt ??= now;
+
+    public void NoteHeldLastGood(DateTimeOffset now)
+    {
+        NoteFailure(now);
+        LastHeldLastGoodAt = now;
+    }
+
+    public bool ShouldGiveUpHeldReload(DateTimeOffset now, TimeSpan budget) =>
+        FirstUnresolvedFailureAt is { } started && now - started >= budget;
+
+    /// <summary>
+    /// ExoPlayer may raise <c>PlaylistStuckException</c> while we are holding or
+    /// re-serving the last-good playlist. Reloading the MediaSource then causes a
+    /// visible stall; ignore the stuck error until the give-up budget elapses.
+    /// </summary>
+    public bool ShouldSuppressStuckPlaylistReload(DateTimeOffset now, TimeSpan giveUpBudget) =>
+        FirstUnresolvedFailureAt is { } started
+        && now - started < giveUpBudget
+        && (LastGoodPlaylist is { Length: > 0 } || LastHeldLastGoodAt is not null);
 }

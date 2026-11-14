@@ -160,7 +160,7 @@ public sealed class PlaybackChromePresenter
         return PlaybackChromeContentState.Error;
     }
 
-    public void ApplyOverlayInfo(PlayerOverlayInfo? info)
+    public void ApplyOverlayInfo(PlayerOverlayInfo? info, bool whileSwitching = false)
     {
         OverlayInfo = info;
         if (info is null)
@@ -174,7 +174,8 @@ public sealed class PlaybackChromePresenter
         var toast = new StreamToastModel(
             info.Index,
             info.Total,
-            VerticalResolutionLabel: PlayerOverlayFormatter.ExtractVerticalResolutionLabel(info.Resolution),
+            VerticalResolutionLabel: PlayerChromeText.FormatIdentityResolution(
+                info.Resolution, info.ProbedResolution, whileSwitching),
             SourceLabel: info.SourceLabel,
             Channel: info.Channel);
         var indexChanged = StreamToast is null

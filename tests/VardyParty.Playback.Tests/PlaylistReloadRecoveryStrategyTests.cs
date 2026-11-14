@@ -104,8 +104,8 @@ public class PlaylistReloadRecoveryStrategyTests
         Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
         Assert.Equal(Playable, outcome.Body);
         Assert.Equal([TimeSpan.Zero], delays);
-        Assert.Contains(logs, l => l.Contains("outcome=retry", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
-        Assert.Contains(logs, l => l.Contains("outcome=serve", StringComparison.Ordinal) && l.Contains("status=200", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.StartsWith("INFO ", StringComparison.Ordinal) && l.Contains("outcome=retry", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.StartsWith("INFO ", StringComparison.Ordinal) && l.Contains("outcome=serve", StringComparison.Ordinal) && l.Contains("attempt=2", StringComparison.Ordinal));
         Assert.DoesNotContain(logs, l => l.Contains("token=secret", StringComparison.Ordinal) || l.Contains("cdn.example", StringComparison.Ordinal));
     }
 
@@ -230,6 +230,207 @@ public class PlaylistReloadRecoveryStrategyTests
         Assert.DoesNotContain("token=secret", line, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(1, "serve", false)]
+    [InlineData(1, "retry", true)]
+    [InlineData(1, "give-up", true)]
+    [InlineData(1, "serve-last-good (deferral budget)", true)]
+    [InlineData(2, "serve", true)]
+    [InlineData(3, "serve", true)]
+    public void Logging_IsInfo_OnlyWhenAttemptOverOneOrOutcomeIsNotServe(int attempt, string outcome, bool expected) =>
+        Assert.Equal(expected, PlaylistReloadLogging.IsInfo(attempt, outcome));
+
+    [Fact]
+    public async Task Coordinator_FirstTryServe_LogsAtDebug()
+    {
+        var fetches = new Queue<PlaylistReloadFetchResult>(
+        [
+            PlaylistReloadFetchResult.FromStatus(200, Playable, "application/vnd.apple.mpegurl")
+        ]);
+        var logs = new List<string>();
+
+        var outcome = await RunAsync(
+            firstAttach: false,
+            fetches,
+            new List<TimeSpan>(),
+            logs);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
+        var line = Assert.Single(logs);
+        Assert.StartsWith("DEBUG ", line, StringComparison.Ordinal);
+        Assert.Contains("row=\"Match Wawes\"", line, StringComparison.Ordinal);
+        Assert.Contains("attempt=1", line, StringComparison.Ordinal);
+        Assert.Contains("status=200", line, StringComparison.Ordinal);
+        Assert.Contains("outcome=serve", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("outcome=serve-last-good", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Coordinator_StatusZeroThen200_RecoversOnAttemptThreeAtInfo()
+    {
+        var fetches = new Queue<PlaylistReloadFetchResult>(
+        [
+            PlaylistReloadFetchResult.FromStatus(0),
+            PlaylistReloadFetchResult.FromStatus(0),
+            PlaylistReloadFetchResult.FromStatus(200, Playable, "application/vnd.apple.mpegurl")
+        ]);
+        var delays = new List<TimeSpan>();
+        var logs = new List<string>();
+
+        var outcome = await RunAsync(
+            firstAttach: false,
+            fetches,
+            delays,
+            logs);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
+        Assert.Equal(Playable, outcome.Body);
+        Assert.Equal(2, delays.Count);
+        Assert.Contains(logs, l => l.StartsWith("INFO ", StringComparison.Ordinal) && l.Contains("attempt=1", StringComparison.Ordinal) && l.Contains("status=0", StringComparison.Ordinal) && l.Contains("outcome=retry", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.StartsWith("INFO ", StringComparison.Ordinal) && l.Contains("attempt=2", StringComparison.Ordinal) && l.Contains("status=0", StringComparison.Ordinal) && l.Contains("outcome=retry", StringComparison.Ordinal));
+        Assert.Contains(logs, l => l.StartsWith("INFO ", StringComparison.Ordinal) && l.Contains("attempt=3", StringComparison.Ordinal) && l.Contains("status=200", StringComparison.Ordinal) && l.Contains("outcome=serve", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, l => l.StartsWith("DEBUG ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Coordinator_Slow503WithLastGood_ServesLastGoodWithinAndroidHoldBudget()
+    {
+        var now = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        session.FirstPlaylistCompleted = true;
+        var logs = new List<string>();
+
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            new PlaylistReloadRequest
+            {
+                IsFirstAttach = false,
+                LastGoodPlaylist = Playable,
+                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
+                Row = "Match Wawes",
+                Session = session,
+                Delay = (delay, _) =>
+                {
+                    now += delay;
+                    return Task.CompletedTask;
+                },
+                Clock = () => now,
+                Log = (isInfo, line) => logs.Add(isInfo ? $"INFO {line}" : $"DEBUG {line}")
+            },
+            _ =>
+            {
+                now += TimeSpan.FromSeconds(3.3);
+                return Task.FromResult(PlaylistReloadFetchResult.FromStatus(503, Html, "text/html"));
+            },
+            CancellationToken.None);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.ServeLastGood, outcome.Kind);
+        Assert.Equal(Playable, outcome.Body);
+        Assert.NotNull(session.LastHeldLastGoodAt);
+        Assert.Contains(logs, l => l.Contains("serve-last-good", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
+        Assert.True(session.ShouldSuppressStuckPlaylistReload(now, PlaybackPolicy.PlaylistReloadGiveUpBudget));
+    }
+
+    [Fact]
+    public async Task Coordinator_TimeBudget_GivesUpCdnUnreachableAfterHeldReloads()
+    {
+        var started = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
+        var now = started;
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        session.FirstPlaylistCompleted = true;
+        session.LastGoodPlaylist = Playable;
+        session.NoteFailure(started);
+        now = started + PlaybackPolicy.PlaylistReloadGiveUpBudget;
+
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            new PlaylistReloadRequest
+            {
+                IsFirstAttach = false,
+                LastGoodPlaylist = Playable,
+                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
+                Row = "Match Wawes",
+                Session = session,
+                Delay = (_, _) => Task.CompletedTask,
+                Clock = () => now
+            },
+            _ => Task.FromResult(PlaylistReloadFetchResult.FromStatus(503, Html, "text/html")),
+            CancellationToken.None);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.Contains("time budget", outcome.Message, StringComparison.Ordinal);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(outcome.Message));
+    }
+
+    [Fact]
+    public void FromHttp_Empty200_IsStatusZero()
+    {
+        var empty = PlaylistReloadFetchResult.FromHttp(200, [], "application/vnd.apple.mpegurl");
+        Assert.Equal(0, empty.StatusCode);
+        Assert.Empty(empty.Body);
+
+        var playable = PlaylistReloadFetchResult.FromHttp(200, Playable, "application/vnd.apple.mpegurl");
+        Assert.Equal(200, playable.StatusCode);
+        Assert.Equal(Playable, playable.Body);
+    }
+
+    [Fact]
+    public async Task Coordinator_StatusZeroGiveUp_StampsCdnUnreachableAndSurvivesLaterParserException()
+    {
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        session.FirstPlaylistCompleted = true;
+        var fetches = new Queue<PlaylistReloadFetchResult>(
+        [
+            PlaylistReloadFetchResult.FromStatus(0),
+            PlaylistReloadFetchResult.FromStatus(0),
+            PlaylistReloadFetchResult.FromStatus(0)
+        ]);
+
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            new PlaylistReloadRequest
+            {
+                IsFirstAttach = false,
+                Row = "Match Wawes",
+                Session = session,
+                Delay = (_, _) => Task.CompletedTask,
+                Clock = () => DateTimeOffset.Parse("2026-11-14T20:27:20Z")
+            },
+            _ => Task.FromResult(fetches.Dequeue()),
+            CancellationToken.None);
+
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, session.LastGiveUpKind);
+        Assert.Equal(outcome.Message, session.LastGiveUpMessage);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(outcome.Message));
+
+        // TV 257 at 20:27: after give-up, ExoPlayer kept the live buffer then
+        // raised ParserException (~DesiredLiveOffsetSeconds later). That must
+        // not take the Hadcrack tried+failed path.
+        var laterParse = PlaybackPolicy.BuildEngineErrorMessage(
+            "Source error",
+            3002,
+            "ParserException: Input does not start with the #EXTM3U header");
+        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(laterParse));
+        var resolved = PlaybackPolicy.ResolvePlayerErrorAfterPlaylistGiveUp(laterParse, session);
+        Assert.Equal(outcome.Message, resolved);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(resolved));
+    }
+
+    [Fact]
+    public void ResolvePlayerErrorAfterPlaylistGiveUp_WithoutGiveUp_KeepsParserException()
+    {
+        var session = new PlaylistReloadSession();
+        var parse = PlaybackPolicy.BuildEngineErrorMessage(
+            "Source error",
+            3002,
+            "ParserException: Input does not start with the #EXTM3U header");
+        Assert.Equal(parse, PlaybackPolicy.ResolvePlayerErrorAfterPlaylistGiveUp(parse, session));
+        Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(parse));
+    }
+
     private static Task<PlaylistReloadOutcome> RunAsync(
         bool firstAttach,
         Queue<PlaylistReloadFetchResult> fetches,
@@ -254,7 +455,7 @@ public class PlaylistReloadRecoveryStrategyTests
                     return Task.CompletedTask;
                 },
                 Clock = () => now,
-                Log = line => logs?.Add(line)
+                Log = (isInfo, line) => logs?.Add(isInfo ? $"INFO {line}" : $"DEBUG {line}")
             },
             _ => Task.FromResult(fetches.Dequeue()),
             CancellationToken.None);

@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using VardyParty.Kernel;
+using VardyParty.Ports;
 
 namespace VardyParty.Playback;
 
@@ -51,13 +53,24 @@ public static class PlaylistReloadCoordinator
             if (decision.Action == PlaylistReloadAction.Serve)
                 return PlaylistReloadOutcome.Serve(last.Body, last.ContentType, last.StatusCode);
 
+            request.Session?.NoteFailure(clock());
+
+            if (decision.Action == PlaylistReloadAction.Retry
+                && request.Session?.ShouldGiveUpHeldReload(clock(), PlaybackPolicy.PlaylistReloadGiveUpBudget) == true)
+            {
+                var kind = decision.ErrorKind ?? PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
+                var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "playlist reload time budget exhausted");
+                Log(request, observation, decision, outcome: "give-up (time budget)");
+                request.Session?.NoteGiveUp(kind, message);
+                return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
+            }
+
             if (decision.Action == PlaylistReloadAction.GiveUp)
             {
                 var kind = decision.ErrorKind ?? PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
-                return PlaylistReloadOutcome.Failed(
-                    kind,
-                    PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, decision.Reason),
-                    last.StatusCode);
+                var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, decision.Reason);
+                request.Session?.NoteGiveUp(kind, message);
+                return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
             }
 
             // Retry: maybe the Windows deferral budget cannot hold the delay.
@@ -68,16 +81,16 @@ public static class PlaylistReloadCoordinator
                 {
                     if (request.LastGoodPlaylist is { Length: > 0 } good)
                     {
+                        request.Session?.NoteHeldLastGood(clock());
                         Log(request, observation, decision, outcome: "serve-last-good (deferral budget)");
                         return PlaylistReloadOutcome.ServeLastGood(good);
                     }
 
                     var kind = PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
+                    var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "deferral budget exhausted");
                     Log(request, observation, decision, outcome: "give-up (deferral budget, no last-good)");
-                    return PlaylistReloadOutcome.Failed(
-                        kind,
-                        PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "deferral budget exhausted"),
-                        last.StatusCode);
+                    request.Session?.NoteGiveUp(kind, message);
+                    return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
                 }
             }
 
@@ -103,9 +116,10 @@ public static class PlaylistReloadCoordinator
         if (request.Log is null)
             return;
         var delayMs = decision.Action == PlaylistReloadAction.Retry ? (int)decision.Delay.TotalMilliseconds : (int?)null;
-        request.Log(PlaylistReloadLogging.Format(
+        var line = PlaylistReloadLogging.Format(
             request.Row, observation.Attempt, observation.StatusCode, observation.ContentType,
-            observation.Body.Span, outcome, delayMs));
+            observation.Body.Span, outcome, delayMs);
+        request.Log(PlaylistReloadLogging.IsInfo(observation.Attempt, outcome), line);
     }
 
     private static string Describe(in PlaylistReloadDecision decision) =>
@@ -126,7 +140,12 @@ public sealed class PlaylistReloadRequest
     public string? Row { get; init; }
     public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
     public Func<DateTimeOffset>? Clock { get; init; }
-    public Action<string>? Log { get; init; }
+    /// <summary>
+    /// First argument is true for Information (attempt &gt; 1 or outcome is not a first-try serve).
+    /// Routine mid-play <c>attempt=1 status=200 serve</c> is Debug (false).
+    /// </summary>
+    public Action<bool, string>? Log { get; init; }
+    public PlaylistReloadSession? Session { get; init; }
 }
 
 public sealed class PlaylistReloadFetchResult
@@ -137,6 +156,18 @@ public sealed class PlaylistReloadFetchResult
 
     public static PlaylistReloadFetchResult FromStatus(int statusCode, byte[]? body = null, string? contentType = null) =>
         new() { StatusCode = statusCode, Body = body ?? [], ContentType = contentType };
+
+    /// <summary>
+    /// A completed 200/206 with an empty body is a dropped response, not a
+    /// playlist: treat it as <c>status=0</c> so give-up stays <see cref="PlaybackErrorKind.CdnUnreachable"/>.
+    /// </summary>
+    public static PlaylistReloadFetchResult FromHttp(int statusCode, byte[]? body = null, string? contentType = null)
+    {
+        body ??= [];
+        if (statusCode is 200 or 206 && body.Length == 0)
+            return new() { StatusCode = 0, Body = [], ContentType = contentType };
+        return new() { StatusCode = statusCode, Body = body, ContentType = contentType };
+    }
 }
 
 public enum PlaylistReloadOutcomeKind
@@ -198,4 +229,26 @@ public static class PlaylistReloadLogging
             return text;
         return text[..maxChars] + "…";
     }
+
+    /// <summary>
+    /// Routine first-try serves stay at Debug. Retries, give-up, last-good, and any
+    /// later attempt are Information — including a recovered <c>attempt=2 serve</c>.
+    /// Outcome is compared exactly to <c>serve</c>, so <c>serve-last-good</c> is Information.
+    /// </summary>
+    public static bool IsInfo(int attempt, string outcome) =>
+        attempt > 1 || !string.Equals(outcome, "serve", StringComparison.Ordinal);
+}
+
+/// <summary>Display name for <c>[playlist-retry] row="..."</c> (the overlay channel label).</summary>
+public static class PlaylistReloadRowName
+{
+    public static string? ForUrl(IStreamSwitchingService? switching, string? url)
+    {
+        var row = PlaybackRowRequestContext.FindRow(switching, url) ?? switching?.GetCurrentStream();
+        return ForRow(row);
+    }
+
+    public static string? ForRow(EnrichedStream? row) =>
+        PlayerOverlayFormatter.ResolveChipOrChannelLabel(row?.Stream)
+        ?? row?.Stream?.Channel;
 }
