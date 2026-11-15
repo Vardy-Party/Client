@@ -11,7 +11,8 @@ name: CD - Package & Release
 # Every platform job builds from source at package_sha (the actions/checkout
 # below). ci_run_id is optional: when given, that CI run's build-* source
 # artifact is overlaid on the checkout, so the guard job first proves the run
-# built the same commit and its artifacts have not expired (repo retention is
+# built the same source (package_sha or an ancestor differing only in
+# Version.props/markdown) and its artifacts have not expired (repo retention is
 # 5 days). Bump Display Version no longer passes ci_run_id: it used to pick the
 # newest successful push CI on main, which can be weeks old (squash merges that
 # carry "[skip ci]" from the ApplicationVersion bot commit skip push CI), so CD
@@ -66,6 +67,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
+          fetch-depth: 0
       - name: Fail if this display version is already released
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,8 +111,19 @@ jobs:
           WANT_SHA=$(git rev-parse HEAD)
           RUN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" --jq .head_sha)
           if [[ "${RUN_SHA}" != "${WANT_SHA}" ]]; then
-            echo "::error::ci_run_id ${CI_RUN_ID} built ${RUN_SHA}, not the packaged commit ${WANT_SHA}. Its build-* artifacts would overlay different source. Omit ci_run_id to build from the checkout."
-            exit 1
+            # Allowed only when package_sha is that CI commit plus Version.props /
+            # markdown changes (e.g. a display-version bump on top of the merge).
+            if ! git merge-base --is-ancestor "${RUN_SHA}" "${WANT_SHA}"; then
+              echo "::error::ci_run_id ${CI_RUN_ID} built ${RUN_SHA}, which is not an ancestor of the packaged commit ${WANT_SHA}. Omit ci_run_id to build from the checkout."
+              exit 1
+            fi
+            OTHER=$(git diff --name-only "${RUN_SHA}" "${WANT_SHA}" | grep -v -E '(^Version\.props$|\.md$)' || true)
+            if [[ -n "${OTHER}" ]]; then
+              echo "::error::ci_run_id ${CI_RUN_ID} built ${RUN_SHA}; the packaged commit ${WANT_SHA} also changes source, so its build-* artifacts would overlay stale files:"
+              echo "${OTHER}"
+              echo "Omit ci_run_id to build from the checkout."
+              exit 1
+            fi
           fi
           LIVE=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")')
@@ -120,7 +133,7 @@ jobs:
               exit 1
             fi
           done
-          echo "CI run ${CI_RUN_ID} built ${WANT_SHA} and has live build-* artifacts."
+          echo "CI run ${CI_RUN_ID} matches ${WANT_SHA} (or differs only in Version.props/markdown) and has live build-* artifacts."
         shell: bash
 
   package-windows:

@@ -258,13 +258,18 @@ pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview
 - **Merged before bumping** (the mistake this playbook exists to prevent). A `1.7.116-b156`
   release is now published. Then: bump `major` to `2.0.0` (Step 2), and because the bump
   commit is CI-skipped you must package 2.0.0 by hand — Actions → **CD - Package & Release**
-  → Run workflow on `main` with `ci_run_id` = the successful main CI run for the PR #74 merge,
-  `produce_release_assets` = true, `application_version` = `157`, `package_sha` = the current
-  `main` tip (the bump commit, so `Version.props` reads 2.0.0). Consider marking the
+  → Run workflow on `main` with `produce_release_assets` = true, `application_version` =
+  `157`, `package_sha` = the current `main` tip (the bump commit, so `Version.props` reads
+  2.0.0), and `ci_run_id` empty. CD builds every platform from `package_sha`. If you do pass a
+  `ci_run_id`, the guard fails unless that run built `package_sha` (or an ancestor that
+  differs only in `Version.props`/markdown) and its `build-*` artifacts are still live (5-day
+  retention). Consider marking the
   `1.7.116-b156` release as a pre-release or deleting it so users don't take it as latest.
-- **CD failed on one platform only.** Re-dispatch CD with the same `ci_run_id`,
-  `package_sha` and `application_version`; asset upload uses `--clobber`, so re-running is
-  safe and the tag is reused.
+- **CD failed on one or more platforms.** Re-dispatch CD with the same `package_sha` and
+  `application_version`, `produce_release_assets` = true, `repackage_existing_release` =
+  true and `ci_run_id` empty. Without `repackage_existing_release` the guard refuses because
+  `<display>-b<build>` already has a release; with it, only that exact tag is accepted and
+  asset upload uses `--clobber`, so the tag is reused.
 
 ## Pitfalls
 
