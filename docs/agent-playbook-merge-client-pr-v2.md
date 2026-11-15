@@ -278,7 +278,8 @@ pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview
   `application_version`, `produce_release_assets` = true, `repackage_existing_release` =
   true and `ci_run_id` empty. Without `repackage_existing_release` the guard refuses because
   `<display>-b<build>` already has a release; with it, only that exact tag is accepted and
-  asset upload uses `--clobber`, so the tag is reused.
+  the tag is reused. Only assets missing from the release are uploaded; files already on it are
+  never overwritten (no `--clobber`), so a retry fills gaps without replacing published files.
 
 ## Pitfalls
 
