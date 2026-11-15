@@ -70,9 +70,16 @@ Set a calendar reminder a few days before **2026-12-01**.
 
 ## Toolchain
 
-- **SDK:** .NET 11 GA (`11.0.100` or a later 11.0 patch). CI uses channel
-  `11.0.x` (`DOTNET_VERSION` in `.github/workflows/ci.yml`). There is no repo
-  `global.json`. Linux must use this SDK too — see `docs/LINUX_SUPPORT.md`.
+- **SDK:** .NET 11 GA. The repo `global.json` pins `11.0.100` with
+  `rollForward: latestPatch` (any 11.0.1xx patch). CI, CD and release use
+  `DOTNET_VERSION: "11.0.1xx"`, and every platform job installs workloads with
+  `--version 11.0.100.1` (workload set). Linux must use this SDK too — see
+  `docs/LINUX_SUPPORT.md`.
+- **Bumping the SDK or workloads:** change `global.json` `sdk.version`, the
+  `DOTNET_VERSION` env in `ci.yml`, `cd.yml` and `release.yml`, and every
+  `dotnet workload install ... --version <set>` in those three files together
+  (including the Apple jobs, which also need a matching Xcode). Then install the
+  same SDK on the MSI and box and run all test projects before pushing.
 - **Apple CI:** iOS and macOS jobs select **Xcode 27.2**
   (`/Applications/Xcode_27.2.app`) and pin workloads with
   `dotnet workload install maui --version 11.0.100.1` (and `ios` /

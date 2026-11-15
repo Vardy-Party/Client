@@ -1,12 +1,11 @@
 name: CI - Build & Test
 
 env:
-  # Everything targets net11.0(-*). 11.0.x is the latest SDK on the 11.0
-  # channel (GA 11.0.100 and later patches). There is deliberately no repo
-  # global.json: with no pin, dotnet picks the newest installed SDK, which
-  # is what the local build scripts need, while CI jobs select the channel
-  # via setup-dotnet.
-  DOTNET_VERSION: "11.0.x"
+  # Everything targets net11.0(-*). The SDK is pinned by the repo global.json
+  # (11.0.100, rollForward latestPatch); setup-dotnet installs the newest
+  # 11.0.1xx patch so that pin resolves. Every platform job installs workloads
+  # from workload set 11.0.100.1. Bump steps: AGENTS.md "Toolchain".
+  DOTNET_VERSION: "11.0.1xx"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   TESTS_DIR: "tests"
@@ -99,7 +98,7 @@ jobs:
       # - name: Restore dependencies
       #   run: find . -name "*Tests.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       - name: Install MAUI workload (HomeUi.Tests restores net11.0 HomeUi)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen --version 11.0.100.1 --ignore-failed-sources
       - name: Build test projects
         run: |
           set -euo pipefail
@@ -134,7 +133,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-android maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-android maui-tizen --version 11.0.100.1 --ignore-failed-sources
       # - name: Restore dependencies
       #   run: find . -name "*.csproj" -type f -print0 | xargs -0 -I {} dotnet restore {}
       # Warnings-as-errors + code-style enforcement. Android Release packaging is
@@ -191,7 +190,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-windows --skip-manifest-update
+        run: dotnet workload install maui-windows --version 11.0.100.1
       - name: Restore dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources -r win-x64
       - name: Build Windows app
@@ -248,7 +247,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-android --ignore-failed-sources
+        run: dotnet workload install maui-android --version 11.0.100.1 --ignore-failed-sources
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -495,7 +494,7 @@ jobs:
       # maui-tizen carries the plain-TFM MAUI SDK on Linux. HomeUiTargetFrameworks
       # keeps HomeUi on net11.0 so restore does not demand maui-android.
       - name: Install MAUI workloads
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen --version 11.0.100.1 --ignore-failed-sources
       - name: Restore Linux head
         env:
           HomeUiTargetFrameworks: net11.0
@@ -530,7 +529,7 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       # Same workload as build-linux (HomeUi is pinned to net11.0).
       - name: Install MAUI workloads
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen --version 11.0.100.1 --ignore-failed-sources
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
