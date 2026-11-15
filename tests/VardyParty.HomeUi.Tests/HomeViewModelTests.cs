@@ -64,7 +64,16 @@ public sealed class HomeViewModelTests : IDisposable
             _bus,
             _selection,
             NullLogger<HomeViewModel>.Instance,
-            new NullDesktopUpdateService());
+            new NullDesktopUpdateService(),
+            remoteCompute: null,
+            Microsoft.Extensions.Options.Options.Create(new GamesApiSettings
+            {
+                CallTimeoutSeconds = 5,
+                MaxRetries = 0,
+                RefreshSchedule = 60,
+                M3U8CallTimeoutSeconds = 5,
+                LeagueAcronyms = ["ZFA"],
+            }));
     }
 
     public void Dispose() => _sut.Dispose();
@@ -395,38 +404,41 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Equal("1 - 0", card.ScoreText);
         Assert.Contains("23", card.StatusText);
     }
+
     [Fact]
     public void FlushPendingApply_Refresh_TitleCasesAllCapsApiLeagueInPlace()
     {
-        _sut.UpdateGames(CatalogWithNamedLeague("UEFA NATIONS LEAGUE", bbcLeague: null, resolvedLeague: null));
+        // Arrange — the shell is built with GamesApi:LeagueAcronyms = ["ZFA"].
+        _sut.UpdateGames(CatalogWithNamedLeague("ZFA NORTHERN CUP", bbcLeague: null, resolvedLeague: null));
         _sut.FlushPendingApply();
         var row = Assert.Single(_sut.Rows);
         var card = Assert.Single(row.Cards);
+        var firstHeading = row.League;
 
-        Assert.Equal("UEFA Nations League", row.League);
-        Assert.Equal("UEFA NATIONS LEAGUE", card.Game.ApiLeague);
-        Assert.Equal("UEFA NATIONS LEAGUE", card.Game.League);
-
+        // Act
         _sut.UpdateGames(CatalogWithNamedLeague(
-            "UEFA NATIONS LEAGUE",
-            bbcLeague: "UEFA Nations League",
-            resolvedLeague: "UEFA Nations League"));
+            "ZFA NORTHERN CUP",
+            bbcLeague: "ZFA Northern Cup",
+            resolvedLeague: "ZFA Northern Cup"));
         _sut.FlushPendingApply();
 
+        // Assert
+        Assert.Equal("ZFA Northern Cup", firstHeading);
+        Assert.Equal("ZFA NORTHERN CUP", card.Game.League);
         Assert.Same(row, Assert.Single(_sut.Rows));
         Assert.Same(card, Assert.Single(_sut.Rows[0].Cards));
-        Assert.Equal("UEFA Nations League", _sut.Rows[0].League);
-        Assert.Equal("UEFA NATIONS LEAGUE", _sut.Rows[0].Cards[0].Game.ApiLeague);
+        Assert.Equal("ZFA Northern Cup", _sut.Rows[0].League);
+        Assert.Equal("ZFA NORTHERN CUP", _sut.Rows[0].Cards[0].Game.ApiLeague);
     }
 
     [Fact]
     public void FlushPendingApply_Refresh_UpdatesLeagueHeadingSpellingOnExistingRow()
     {
-        _sut.UpdateGames(CatalogWithNamedLeague("premier league", bbcLeague: null, resolvedLeague: null));
+        // Arrange
+        _sut.UpdateGames(CatalogWithNamedLeague("sample premier division", bbcLeague: null, resolvedLeague: null));
         _sut.FlushPendingApply();
         var row = Assert.Single(_sut.Rows);
-        Assert.Equal("premier league", row.League);
-
+        var firstHeading = row.League;
         string? changed = null;
         row.PropertyChanged += (_, e) =>
         {
@@ -436,16 +448,19 @@ public sealed class HomeViewModelTests : IDisposable
             }
         };
 
+        // Act
         _sut.UpdateGames(CatalogWithNamedLeague(
-            "premier league",
-            bbcLeague: "Premier League",
-            resolvedLeague: "Premier League"));
+            "sample premier division",
+            bbcLeague: "Sample Premier Division",
+            resolvedLeague: "Sample Premier Division"));
         _sut.FlushPendingApply();
 
+        // Assert
+        Assert.Equal("sample premier division", firstHeading);
         Assert.Same(row, Assert.Single(_sut.Rows));
-        Assert.Equal("Premier League", row.League);
+        Assert.Equal("Sample Premier Division", row.League);
         Assert.Equal(nameof(LeagueRowViewModel.League), changed);
-        Assert.Equal("premier league", row.Cards[0].Game.ApiLeague);
+        Assert.Equal("sample premier division", row.Cards[0].Game.ApiLeague);
     }
 
     [Fact]
@@ -1212,8 +1227,8 @@ public sealed class HomeViewModelTests : IDisposable
         string? resolvedLeague)
     {
         var game = _fixture.Build<Game>()
-            .With(g => g.Home, "Portugal")
-            .With(g => g.Away, "Denmark")
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
             .With(g => g.BBCHome, "")
             .With(g => g.BBCAway, "")
             .With(g => g.League, apiLeague)

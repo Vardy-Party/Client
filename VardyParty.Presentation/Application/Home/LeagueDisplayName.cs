@@ -9,16 +9,23 @@ namespace VardyParty.Presentation;
 /// </summary>
 public static class LeagueDisplayName
 {
-    private static readonly HashSet<string> Acronyms = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> DefaultAcronyms =
+        new(GamesApiSettings.DefaultLeagueAcronyms, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Acronym set for <see cref="ForDisplay(string?, IReadOnlyCollection{string}?)"/>.
+    /// Null or empty means <see cref="GamesApiSettings.DefaultLeagueAcronyms"/>.
+    /// </summary>
+    public static IReadOnlySet<string> AcronymSet(IEnumerable<string>? acronyms)
     {
-        "UEFA",
-        "CAF",
-        "FIFA",
-        "MLS",
-        "NBA",
-        "NFL",
-        "EFL",
-    };
+        var configured = acronyms?
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Select(a => a.Trim())
+            .ToList();
+        return configured is { Count: > 0 }
+            ? new HashSet<string>(configured, StringComparer.OrdinalIgnoreCase)
+            : DefaultAcronyms;
+    }
 
     private static readonly HashSet<string> SmallWords = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -32,12 +39,13 @@ public static class LeagueDisplayName
     };
 
     /// <summary>
-    /// Title-cases an ALL-CAPS API key, keeping known short acronyms
-    /// uppercase. Mixed-case names (BBC, already-resolved headings) are left
-    /// unchanged.
+    /// Title-cases an ALL-CAPS API key, keeping configured acronyms
+    /// (<see cref="GamesApiSettings.LeagueAcronyms"/>) uppercase. Mixed-case names
+    /// (BBC, already-resolved headings) are left unchanged.
     /// </summary>
-    public static string ForDisplay(string? name)
+    public static string ForDisplay(string? name, IReadOnlyCollection<string>? acronyms = null)
     {
+        var acronymSet = acronyms as IReadOnlySet<string> ?? AcronymSet(acronyms);
         var trimmed = (name ?? string.Empty).Trim();
         if (trimmed.Length == 0 || !IsAllCaps(trimmed))
         {
@@ -48,7 +56,7 @@ public static class LeagueDisplayName
         var titled = new string[words.Length];
         for (var i = 0; i < words.Length; i++)
         {
-            titled[i] = TitleCaseToken(words[i], firstWord: i == 0);
+            titled[i] = TitleCaseToken(words[i], firstWord: i == 0, acronymSet);
         }
 
         return string.Join(' ', titled);
@@ -59,7 +67,7 @@ public static class LeagueDisplayName
     /// ResolvedLeague or BBC spelling, avoid ALL CAPS, then title-case if the
     /// winner is still an ALL-CAPS API key.
     /// </summary>
-    public static string ForRow(IEnumerable<Game> games)
+    public static string ForRow(IEnumerable<Game> games, IReadOnlyCollection<string>? acronyms = null)
     {
         var candidates = new List<(string Name, bool FromReconciled, bool AllCaps, bool MixedCase)>();
         foreach (var game in games)
@@ -87,7 +95,7 @@ public static class LeagueDisplayName
             .ThenByDescending(c => c.MixedCase)
             .First();
 
-        return ForDisplay(chosen.Name);
+        return ForDisplay(chosen.Name, acronyms);
     }
 
     public static bool IsAllCaps(string name) =>
@@ -108,25 +116,25 @@ public static class LeagueDisplayName
             && name.Equals(game.BBCLeague.Trim(), StringComparison.Ordinal);
     }
 
-    private static string TitleCaseToken(string token, bool firstWord)
+    private static string TitleCaseToken(string token, bool firstWord, IReadOnlySet<string> acronyms)
     {
         var parts = token.Split('-');
         for (var i = 0; i < parts.Length; i++)
         {
-            parts[i] = TitleCasePart(parts[i], firstWord && i == 0);
+            parts[i] = TitleCasePart(parts[i], firstWord && i == 0, acronyms);
         }
 
         return string.Join('-', parts);
     }
 
-    private static string TitleCasePart(string part, bool firstWord)
+    private static string TitleCasePart(string part, bool firstWord, IReadOnlySet<string> acronyms)
     {
         if (part.Length == 0)
         {
             return part;
         }
 
-        if (Acronyms.Contains(part))
+        if (acronyms.Contains(part))
         {
             return part.ToUpperInvariant();
         }

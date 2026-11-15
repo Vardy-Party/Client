@@ -8,93 +8,163 @@ namespace VardyParty.Presentation.Tests;
 
 public class LeagueDisplayNameTests
 {
+    // Fictional acronyms, injected the way GamesApiSettings.LeagueAcronyms is.
+    private static readonly string[] Acronyms = ["ZFA", "QRL", "XBL"];
+
     [Theory]
-    [InlineData("UEFA NATIONS LEAGUE", "UEFA Nations League")]
-    [InlineData("CAF AFRICA CUP OF NATIONS QUALIFIERS", "CAF Africa Cup of Nations Qualifiers")]
-    [InlineData("FIFA WORLD CUP", "FIFA World Cup")]
-    [InlineData("MLS REGULAR SEASON", "MLS Regular Season")]
-    [InlineData("NBA PLAYOFFS", "NBA Playoffs")]
-    [InlineData("NFL REGULAR SEASON", "NFL Regular Season")]
-    [InlineData("EFL CHAMPIONSHIP", "EFL Championship")]
-    public void ForDisplay_TitleCasesAllCapsApiKeys_KeepingKnownAcronyms(string input, string expected)
+    [InlineData("ZFA NORTHERN CUP", "ZFA Northern Cup")]
+    [InlineData("QRL CUP OF THE ISLES QUALIFIERS", "QRL Cup of the Isles Qualifiers")]
+    [InlineData("XBL REGULAR SEASON", "XBL Regular Season")]
+    [InlineData("NORTHERN CUP-ZFA STAGE", "Northern Cup-ZFA Stage")]
+    public void ForDisplay_TitleCasesAllCapsApiKeys_KeepingConfiguredAcronyms(string input, string expected)
     {
-        Assert.Equal(expected, LeagueDisplayName.ForDisplay(input));
+        // Arrange
+        // Act
+        var result = LeagueDisplayName.ForDisplay(input, Acronyms);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void ForDisplay_WordNotConfiguredAsAcronym_IsTitleCased()
+    {
+        // Arrange
+        string[] withoutZfa = ["QRL"];
+
+        // Act
+        var result = LeagueDisplayName.ForDisplay("ZFA NORTHERN CUP", withoutZfa);
+
+        // Assert
+        Assert.Equal("Zfa Northern Cup", result);
+    }
+
+    [Fact]
+    public void ForDisplay_NoConfiguredAcronyms_UsesTheDefaults()
+    {
+        // Arrange
+        var defaults = GamesApiSettings.DefaultLeagueAcronyms;
+
+        // Act
+        var result = LeagueDisplayName.ForDisplay("NWSL SAMPLE SHIELD", Array.Empty<string>());
+
+        // Assert
+        Assert.Equal("NWSL Sample Shield", result);
+        Assert.Contains("AFC", defaults);
+        Assert.Contains("CONCACAF", defaults);
+        Assert.Contains("CONMEBOL", defaults);
+        Assert.Contains("USL", defaults);
+        Assert.Contains("NWSL", defaults);
+        Assert.Contains("WSL", defaults);
+        Assert.Contains("SPL", defaults);
     }
 
     [Theory]
-    [InlineData("UEFA Nations League")]
-    [InlineData("CAF Africa Cup of Nations Qualifiers")]
-    [InlineData("Premier League")]
+    [InlineData("ZFA Northern Cup")]
+    [InlineData("QRL Cup of the Isles Qualifiers")]
+    [InlineData("Sample Premier Division")]
     [InlineData("league alpha")]
     public void ForDisplay_LeavesMixedOrLowerCaseNamesAlone(string input)
     {
-        Assert.Equal(input, LeagueDisplayName.ForDisplay(input));
+        // Arrange
+        // Act
+        var result = LeagueDisplayName.ForDisplay(input, Acronyms);
+
+        // Assert
+        Assert.Equal(input, result);
     }
 
     [Fact]
     public void ForDisplay_TrimsWhitespace_AndTreatsBlankAsEmpty()
     {
-        Assert.Equal("UEFA Nations League", LeagueDisplayName.ForDisplay("  UEFA NATIONS LEAGUE  "));
-        Assert.Equal(string.Empty, LeagueDisplayName.ForDisplay("   "));
-        Assert.Equal(string.Empty, LeagueDisplayName.ForDisplay(null));
+        // Arrange
+        const string padded = "  ZFA NORTHERN CUP  ";
+
+        // Act
+        var trimmed = LeagueDisplayName.ForDisplay(padded, Acronyms);
+        var blank = LeagueDisplayName.ForDisplay("   ", Acronyms);
+        var missing = LeagueDisplayName.ForDisplay(null, Acronyms);
+
+        // Assert
+        Assert.Equal("ZFA Northern Cup", trimmed);
+        Assert.Equal(string.Empty, blank);
+        Assert.Equal(string.Empty, missing);
     }
 
     [Fact]
     public void ForRow_PrefersBbcOrResolvedSpelling_OverAllCapsApiKey()
     {
+        // Arrange — the all-caps API game is first, which used to become group.Key.
         var apiOnly = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
             Start = DateTime.UtcNow.AddHours(1),
         };
         var matched = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
-            BBCLeague = "UEFA Nations League",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
+            BBCLeague = "ZFA Northern Cup",
             Start = DateTime.UtcNow.AddHours(2),
         };
-        matched.ResolveLeague("UEFA Nations League");
+        matched.ResolveLeague("ZFA Northern Cup");
 
-        // The all-caps API game is first, which used to become group.Key.
-        var heading = LeagueDisplayName.ForRow(new[] { apiOnly, matched });
+        // Act
+        var heading = LeagueDisplayName.ForRow(new[] { apiOnly, matched }, Acronyms);
 
-        Assert.Equal("UEFA Nations League", heading);
-        Assert.Equal("UEFA NATIONS LEAGUE", apiOnly.ApiLeague);
-        Assert.Equal("UEFA NATIONS LEAGUE", matched.ApiLeague);
+        // Assert
+        Assert.Equal("ZFA Northern Cup", heading);
+        Assert.Equal("ZFA NORTHERN CUP", apiOnly.ApiLeague);
+        Assert.Equal("ZFA NORTHERN CUP", matched.ApiLeague);
     }
 
     [Fact]
     public void ForRow_TitleCasesWhenTheGroupIsOnlyAnAllCapsApiKey()
     {
+        // Arrange
         var game = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
             Start = DateTime.UtcNow.AddHours(1),
         };
 
-        Assert.Equal("UEFA Nations League", LeagueDisplayName.ForRow(new[] { game }));
-        Assert.Equal("UEFA NATIONS LEAGUE", game.ApiLeague);
-        Assert.Equal("UEFA NATIONS LEAGUE", game.League);
+        // Act
+        var heading = LeagueDisplayName.ForRow(new[] { game }, Acronyms);
+
+        // Assert
+        Assert.Equal("ZFA Northern Cup", heading);
+        Assert.Equal("ZFA NORTHERN CUP", game.ApiLeague);
+        Assert.Equal("ZFA NORTHERN CUP", game.League);
     }
 
     [Fact]
     public void ForRow_PrefersTitleCaseOverAllLowercaseWhenCasingDiffers()
     {
+        // Arrange
         var lower = new Game { League = "league alpha", Start = DateTime.UtcNow.AddHours(1) };
         var titled = new Game { League = "League Alpha", Start = DateTime.UtcNow.AddHours(2) };
 
-        Assert.Equal("League Alpha", LeagueDisplayName.ForRow(new[] { lower, titled }));
+        // Act
+        var heading = LeagueDisplayName.ForRow(new[] { lower, titled }, Acronyms);
+
+        // Assert
+        Assert.Equal("League Alpha", heading);
     }
 
     [Fact]
     public void ForRow_EmptyOrBlankLeagues_FallsBackToOther()
     {
-        Assert.Equal(HomeRowsBuilder.FallbackLeague, LeagueDisplayName.ForRow(Array.Empty<Game>()));
-        Assert.Equal(
-            HomeRowsBuilder.FallbackLeague,
-            LeagueDisplayName.ForRow(new[] { new Game { League = "  ", Start = DateTime.UtcNow } }));
+        // Arrange
+        var blank = new[] { new Game { League = "  ", Start = DateTime.UtcNow } };
+
+        // Act
+        var none = LeagueDisplayName.ForRow(Array.Empty<Game>(), Acronyms);
+        var blankHeading = LeagueDisplayName.ForRow(blank, Acronyms);
+
+        // Assert
+        Assert.Equal(HomeRowsBuilder.FallbackLeague, none);
+        Assert.Equal(HomeRowsBuilder.FallbackLeague, blankHeading);
     }
 }

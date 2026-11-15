@@ -18,9 +18,14 @@ public class HomeRowsBuilderTests
     [Fact]
     public void Build_EmptyOrNull_ReturnsNoRows()
     {
-        // Act & Assert
-        Assert.Empty(HomeRowsBuilder.Build(null));
-        Assert.Empty(HomeRowsBuilder.Build(Array.Empty<Game>()));
+        // Arrange
+        // Act
+        var fromNull = HomeRowsBuilder.Build(null);
+        var fromEmpty = HomeRowsBuilder.Build(Array.Empty<Game>());
+
+        // Assert
+        Assert.Empty(fromNull);
+        Assert.Empty(fromEmpty);
     }
 
     [Fact]
@@ -133,8 +138,8 @@ public class HomeRowsBuilderTests
         // Arrange
         var games = new[]
         {
-            new Game { League = "api-name", BBCLeague = "Premier League", Start = DateTime.UtcNow.AddHours(1) },
-            new Game { League = "Premier League", Start = DateTime.UtcNow.AddHours(2) },
+            new Game { League = "api-name", BBCLeague = "Sample Premier Division", Start = DateTime.UtcNow.AddHours(1) },
+            new Game { League = "Sample Premier Division", Start = DateTime.UtcNow.AddHours(2) },
         };
 
         // Act
@@ -142,50 +147,58 @@ public class HomeRowsBuilderTests
 
         // Assert
         var row = Assert.Single(rows);
-        Assert.Equal("Premier League", row.League);
+        Assert.Equal("Sample Premier Division", row.League);
     }
 
     [Fact]
     public void Build_AllCapsApiLeague_IsTitleCasedForTheHeading_WithoutChangingApiLeague()
     {
+        // Arrange
         var game = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
             Start = new DateTime(2026, 11, 14, 19, 0, 0, DateTimeKind.Utc),
         };
 
-        var row = Assert.Single(HomeRowsBuilder.Build(new[] { game }));
+        // Act
+        var rows = HomeRowsBuilder.Build(new[] { game }, ["ZFA"]);
 
-        Assert.Equal("UEFA Nations League", row.League);
+        // Assert
+        var row = Assert.Single(rows);
+        Assert.Equal("ZFA Northern Cup", row.League);
         Assert.Same(game, Assert.Single(row.Games));
-        Assert.Equal("UEFA NATIONS LEAGUE", game.ApiLeague);
-        Assert.Equal("UEFA NATIONS LEAGUE", game.League);
+        Assert.Equal("ZFA NORTHERN CUP", game.ApiLeague);
+        Assert.Equal("ZFA NORTHERN CUP", game.League);
     }
 
     [Fact]
     public void Build_PrefersBbcSpellingWhenItDiffersOnlyByCaseFromTheApiKey()
     {
+        // Arrange
         var unmatched = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
             Start = new DateTime(2026, 11, 14, 19, 0, 0, DateTimeKind.Utc),
         };
         var matched = new Game
         {
-            League = "UEFA NATIONS LEAGUE",
-            ApiLeague = "UEFA NATIONS LEAGUE",
-            BBCLeague = "UEFA Nations League",
+            League = "ZFA NORTHERN CUP",
+            ApiLeague = "ZFA NORTHERN CUP",
+            BBCLeague = "ZFA Northern Cup",
             Start = new DateTime(2026, 11, 14, 19, 45, 0, DateTimeKind.Utc),
         };
-        matched.ResolveLeague("UEFA Nations League");
+        matched.ResolveLeague("ZFA Northern Cup");
 
-        var row = Assert.Single(HomeRowsBuilder.Build(new[] { unmatched, matched }));
+        // Act
+        var rows = HomeRowsBuilder.Build(new[] { unmatched, matched }, ["ZFA"]);
 
-        Assert.Equal("UEFA Nations League", row.League);
+        // Assert
+        var row = Assert.Single(rows);
+        Assert.Equal("ZFA Northern Cup", row.League);
         Assert.Equal(2, row.Games.Count);
-        Assert.Equal("UEFA NATIONS LEAGUE", unmatched.ApiLeague);
-        Assert.Equal("UEFA NATIONS LEAGUE", matched.ApiLeague);
+        Assert.Equal("ZFA NORTHERN CUP", unmatched.ApiLeague);
+        Assert.Equal("ZFA NORTHERN CUP", matched.ApiLeague);
     }
 }

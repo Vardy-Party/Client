@@ -10,8 +10,9 @@ public class LeagueRowViewModelTests
     [Fact]
     public void Refresh_UpdatesLeague_AndRaisesPropertyChanged()
     {
+        // Arrange
         var row = new LeagueRowViewModel(
-            "UEFA NATIONS LEAGUE",
+            "ZFA NORTHERN CUP",
             hasLiveGames: true,
             new List<MatchCardViewModel>(),
             new HomeLayoutState());
@@ -24,17 +25,20 @@ public class LeagueRowViewModelTests
             }
         };
 
-        row.Refresh(hasLiveGames: true, "UEFA Nations League");
+        // Act
+        row.Refresh(hasLiveGames: true, "ZFA Northern Cup");
 
-        Assert.Equal("UEFA Nations League", row.League);
+        // Assert
+        Assert.Equal("ZFA Northern Cup", row.League);
         Assert.Equal(nameof(LeagueRowViewModel.League), changed);
     }
 
     [Fact]
     public void Refresh_SameLeague_DoesNotRaisePropertyChanged()
     {
+        // Arrange
         var row = new LeagueRowViewModel(
-            "UEFA Nations League",
+            "ZFA Northern Cup",
             hasLiveGames: true,
             new List<MatchCardViewModel>(),
             new HomeLayoutState());
@@ -47,9 +51,11 @@ public class LeagueRowViewModelTests
             }
         };
 
-        row.Refresh(hasLiveGames: false, "UEFA Nations League");
+        // Act
+        row.Refresh(hasLiveGames: false, "ZFA Northern Cup");
 
-        Assert.Equal("UEFA Nations League", row.League);
+        // Assert
+        Assert.Equal("ZFA Northern Cup", row.League);
         Assert.False(row.HasLiveGames);
         Assert.False(raised);
     }

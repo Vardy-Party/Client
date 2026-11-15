@@ -26,4 +26,20 @@ public class GamesApiSettings
     /// still use option 1 in the fetch layer and keep option 2 enabled.
     /// </summary>
     public string PlaylistReloadStrategy { get; set; } = "RetrySameUrlThenSwitchBack";
+
+    /// <summary>
+    /// Words kept upper-case when an ALL-CAPS league key is title-cased for a Home row
+    /// heading (display only). Configurable under <c>GamesApi:LeagueAcronyms</c>; a
+    /// configured list replaces <see cref="DefaultLeagueAcronyms"/>. Empty (the default)
+    /// uses <see cref="DefaultLeagueAcronyms"/>. Kept empty here because the configuration
+    /// binder appends to a pre-filled array instead of replacing it.
+    /// </summary>
+    public string[] LeagueAcronyms { get; set; } = [];
+
+    /// <summary>Default for <see cref="LeagueAcronyms"/>.</summary>
+    public static IReadOnlyList<string> DefaultLeagueAcronyms { get; } =
+    [
+        "UEFA", "CAF", "AFC", "FIFA", "CONCACAF", "CONMEBOL",
+        "MLS", "USL", "NWSL", "WSL", "SPL", "EFL", "NBA", "NFL",
+    ];
 }

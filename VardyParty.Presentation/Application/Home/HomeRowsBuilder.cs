@@ -20,8 +20,15 @@ public static class HomeRowsBuilder
 {
     public const string FallbackLeague = "Other";
 
-    public static IReadOnlyList<LeagueRowModel> Build(IEnumerable<Game>? games)
+    /// <param name="leagueAcronyms">
+    /// Words kept upper-case in title-cased headings
+    /// (<see cref="GamesApiSettings.LeagueAcronyms"/>); null uses the defaults.
+    /// </param>
+    public static IReadOnlyList<LeagueRowModel> Build(
+        IEnumerable<Game>? games,
+        IReadOnlyCollection<string>? leagueAcronyms = null)
     {
+        var acronyms = LeagueDisplayName.AcronymSet(leagueAcronyms);
         var list = games?.Where(g => g != null).ToList() ?? new List<Game>();
         if (list.Count == 0) return Array.Empty<LeagueRowModel>();
 
@@ -29,7 +36,7 @@ public static class HomeRowsBuilder
             .GroupBy(GroupingKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => new
             {
-                Row = new LeagueRowModel(LeagueDisplayName.ForRow(group), group.ToList()),
+                Row = new LeagueRowModel(LeagueDisplayName.ForRow(group, acronyms), group.ToList()),
                 HasLive = group.Any(g => g.IsLiveForOrdering),
                 EarliestStart = group.Min(g => g.StartUtcForOrdering),
             })
