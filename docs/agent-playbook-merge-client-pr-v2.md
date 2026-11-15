@@ -195,7 +195,8 @@ Or in the UI: PR #74 → **Squash and merge** → keep the title
 prefix the squash subject with `ci:` — that would make CI skip the merge and no release would
 be built at all.
 
-**Delete every `[skip ci]` line from the squash message body before confirming.** The repo's
+**Delete every `[skip ci]` line from the squash message body before confirming** (and the
+variants listed in [CI_SKIP_TOKENS.md](CI_SKIP_TOKENS.md)). The repo's
 squash default copies every commit message into the body, and GitHub skips all push workflows
 (CI, CodeQL, Increment Build Version, so no CD) when `[skip ci]` appears anywhere in it. That is
 how #155 and #162 landed without main CI. The ApplicationVersion bot no longer adds the token,

@@ -110,6 +110,23 @@ Do not assume a failure is "just CI" without comparing to a known-green run
 and identifying the cause. Do not "fix CI" (workflow or runner changes)
 unless asked.
 
+### Skip-CI tokens (builds on `main` depend on this)
+
+`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]` or `[actions skip]`
+anywhere in a commit message (subject or body, even quoted) stops GitHub from
+running push and pull_request workflows for it. A squash merge builds `main`'s
+message from every branch commit message, so one token on a branch means no CI,
+no CodeQL and no artifacts on `main`. That broke CD for 3.6.0-b261. Full
+write-up: [`docs/CI_SKIP_TOKENS.md`](docs/CI_SKIP_TOKENS.md).
+
+- Never put a skip-CI token in a commit message, PR title or squash message.
+  To mention it, write "skip-ci token"; quoting the literal string triggers it.
+- Before asking Jon to merge, check the branch:
+  `git log --format=%B origin/main..HEAD | grep -inE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'`.
+  If anything matches, tell him to delete those lines from the squash message
+  (or give him a `gh pr merge --squash --body ...` without them).
+- Bots don't need the token: `GITHUB_TOKEN` pushes never start workflows.
+
 Do not hand-edit `ApplicationDisplayVersion` on a feature branch.
 `ApplicationVersion` is the integer build counter. See
 `docs/VERSION_MANAGEMENT.md`.

@@ -66,3 +66,6 @@ grep ApplicationVersion Version.props
   with the bump workflow on the same line).
 - Confuse `ApplicationVersion` (155, 156, …) with the display semver.
 - Expect the bump workflow to create git tags or run CD by itself.
+- Put a skip-CI token in any commit or squash message, or leave one in a squash
+  body built from branch commits. It stops push CI on `main` (no artifacts) and
+  broke CD for 3.6.0-b261. See [CI_SKIP_TOKENS.md](CI_SKIP_TOKENS.md).
