@@ -378,8 +378,10 @@ public class CdnUnreachableBusinessRulesTests
             alsoHealthy: backups,
             playback: watching.Task);
 
-        // Act
-        await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object);
+        // Act — bounded, so a regression that never schedules the recheck fails here
+        // instead of hanging the job.
+        await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object)
+            .WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert
         TimeSpan[] waits;
