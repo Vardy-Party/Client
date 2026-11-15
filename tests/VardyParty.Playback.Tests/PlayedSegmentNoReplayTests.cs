@@ -126,6 +126,47 @@ public class PlayedSegmentNoReplayTests
     }
 
     [Fact]
+    public async Task PrepareServed_RunsBeforeTheTrim_SoPositionallySwappedUrlsStayMapped()
+    {
+        // Arrange: a decoy playlist whose lines the player never fetches; prepare swaps
+        // the n-th line for the n-th real URL, and only real URLs were recorded as played.
+        var real = new[] { "https://edge.example.net/r/a1.ts", "https://edge.example.net/r/a2.ts", "https://edge.example.net/r/a3.ts" };
+        const string decoy = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:40\n#EXTINF:6.0,\nd1.json\n#EXTINF:6.0,\nd2.json\n#EXTINF:6.0,\nd3.json\n";
+        var memory = new PlayedSegmentMemory();
+        memory.NoteSegment(real[0]);
+        var session = new PlaylistReloadSession(row: "Riverside Rovers") { PlayedSegments = memory };
+        var request = PlaylistReloadRequest.MidPlay(
+            isFirstAttach: true,
+            session,
+            "Riverside Rovers",
+            playlistUrl: PlaylistUrl,
+            prepareServed: body =>
+            {
+                var text = Encoding.UTF8.GetString(body);
+                for (var i = 0; i < real.Length; i++)
+                    text = text.Replace($"d{i + 1}.json", real[i], StringComparison.Ordinal);
+                return Encoding.UTF8.GetBytes(text);
+            });
+
+        // Act
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ => Task.FromResult(PlaylistReloadFetchResult.FromHttp(200, Encoding.UTF8.GetBytes(decoy), "application/vnd.apple.mpegurl")),
+            CancellationToken.None);
+        var served = Encoding.UTF8.GetString(outcome.Body);
+
+        // Assert
+        Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
+        Assert.DoesNotContain(real[0], served, StringComparison.Ordinal);
+        Assert.Contains(real[1], served, StringComparison.Ordinal);
+        Assert.Contains(real[2], served, StringComparison.Ordinal);
+        Assert.True(served.IndexOf(real[1], StringComparison.Ordinal) < served.IndexOf(real[2], StringComparison.Ordinal));
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:41", served, StringComparison.Ordinal);
+        Assert.DoesNotContain(".json", served, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NoteSegment_IgnoresPlaylists_AndMatchesWithoutSignedQuery()
     {
         // Arrange
