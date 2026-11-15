@@ -39,6 +39,9 @@ public sealed record StreamToastModel(
 {
     public string Text => PlayerOverlayFormatter.FormatStreamToast(
         Index, Total, VerticalResolutionLabel, SourceLabel, Channel);
+
+    /// <summary><see cref="Text"/> split around the V1/V2 chip, coloured like the video-info badge.</summary>
+    public StreamIdentityParts Parts => PlayerOverlayFormatter.SplitSourceChip(Text, SourceLabel);
 }
 
 /// <summary>

@@ -38,6 +38,8 @@ namespace VardyParty.Platforms.Android
             {
                 _videoWidth = size.Width;
                 _videoHeight = size.Height;
+                // A mid-play size change replaces the stream's stored height too.
+                MeasuredPictureSize.Remember(_switching?.GetCurrentStream()?.Health, size);
             }
             else
             {

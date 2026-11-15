@@ -1029,7 +1029,7 @@ namespace VardyParty.Platforms.Windows
                     try
                     {
                         chrome.SetContentState(PlaybackChromeContentState.Switching);
-                        streamCountText.Text = message;
+                        ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(message, null));
                         if (!chrome.IsVideoInfoVisible)
                         {
                             streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;

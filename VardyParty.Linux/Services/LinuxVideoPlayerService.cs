@@ -1462,8 +1462,10 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 var published = _pictureSizeSettler.Observe(raw.Width, raw.Height);
                 resolution = published;
-                if (published is { Height: > 0 } size)
-                    _switchBack?.NoteBackupHeight(size.Height);
+                NoteSettledPictureSize(published);
+                // A mid-play size change needs the tick to settle once the picture tick stopped.
+                if (_pictureSizeSettler.NeedsTick && _pictureTickTimer is null)
+                    StartPictureTick();
             }
 
             // LibVLC media stats report demux/input rates in bytes/s.
@@ -1559,7 +1561,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             try
             {
-                _pictureSizeSettler.Tick();
+                NoteSettledPictureSize(_pictureSizeSettler.Tick());
                 ProbeVideo();
             }
             catch (Exception ex)
@@ -1567,6 +1569,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 _logger.LogDebug(ex, "[LinuxVideoPlayerService] Picture tick failed");
             }
         }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void NoteSettledPictureSize((int Width, int Height)? published)
+    {
+        if (published is not { Height: > 0 } size)
+            return;
+        _switchBack?.NoteBackupHeight(size.Height);
+        // A mid-play size change replaces the stream's stored height too.
+        MeasuredPictureSize.Remember(_switching.GetCurrentStream()?.Health, size);
     }
 
     private void StopPictureTick()

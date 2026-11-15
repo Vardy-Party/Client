@@ -89,8 +89,8 @@ namespace VardyParty.Platforms.Windows
                         chrome.ApplyOverlayInfo(overlay, streamSwitchInProgress);
                         if (chrome.IsStreamToastVisible || chrome.ShouldHoldStreamToast)
                         {
-                            streamCountText.Text = chrome.StreamToast?.Text ?? streamCountText.Text;
-                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                            if (chrome.StreamToast is { } toast)
+                                ApplyStreamToastText(toast.Parts);
                         }
                     }
 
@@ -106,9 +106,21 @@ namespace VardyParty.Platforms.Windows
             {
                 var published = pictureSizeSettler.Observe(width, height);
                 measuredPictureConfirmed = published is not null;
-                if (published is { Height: > 0 } size)
-                    switchBack?.NoteBackupHeight(size.Height);
+                NoteSettledPictureSize(published);
                 SchedulePictureSizeSettleTick();
+            }
+
+            private void NoteSettledPictureSize((int Width, int Height)? published)
+            {
+                if (published is not { Height: > 0 } size)
+                    return;
+                switchBack?.NoteBackupHeight(size.Height);
+                try
+                {
+                    // A mid-play size change replaces the stream's stored height too.
+                    MeasuredPictureSize.Remember(switchingService?.GetCurrentStream()?.Health, size);
+                }
+                catch (Exception ex) { _host.LogIgnored("RememberPictureSize", ex); }
             }
 
             private void SchedulePictureSizeSettleTick()
@@ -116,7 +128,8 @@ namespace VardyParty.Platforms.Windows
                 try
                 {
                     pictureSizeSettleTimer?.Stop();
-                    if (pictureSizeSettler.HasPublished)
+                    // Also ticks for a mid-play size change waiting to settle.
+                    if (!pictureSizeSettler.NeedsTick)
                         return;
 
                     if (pictureSizeSettleTimer is null)
@@ -140,8 +153,9 @@ namespace VardyParty.Platforms.Windows
                     pictureSizeSettleTimer?.Stop();
                     var published = pictureSizeSettler.Tick();
                     measuredPictureConfirmed = published is not null;
-                    if (published is { Height: > 0 } size)
-                        switchBack?.NoteBackupHeight(size.Height);
+                    NoteSettledPictureSize(published);
+                    if (pictureSizeSettler.NeedsTick)
+                        pictureSizeSettleTimer?.Start();
                     ProbeVideo();
                     if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                     {
@@ -151,6 +165,34 @@ namespace VardyParty.Platforms.Windows
                     UpdateInfo();
                 }
                 catch (Exception ex) { _host.LogIgnored("PictureSizeSettleTick", ex); }
+            }
+
+            /// <summary>
+            /// Stream toast row: prefix text, the V1/V2 chip as a badge in the shared
+            /// <see cref="SourceBadgeStyle"/> colours (same as video-info), then the suffix.
+            /// </summary>
+            private void ApplyStreamToastText(StreamIdentityParts parts)
+            {
+                if (!parts.HasChip || parts.ChipStyle is not { } style)
+                {
+                    streamCountText.Text = parts.Text;
+                    streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    streamSuffixText.Text = string.Empty;
+                    streamSuffixText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    return;
+                }
+
+                streamCountText.Text = parts.Prefix.TrimEnd();
+                streamSourceBadgeText.Text = parts.Chip;
+                streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
+                streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
+                streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                streamSuffixText.Text = parts.Suffix.TrimStart();
+                streamSuffixText.Visibility = string.IsNullOrEmpty(streamSuffixText.Text)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
             }
 
             private void ApplyVideoInfoPanel(VideoInfoPanelModel model, bool whileSwitching, string? sourceLabel)
@@ -603,12 +645,13 @@ namespace VardyParty.Platforms.Windows
                         if (chrome.IsVideoInfoVisible)
                             return;
 
-                        streamCountText.Text = chrome.StreamToast?.Text
+                        var toastText = chrome.StreamToast?.Text
                             ?? PlayerOverlayFormatter.FormatStreamToast(
                                 index, total, measured ?? overlay.ProbedResolution,
                                 overlay.SourceLabel, overlay.Channel);
-                        // Chip / name / height live in the one-row text; do not stack a badge below.
-                        streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        // One row: index, coloured V1/V2 chip (video-info colours), name, height.
+                        ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(
+                            toastText, chrome.StreamToast?.SourceLabel ?? overlay.SourceLabel));
 
                         // Restart auto-hide only when the stream index/total changes, or
                         // while awaiting playable content. Height-only refreshes already

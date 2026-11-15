@@ -162,6 +162,41 @@ public class PlaybackUniformityParityTests
         Assert.False(ownCopy, $"{platform} keeps its own played-segment trimming instead of the shared one");
     }
 
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void Adapter_FollowsMidPlayHeightChanges_ThroughTheSharedSettler(string platform)
+    {
+        // Arrange
+        var source = AdapterSource(platform);
+
+        // Act
+        var remembers = source.Contains("MeasuredPictureSize.Remember(", StringComparison.Ordinal);
+        var ticksOnChange = source.Contains("NeedsTick", StringComparison.Ordinal);
+
+        // Assert
+        Assert.True(remembers, $"{platform} does not copy the settled height into the stream's stored height");
+        Assert.True(ticksOnChange, $"{platform} does not tick the settler while a new size is pending");
+    }
+
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void Adapter_ColoursTheStreamToastChip_WithTheSharedBadgeStyle(string platform)
+    {
+        // Arrange
+        var source = platform == "Linux"
+            ? AdapterSource(platform) + File.ReadAllText(Path.Combine(RepoRoot(), "VardyParty.Linux", "Pages", "LinuxHomePage.PlayerChrome.cs"))
+            : AdapterSource(platform);
+
+        // Act
+        var splitsChip = source.Contains("SplitSourceChip(", StringComparison.Ordinal)
+            || source.Contains(".Parts", StringComparison.Ordinal);
+        var usesSharedStyle = source.Contains("ChipStyle", StringComparison.Ordinal);
+
+        // Assert
+        Assert.True(splitsChip, $"{platform} does not split the toast around the shared chip");
+        Assert.True(usesSharedStyle, $"{platform} does not colour the toast chip with SourceBadgeStyle");
+    }
+
     private static string AdapterSource(string platform)
     {
         var root = RepoRoot();

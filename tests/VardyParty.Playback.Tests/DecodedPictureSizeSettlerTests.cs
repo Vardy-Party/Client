@@ -100,7 +100,7 @@ public class DecodedPictureSizeSettlerTests
     }
 
     [Fact]
-    public void PublishedSizeThatThenChanges_IsWithdrawnUntilTheNewSizeSettles()
+    public void MidPlay720ThenSteady1080_KeepsShowing720UntilThe1080Settles()
     {
         // Arrange
         var now = Start;
@@ -110,16 +110,45 @@ public class DecodedPictureSizeSettlerTests
         var first = sut.Tick();
 
         // Act
-        now += TimeSpan.FromMilliseconds(50);
+        now += TimeSpan.FromSeconds(30);
         var onChange = sut.Observe(1920, 1080);
-        var publishedAfterChange = sut.HasPublished;
-        now += TimeSpan.FromSeconds(1);
+        var needsTick = sut.NeedsTick;
+        now += TimeSpan.FromMilliseconds(500);
+        var halfway = sut.Tick();
+        now += TimeSpan.FromMilliseconds(500);
         var settled = sut.Tick();
 
         // Assert
         Assert.Equal((1280, 720), first);
-        Assert.Null(onChange);
-        Assert.False(publishedAfterChange);
+        Assert.Equal((1280, 720), onChange);
+        Assert.True(needsTick);
+        Assert.Equal((1280, 720), halfway);
         Assert.Equal((1920, 1080), settled);
+        Assert.False(sut.NeedsTick);
+    }
+
+    [Fact]
+    public void MidPlayBriefBlip_NeverChangesThePublishedSize()
+    {
+        // Arrange
+        var now = Start;
+        var sut = new DecodedPictureSizeSettler(() => now);
+        sut.Observe(1280, 720);
+        now += TimeSpan.FromSeconds(1);
+        sut.Tick();
+
+        // Act
+        now += TimeSpan.FromSeconds(10);
+        var duringBlip = sut.Observe(1920, 1080);
+        now += TimeSpan.FromMilliseconds(300);
+        var back = sut.Observe(1280, 720);
+        now += TimeSpan.FromSeconds(2);
+        var later = sut.Tick();
+
+        // Assert
+        Assert.Equal((1280, 720), duringBlip);
+        Assert.Equal((1280, 720), back);
+        Assert.Equal((1280, 720), later);
+        Assert.False(sut.NeedsTick);
     }
 }

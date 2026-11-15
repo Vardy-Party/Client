@@ -106,6 +106,7 @@ namespace VardyParty.Platforms.Windows
             private Microsoft.UI.Xaml.Controls.TextBlock streamCountText = null!;
             private Microsoft.UI.Xaml.Controls.Border streamSourceBadge = null!;
             private Microsoft.UI.Xaml.Controls.TextBlock streamSourceBadgeText = null!;
+            private Microsoft.UI.Xaml.Controls.TextBlock streamSuffixText = null!;
             private Microsoft.UI.Xaml.Controls.StackPanel nextButtonContainer = null!;
             private Microsoft.UI.Xaml.Controls.Border nextButtonHotZone = null!;
             private WinButton nextButton = null!;
@@ -763,16 +764,28 @@ namespace VardyParty.Platforms.Windows
                         VerticalAlignment = WinVerticalAlignment.Center,
                         CornerRadius = new Microsoft.UI.Xaml.CornerRadius(999),
                         Padding = new WinThickness(6, 1, 6, 1),
-                        Margin = new WinThickness(0),
+                        Margin = new WinThickness(6, 0, 6, 0),
                         Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
                     };
                     streamSourceBadgeText = new Microsoft.UI.Xaml.Controls.TextBlock
                     {
-                        FontSize = 10,
+                        FontSize = 12,
                         FontWeight = Microsoft.UI.Text.FontWeights.Bold
                     };
                     streamSourceBadge.Child = streamSourceBadgeText;
                     streamInfoPanel.Children.Add(streamSourceBadge);
+
+                    // Text after the coloured chip: "· North Sports · 720p".
+                    streamSuffixText = new Microsoft.UI.Xaml.Controls.TextBlock
+                    {
+                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                        FontSize = 14,
+                        FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap,
+                        VerticalAlignment = WinVerticalAlignment.Center,
+                        Visibility = Microsoft.UI.Xaml.Visibility.Collapsed
+                    };
+                    streamInfoPanel.Children.Add(streamSuffixText);
 
                     // Next stream button host (button + x/y hint directly beneath).
                     // Right-aligned inside the hot zone so a wide hover strip does not

@@ -140,6 +140,45 @@ public static class PlayerOverlayFormatter
         return FormatStreamIdentityLine(index, total, sourceLabel, channelName, verticalResolutionLabel);
     }
 
+    /// <summary>
+    /// Splits a one-row identity (<c>2/9 · V2 · North Sports · 720p</c>) around its
+    /// source chip so every host can draw the chip in the same colours as the
+    /// video-info badge (<see cref="SourceBadgeStyle.ForLabel"/>): Android spans,
+    /// Windows and Linux a badge between two text runs. No chip when
+    /// <paramref name="sourceLabel"/> is blank or not on the row.
+    /// </summary>
+    public static StreamIdentityParts SplitSourceChip(string? identityLine, string? sourceLabel)
+    {
+        var text = identityLine ?? string.Empty;
+        if (text.Length == 0 || string.IsNullOrWhiteSpace(sourceLabel))
+            return new StreamIdentityParts(text, null, string.Empty, null);
+
+        const string separator = " · ";
+        var chip = sourceLabel.Trim();
+        var search = 0;
+        while (search < text.Length)
+        {
+            var at = text.IndexOf(separator + chip, search, StringComparison.Ordinal);
+            if (at < 0)
+                break;
+            var chipStart = at + separator.Length;
+            var chipEnd = chipStart + chip.Length;
+            if (chipEnd == text.Length
+                || string.CompareOrdinal(text, chipEnd, separator, 0, separator.Length) == 0)
+            {
+                return new StreamIdentityParts(
+                    text[..chipStart],
+                    chip,
+                    text[chipEnd..],
+                    SourceBadgeStyle.ForLabel(chip));
+            }
+
+            search = at + 1;
+        }
+
+        return new StreamIdentityParts(text, null, string.Empty, null);
+    }
+
     public static string? MapCodecToFriendlyName(string? codec)
     {
         if (string.IsNullOrEmpty(codec)) return null;
@@ -232,6 +271,18 @@ public static class PlayerOverlayFormatter
         || string.Equals(channel, "FB", StringComparison.OrdinalIgnoreCase);
 
     private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
+}
+
+/// <summary>
+/// A one-row identity split around its source chip (see
+/// <see cref="PlayerOverlayFormatter.SplitSourceChip"/>). <see cref="Text"/> is the
+/// original row; <see cref="ChipStart"/> indexes the chip within it.
+/// </summary>
+public readonly record struct StreamIdentityParts(string Prefix, string? Chip, string Suffix, SourceBadgeStyle? ChipStyle)
+{
+    public bool HasChip => !string.IsNullOrEmpty(Chip) && ChipStyle is not null;
+    public int ChipStart => Prefix.Length;
+    public string Text => Prefix + (Chip ?? string.Empty) + Suffix;
 }
 
 /// <summary>ARGB tokens for catalog source badges (V1/FB vs other).</summary>

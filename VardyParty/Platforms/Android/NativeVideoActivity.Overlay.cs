@@ -344,6 +344,35 @@ namespace VardyParty.Platforms.Android
 
         private void HideInfoOverlay() => EnsureChrome().HideVideoInfo();
 
+        /// <summary>
+        /// One-row toast with the V1/V2 chip drawn in the video-info badge colours
+        /// (shared <see cref="SourceBadgeStyle"/> via <see cref="StreamIdentityParts"/>).
+        /// </summary>
+        private void ApplyStreamToastText(StreamIdentityParts parts)
+        {
+            if (_streamToastView == null)
+                return;
+            if (!parts.HasChip || parts.ChipStyle is not { } style)
+            {
+                _streamToastView.Text = parts.Text;
+                return;
+            }
+
+            // Non-breaking spaces pad the coloured chip like the video-info badge.
+            var chip = "\u00A0" + parts.Chip + "\u00A0";
+            var text = parts.Prefix + chip + parts.Suffix;
+            var start = parts.ChipStart;
+            var end = start + chip.Length;
+            var spannable = new global::Android.Text.SpannableString(text);
+            spannable.SetSpan(
+                new global::Android.Text.Style.BackgroundColorSpan(global::Android.Graphics.Color.ParseColor(style.BackgroundHex)),
+                start, end, global::Android.Text.SpanTypes.ExclusiveExclusive);
+            spannable.SetSpan(
+                new global::Android.Text.Style.ForegroundColorSpan(global::Android.Graphics.Color.ParseColor(style.ForegroundHex)),
+                start, end, global::Android.Text.SpanTypes.ExclusiveExclusive);
+            _streamToastView.TextFormatted = spannable;
+        }
+
         private void ShowStreamToastIfNeeded()
         {
             if (_streamToastView == null || _streamToastHandler == null || _streamToastRunnable == null) return;
@@ -381,8 +410,9 @@ namespace VardyParty.Platforms.Android
                 Title = channel
             }, _streamSwitchInProgress);
 
-            _streamToastView.Text = chrome.StreamToast?.Text
+            var toastText = chrome.StreamToast?.Text
                 ?? PlayerOverlayFormatter.FormatStreamToast(index, total, resolution, sourceLabel, channel);
+            ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(toastText, chrome.StreamToast?.SourceLabel ?? sourceLabel));
 
             var indexChanged = index != _lastToastIndex || total != _lastToastTotal;
             _lastToastIndex = index;

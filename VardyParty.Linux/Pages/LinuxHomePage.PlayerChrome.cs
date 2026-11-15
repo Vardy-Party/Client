@@ -208,6 +208,30 @@ public partial class LinuxHomePage
         return timer;
     }
 
+    /// <summary>
+    /// Toast row: prefix, the V1/V2 chip as a badge in the shared
+    /// <see cref="SourceBadgeStyle"/> colours (same as Android / Windows), then the suffix.
+    /// </summary>
+    private void ApplyStreamToastText(StreamIdentityParts parts)
+    {
+        if (!parts.HasChip || parts.ChipStyle is not { } style)
+        {
+            StreamToastLabel.Text = parts.Text;
+            StreamSourceBadge.IsVisible = false;
+            StreamToastSuffixLabel.Text = string.Empty;
+            StreamToastSuffixLabel.IsVisible = false;
+            return;
+        }
+
+        StreamToastLabel.Text = parts.Prefix.TrimEnd();
+        StreamSourceBadgeLabel.Text = parts.Chip;
+        StreamSourceBadge.BackgroundColor = Microsoft.Maui.Graphics.Color.FromArgb(style.BackgroundHex);
+        StreamSourceBadgeLabel.TextColor = Microsoft.Maui.Graphics.Color.FromArgb(style.ForegroundHex);
+        StreamSourceBadge.IsVisible = true;
+        StreamToastSuffixLabel.Text = parts.Suffix.TrimStart();
+        StreamToastSuffixLabel.IsVisible = !string.IsNullOrEmpty(StreamToastSuffixLabel.Text);
+    }
+
     private void ApplyPlayerChromeVisuals()
     {
         ApplyCloseChipVisuals();
@@ -226,9 +250,7 @@ public partial class LinuxHomePage
         var chromeRevealed = _closeChip.ChipVisible || needsExpanded;
 
         StreamToastPanel.IsVisible = toastVisible;
-        StreamToastLabel.Text = toast?.Text ?? string.Empty;
-        // Chip / name / height live in the one-row toast text; hide the separate badge.
-        StreamSourceBadge.IsVisible = false;
+        ApplyStreamToastText(toast?.Parts ?? PlayerOverlayFormatter.SplitSourceChip(null, null));
 
         PlaybackBufferingIndicator.IsVisible = _isPlaybackBuffering;
         PlaybackBufferingIndicator.IsRunning = _isPlaybackBuffering;
