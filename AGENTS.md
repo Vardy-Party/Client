@@ -147,7 +147,9 @@ splash SVG after the build. Preferred commands:
   the current-user `CN=VardyParty` certificate; do not add certificates to
   machine stores. Back up settings, then upgrade with `Add-AppxPackage`
   (no remove) so data is kept.
-- **Linux:** `docs/LINUX_SUPPORT.md`. Pin
+- **Linux:** `docs/LINUX_SUPPORT.md`; build from source per
+  `docs/LINUX_DEVELOPER_GUIDE.md` (incl. removing preview/RC SDKs), user
+  install per `docs/LINUX_USER_GUIDE.md`. Pin
   `-p:HomeUiTargetFrameworks=net11.0` per command; do not export that
   variable into the shell.
 

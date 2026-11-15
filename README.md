@@ -10,7 +10,9 @@ You need the **.NET 11 SDK** on every head (distro/apt .NET 10 fails with
 
 - **Linux / WSL** — [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md): install the
   .NET 11 SDK, `dotnet workload install maui-tizen`, and pin
-  `HomeUiTargetFrameworks=net11.0` for restore and run.
+  `HomeUiTargetFrameworks=net11.0` for restore and run. Users installing a
+  release: [docs/LINUX_USER_GUIDE.md](docs/LINUX_USER_GUIDE.md). Developers
+  (and removing preview/RC SDKs): [docs/LINUX_DEVELOPER_GUIDE.md](docs/LINUX_DEVELOPER_GUIDE.md).
 - **Windows** — [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md)
 - **Android (mobile)** and **Android TV** — [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md)
   (`package-android.ps1` produces `arm64-v8a` phones and `armeabi-v7a` TV;
@@ -55,6 +57,8 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 | [docs/STREAM_PLAYBACK_RULES.md](docs/STREAM_PLAYBACK_RULES.md) | Playback session / engine contract |
 | [docs/STREAM_HEALTH_PROTOCOL.md](docs/STREAM_HEALTH_PROTOCOL.md) | Health-check protocol |
 | [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 SDK + run Desktop / WSL |
+| [docs/LINUX_USER_GUIDE.md](docs/LINUX_USER_GUIDE.md) | Install and run the Linux client (snap / tarball, LibVLC) |
+| [docs/LINUX_DEVELOPER_GUIDE.md](docs/LINUX_DEVELOPER_GUIDE.md) | Build the Linux client from source with .NET 11 GA; remove preview SDKs |
 | [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1 -Api preview`) |
 | [docs/REMOTE_COMPUTE_PREVIEW_USB.md](docs/REMOTE_COMPUTE_PREVIEW_USB.md) | Preview test with a phone on USB, Wi-Fi off |
 | [docs/WINDOWS_INSTALL.md](docs/WINDOWS_INSTALL.md) | Windows install / sideload |
