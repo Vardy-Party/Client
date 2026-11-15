@@ -106,8 +106,8 @@ public static partial class PlayerChromeText
     /// Quality line from what playback actually measured. A media playlist often has
     /// no <c>#EXT-X-STREAM-INF</c>, so the health record is "Unknown Quality" while
     /// the player already has a picture size. The measured size wins; the playlist
-    /// label is used only when nothing was measured. Bitrate is never shown in the
-    /// UI (it only feeds health metrics), so any bitrate in the playlist label is dropped.
+    /// label is used only when nothing was measured. Bitrate lives on its own field
+    /// (<see cref="VideoInfoPanelModel.Bitrate"/>), so any bitrate in the playlist label is dropped.
     /// </summary>
     public static string FormatMeasuredQuality(string? measuredResolution, string? playlistQuality)
     {
@@ -123,6 +123,13 @@ public static partial class PlayerChromeText
         }
 
         return "Unknown Quality";
+    }
+
+    /// <summary>One decimal Mbps, including rates under 1 Mbps (500 kbps is 0.5 Mbps).</summary>
+    public static string FormatBitrateMbps(int kbps)
+    {
+        var tenths = (kbps + 50) / 100;
+        return $"{tenths / 10}.{tenths % 10} Mbps";
     }
 
     /// <summary>Removes bitrate tokens (<c>5000kbps</c>, <c>3.4 Mbps</c>) from a display label.</summary>
@@ -178,7 +185,8 @@ public static partial class PlayerChromeText
             frameRate = fps;
         }
 
-        // Bitrate stays in health metrics only; it is never shown.
+        // Measured bitrate first (the adapters resolve it via MeasuredBitrate), then the row's own.
+        var bitrate = overlay?.BitrateKbps ?? current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate;
         quality = FormatMeasuredQuality(resolution, quality);
         var buffer = bufferPercent ?? overlay?.BufferPercent;
         var videoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(overlay?.VideoCodec)
@@ -198,6 +206,7 @@ public static partial class PlayerChromeText
             ProbedResolution = probed,
             FrameRate = frameRate.HasValue ? $"{frameRate:0.##} fps" : null,
             AspectRatio = overlay?.AspectRatio ?? BuildAspectRatio(resolution),
+            Bitrate = bitrate is > 0 ? FormatBitrateMbps(bitrate.Value) : null,
             VideoCodec = videoCodec,
             AudioCodec = audioCodec,
             // Game title from the host; never substitute the MP chip here.
@@ -232,7 +241,7 @@ public static partial class PlayerChromeText
         PlayerOverlayFormatter.EllipsizeStreamName(name, maxLength);
 
     /// <summary>
-    /// Vertical resolution for the identity row (e.g. <c>720p</c>).
+    /// Vertical resolution for the quality line (e.g. <c>720p</c>), shown beside the bitrate.
     /// Player-measured size is omitted while a switch is in flight so the
     /// previous picture cannot flash. A bitstream-probed height for the
     /// target row may still be shown. Playlist metadata is never used.
@@ -253,27 +262,18 @@ public static partial class PlayerChromeText
         FormatIdentityResolution(model.Resolution, model.ProbedResolution, whileSwitching);
 
     /// <summary>
-    /// Text after the index and V1/V2 chip on the identity row, e.g. <c>Fubo US · 720p</c>.
-    /// Hosts with a visual chip render this beside the badge; Linux inlines the chip in
-    /// <see cref="FormatStreamIdentityLine"/>.
+    /// Text after the index and V1/V2 chip on the video-info identity row, e.g. <c>Fubo US</c>.
+    /// The vertical resolution is not on this row; it sits beside the bitrate on
+    /// <see cref="FormatQualityLine"/>. Hosts with a visual chip render this beside the badge;
+    /// Linux inlines the chip in <see cref="FormatStreamIdentityLine"/>.
     /// </summary>
-    public static string FormatStreamIdentitySuffix(VideoInfoPanelModel model, bool whileSwitching = false)
-    {
-        var parts = new List<string>();
-        var name = EllipsizeStreamName(model.Channel);
-        if (!string.IsNullOrEmpty(name))
-            parts.Add(name);
-
-        var resolution = FormatIdentityResolution(model, whileSwitching);
-        if (!string.IsNullOrEmpty(resolution))
-            parts.Add(resolution);
-
-        return string.Join(" · ", parts);
-    }
+    public static string FormatStreamIdentitySuffix(VideoInfoPanelModel model, bool whileSwitching = false) =>
+        EllipsizeStreamName(model.Channel) ?? string.Empty;
 
     /// <summary>
-    /// Full identity line for text-only hosts (Linux): <c>2/9 · V2 · Fubo US · 720p</c>.
-    /// Omits the chip, the name, and/or the resolution when they are unknown.
+    /// Full video-info identity line for text-only hosts (Linux): <c>2/9 · V2 · Fubo US</c>.
+    /// Omits the chip and/or the name when they are unknown. No resolution (see
+    /// <see cref="FormatQualityLine"/>).
     /// </summary>
     public static string FormatStreamIdentityLine(
         VideoInfoPanelModel model,
@@ -287,40 +287,37 @@ public static partial class PlayerChromeText
             model.StreamIndex,
             model.StreamTotal,
             sourceLabel,
-            model.Channel,
-            FormatIdentityResolution(model, whileSwitching));
+            model.Channel);
     }
 
     /// <summary>
-    /// Quality line under the identity row. When the vertical resolution is already on
-    /// that row, the height prefix is stripped so <c>1080p 60fps</c> becomes <c>60fps</c>.
-    /// Bitrate is never shown. Empty while switching or when nothing remains.
+    /// Quality line under the identity row: vertical resolution and bitrate side by side,
+    /// e.g. <c>720p · 3.4 Mbps</c>. The height is the settled player-measured size, so it
+    /// follows mid-play changes. While switching, only a bitstream-probed height for the
+    /// target row is shown (never the previous stream's size or bitrate). With neither
+    /// height nor bitrate, falls back to the playlist quality label.
     /// </summary>
     public static string FormatQualityLine(VideoInfoPanelModel model, bool whileSwitching = false)
     {
-        if (whileSwitching || string.IsNullOrWhiteSpace(model.Quality))
-            return string.Empty;
+        var height = FormatIdentityResolution(model, whileSwitching);
+        if (whileSwitching)
+            return height ?? string.Empty;
 
-        var quality = StripBitrate(model.Quality);
-        if (quality.Length == 0)
-            return string.Empty;
-        var height = FormatIdentityResolution(model, whileSwitching: false);
-        if (string.IsNullOrEmpty(height))
-            return quality;
+        var parts = new List<string>(2);
+        if (!string.IsNullOrEmpty(height))
+            parts.Add(height);
+        if (!string.IsNullOrWhiteSpace(model.Bitrate))
+            parts.Add(model.Bitrate.Trim());
+        if (parts.Count > 0)
+            return string.Join(" · ", parts);
 
-        if (quality.Equals(height, StringComparison.OrdinalIgnoreCase))
-            return string.Empty;
-
-        if (quality.StartsWith(height, StringComparison.OrdinalIgnoreCase))
-            return quality[height.Length..].TrimStart();
-
-        return quality;
+        return StripBitrate(model.Quality);
     }
 
     /// <summary>
     /// Detail block under quality (Android <c>_resBrView</c>): aspect, buffer,
-    /// codecs, source URL, referer. Channel and resolution live on the identity row,
-    /// so they are omitted here. Empty while switching.
+    /// codecs, source URL, referer. Channel lives on the identity row and resolution and
+    /// bitrate on the quality line, so they are omitted here. Empty while switching.
     /// </summary>
     public static string FormatVideoInfoDetail(VideoInfoPanelModel model, bool whileSwitching = false)
     {
@@ -424,6 +421,8 @@ public sealed class VideoInfoPanelModel
     public string? ProbedResolution { get; init; }
     public string? FrameRate { get; init; }
     public string? AspectRatio { get; init; }
+    /// <summary>Display bitrate, e.g. <c>3.4 Mbps</c>; null when unknown.</summary>
+    public string? Bitrate { get; init; }
     public string? VideoCodec { get; init; }
     public string? AudioCodec { get; init; }
     public string? Title { get; init; }

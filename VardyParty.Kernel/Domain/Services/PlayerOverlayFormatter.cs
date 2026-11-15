@@ -125,9 +125,9 @@ public static class PlayerOverlayFormatter
     }
 
     /// <summary>
-    /// Stream toast copy. Empty total → <c>Streams: 0</c>; otherwise the same
-    /// one-row identity as the video-info panel (<c>1/2 · V1 · Fubo US · 720p</c>).
-    /// Height is included once known.
+    /// Stream toast (channel-start info bar) copy. Empty total → <c>Streams: 0</c>;
+    /// otherwise <c>1/2 · V1 · Fubo US · 720p</c>. Height is included once known. The
+    /// video-info panel's identity row omits the height; there it sits beside the bitrate.
     /// </summary>
     public static string FormatStreamToast(
         int index,

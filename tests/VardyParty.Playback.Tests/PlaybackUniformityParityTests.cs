@@ -197,6 +197,31 @@ public class PlaybackUniformityParityTests
         Assert.True(usesSharedStyle, $"{platform} does not colour the toast chip with SourceBadgeStyle");
     }
 
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void Adapter_ShowsHeightAndBitrateOnTheSharedQualityLine_NotOnTheNameRow(string platform)
+    {
+        // Arrange
+        var source = platform == "Linux"
+            ? AdapterSource(platform) + File.ReadAllText(Path.Combine(RepoRoot(), "VardyParty.Linux", "Pages", "LinuxHomePage.PlayerChrome.cs"))
+            : AdapterSource(platform);
+
+        // Act
+        var usesSharedQualityLine = platform == "Linux"
+            ? source.Contains("PlayerChromeText.FormatVideoInfo(", StringComparison.Ordinal)
+            : source.Contains("PlayerChromeText.FormatQualityLine(", StringComparison.Ordinal)
+              && source.Contains("PlayerChromeText.FormatStreamIdentitySuffix(", StringComparison.Ordinal);
+        var feedsBitrate = Regex.IsMatch(source, @"BitrateKbps\s*=\s*\w*[bB]itrateKbps");
+        var ownFormatting = new[] { "Mbps", "FormatIdentityResolution(", "ExtractVerticalResolution(" }
+            .Where(token => source.Contains(token, StringComparison.Ordinal))
+            .ToList();
+
+        // Assert
+        Assert.True(usesSharedQualityLine, $"{platform} does not render the video-info rows through PlayerChromeText");
+        Assert.True(feedsBitrate, $"{platform} does not pass the measured bitrate into the overlay snapshot");
+        Assert.Empty(ownFormatting);
+    }
+
     private static string AdapterSource(string platform)
     {
         var root = RepoRoot();
