@@ -576,13 +576,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     }
 
     // Next, Previous, auto-advance and the prewarmer all use channel order
-    // (docs/PROBE_SCHEDULING_RULES.md rule 11). SetBackupPreference is kept so
-    // existing callers compile; it does not change switch order. Tiers are for
-    // LocalService slot scheduling only (rule 1).
-
-    public void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf)
-    {
-    }
+    // (docs/PROBE_SCHEDULING_RULES.md rule 11), passing over rows skipped this
+    // cycle. Tiers are for LocalService slot scheduling only (rule 1).
 
     public IReadOnlyList<EnrichedStream> GetUpcoming(int depth)
     {
@@ -594,7 +589,8 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             return PlaybackUrlReusePolicy.UpcomingInSwitchOrder(
                 _healthyStreams.ToList(),
                 current,
-                depth);
+                depth,
+                IsRowSkipped);
         }
     }
 

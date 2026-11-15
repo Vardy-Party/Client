@@ -128,16 +128,12 @@ public interface IStreamSwitchingService
 
     // Next, Previous, auto-advance and GetUpcoming walk channel numbers in order
     // (docs/PROBE_SCHEDULING_RULES.md rule 11). Tiers do not change that order.
-    // SetBackupPreference is a no-op kept so existing callers compile.
-
-    /// <summary>No-op. Kept so existing callers compile; tiers do not change switch order.</summary>
-    void SetBackupPreference(EnrichedStream? startRow, Func<EnrichedStream, StreamTier>? tierOf) { }
 
     /// <summary>
     /// Up to <paramref name="depth"/> rows Next would reach first, in channel order
-    /// (with wrap), skipping only the current row
+    /// (with wrap), skipping the current row and rows skipped this cycle
     /// (<see cref="PlaybackUrlReusePolicy.UpcomingInSwitchOrder"/>).
     /// </summary>
     IReadOnlyList<EnrichedStream> GetUpcoming(int depth) =>
-        PlaybackUrlReusePolicy.UpcomingInSwitchOrder(GetHealthyStreams(), GetCurrentStream(), depth);
+        PlaybackUrlReusePolicy.UpcomingInSwitchOrder(GetHealthyStreams(), GetCurrentStream(), depth, row => IsSkippedInCycle(row));
 }

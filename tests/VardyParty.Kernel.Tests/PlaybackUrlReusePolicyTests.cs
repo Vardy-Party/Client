@@ -209,6 +209,23 @@ public class PlaybackUrlReusePolicyTests
     }
 
     [Fact]
+    public void UpcomingInSwitchOrder_PassesOverSkippedRows()
+    {
+        // Arrange
+        var a = Row("a", "a");
+        var b = Row("b", "b");
+        var c = Row("c", "c");
+        var d = Row("d", "d");
+        var pool = new List<EnrichedStream> { a, b, c, d };
+
+        // Act
+        var upcoming = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(pool, a, 2, row => ReferenceEquals(row, b));
+
+        // Assert
+        Assert.Equal(new[] { c, d }, upcoming);
+    }
+
+    [Fact]
     public void SwitchTexts_NameTheTarget()
     {
         // Assert

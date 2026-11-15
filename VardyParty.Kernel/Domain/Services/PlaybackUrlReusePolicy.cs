@@ -335,12 +335,15 @@ public static class PlaybackUrlReusePolicy
 
     /// <summary>
     /// Up to <paramref name="depth"/> visible pool rows after <paramref name="current"/>
-    /// in Next order (wrapping), never the current row.
+    /// in Next order (wrapping), never the current row. Rows for which
+    /// <paramref name="isSkipped"/> returns true (tried or failed this cycle) are
+    /// passed over, just as Next passes over them.
     /// </summary>
     public static IReadOnlyList<EnrichedStream> UpcomingInSwitchOrder(
         IReadOnlyList<EnrichedStream> healthy,
         EnrichedStream? current,
-        int depth)
+        int depth,
+        Func<EnrichedStream, bool>? isSkipped = null)
     {
         ArgumentNullException.ThrowIfNull(healthy);
         var result = new List<EnrichedStream>();
@@ -360,7 +363,7 @@ public static class PlaybackUrlReusePolicy
         for (var step = 1; step <= healthy.Count && result.Count < depth; step++)
         {
             var row = healthy[(start + step + healthy.Count) % healthy.Count];
-            if (ReferenceEquals(row, current) || result.Contains(row))
+            if (ReferenceEquals(row, current) || result.Contains(row) || isSkipped?.Invoke(row) == true)
                 continue;
             result.Add(row);
         }
