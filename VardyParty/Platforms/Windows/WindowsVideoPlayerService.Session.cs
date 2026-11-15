@@ -154,7 +154,7 @@ namespace VardyParty.Platforms.Windows
             private readonly PlaybackTransferMeter transferMeter = new();
             /// <summary>HTTP status of the last failed download of this attach (0 after a success).</summary>
             private volatile int lastDownloadFailureStatus;
-        private PlaylistReloadSession? playlistReloadSession;
+            private PlaylistReloadSession? playlistReloadSession;
             /// <summary>Attach generation waiting for its first Playing state to raise Ready.</summary>
             private long readyPendingGeneration = -1;
             private CancellationTokenSource? readyWatchdogCts;

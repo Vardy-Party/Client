@@ -50,7 +50,6 @@ public static class SwitchBackLoop
                     continue;
 
                 case SwitchBackAction.Probe:
-                {
                     var candidate = decision.Candidate!;
                     log?.Invoke($"[switch-back] probing row=\"{candidate.RowName ?? "(unknown)"}\"");
                     SwitchBackProbeResult result;
@@ -72,7 +71,6 @@ public static class SwitchBackLoop
                     if (decision.Action != SwitchBackAction.SwitchBack)
                         continue;
                     break;
-                }
 
                 case SwitchBackAction.SwitchBack:
                     break;
