@@ -96,4 +96,49 @@ public sealed class PlaylistReloadSession
 
     public bool ShouldGiveUpHeldReload(DateTimeOffset now, TimeSpan budget) =>
         FirstUnresolvedFailureAt is { } started && now - started >= budget;
+
+    /// <summary>
+    /// The player's played-segment memory (<see cref="PlaybackSessionController.PlayedSegments"/>).
+    /// Null disables no-replay trimming (tests, tools).
+    /// </summary>
+    public PlayedSegmentMemory? PlayedSegments { get; init; }
+
+    private int _attachTrimDone;
+
+    /// <summary>Records a fetched media segment in <see cref="PlayedSegments"/>.</summary>
+    public void NoteSegmentFetched(string? url) => PlayedSegments?.NoteSegment(url);
+
+    /// <summary>
+    /// No-replay rule (all platforms): the first media playlist served for this attach,
+    /// or the next one after <see cref="PlayedSegmentMemory.ArmTrimOnce"/>, drops the
+    /// leading segments already fetched this viewing. A master playlist passes through
+    /// untouched and does not use up the first-media-playlist trim.
+    /// </summary>
+    public byte[] DropPlayedSegments(byte[] body, string? playlistUrl, out int dropped)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        dropped = 0;
+        var memory = PlayedSegments;
+        if (memory is null || body.Length == 0)
+            return body;
+
+        var text = System.Text.Encoding.UTF8.GetString(body);
+        if (!text.AsSpan().TrimStart().StartsWith("#EXTM3U", StringComparison.Ordinal)
+            || !text.Contains("#EXTINF", StringComparison.OrdinalIgnoreCase))
+        {
+            return body;
+        }
+
+        var firstMediaPlaylist = Interlocked.Exchange(ref _attachTrimDone, 1) == 0;
+        var armed = memory.ConsumeTrim();
+        if (!firstMediaPlaylist && !armed)
+            return body;
+
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(text, memory.WasPlayed, playlistUrl);
+        if (trimmed.Dropped <= 0)
+            return body;
+
+        dropped = trimmed.Dropped;
+        return System.Text.Encoding.UTF8.GetBytes(trimmed.Text);
+    }
 }

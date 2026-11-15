@@ -173,7 +173,7 @@ Shared decision: `SwitchBackRunner` + `SwitchBackPlaylistProbe.RestoreAndSwitchT
 | Video confirmation | On (`Playback.cs` 23–24), 8s | Off; 20s start watchdog (`Playback.cs` 318–362) | Off | One flag, one timeout |
 | Ready meaning | READY, but “working” waits for a picture | Ready only on **Playing** | Ready on Playing, or “playing without a Playing event” (`LinuxVideoPlayerService.cs` 1227) | Supervisor takes `Playing` / `ReadyForPicture`; adapters must not mark established early |
 | Refused-segment short-circuit | `IsRefusalAlreadyHandled` (`Playback.cs` 497) | `lastDownloadFailureStatus` prefixed onto `MediaFailed` (`Session.cs` 645–647) | Log-scraped 403 only | `SegmentFetchFailed(403)` → same token path |
-| Trim played segments | `PlayedSegmentMemory` + `TrimPlayedSegments` on rewritten / stall-prepare playlists | None | Proxy may rewrite playlists, no played-segment trim | Keep as an Android adapter detail unless a stall prepare still exists; never use it to serve last-good |
+| Trim played segments | Shared `PlayedSegmentMemory` (via `PlaybackSessionController.PlayedSegments`); data source notes segments | `DownloadRequested` segment branch notes segments; initial manifest trimmed too | Proxy segment branch notes segments | **Done (#162 cycle 2):** shared `PlaylistReloadSession.DropPlayedSegments` trims the first media playlist of every attach in `PlaylistReloadCoordinator`; never used to serve last-good |
 
 ## Engine limits that genuinely cannot be unified
 

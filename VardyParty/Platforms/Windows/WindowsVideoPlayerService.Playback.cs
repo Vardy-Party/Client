@@ -666,12 +666,29 @@ namespace VardyParty.Platforms.Windows
                     // This attach's headers: a later switch must not change an older source's.
                     var referer = _refererUrl;
                     var requestHeaders = _requestHeaders;
+                    // One session per attach. Its first media playlist (this manifest, or the
+                    // first variant AMS loads) drops segments this player already fetched, so a
+                    // same-URL reattach or switch-back never replays watched video.
+                    var playlistReload = new PlaylistReloadSession(
+                        _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy,
+                        PlaylistReloadRowName.ForUrl(switchingService, url))
+                    {
+                        FirstPlaylistCompleted = true,
+                        PlayedSegments = session.PlayedSegments
+                    };
                     var created = await _host.CreateAdaptiveMediaSourceAsync(
                         managedHttp,
                         uri,
                         referer,
                         requestHeaders,
-                        manifestToken);
+                        manifestToken,
+                        manifest =>
+                        {
+                            var unplayed = playlistReload.DropPlayedSegments(manifest, url, out var dropped);
+                            if (dropped > 0)
+                                _host._logger.LogInformation("[no-replay] row=\"{Row}\" dropped {Dropped} played segments", PlaylistReloadLogging.RowLabel(playlistReload.Row), dropped);
+                            return unplayed;
+                        });
                     var adaptiveResult = created.Result;
                     var manifestStream = created.ManifestStream;
 
@@ -704,12 +721,6 @@ namespace VardyParty.Platforms.Windows
                         // fetches are mid-play. If the next retry would exceed the deferral
                         // budget, give up as CDN-unreachable and switch — never serve a
                         // stale last-good playlist (already-watched segments).
-                        var playlistReload = new PlaylistReloadSession(
-                            _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy,
-                            PlaylistReloadRowName.ForUrl(switchingService, url))
-                        {
-                            FirstPlaylistCompleted = true
-                        };
                         playlistReloadSession = playlistReload;
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
@@ -741,7 +752,8 @@ namespace VardyParty.Platforms.Windows
                                                     _host._logger.LogInformation("{Line}", line);
                                                 else
                                                     _host._logger.LogDebug("{Line}", line);
-                                            }),
+                                            },
+                                            playlistUrl: resourceUrl),
                                         async ct =>
                                         {
                                             using var req = new System.Net.Http.HttpRequestMessage(
@@ -849,6 +861,8 @@ namespace VardyParty.Platforms.Windows
 
                                 args.Result.InputStream = winrtStream.GetInputStreamAt(0);
                                 args.Result.ContentType = contentType;
+                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment)
+                                    playlistReload.NoteSegmentFetched(args.ResourceUri.ToString());
                                 lastDownloadFailureStatus = 0;
                                 session.NotifyDownloadSuccess();
                             }

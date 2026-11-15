@@ -152,7 +152,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             _hlsProxy = new LinuxHlsLocalProxy(
                 httpClientFactory.CreateClient(VardyParty.Hosting.PlaybackHttpClients.Media),
                 logger,
-                playlistReload);
+                playlistReload,
+                _session.PlayedSegments);
             if (_playlistProcessor is not null)
                 _hlsProxy.SetPlaylistTransform(_playlistProcessor.Process);
         }

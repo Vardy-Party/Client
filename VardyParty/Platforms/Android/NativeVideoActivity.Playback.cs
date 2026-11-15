@@ -354,7 +354,7 @@ namespace VardyParty.Platforms.Android
             }
 
             _behindLiveWindowRecoveries++;
-            PlayedSegmentMemory.ArmTrimOnce();
+            _session.PlayedSegments.ArmTrimOnce();
 
             try
             {
@@ -739,7 +739,10 @@ namespace VardyParty.Platforms.Android
                 strategy = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy;
             }
             catch { /* default strategy */ }
-            var created = new PlaylistReloadSession(strategy, PlaylistReloadRowName.ForUrl(_switching, m3u8Url));
+            var created = new PlaylistReloadSession(strategy, PlaylistReloadRowName.ForUrl(_switching, m3u8Url))
+            {
+                PlayedSegments = _session.PlayedSegments
+            };
             _playlistReloadSession = created;
             return created;
         }

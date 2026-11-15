@@ -62,7 +62,17 @@ public static class PlaylistReloadCoordinator
             Log(request, observation, decision, outcome: Describe(decision), fetchError);
 
             if (decision.Action == PlaylistReloadAction.Serve)
-                return PlaylistReloadOutcome.Serve(last.Body, last.ContentType, last.StatusCode);
+            {
+                var served = last.Body;
+                if (request.Session is { } attach)
+                {
+                    served = attach.DropPlayedSegments(served, request.PlaylistUrl, out var dropped);
+                    if (dropped > 0)
+                        request.Log?.Invoke(true, $"[no-replay] row=\"{PlaylistReloadLogging.RowLabel(request.Row)}\" dropped {dropped} played segments");
+                }
+
+                return PlaylistReloadOutcome.Serve(served, last.ContentType, last.StatusCode);
+            }
 
             request.Session?.NoteFailure(clock());
 
@@ -154,6 +164,9 @@ public sealed class PlaylistReloadRequest
     public Action<bool, string>? Log { get; init; }
     public PlaylistReloadSession? Session { get; init; }
 
+    /// <summary>Playlist URL, used to resolve relative segment URIs when dropping played segments.</summary>
+    public string? PlaylistUrl { get; init; }
+
     /// <summary>
     /// Mid-play request used by Android, Windows, and Linux: shared <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>.
     /// </summary>
@@ -163,9 +176,11 @@ public sealed class PlaylistReloadRequest
         string? row,
         Action<bool, string>? log = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        Func<DateTimeOffset>? clock = null) =>
+        Func<DateTimeOffset>? clock = null,
+        string? playlistUrl = null) =>
         new()
         {
+            PlaylistUrl = playlistUrl,
             IsFirstAttach = isFirstAttach,
             MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
             Row = row,
@@ -247,12 +262,15 @@ public static class PlaylistReloadLogging
         string outcome,
         int? delayMs)
     {
-        var rowLabel = string.IsNullOrWhiteSpace(row) ? "(unknown)" : row.Trim();
+        var rowLabel = RowLabel(row);
         var type = string.IsNullOrWhiteSpace(contentType) ? "n/a" : contentType.Trim();
         var prefix = SanitizeBodyPrefix(body);
         var delay = delayMs is { } ms ? $" delay_ms={ms}" : string.Empty;
         return $"[playlist-retry] row=\"{rowLabel}\" attempt={attempt} status={status} content-type={type} body=\"{prefix}\" outcome={outcome}{delay}";
     }
+
+    public static string RowLabel(string? row) =>
+        string.IsNullOrWhiteSpace(row) ? "(unknown)" : row.Trim();
 
     public static string SanitizeBodyPrefix(ReadOnlySpan<byte> body, int maxChars = 80)
     {

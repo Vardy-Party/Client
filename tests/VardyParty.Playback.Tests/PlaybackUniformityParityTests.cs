@@ -141,6 +141,27 @@ public class PlaybackUniformityParityTests
         Assert.Empty(replays);
     }
 
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void Adapter_RecordsPlayedSegmentsAndTrimsEveryAttach_ThroughSharedMemory(string platform)
+    {
+        // Arrange
+        var source = AdapterSource(platform);
+
+        // Act
+        var notesSegments = source.Contains("NoteSegmentFetched(", StringComparison.Ordinal);
+        var sharesMemory = source.Contains("PlayedSegments", StringComparison.Ordinal);
+        var passesPlaylistUrl = source.Contains("playlistUrl:", StringComparison.Ordinal);
+        var ownCopy = Regex.IsMatch(source, @"class\s+PlayedSegmentMemory\b")
+            || source.Contains("TrimPlayedPrefix(", StringComparison.Ordinal);
+
+        // Assert
+        Assert.True(notesSegments, $"{platform} does not record fetched segments via PlaylistReloadSession.NoteSegmentFetched");
+        Assert.True(sharesMemory, $"{platform} does not hand PlaybackSessionController.PlayedSegments to its attach session");
+        Assert.True(passesPlaylistUrl, $"{platform} does not pass playlistUrl to the shared coordinator");
+        Assert.False(ownCopy, $"{platform} keeps its own played-segment trimming instead of the shared one");
+    }
+
     private static string AdapterSource(string platform)
     {
         var root = RepoRoot();

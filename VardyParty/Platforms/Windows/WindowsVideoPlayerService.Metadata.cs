@@ -239,7 +239,8 @@ namespace VardyParty.Platforms.Windows
             Uri manifestUri,
             string refererUrl,
             IReadOnlyDictionary<string, string>? requestHeaders,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Func<byte[], byte[]>? transformManifest = null)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
             ApplyManagedPlaybackHeaders(request, refererUrl, requestHeaders);
@@ -253,7 +254,16 @@ namespace VardyParty.Platforms.Windows
                 response.Content.Headers.ContentType,
                 manifestUri.AbsolutePath,
                 AdaptiveMediaSourceResourceType.Manifest);
-            InMemoryRandomAccessStream? manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            InMemoryRandomAccessStream? manifestStream;
+            if (transformManifest is null)
+            {
+                manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            }
+            else
+            {
+                var manifestBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                manifestStream = await CopyToRandomAccessStreamAsync(transformManifest(manifestBytes));
+            }
             try
             {
                 var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(

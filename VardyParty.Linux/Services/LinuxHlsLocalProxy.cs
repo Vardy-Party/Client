@@ -30,15 +30,27 @@ public sealed class LinuxHlsLocalProxy : IDisposable
     private PlaylistReloadSession? _playlistSession;
     private string? _playlistRow;
 
+    private readonly PlayedSegmentMemory _playedSegments;
+
+    /// <param name="playedSegments">
+    /// The player's <see cref="PlaybackSessionController.PlayedSegments"/>. Every segment
+    /// the proxy serves is recorded there, and each attach's first media playlist drops
+    /// the ones already fetched (no-replay rule, shared with Android and Windows).
+    /// </param>
     public LinuxHlsLocalProxy(
         HttpClient http,
         ILogger? logger = null,
-        IPlaylistReloadRecoveryStrategy? playlistReload = null)
+        IPlaylistReloadRecoveryStrategy? playlistReload = null,
+        PlayedSegmentMemory? playedSegments = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _logger = logger;
         _playlistReload = playlistReload ?? PlaylistReloadStrategies.Default;
+        _playedSegments = playedSegments ?? new PlayedSegmentMemory();
     }
+
+    private PlaylistReloadSession NewPlaylistSession(string? row) =>
+        new(_playlistReload, row) { PlayedSegments = _playedSegments };
 
     public int Port => _port;
 
@@ -93,7 +105,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         lock (_playlistStateLock)
         {
             _playlistRow = string.IsNullOrWhiteSpace(row) ? null : row.Trim();
-            _playlistSession = new PlaylistReloadSession(_playlistReload, _playlistRow);
+            _playlistSession = NewPlaylistSession(_playlistRow);
         }
 
         return new Uri(LinuxHlsPlaylistRewriter.ToProxyUrl(origin.AbsoluteUri, Prefix));
@@ -178,6 +190,8 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                 var body = new byte[peeked + rest.Length];
                 Buffer.BlockCopy(peek, 0, body, 0, peeked);
                 Buffer.BlockCopy(rest, 0, body, peeked, rest.Length);
+                var finalUrl = response.RequestMessage?.RequestUri?.AbsoluteUri ?? target;
+                body = DropPlayedSegments(body, finalUrl);
                 var text = Encoding.UTF8.GetString(body);
                 if (_playlistTransform is not null)
                 {
@@ -196,7 +210,6 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                     text = substituted;
                 }
 
-                var finalUrl = response.RequestMessage?.RequestUri?.AbsoluteUri ?? target;
                 var rewritten = LinuxHlsPlaylistRewriter.Rewrite(text, finalUrl, Prefix);
                 var bytes = Encoding.UTF8.GetBytes(rewritten);
                 ctx.Response.ContentType = "application/vnd.apple.mpegurl";
@@ -204,6 +217,9 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                 await ctx.Response.OutputStream.WriteAsync(bytes, _cts.Token).ConfigureAwait(false);
                 return;
             }
+
+            if (response.IsSuccessStatusCode)
+                CurrentPlaylistSession().NoteSegmentFetched(target);
 
             if (SegmentPayload.IsWrapperContainer(peek.AsSpan(0, peeked)))
             {
@@ -242,6 +258,21 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         }
     }
 
+    private PlaylistReloadSession CurrentPlaylistSession()
+    {
+        lock (_playlistStateLock)
+            return _playlistSession ??= NewPlaylistSession(_playlistRow);
+    }
+
+    private byte[] DropPlayedSegments(byte[] body, string playlistUrl)
+    {
+        var session = CurrentPlaylistSession();
+        var unplayed = session.DropPlayedSegments(body, playlistUrl, out var dropped);
+        if (dropped > 0)
+            _logger?.LogInformation("[no-replay] row=\"{Row}\" dropped {Dropped} played segments", PlaylistReloadLogging.RowLabel(session.Row), dropped);
+        return unplayed;
+    }
+
     private async Task ServePlaylistWithRecoveryAsync(HttpListenerContext ctx, string target)
     {
         PlaylistReloadSession? session;
@@ -249,7 +280,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         lock (_playlistStateLock)
         {
             row = _playlistRow;
-            session = _playlistSession ??= new PlaylistReloadSession(_playlistReload, row);
+            session = _playlistSession ??= NewPlaylistSession(row);
         }
 
         var request = PlaylistReloadRequest.MidPlay(
@@ -262,7 +293,8 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                     _logger?.LogInformation("{Line}", line);
                 else
                     _logger?.LogDebug("{Line}", line);
-            });
+            },
+            playlistUrl: target);
 
         var outcome = await PlaylistReloadCoordinator.RunAsync(
             _playlistReload,

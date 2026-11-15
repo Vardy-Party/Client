@@ -68,6 +68,13 @@ public sealed class PlaybackSessionController
     }
 
     /// <summary>
+    /// Segments this player has fetched, for the no-replay rule. Adapters record every
+    /// segment download here and hand it to each attach's <see cref="PlaylistReloadSession"/>
+    /// so a same-URL reattach (or switch-back) never replays watched video.
+    /// </summary>
+    public PlayedSegmentMemory PlayedSegments { get; } = new();
+
+    /// <summary>
     /// When true, Ready alone does not make a stream "working": it must also show a
     /// picture (<see cref="MediaEngineEventKind.VideoProbe"/> with video). A stream that is
     /// Ready for <see cref="NoVideoTimeout"/> with no picture fails with

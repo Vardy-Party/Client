@@ -94,7 +94,7 @@ namespace VardyParty.Platforms.Android
                 return length;
             }
 
-            PlayedSegmentMemory.Note(dataSpec.Uri?.ToString());
+            _playlistSession?.NoteSegmentFetched(dataSpec.Uri?.ToString());
 
             WrappedSegmentRead read;
             try
@@ -129,6 +129,9 @@ namespace VardyParty.Platforms.Android
         {
             var session = _playlistSession;
             var strategy = session?.Strategy ?? PlaylistReloadStrategies.Default;
+            // A redirected playlist repeats the window: drop what was already fetched.
+            if (PlayingPlaylistRedirect.LastApplyRewrote)
+                session?.PlayedSegments?.ArmTrimOnce();
             var request = PlaylistReloadRequest.MidPlay(
                 isFirstAttach: session is null || !session.FirstPlaylistCompleted,
                 session,
@@ -139,7 +142,8 @@ namespace VardyParty.Platforms.Android
                         global::Android.Util.Log.Info("VardyParty", line);
                     else
                         global::Android.Util.Log.Debug("VardyParty", line);
-                });
+                },
+                playlistUrl: dataSpec.Uri?.ToString());
 
             PlaylistReloadOutcome outcome;
             try
@@ -168,7 +172,8 @@ namespace VardyParty.Platforms.Android
             var served = outcome.Body ?? Array.Empty<byte>();
             session?.NoteServed();
 
-            var bytes = TrimPlayedSegments(dataSpec, served);
+            // The shared coordinator already dropped played segments (no-replay rule).
+            var bytes = served;
             ReportOpenOutcome(0, failed: false);
             _pending = bytes;
             _upstreamDone = true;
@@ -219,29 +224,6 @@ namespace VardyParty.Platforms.Android
             }
 
             return body.ToArray();
-        }
-
-        private static byte[] TrimPlayedSegments(DataSpec dataSpec, byte[] bytes)
-        {
-            var text = Encoding.UTF8.GetString(bytes);
-            if (!text.AsSpan().TrimStart().StartsWith("#EXTM3U", StringComparison.Ordinal))
-                return bytes;
-
-            var playlistUrl = dataSpec.Uri?.ToString();
-            PlayedSegmentMemory.NotePlaylist(playlistUrl);
-            var rewritten = PlayingPlaylistRedirect.LastApplyRewrote;
-            var stallPrepare = PlayedSegmentMemory.ConsumeTrim();
-            var dropPlayed = rewritten || stallPrepare;
-            var trimmed = dropPlayed
-                ? UnplayedPlaylist.TrimPlayedPrefix(text, PlayedSegmentMemory.WasPlayed, playlistUrl)
-                : new UnplayedPlaylist.Trim(text, 0);
-            if (trimmed.Dropped <= 0)
-                return bytes;
-
-            global::Android.Util.Log.Info(
-                "VardyParty",
-                $"Playlist reload dropped {trimmed.Dropped} played segments");
-            return Encoding.UTF8.GetBytes(trimmed.Text);
         }
 
         private static string? ContentTypeOf(IDataSource source)
