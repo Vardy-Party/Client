@@ -254,7 +254,8 @@ public class CdnUnreachableBusinessRulesTests
 
     private (StreamResolutionOrchestrator Sut, List<StreamHealthReport> Reports, List<TimeSpan> RecheckDelays, List<TimeSpan> LsDelays)
         Orchestrator(StreamModel stream, Func<int, EnrichedStream> resolveCall, Func<DateTime>? clock = null,
-            Action<TimeSpan>? onRecheckDelay = null, StreamModel[]? alsoHealthy = null)
+            Action<TimeSpan>? onRecheckDelay = null, StreamModel[]? alsoHealthy = null,
+            Task<PlaybackResult>? playback = null)
     {
         ResolverMocks();
         alsoHealthy ??= [];
@@ -293,7 +294,7 @@ public class CdnUnreachableBusinessRulesTests
             .Setup(p => p.PlayVideoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<Func<Task>?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<IReadOnlyDictionary<string, string>?>()))
-            .ReturnsAsync(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+            .Returns(playback ?? Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed)));
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var recheckDelays = new List<TimeSpan>();
         var lsDelays = new List<TimeSpan>();
@@ -352,6 +353,11 @@ public class CdnUnreachableBusinessRulesTests
     [Fact]
     public async Task Orchestrator_CdnUnreachable_WithBackupInPool_FirstRecheckStillWaitsTwoMinutes()
     {
+        // Arrange — a backup starts playing straight away. The viewer keeps watching until
+        // the CDN recheck has started its wait, then leaves. (A player that closed at once
+        // raced the resolver: it could see "viewer left" before the CDN row was yielded and
+        // return with no recheck, which is what CI caught.)
+        var watching = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var kickOff = DateTime.UtcNow.AddMinutes(-50);
         var stream = CreateStream();
         var backups = new[]
@@ -368,11 +374,17 @@ public class CdnUnreachableBusinessRulesTests
                 ResolvedM3U8Url = Manifest,
                 Referer = stream.Url
             },
-            alsoHealthy: backups);
+            onRecheckDelay: _ => watching.TrySetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed)),
+            alsoHealthy: backups,
+            playback: watching.Task);
 
+        // Act
         await sut.StartAsync(LiveGame(kickOff), _fixture.GetMock<IPlaybackLauncher>().Object);
 
-        Assert.Equal([TimeSpan.FromMinutes(2)], recheckDelays);
+        // Assert
+        TimeSpan[] waits;
+        lock (recheckDelays) waits = recheckDelays.ToArray();
+        Assert.Equal([TimeSpan.FromMinutes(2)], waits);
     }
 
     [Fact]
