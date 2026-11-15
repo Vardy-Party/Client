@@ -7,6 +7,15 @@ on:
     branches:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
+    # Do not even start for PRs that only touch Version.props / markdown — the
+    # bump job skips them anyway. Bump Display Version's bot PR is exactly that,
+    # and GitHub now holds pull_request runs triggered by github-actions[bot]
+    # for approval; Bump Display squash-merges within seconds, so the held run
+    # "expired" and showed a red X (#423 on PR #167, also #297, #235, #227, #220).
+    # Job-level `if:` cannot help: approval is checked before jobs are evaluated.
+    paths-ignore:
+      - "**.md"
+      - "Version.props"
 
 concurrency:
   group: pr-application-version-${{ github.event.pull_request.number }}
