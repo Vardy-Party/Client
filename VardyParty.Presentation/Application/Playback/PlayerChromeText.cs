@@ -9,7 +9,7 @@ namespace VardyParty.Presentation;
 /// Windows, Android (including TV), and Linux all use these strings so the
 /// identity row and detail block stay aligned.
 /// </summary>
-public static class PlayerChromeText
+public static partial class PlayerChromeText
 {
     private static readonly Regex ResolutionPair = new(
         @"(\d{3,4})\s*[xX]\s*(\d{3,4})",
@@ -105,35 +105,40 @@ public static class PlayerChromeText
     /// <summary>
     /// Quality line from what playback actually measured. A media playlist often has
     /// no <c>#EXT-X-STREAM-INF</c>, so the health record is "Unknown Quality" while
-    /// the player already has a picture size. Measured size and bitrate win.
-    /// The playlist label is used only when nothing was measured.
+    /// the player already has a picture size. The measured size wins; the playlist
+    /// label is used only when nothing was measured. Bitrate is never shown in the
+    /// UI (it only feeds health metrics), so any bitrate in the playlist label is dropped.
     /// </summary>
-    public static string FormatMeasuredQuality(string? measuredResolution, int? bitrateKbps, string? playlistQuality)
+    public static string FormatMeasuredQuality(string? measuredResolution, string? playlistQuality)
     {
-        var parts = new List<string>();
         var height = ExtractVerticalResolution(measuredResolution);
         if (!string.IsNullOrEmpty(height))
-            parts.Add(height);
-        if (bitrateKbps is > 0)
-            parts.Add(FormatBitrateMbps(bitrateKbps.Value));
-        if (parts.Count > 0)
-            return string.Join(' ', parts);
+            return height;
 
-        if (!string.IsNullOrWhiteSpace(playlistQuality)
-            && !playlistQuality.Equals("Unknown Quality", StringComparison.OrdinalIgnoreCase))
+        var label = StripBitrate(playlistQuality);
+        if (!string.IsNullOrWhiteSpace(label)
+            && !label.Equals("Unknown Quality", StringComparison.OrdinalIgnoreCase))
         {
-            return playlistQuality.Trim();
+            return label;
         }
 
         return "Unknown Quality";
     }
 
-    /// <summary>One decimal Mbps, including rates under 1 Mbps (500 kbps is 0.5 Mbps).</summary>
-    public static string FormatBitrateMbps(int kbps)
+    /// <summary>Removes bitrate tokens (<c>5000kbps</c>, <c>3.4 Mbps</c>) from a display label.</summary>
+    public static string StripBitrate(string? text)
     {
-        var tenths = (kbps + 50) / 100;
-        return $"{tenths / 10}.{tenths % 10} Mbps";
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+        var stripped = BitrateToken().Replace(text, " ");
+        return WhitespaceRun().Replace(stripped, " ").Trim();
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b\d+(?:[.,]\d+)?\s*[kKmMgG]?bps\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex BitrateToken();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s{2,}")]
+    private static partial System.Text.RegularExpressions.Regex WhitespaceRun();
 
     public static string RefererHost(string? url)
     {
@@ -173,8 +178,8 @@ public static class PlayerChromeText
             frameRate = fps;
         }
 
-        var bitrate = overlay?.BitrateKbps ?? current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate;
-        quality = FormatMeasuredQuality(resolution, bitrate, quality);
+        // Bitrate stays in health metrics only; it is never shown.
+        quality = FormatMeasuredQuality(resolution, quality);
         var buffer = bufferPercent ?? overlay?.BufferPercent;
         var videoCodec = PlayerOverlayFormatter.MapCodecToFriendlyName(overlay?.VideoCodec)
             ?? PlayerOverlayFormatter.MapCodecToFriendlyName(current?.Health?.VideoCodec);
@@ -193,7 +198,6 @@ public static class PlayerChromeText
             ProbedResolution = probed,
             FrameRate = frameRate.HasValue ? $"{frameRate:0.##} fps" : null,
             AspectRatio = overlay?.AspectRatio ?? BuildAspectRatio(resolution),
-            Bitrate = bitrate is > 0 ? FormatBitrateMbps(bitrate.Value) : null,
             VideoCodec = videoCodec,
             AudioCodec = audioCodec,
             // Game title from the host; never substitute the MP chip here.
@@ -289,15 +293,17 @@ public static class PlayerChromeText
 
     /// <summary>
     /// Quality line under the identity row. When the vertical resolution is already on
-    /// that row, the height prefix is stripped so <c>720p 3.4 Mbps</c> becomes <c>3.4 Mbps</c>.
-    /// Empty while switching or when nothing remains.
+    /// that row, the height prefix is stripped so <c>1080p 60fps</c> becomes <c>60fps</c>.
+    /// Bitrate is never shown. Empty while switching or when nothing remains.
     /// </summary>
     public static string FormatQualityLine(VideoInfoPanelModel model, bool whileSwitching = false)
     {
         if (whileSwitching || string.IsNullOrWhiteSpace(model.Quality))
             return string.Empty;
 
-        var quality = model.Quality.Trim();
+        var quality = StripBitrate(model.Quality);
+        if (quality.Length == 0)
+            return string.Empty;
         var height = FormatIdentityResolution(model, whileSwitching: false);
         if (string.IsNullOrEmpty(height))
             return quality;
@@ -349,7 +355,7 @@ public static class PlayerChromeText
 
     /// <param name="whileSwitching">
     /// When true (Next/Prev/chip in flight), omit measured stream telemetry and URLs so
-    /// the video-info overlay does not flash the previous stream's size/bitrate/m3u8.
+    /// the video-info overlay does not flash the previous stream's size/m3u8.
     /// Keeps status, the identity row (index, source badge, stream name), and game title.
     /// </param>
     /// <remarks>
@@ -418,7 +424,6 @@ public sealed class VideoInfoPanelModel
     public string? ProbedResolution { get; init; }
     public string? FrameRate { get; init; }
     public string? AspectRatio { get; init; }
-    public string? Bitrate { get; init; }
     public string? VideoCodec { get; init; }
     public string? AudioCodec { get; init; }
     public string? Title { get; init; }

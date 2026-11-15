@@ -75,7 +75,11 @@ public class StreamHealth
     /// Human-readable quality string for UI display (e.g., "1080p 60fps 5000kbps")
     /// Derived from Resolution, FrameRate, and Bitrate
     /// </summary>
-    public string GetQualityLabel()
+    /// <param name="includeBitrate">
+    /// False for anything shown in the player UI (bitrate is never displayed; it only
+    /// feeds health metrics). Logs and tools keep it.
+    /// </param>
+    public string GetQualityLabel(bool includeBitrate = true)
     {
         var parts = new List<string>();
 
@@ -98,7 +102,7 @@ public class StreamHealth
             parts.Add($"{FrameRate}fps");
         }
 
-        if (Bitrate.HasValue)
+        if (includeBitrate && Bitrate.HasValue)
         {
             parts.Add($"{Bitrate}kbps");
         }

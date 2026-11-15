@@ -1,3 +1,4 @@
+using System;
 using AutoFixture;
 using VardyParty.Kernel;
 using VardyParty.Presentation;
@@ -41,21 +42,79 @@ public class PlayerChromeTextTests
     }
 
     [Fact]
-    public void FormatMeasuredQuality_UsesPictureSizeAndMeasuredBitrate()
+    public void FormatMeasuredQuality_UsesPictureSize_NeverBitrate()
+    {
+        // Arrange
+        const string playlistLabel = "1080p 60fps 5000kbps";
+
+        // Act
+        var fromPlayback = PlayerChromeText.FormatMeasuredQuality("960x540", "Unknown Quality");
+        var playlist = PlayerChromeText.FormatMeasuredQuality(null, playlistLabel);
+        var nothing = PlayerChromeText.FormatMeasuredQuality(null, "4500kbps");
+
+        // Assert
+        Assert.Equal("540p", fromPlayback);
+        Assert.Equal("1080p 60fps", playlist);
+        Assert.Equal("Unknown Quality", nothing);
+    }
+
+    [Theory]
+    [InlineData("720p 3.4 Mbps", "720p")]
+    [InlineData("1080p 60fps 5000kbps", "1080p 60fps")]
+    [InlineData("0.5 Mbps", "")]
+    [InlineData("540p", "540p")]
+    public void StripBitrate_RemovesEveryBitrateToken(string input, string expected)
     {
         // Arrange
         // Act
-        var fromPlayback = PlayerChromeText.FormatMeasuredQuality("960x540", 1840, "Unknown Quality");
-        var subMbps = PlayerChromeText.FormatMeasuredQuality("960x540", 500, "Unknown Quality");
-        var sizeOnly = PlayerChromeText.FormatMeasuredQuality("960x540", null, "Unknown Quality");
-        var playlist = PlayerChromeText.FormatMeasuredQuality(null, null, "1080p 60fps 5000kbps");
+        var result = PlayerChromeText.StripBitrate(input);
 
         // Assert
-        Assert.Equal("540p 1.8 Mbps", fromPlayback);
-        Assert.Equal("540p 0.5 Mbps", subMbps);
-        Assert.Equal("0.0 Mbps", PlayerChromeText.FormatBitrateMbps(3));
-        Assert.Equal("540p", sizeOnly);
-        Assert.Equal("1080p 60fps 5000kbps", playlist);
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void VideoInfoPanel_NoStringShowsBitrate()
+    {
+        // Arrange
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Channel, "Channel North")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.PlayerStreams, [])
+            .With(s => s.BitrateKbps, 5000)
+            .Create();
+        var health = _fixture.Build<StreamHealth>()
+            .With(h => h.Status, StreamHealthStatus.Healthy)
+            .With(h => h.Resolution, "1920x1080")
+            .With(h => h.FrameRate, 60)
+            .With(h => h.Bitrate, 5000)
+            .Create();
+        var enriched = _fixture.Build<EnrichedStream>()
+            .With(s => s.Stream, stream)
+            .With(s => s.Status, StreamResolutionStatus.Healthy)
+            .With(s => s.Health, health)
+            .Create();
+        var overlay = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Resolution, (string?)null)
+            .With(i => i.BitrateKbps, 3400)
+            .Create();
+
+        // Act
+        var model = PlayerChromeText.FromPlayback(overlay, enriched, "Playing", "Home United vs Away City", null, null);
+        var strings = new[]
+        {
+            PlayerChromeText.FormatVideoInfo(model),
+            PlayerChromeText.FormatQualityLine(model),
+            PlayerChromeText.FormatVideoInfoDetail(model),
+            PlayerChromeText.FormatStreamIdentityLine(model, model.SourceLabel)
+        };
+
+        // Assert
+        Assert.All(strings, text =>
+        {
+            Assert.DoesNotContain("Mbps", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("kbps", text, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact]
@@ -112,7 +171,6 @@ public class PlayerChromeTextTests
             Resolution = "1920x1080",
             FrameRate = "60 fps",
             AspectRatio = "16:9",
-            Bitrate = "4500 kbps",
             VideoCodec = "H.264",
             AudioCodec = "AAC",
             Title = "Home United vs Away City",
@@ -147,7 +205,7 @@ public class PlayerChromeTextTests
     [Fact]
     public void FormatVideoInfo_WhileSwitching_KeepsBadgeOmitsTelemetryAndUrls()
     {
-        // Arrange — known identity stays; measured size/bitrate/URLs go until the new stream settles
+        // Arrange — known identity stays; measured size/URLs go until the new stream settles
         var model = new VideoInfoPanelModel
         {
             PlaybackState = "Playing",
@@ -155,11 +213,10 @@ public class PlayerChromeTextTests
             StreamTotal = 5,
             Channel = "Channel North",
             SourceLabel = "V1",
-            Quality = "540p 1.8 Mbps",
+            Quality = "540p",
             Resolution = "960x540",
             FrameRate = "30 fps",
             AspectRatio = "16:9",
-            Bitrate = "1.8 Mbps",
             VideoCodec = "H.264",
             AudioCodec = "AAC",
             Title = "Home United vs Away City",
@@ -180,7 +237,6 @@ public class PlayerChromeTextTests
         Assert.DoesNotContain("Source: V1", text);
         Assert.DoesNotContain("Channel: Channel North", text);
         Assert.Contains("Home United vs Away City", text);
-        Assert.DoesNotContain("540p 1.8 Mbps", text);
         Assert.DoesNotContain("Aspect ratio:", text);
         Assert.DoesNotContain("Video:", text);
         Assert.DoesNotContain("https://streams.example.com", text);
@@ -342,11 +398,11 @@ public class PlayerChromeTextTests
     }
 
     [Theory]
-    [InlineData("1280x720", "720p 3.4 Mbps", "3.4 Mbps")]
+    [InlineData("1280x720", "720p 3.4 Mbps", "")]
     [InlineData("1280x720", "720p", "")]
     [InlineData("1920x1080", "1080p 60fps", "60fps")]
-    [InlineData(null, "1080p 60fps 5000kbps", "1080p 60fps 5000kbps")]
-    [InlineData("960x540", "540p 1.8 Mbps", "1.8 Mbps")]
+    [InlineData(null, "1080p 60fps 5000kbps", "1080p 60fps")]
+    [InlineData("960x540", "540p 1.8 Mbps", "")]
     public void FormatQualityLine_StripsHeightAlreadyOnIdentityRow(
         string? resolution,
         string? quality,
@@ -535,7 +591,7 @@ public class PlayerChromeTextTests
         Assert.Equal("Home United vs Away City", model.Title);
         Assert.Equal("https://streams.example.com/live.m3u8", model.SourceUrl);
         Assert.Equal("referer.example.com", model.RefererHost);
-        Assert.Equal("2.5 Mbps", model.Bitrate);
+        Assert.DoesNotContain("Mbps", model.Quality, StringComparison.Ordinal);
     }
 
     [Fact]

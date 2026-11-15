@@ -839,7 +839,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public void EnrichedStream_GetQualityDisplay_ShowsQualityWhenHealthy()
+    public void EnrichedStream_GetQualityDisplay_ShowsQualityWhenHealthy_WithoutBitrate()
     {
         // Arrange
         var health = _fixture.Build<StreamHealth>()
@@ -858,7 +858,7 @@ public class StreamResolverTests
         var display = enriched.GetQualityDisplay();
 
         // Assert
-        Assert.Equal("1080p 60fps 8000kbps", display);
+        Assert.Equal("1080p 60fps", display);
     }
 
     [Fact]

@@ -85,7 +85,7 @@ namespace VardyParty.Platforms.Android
                     : null;
                 var probedResolution = current.Health?.GetProbedResolution();
                 var resolution = measuredResolution;
-                // Match Windows: MeasuredBitrate so video-info and /health share one number.
+                // Match Windows: MeasuredBitrate feeds /health metrics only; video-info never shows bitrate.
                 var bitrateKbps = MeasuredBitrate.ResolveKbps(
                     current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
                     amsBitsPerSecond: 0,
