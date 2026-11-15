@@ -189,6 +189,12 @@ During CI builds, all platform builds are available as workflow artifacts:
 
 ## Best Practices
 
+> **Skip-CI tokens:** a skip-CI token (the bracketed `skip ci`, `ci skip`, `no ci`,
+> `skip actions` or `actions skip`) anywhere in a commit message, including a squash
+> message built from branch commits, stops every push workflow on `main`: no CI, no CodeQL,
+> no artifacts, and CD for 3.6.0-b261 failed because of it. Delete such lines before merging
+> and never quote the token in a commit message. See [docs/CI_SKIP_TOKENS.md](../docs/CI_SKIP_TOKENS.md).
+
 1. **CI First**: Unit tests and code quality checks run on every push/PR
 2. **CD Gated**: Installers only build if CI passes (`workflow_run` dependency)
 3. **Branch-Specific CD**: CD only runs on `main` (production) and `feature/github-builds` (development)

@@ -195,6 +195,15 @@ Or in the UI: PR #74 → **Squash and merge** → keep the title
 prefix the squash subject with `ci:` — that would make CI skip the merge and no release would
 be built at all.
 
+**Delete every `[skip ci]` line from the squash message body before confirming** (and the
+variants listed in [CI_SKIP_TOKENS.md](CI_SKIP_TOKENS.md)). The repo's
+squash default copies every commit message into the body, and GitHub skips all push workflows
+(CI, CodeQL, Increment Build Version, so no CD) when `[skip ci]` appears anywhere in it. That is
+how #155 and #162 landed without main CI. The ApplicationVersion bot no longer adds the token,
+but older branches still carry it: PR #166 has it in `eab3556`, `d98fd3a` and the body of
+`7a5d666`, so #166's squash message must have those lines removed. With `gh`, pass an explicit
+body: `gh pr merge 166 --squash --subject "<PR title> (#166)" --body "<summary without the token>"`.
+
 ### Step 4 — Watch the automation (Agent)
 
 In order, on `main`:
@@ -258,13 +267,18 @@ pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview
 - **Merged before bumping** (the mistake this playbook exists to prevent). A `1.7.116-b156`
   release is now published. Then: bump `major` to `2.0.0` (Step 2), and because the bump
   commit is CI-skipped you must package 2.0.0 by hand — Actions → **CD - Package & Release**
-  → Run workflow on `main` with `ci_run_id` = the successful main CI run for the PR #74 merge,
-  `produce_release_assets` = true, `application_version` = `157`, `package_sha` = the current
-  `main` tip (the bump commit, so `Version.props` reads 2.0.0). Consider marking the
+  → Run workflow on `main` with `produce_release_assets` = true, `application_version` =
+  `157`, `package_sha` = the current `main` tip (the bump commit, so `Version.props` reads
+  2.0.0), and `ci_run_id` empty. CD builds every platform from `package_sha`. If you do pass a
+  `ci_run_id`, the guard fails unless that run built `package_sha` (or an ancestor that
+  differs only in `Version.props`/markdown) and its `build-*` artifacts are still live (5-day
+  retention). Consider marking the
   `1.7.116-b156` release as a pre-release or deleting it so users don't take it as latest.
-- **CD failed on one platform only.** Re-dispatch CD with the same `ci_run_id`,
-  `package_sha` and `application_version`; asset upload uses `--clobber`, so re-running is
-  safe and the tag is reused.
+- **CD failed on one or more platforms.** Re-dispatch CD with the same `package_sha` and
+  `application_version`, `produce_release_assets` = true, `repackage_existing_release` =
+  true and `ci_run_id` empty. Without `repackage_existing_release` the guard refuses because
+  `<display>-b<build>` already has a release; with it, only that exact tag is accepted and
+  asset upload uses `--clobber`, so the tag is reused.
 
 ## Pitfalls
 
@@ -283,6 +297,8 @@ pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview
   three-way conflict on the next push to the PR. Untick it.
 - **A `ci:`-prefixed squash subject** on the product merge makes CI, Increment Build Version
   and therefore CD skip the merge entirely — no release at all.
+- **A `[skip ci]` line left in the squash body** does the same: no push CI, no CodeQL, no CD.
+  Delete those lines in the merge dialog (or pass `--body`) every time.
 - **`docs/VERSION_MANAGEMENT.md` is stale.** It still describes auto-increment on `main`,
   git tags created by the bump workflow, and versions `1.7.2`/`35`. Trust the workflow YAML
   and `Version.props`, not that document.

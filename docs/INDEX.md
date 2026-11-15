@@ -28,6 +28,7 @@ superseded phase plans were removed.
 
 | Doc | What it is |
 |-----|------------|
+| [CI_SKIP_TOKENS.md](CI_SKIP_TOKENS.md) | **Must read before any merge:** a skip-CI token (`[skip ci]` and variants) in a commit or squash message stops CI on `main` and broke CD for 3.6.0-b261 |
 | [VERSION_MANAGEMENT.md](VERSION_MANAGEMENT.md) | `Version.props`, bump display, CD naming |
 | [agent-playbook-merge-client-pr-v2.md](agent-playbook-merge-client-pr-v2.md) | How to land a PR so main packages **v2.0.0** (playbook only) |
 | [../.github/CI-CD-SETUP.md](../.github/CI-CD-SETUP.md) | CI / CD / Release workflow overview |

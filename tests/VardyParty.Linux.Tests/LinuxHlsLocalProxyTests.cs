@@ -201,6 +201,51 @@ public class LinuxHlsLocalProxyTests
         Assert.Equal(4, handler.PlaylistFetchCount);
     }
 
+    [Theory]
+    [InlineData("https://cdn.example/capture-feed.m3u8")]
+    [InlineData("https://cdn.example/capture-feed")]
+    public async Task CaptureMode_Reattach_DropsPlayedCapturedSegments_AndKeepsTheUrlMapping(string feedUrl)
+    {
+        // Arrange: capture mode swaps the n-th decoy line for the n-th captured URL.
+        // The .m3u8 URL goes through the shared coordinator; the extensionless one
+        // through the content-sniffed playlist branch.
+        var captured = new[]
+        {
+            "https://media.fictional-capture.example/clip/c1.ts",
+            "https://media.fictional-capture.example/clip/c2.ts",
+            "https://media.fictional-capture.example/clip/c3.ts",
+            "https://media.fictional-capture.example/clip/c4.ts"
+        };
+        var handler = new ScriptedHandler();
+        var playedSegments = new VardyParty.Playback.PlayedSegmentMemory();
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream, playedSegments: playedSegments);
+        Assert.True(proxy.TryStart());
+        proxy.SetRewrittenSegments(captured);
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+
+        var firstAttach = await client.GetStringAsync(proxy.Wrap(feedUrl));
+        var firstTargets = SegmentTargets(proxy, firstAttach);
+        foreach (var segment in firstAttach.Split('\n').Where(l => l.StartsWith(proxy.Prefix, StringComparison.Ordinal)).Take(2))
+            Assert.Equal(new byte[] { 0x47, 0x40, 0x11, 0x10 }, await client.GetByteArrayAsync(segment.Trim()));
+
+        // Act: same-URL reattach (new attach session, same played-segment memory).
+        var reattach = await client.GetStringAsync(proxy.Wrap(feedUrl));
+
+        // Assert
+        Assert.Equal(captured, firstTargets);
+        Assert.Equal(new[] { captured[2], captured[3] }, SegmentTargets(proxy, reattach));
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:12", reattach, StringComparison.Ordinal);
+        Assert.DoesNotContain("decoy", reattach, StringComparison.Ordinal);
+    }
+
+    private static List<string> SegmentTargets(LinuxHlsLocalProxy proxy, string playlist) =>
+        playlist.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.StartsWith(proxy.Prefix, StringComparison.Ordinal))
+            .Select(l => LinuxHlsPlaylistRewriter.TryDecodeTarget(l[proxy.Prefix.Length..], out var url) ? url : l)
+            .ToList();
+
     private static string SegmentThroughProxy(LinuxHlsLocalProxy proxy, string target) =>
         LinuxHlsPlaylistRewriter.ToProxyUrl(target, proxy.Prefix);
 
@@ -228,6 +273,30 @@ public class LinuxHlsLocalProxyTests
             {
                 PlaylistFetchCount++;
                 return Task.FromResult(PlaylistScript.Dequeue());
+            }
+
+            if (url.EndsWith("/capture-feed.m3u8", StringComparison.Ordinal)
+                || url.EndsWith("/capture-feed", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Text(
+                    """
+                    #EXTM3U
+                    #EXT-X-TARGETDURATION:2
+                    #EXT-X-MEDIA-SEQUENCE:10
+                    #EXTINF:2.0,
+                    decoy1.json
+                    #EXTINF:2.0,
+                    decoy2.json
+                    #EXTINF:2.0,
+                    decoy3.json
+                    #EXTINF:2.0,
+                    decoy4.json
+                    """));
+            }
+
+            if (url.StartsWith("https://media.fictional-capture.example/", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Bytes([0x47, 0x40, 0x11, 0x10], "video/MP2T"));
             }
 
             if (url.EndsWith("ctu.m3u8", StringComparison.Ordinal))

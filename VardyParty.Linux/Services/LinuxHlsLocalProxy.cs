@@ -191,25 +191,10 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                 Buffer.BlockCopy(peek, 0, body, 0, peeked);
                 Buffer.BlockCopy(rest, 0, body, peeked, rest.Length);
                 var finalUrl = response.RequestMessage?.RequestUri?.AbsoluteUri ?? target;
-                body = DropPlayedSegments(body, finalUrl);
-                var text = Encoding.UTF8.GetString(body);
-                if (_playlistTransform is not null)
-                {
-                    var transformed = _playlistTransform(text);
-                    if (!string.Equals(transformed, text, StringComparison.Ordinal))
-                    {
-                        _logger?.LogInformation("[LinuxHlsProxy] Applied transport playlist rewrite");
-                        text = transformed;
-                    }
-                }
-
-                var substituted = LinuxHlsPlaylistRewriter.SubstitutePlayableSegments(text, _rewrittenSegments);
-                if (!string.Equals(substituted, text, StringComparison.Ordinal))
-                {
-                    _logger?.LogInformation("[LinuxHlsProxy] Substituted captured rewritten segment URLs");
-                    text = substituted;
-                }
-
+                // Swap in captured URLs first, then trim: the trim must compare the URLs
+                // the segment path records, and the positional swap must not shift.
+                var prepared = PrepareForPlayer(body);
+                var text = Encoding.UTF8.GetString(DropPlayedSegments(prepared, finalUrl));
                 var rewritten = LinuxHlsPlaylistRewriter.Rewrite(text, finalUrl, Prefix);
                 var bytes = Encoding.UTF8.GetBytes(rewritten);
                 ctx.Response.ContentType = "application/vnd.apple.mpegurl";
@@ -294,7 +279,8 @@ public sealed class LinuxHlsLocalProxy : IDisposable
                 else
                     _logger?.LogDebug("{Line}", line);
             },
-            playlistUrl: target);
+            playlistUrl: target,
+            prepareServed: PrepareForPlayer);
 
         var outcome = await PlaylistReloadCoordinator.RunAsync(
             _playlistReload,
@@ -333,29 +319,42 @@ public sealed class LinuxHlsLocalProxy : IDisposable
 
     private async Task WritePlaylistAsync(HttpListenerContext ctx, string text, string target)
     {
-        if (_playlistTransform is not null)
-        {
-            var transformed = _playlistTransform(text);
-            if (!string.Equals(transformed, text, StringComparison.Ordinal))
-            {
-                _logger?.LogInformation("[LinuxHlsProxy] Applied transport playlist rewrite");
-                text = transformed;
-            }
-        }
-
-        var substituted = LinuxHlsPlaylistRewriter.SubstitutePlayableSegments(text, _rewrittenSegments);
-        if (!string.Equals(substituted, text, StringComparison.Ordinal))
-        {
-            _logger?.LogInformation("[LinuxHlsProxy] Substituted captured rewritten segment URLs");
-            text = substituted;
-        }
-
         var rewritten = LinuxHlsPlaylistRewriter.Rewrite(text, target, Prefix);
         var bytes = Encoding.UTF8.GetBytes(rewritten);
         ctx.Response.StatusCode = 200;
         ctx.Response.ContentType = "application/vnd.apple.mpegurl";
         ctx.Response.ContentLength64 = bytes.Length;
         await ctx.Response.OutputStream.WriteAsync(bytes, _cts.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The playlist LibVLC will fetch from, before the no-replay trim: the transport
+    /// rewrite, then capture mode's positional swap of decoy segment lines for the
+    /// LocalService-captured URLs. Trimming after this compares the captured URLs that
+    /// <see cref="PlaylistReloadSession.NoteSegmentFetched"/> records (issue #163).
+    /// </summary>
+    private byte[] PrepareForPlayer(byte[] body)
+    {
+        var text = Encoding.UTF8.GetString(body);
+        var prepared = text;
+        if (_playlistTransform is not null)
+        {
+            var transformed = _playlistTransform(prepared);
+            if (!string.Equals(transformed, prepared, StringComparison.Ordinal))
+            {
+                _logger?.LogInformation("[LinuxHlsProxy] Applied transport playlist rewrite");
+                prepared = transformed;
+            }
+        }
+
+        var substituted = LinuxHlsPlaylistRewriter.SubstitutePlayableSegments(prepared, _rewrittenSegments);
+        if (!string.Equals(substituted, prepared, StringComparison.Ordinal))
+        {
+            _logger?.LogInformation("[LinuxHlsProxy] Substituted captured rewritten segment URLs");
+            prepared = substituted;
+        }
+
+        return ReferenceEquals(prepared, text) ? body : Encoding.UTF8.GetBytes(prepared);
     }
 
     private void ApplyHeaders(HttpRequestMessage request)

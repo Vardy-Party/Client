@@ -64,6 +64,8 @@ public static class PlaylistReloadCoordinator
             if (decision.Action == PlaylistReloadAction.Serve)
             {
                 var served = last.Body;
+                if (request.PrepareServed is { } prepare)
+                    served = prepare(served);
                 if (request.Session is { } attach)
                 {
                     served = attach.DropPlayedSegments(served, request.PlaylistUrl, out var dropped);
@@ -168,6 +170,16 @@ public sealed class PlaylistReloadRequest
     public string? PlaylistUrl { get; init; }
 
     /// <summary>
+    /// Turns a served body into the playlist the player will actually fetch from
+    /// (Linux capture mode swaps decoy segment lines for LocalService-captured URLs)
+    /// before the no-replay trim runs. The trim then compares the same URLs the
+    /// segment path records with <see cref="PlaylistReloadSession.NoteSegmentFetched"/>,
+    /// and a positional swap is never shifted by segments dropped before it.
+    /// Runs only on a body that is served; strategy decisions see the raw fetch.
+    /// </summary>
+    public Func<byte[], byte[]>? PrepareServed { get; init; }
+
+    /// <summary>
     /// Mid-play request used by Android, Windows, and Linux: shared <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>.
     /// </summary>
     public static PlaylistReloadRequest MidPlay(
@@ -177,10 +189,12 @@ public sealed class PlaylistReloadRequest
         Action<bool, string>? log = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         Func<DateTimeOffset>? clock = null,
-        string? playlistUrl = null) =>
+        string? playlistUrl = null,
+        Func<byte[], byte[]>? prepareServed = null) =>
         new()
         {
             PlaylistUrl = playlistUrl,
+            PrepareServed = prepareServed,
             IsFirstAttach = isFirstAttach,
             MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
             Row = row,

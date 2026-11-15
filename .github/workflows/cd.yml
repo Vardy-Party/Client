@@ -7,6 +7,17 @@ name: CD - Package & Release
 #
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
+#
+# Every platform job builds from source at package_sha (the actions/checkout
+# below). ci_run_id is optional: when given, that CI run's build-* source
+# artifact is overlaid on the checkout, so the guard job first proves the run
+# built the same source (package_sha or an ancestor differing only in
+# Version.props/markdown) and its artifacts have not expired (repo retention is
+# 5 days). Bump Display Version no longer passes ci_run_id: it used to pick the
+# newest successful push CI on main, which can be weeks old (squash merges that
+# carried "[skip ci]" from the old ApplicationVersion bot commit skipped push CI), so CD
+# #249 failed with "Artifact not found for name: build-windows" — and with
+# unexpired artifacts it would have shipped stale source under a new version.
 env:
   # Everything targets net11.0(-*). SDK pinned by global.json (11.0.100,
   # latestPatch); workloads from set 11.0.100.1. Bump steps: AGENTS.md "Toolchain".
@@ -19,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       ci_run_id:
-        description: 'CI Run ID to download artifacts from (required for feature branches)'
+        description: 'Optional CI run ID whose build-* artifacts are overlaid on the checkout. Must have built package_sha. Empty = build from the checkout only.'
         required: false
         default: ''
       produce_release_assets:
@@ -35,6 +46,11 @@ on:
         description: 'Git SHA of the CI commit to check out (the merge being packaged). Empty = workflow ref.'
         required: false
         default: ''
+      repackage_existing_release:
+        description: 'Retry a failed or partial CD for the same display version AND build: allow an existing release whose tag is exactly <display>-b<build> (assets are re-uploaded with --clobber).'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -51,10 +67,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.package_sha || github.sha }}
+          fetch-depth: 0
       - name: Fail if this display version is already released
         env:
           GH_TOKEN: ${{ github.token }}
           PRODUCE_RELEASE: ${{ github.event.inputs.produce_release_assets }}
+          REPACKAGE: ${{ github.event.inputs.repackage_existing_release }}
+          APPLICATION_VERSION: ${{ github.event.inputs.application_version }}
         run: |
           set -euo pipefail
           if [[ "${PRODUCE_RELEASE}" != "true" ]]; then
@@ -69,10 +88,63 @@ jobs:
           EXISTING=$(gh release list --limit 100 --json tagName --jq \
             "[.[].tagName | select(startswith(\"${DISPLAY}-b\"))] | .[0] // empty")
           if [[ -n "${EXISTING}" ]]; then
-            echo "::error::Display version ${DISPLAY} already has GitHub Release '${EXISTING}'. Refusing to package/clobber. Run Actions → Bump Display Version, then let that workflow dispatch CD."
+            BUILD="${APPLICATION_VERSION}"
+            if [[ -z "${BUILD}" ]]; then
+              BUILD=$(sed -n 's:.*<ApplicationVersion>\([0-9]*\)</ApplicationVersion>.*:\1:p' Version.props | head -n 1)
+            fi
+            if [[ "${REPACKAGE}" == "true" && "${EXISTING}" == "${DISPLAY}-b${BUILD}" ]]; then
+              echo "::notice::Re-packaging existing release ${EXISTING} (repackage_existing_release=true)."
+              exit 0
+            fi
+            echo "::error::Display version ${DISPLAY} already has GitHub Release '${EXISTING}'. Refusing to package/clobber. Run Actions → Bump Display Version, then let that workflow dispatch CD. To retry a failed CD for exactly ${DISPLAY}-b${BUILD}, dispatch with repackage_existing_release=true."
             exit 1
           fi
           echo "Display version ${DISPLAY} has no existing release — OK to package."
+        shell: bash
+      - name: Verify ci_run_id built package_sha and still has artifacts
+        if: ${{ github.event.inputs.ci_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.inputs.ci_run_id }}
+        run: |
+          set -euo pipefail
+          WANT_SHA=$(git rev-parse HEAD)
+          read -r RUN_SHA RUN_EVENT RUN_CONCLUSION < <(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" \
+            --jq '[.head_sha, .event, (.conclusion // "none")] | @tsv')
+          # A pull_request run builds refs/pull/N/merge (the PR merged with whatever
+          # main was then), so its head_sha does not describe the overlaid source.
+          if [[ "${RUN_EVENT}" != "push" && "${RUN_EVENT}" != "workflow_dispatch" ]]; then
+            echo "::error::ci_run_id ${CI_RUN_ID} is a '${RUN_EVENT}' run; its build-* artifacts come from a PR merge ref, not ${RUN_SHA}. Use a push CI run or omit ci_run_id."
+            exit 1
+          fi
+          if [[ "${RUN_CONCLUSION}" != "success" ]]; then
+            echo "::error::ci_run_id ${CI_RUN_ID} concluded '${RUN_CONCLUSION}', not success. Use a green push CI run or omit ci_run_id."
+            exit 1
+          fi
+          if [[ "${RUN_SHA}" != "${WANT_SHA}" ]]; then
+            # Allowed only when package_sha is that CI commit plus Version.props /
+            # markdown changes (e.g. a display-version bump on top of the merge).
+            if ! git merge-base --is-ancestor "${RUN_SHA}" "${WANT_SHA}"; then
+              echo "::error::ci_run_id ${CI_RUN_ID} built ${RUN_SHA}, which is not an ancestor of the packaged commit ${WANT_SHA}. Omit ci_run_id to build from the checkout."
+              exit 1
+            fi
+            OTHER=$(git diff --name-only "${RUN_SHA}" "${WANT_SHA}" | grep -v -E '(^Version\.props$|\.md$)' || true)
+            if [[ -n "${OTHER}" ]]; then
+              echo "::error::ci_run_id ${CI_RUN_ID} built ${RUN_SHA}; the packaged commit ${WANT_SHA} also changes source, so its build-* artifacts would overlay stale files:"
+              echo "${OTHER}"
+              echo "Omit ci_run_id to build from the checkout."
+              exit 1
+            fi
+          fi
+          LIVE=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired | not) | .name] | join(" ")')
+          for a in build-windows build-android build-ios build-macos; do
+            if [[ " ${LIVE} " != *" ${a} "* ]]; then
+              echo "::error::CI run ${CI_RUN_ID} has no live '${a}' artifact (expired or never uploaded). Omit ci_run_id to build from the checkout."
+              exit 1
+            fi
+          done
+          echo "CI run ${CI_RUN_ID} (${RUN_EVENT}, success) matches ${WANT_SHA} (or differs only in Version.props/markdown) and has live build-* artifacts."
         shell: bash
 
   package-windows:
@@ -104,6 +176,7 @@ jobs:
       - name: Install MAUI workloads
         run: dotnet workload install maui --version 11.0.100.1
       - name: Download Windows build artifact
+        if: ${{ env.CI_RUN_ID != '' }}
         uses: actions/download-artifact@v8
         with:
           name: build-windows
@@ -401,6 +474,7 @@ jobs:
       - name: Restore app dependencies
         run: dotnet restore ${{ env.VARDYPARTY_CSPROJ }} --ignore-failed-sources
       - name: Download Android build artifact
+        if: ${{ env.CI_RUN_ID != '' }}
         uses: actions/download-artifact@v8
         with:
           name: build-android
@@ -611,6 +685,7 @@ jobs:
           dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
           dotnet workload install ios --version 11.0.100.1 --ignore-failed-sources
       - name: Download iOS build artifact
+        if: ${{ env.CI_RUN_ID != '' }}
         uses: actions/download-artifact@v8
         with:
           name: build-ios
@@ -742,6 +817,7 @@ jobs:
           dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
           dotnet workload install maccatalyst --version 11.0.100.1 --ignore-failed-sources
       - name: Download macOS build artifact
+        if: ${{ env.CI_RUN_ID != '' }}
         uses: actions/download-artifact@v8
         with:
           name: build-macos
