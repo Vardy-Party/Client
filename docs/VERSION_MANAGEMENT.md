@@ -42,8 +42,11 @@ product merge that should package, or follow
 ### Build counter
 
 - On PRs: **ApplicationVersion on PR** keeps the branch counter ahead of
-  published `-bN` releases. Its Version.props commit uses `[skip ci]` so it does
-  not cancel or restart the product CI already running for that synchronize.
+  published `-bN` releases. Its Version.props commit is pushed with
+  `GITHUB_TOKEN`, which starts no workflows, so it does not cancel or restart
+  the product CI already running for that synchronize. The message carries no
+  skip-CI token: a squash merge copies it into main's commit and would skip push
+  CI on `main`.
 - On `main` after green CI: **Increment Build Version** dispatches CD with the
   packaging `ApplicationVersion`.
 - Release **name**: `VardyParty v{display}-b{build}`  

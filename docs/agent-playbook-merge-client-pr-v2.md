@@ -195,6 +195,14 @@ Or in the UI: PR #74 → **Squash and merge** → keep the title
 prefix the squash subject with `ci:` — that would make CI skip the merge and no release would
 be built at all.
 
+**Delete every `[skip ci]` line from the squash message body before confirming.** The repo's
+squash default copies every commit message into the body, and GitHub skips all push workflows
+(CI, CodeQL, Increment Build Version, so no CD) when `[skip ci]` appears anywhere in it. That is
+how #155 and #162 landed without main CI. The ApplicationVersion bot no longer adds the token,
+but older branches still carry it: PR #166 has it in `eab3556`, `d98fd3a` and the body of
+`7a5d666`, so #166's squash message must have those lines removed. With `gh`, pass an explicit
+body: `gh pr merge 166 --squash --subject "<PR title> (#166)" --body "<summary without the token>"`.
+
 ### Step 4 — Watch the automation (Agent)
 
 In order, on `main`:
@@ -288,6 +296,8 @@ pwsh ./package-android.ps1       # -Mode all for the fat/store APK; -Api preview
   three-way conflict on the next push to the PR. Untick it.
 - **A `ci:`-prefixed squash subject** on the product merge makes CI, Increment Build Version
   and therefore CD skip the merge entirely — no release at all.
+- **A `[skip ci]` line left in the squash body** does the same: no push CI, no CodeQL, no CD.
+  Delete those lines in the merge dialog (or pass `--body`) every time.
 - **`docs/VERSION_MANAGEMENT.md` is stale.** It still describes auto-increment on `main`,
   git tags created by the bump workflow, and versions `1.7.2`/`35`. Trust the workflow YAML
   and `Version.props`, not that document.

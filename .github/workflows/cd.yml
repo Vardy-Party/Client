@@ -15,7 +15,7 @@ name: CD - Package & Release
 # Version.props/markdown) and its artifacts have not expired (repo retention is
 # 5 days). Bump Display Version no longer passes ci_run_id: it used to pick the
 # newest successful push CI on main, which can be weeks old (squash merges that
-# carry "[skip ci]" from the ApplicationVersion bot commit skip push CI), so CD
+# carried "[skip ci]" from the old ApplicationVersion bot commit skipped push CI), so CD
 # #249 failed with "Artifact not found for name: build-windows" — and with
 # unexpired artifacts it would have shipped stale source under a new version.
 env:
@@ -109,7 +109,18 @@ jobs:
         run: |
           set -euo pipefail
           WANT_SHA=$(git rev-parse HEAD)
-          RUN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" --jq .head_sha)
+          read -r RUN_SHA RUN_EVENT RUN_CONCLUSION < <(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" \
+            --jq '[.head_sha, .event, (.conclusion // "none")] | @tsv')
+          # A pull_request run builds refs/pull/N/merge (the PR merged with whatever
+          # main was then), so its head_sha does not describe the overlaid source.
+          if [[ "${RUN_EVENT}" != "push" && "${RUN_EVENT}" != "workflow_dispatch" ]]; then
+            echo "::error::ci_run_id ${CI_RUN_ID} is a '${RUN_EVENT}' run; its build-* artifacts come from a PR merge ref, not ${RUN_SHA}. Use a push CI run or omit ci_run_id."
+            exit 1
+          fi
+          if [[ "${RUN_CONCLUSION}" != "success" ]]; then
+            echo "::error::ci_run_id ${CI_RUN_ID} concluded '${RUN_CONCLUSION}', not success. Use a green push CI run or omit ci_run_id."
+            exit 1
+          fi
           if [[ "${RUN_SHA}" != "${WANT_SHA}" ]]; then
             # Allowed only when package_sha is that CI commit plus Version.props /
             # markdown changes (e.g. a display-version bump on top of the merge).
@@ -133,7 +144,7 @@ jobs:
               exit 1
             fi
           done
-          echo "CI run ${CI_RUN_ID} matches ${WANT_SHA} (or differs only in Version.props/markdown) and has live build-* artifacts."
+          echo "CI run ${CI_RUN_ID} (${RUN_EVENT}, success) matches ${WANT_SHA} (or differs only in Version.props/markdown) and has live build-* artifacts."
         shell: bash
 
   package-windows:

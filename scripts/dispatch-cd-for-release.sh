@@ -4,7 +4,7 @@
 # CD checks out package_sha and builds every platform from that source, so it
 # needs no CI artifacts. This script used to pass ci_run_id = "latest successful
 # product CI on main", which ignored the SHA: squash merges that carry
-# "[skip ci]" (from the ApplicationVersion bot commit on the PR) never run push
+# "[skip ci]" (from the old ApplicationVersion bot commit on the PR) never run push
 # CI on main, so the newest such run was weeks old, its artifacts had expired
 # (5-day retention) and CD #249 failed with "Artifact not found for name:
 # build-windows". Product code is gated by PR CI before merge.

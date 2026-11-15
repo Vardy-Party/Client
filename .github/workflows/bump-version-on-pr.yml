@@ -96,8 +96,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add Version.props
-          # [skip ci] so this Version.props-only push does not cancel/restart the
-          # in-flight product CI (same PR synchronize used to fan out a second build).
-          git commit -m "ci: set ApplicationVersion to ${NEXT} for merge to main [skip ci]"
+          # Pushed with GITHUB_TOKEN, which never starts workflows (no push and no
+          # pull_request synchronize), so the in-flight product CI is not cancelled
+          # or restarted. No skip-CI token in the message: squash merges copy every
+          # commit message into main's merge commit, and the token there stopped
+          # push CI on main for #155 and #162.
+          git commit -m "ci: set ApplicationVersion to ${NEXT} for merge to main"
           git push origin "HEAD:${GITHUB_HEAD_REF}"
           echo "::notice::Feature branch ApplicationVersion ${BEFORE} → ${NEXT}"
