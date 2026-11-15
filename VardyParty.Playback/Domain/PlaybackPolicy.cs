@@ -91,12 +91,32 @@ public static partial class PlaybackPolicy
         => consecutiveFailures >= MaxConsecutiveDownloadFailures;
 
     /// <summary>
-    /// Soft live-HLS recoveries (Android BehindLiveWindow or PlaylistStuck seek,
-    /// Windows AdaptiveMediaSource reattach) before escalating to
-    /// <see cref="MediaEngineEventKind.Error"/> / pool remove.
-    /// Linux LibVLC uses --http-reconnect instead of this budget.
+    /// Soft live-HLS recoveries before escalating to <see cref="MediaEngineEventKind.Error"/>.
+    /// Only Android's BehindLiveWindow seek uses it (a forward seek to the live
+    /// edge, never a replay). Windows no longer reattaches the same URL on a
+    /// mid-play network failure: that restarts at the live offset and re-shows
+    /// watched footage, so it escalates as CDN-unreachable instead
+    /// (<see cref="WindowsMidPlayNetworkFailureMessage"/>) and the session switches.
     /// </summary>
     public const int MaxLiveHlsRecoveries = 5;
+
+    /// <summary>
+    /// The Error message for a Windows <c>MediaPlayerError.NetworkError</c>. The
+    /// kind comes from the last download HTTP status, not the OS error text:
+    /// 404/410 is a dead playlist, 401/403/442 a token reject, and anything else
+    /// (no status, 5xx, reset, timeout) is CDN-unreachable, so the session switches
+    /// streams and option 2 can return later. No same-URL reattach (that replays
+    /// already-watched segments).
+    /// </summary>
+    public static string WindowsMidPlayNetworkFailureMessage(int lastDownloadStatus, string detail)
+    {
+        var text = string.IsNullOrWhiteSpace(detail) ? "network error" : detail.Trim();
+        if (lastDownloadStatus is 404 or 410)
+            return $"HTTP {lastDownloadStatus} playlist not found: {text}";
+        if (IsRefusedStatus(lastDownloadStatus))
+            return $"{RefusedDownloadReason(lastDownloadStatus)}: {text}";
+        return $"{PlaybackCloseReasons.CdnUnreachable}: network error mid-play ({text})";
+    }
 
     /// <summary>
     /// Shared live-buffer target (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;

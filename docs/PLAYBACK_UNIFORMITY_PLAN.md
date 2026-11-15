@@ -60,7 +60,7 @@ Normalize at the adapter boundary (name as needed; keep payloads small and OS-fr
 | `EngineError` | raw text + any status the adapter could parse | Last resort when the engine has no structured code |
 | `Ended` | | Existing |
 
-The supervisor, not the adapter, classifies `EngineError` / `Stalled` / `BehindLive` and chooses: ride the buffer and retry the playlist, give up and switch (option 2), seek forward to the live edge, or reattach the same URL when the engine has no seek.
+The supervisor, not the adapter, classifies `EngineError` / `Stalled` / `BehindLive` and chooses: ride the buffer and retry the playlist, give up and switch (option 2), seek forward to the live edge, or (never) reattach the same URL: an engine with no seek switches instead.
 
 ### Shared constants (one policy number each)
 
@@ -96,17 +96,17 @@ Paths are from the Client repo root. Line numbers are as of `3caba87`.
 | Platform | File:line | Current behaviour |
 |---|---|---|
 | Android | `NativeVideoActivity.Playback.cs` 289–353, 539+ (`AttachEngine`) | Mid-play playlist retries are already in MidPlay (shared). `PlaylistStuck` no longer reloads the `MediaSource` (escalates so the session can switch). `BehindLiveWindow` still seeks and `Prepare`s locally, incrementing `_behindLiveWindowRecoveries` against `MaxLiveHlsRecoveries`. Budget is **not** reset on READY (Bravia loop). |
-| Windows | `WindowsVideoPlayerService.Playback.cs` 229–291, 218–225; `Session.cs` 160–162, 626–632 | No BLWE seek API. A `NetworkError` `MediaFailed` **reattaches** the same URL via `SoftRecoverPlaybackAsync` → `StartPlaybackAsync`, keeping the session generation. Nested failures while in flight are swallowed. Intentional `BeginAttach` resets `liveHlsRecoveries`. This can hide a dead network stream until the budget of 5 is gone, and is not the same as Android’s “seek forward, or switch on stuck.” |
+| Windows | `WindowsVideoPlayerService.Session.cs` (`mediaFailedHandler`); `PlaybackPolicy.WindowsMidPlayNetworkFailureMessage` | **Done on #162:** no same-URL reattach. A `NetworkError` `MediaFailed` raises Error with a kind taken from the last download status; CDN-unreachable switches through the shared session and option 2 returns later. |
 | Linux | `LinuxPlatformProbe.cs` 138–140 (`--http-reconnect`); `LinuxVideoPlayerService.cs` 1336–1345 | LibVLC reconnects **inside** the engine with no count and no session event. A fatal error is a single vague `Error`. There is no soft-recover budget and no “seek to live edge.” |
 
-**Proposal:** Soft recover is a supervisor decision with two adapter capabilities: `CanSeekLiveEdge` (Android yes; Windows/Linux usually no) and `CanReattachSameUrl`. Policy: `BehindLive` + can seek → seek forward; `BehindLive` + cannot seek → one budgeted reattach; `Stalled` / `PlaylistStuck` → **do not** reload or reattach (replay/stall risk) → give up and switch. Linux `--http-reconnect` should be treated as an engine limit: either disable it and let the supervisor decide, or leave it on and document that some reconnects will never be visible.
+**Proposal:** Soft recover is a supervisor decision with two adapter capabilities: `CanSeekLiveEdge` (Android yes; Windows/Linux usually no) and `CanReattachSameUrl`. Policy: `BehindLive` + can seek → seek forward; `BehindLive` + cannot seek → give up and switch (a same-URL reattach replays watched segments); `Stalled` / `PlaylistStuck` → **do not** reload or reattach (replay/stall risk) → give up and switch. Linux `--http-reconnect` should be treated as an engine limit: either disable it and let the supervisor decide, or leave it on and document that some reconnects will never be visible.
 
 ### 3. Behind live window / live-edge seek
 
 | Platform | File:line | Current behaviour |
 |---|---|---|
 | Android | `PlaybackPolicy.cs` 140–147, 128; `NativeVideoActivity.Playback.cs` 336–345 | Error code 1002 or “BehindLiveWindow” text → `SeekToDefaultPosition()` + `Prepare()` + `PlayWhenReady`. This is a **forward** seek, not a replay. |
-| Windows | `Playback.cs` 229–275 | No equivalent event. Network `MediaFailed` reattaches the source (see above), which may jump to the live edge or briefly re-request a window — not guaranteed to be seek-forward-only. |
+| Windows | (none) | No equivalent event. Since #162 a network `MediaFailed` switches instead of reattaching (see above), so nothing replays. |
 | Linux | (none) | No behind-live detection. `--http-reconnect` / cache may stall or jump without a session event. |
 
 **Proposal:** Only the supervisor may request `SeekLiveEdge`. Adapters that cannot seek report `BehindLive` (if detectable) or `EngineError` and accept `ReattachSameUrl` or `GiveUpAndSwitch`.
@@ -116,7 +116,7 @@ Paths are from the Client repo root. Line numbers are as of `3caba87`.
 | Platform | File:line | Current behaviour |
 |---|---|---|
 | Android | `NativeVideoActivity.Playback.cs` 316–323; `PlaybackPolicy.SameStreamRecovery.cs` 167+ (`IsStuckLivePlaylistFailure` in classify) | Stuck playlist is **not** reloaded (TV 257 20:20:21 froze ~8s and could replay). It escalates and classifies as `CdnUnreachable` so option 2 can run. |
-| Windows | `PlaybackPolicy.cs` 184–206 | Soft recover is **any** `MediaPlayerError.NetworkError` that is not auth/unsupported. There is no stuck-playlist detector, so a freeze or frozen manifest can burn all five reattaches. |
+| Windows | `PlaybackPolicy.WindowsMidPlayNetworkFailureMessage` | No reattach budget any more (#162): a network failure switches at once. There is still no stuck-playlist detector; a frozen manifest is caught by option 2 probes (`SwitchBackPlaylistProgress`) but not yet on the playing row. |
 | Linux | `LinuxVideoPlayerService.cs` 1336–1345 | No stall event. The user sees a freeze until LibVLC errors or the buffer ends. |
 
 **Proposal:** `Stalled(kind)` is a first-class event. Shared rule: do not reload a stuck playlist; give up and switch; keep the row for option 2. Windows/Linux adapters should map the closest engine signal (repeated playlist body, buffer ahead = 0 for N seconds, or a documented LibVLC log line) to `Stalled`, not invent a third recovery.
@@ -180,7 +180,7 @@ Shared decision: `SwitchBackRunner` + `SwitchBackPlaylistProbe.RestoreAndSwitchT
 These should stay documented exceptions, not hidden if-platform branches in policy:
 
 1. **ExoPlayer `ERROR_CODE_BEHIND_LIVE_WINDOW` (1002)** is Android-only. Windows and Linux have no BLWE signal; they can only approximate with buffer-ahead and errors.
-2. **Windows AMS has no seek-to-live-edge API** comparable to `SeekToDefaultPosition`. Soft recover is reattach, and `DesiredLiveOffset` is best-effort (manifests may reject it). `DownloadRequested` must finish within `WindowsPlaylistDeferralBudget` (8s) or AMS may abandon the request — already bounded by the shared 2s hold.
+2. **Windows AMS has no seek-to-live-edge API** comparable to `SeekToDefaultPosition`. Soft recover was a reattach (removed on #162: it replays), and `DesiredLiveOffset` is best-effort (manifests may reject it). `DownloadRequested` must finish within `WindowsPlaylistDeferralBudget` (8s) or AMS may abandon the request — already bounded by the shared 2s hold.
 3. **LibVLC `--http-reconnect` and `--network-caching` are opaque.** Caching is not a live-edge offset. `EncounteredError` often has no HTTP status. Playing may never fire on the vmem/HLS path. `--http-reconnect` can recover without the supervisor knowing.
 4. **LibVLC must go through the loopback proxy** so DualStack/DoH and headers work (`LinuxHlsLocalProxy`). That is transport, not policy, and can stay.
 5. **First-frame size lies:** AMS 1920×1080 flash is real; the shared settler is the fix, not a platform rule.
@@ -204,7 +204,7 @@ Introduce `PlayerEvent` and a `PlaybackSupervisor` (or extend `PlaybackSessionCo
 
 ### Phase 2 — Stall and behind-live policy in one place (follow-up PR)
 
-Supervisor rules: seek forward only for `BehindLive` when `CanSeekLiveEdge`; otherwise one budgeted reattach; `Stalled`/`PlaylistStuck` always give up and switch (option 2). Shared `MaxLiveHlsRecoveries`. Document Linux `--http-reconnect` as an engine limit or turn it off.
+Supervisor rules: seek forward only for `BehindLive` when `CanSeekLiveEdge`; otherwise give up and switch (no reattach); `Stalled`/`PlaylistStuck` always give up and switch (option 2). Shared `MaxLiveHlsRecoveries`. Document Linux `--http-reconnect` as an engine limit or turn it off.
 
 Tests: timeline — behind-live then recover without switch on a seek-capable fake; stuck playlist switches and arms switch-back on all fakes; recovery budget exhausts then move-on.
 

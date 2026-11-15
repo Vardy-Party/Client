@@ -166,6 +166,11 @@ public static partial class PlaybackPolicy
         if (string.IsNullOrWhiteSpace(message))
             return PlaybackErrorKind.Transient;
 
+        // Our own CDN-unreachable verdict (KeepCdnUnreachableAndMoveOn, a Windows
+        // network failure with no dead/auth status): already classified by status.
+        if (message.StartsWith(VardyParty.Kernel.PlaybackCloseReasons.CdnUnreachable, StringComparison.Ordinal))
+            return PlaybackErrorKind.CdnUnreachable;
+
         var text = message.ToLowerInvariant();
 
         // A playlist that is 404/410 is gone. A segment 404 is often a transient

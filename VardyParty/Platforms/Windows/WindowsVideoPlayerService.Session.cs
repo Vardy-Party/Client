@@ -160,10 +160,6 @@ namespace VardyParty.Platforms.Windows
             private CancellationTokenSource? readyWatchdogCts;
             private string? segmentHeadersLoggedFor;
             private bool isClosingPlayer;
-            /// <summary>Transient live HLS MediaFailed — reattach without pool remove (capped; mirrors Android BLWE).</summary>
-            private int liveHlsRecoveries;
-            /// <summary>True while a soft-recover <c>StartPlaybackAsync</c> is in flight — coalesce nested MediaFailed.</summary>
-            private bool liveHlsSoftRecoverInFlight;
 
             public PlayerSession(
                 WindowsVideoPlayerService host,
@@ -633,9 +629,6 @@ namespace VardyParty.Platforms.Windows
                         {
                             if (cleanupInvoked) return;
 
-                            if (TryRecoverLiveHlsFailure(e))
-                                return;
-
                             var errMsg = e?.ErrorMessage;
                             var ext = string.Empty;
                             try { ext = e?.ExtendedErrorCode?.Message ?? string.Empty; } catch (Exception ex) { _host._logger.LogWarning(ex, "Failed to read extended media error"); }
@@ -647,7 +640,9 @@ namespace VardyParty.Platforms.Windows
                             // every segment was refused (13 Nov, V2 chips on fhlsport955): name the
                             // refusal, so it is a token reject (one fresh resolve, then Next), not format death.
                             var refusedStatus = lastDownloadFailureStatus;
-                            if (PlaybackPolicy.IsRefusedStatus(refusedStatus))
+                            if (IsRecoverableMediaFailure(e))
+                                detail = PlaybackPolicy.WindowsMidPlayNetworkFailureMessage(refusedStatus, detail);
+                            else if (PlaybackPolicy.IsRefusedStatus(refusedStatus))
                                 detail = $"{PlaybackPolicy.RefusedDownloadReason(refusedStatus)}: {detail}";
                             detail = PlaybackPolicy.ResolvePlayerErrorAfterPlaylistGiveUp(detail, playlistReloadSession);
                             CancelReadyWatchdog();

@@ -682,6 +682,14 @@ public sealed class PlaybackSessionController
                 return KeepUnresolvedPlayAndMoveOn(reason);
             }
 
+            // CDN unreachable mid-play: option 1 already retried the playlist in
+            // the fetch layer. A same-URL reload or a fresh /play restarts at the
+            // live offset and re-shows watched segments ("like the Matrix"), so
+            // switch to another row instead and let option 2 return. Only a lone
+            // row (nothing to switch to) still gets the same-stream retries.
+            if (kind == PlaybackErrorKind.CdnUnreachable && CanSwitchAwayFromCdnUnreachable())
+                return KeepCdnUnreachableAndMoveOn(reason);
+
             return TryRecoverSameStream(reason, kind) ?? FailEstablishedOrAdvance(reason);
         }
 
@@ -1010,6 +1018,15 @@ public sealed class PlaybackSessionController
     /// </summary>
     private bool HasEligibleLastGood()
         => !string.IsNullOrWhiteSpace(_lastGoodUrl) && !IsFeedFailedInCycle(_lastGoodUrl);
+
+    /// <summary>
+    /// Whether <see cref="KeepCdnUnreachableAndMoveOn"/> would advance (rather than
+    /// close): another untried row exists and this lap has not skipped them all.
+    /// </summary>
+    private bool CanSwitchAwayFromCdnUnreachable()
+        => _healthyStreamCount > 1
+           && _cdnUnreachableSkips + 1 < _healthyStreamCount
+           && HasUntriedStream();
 
     private bool HasUntriedStream()
     {

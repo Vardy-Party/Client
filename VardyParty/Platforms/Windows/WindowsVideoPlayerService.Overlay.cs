@@ -424,8 +424,7 @@ namespace VardyParty.Platforms.Windows
                 {
                     proposed = PlaybackChromeContentState.Switching;
                 }
-                else if (liveHlsSoftRecoverInFlight
-                    || session.Snapshot.IsRecovering
+                else if (session.Snapshot.IsRecovering
                     || session.Snapshot.IsRecoveringSwitch)
                 {
                     proposed = PlaybackChromeContentState.Recovering;

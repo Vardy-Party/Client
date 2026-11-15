@@ -220,81 +220,16 @@ namespace VardyParty.Platforms.Windows
 
             private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
             {
-                // Intentional attach (switch / start) — reset soft live recoveries.
-                liveHlsRecoveries = 0;
-                liveHlsSoftRecoverInFlight = false;
                 SyncHealthyStreamCount();
                 ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
             }
 
             /// <summary>
-            /// Linux LibVLC reconnects; Android seeks to live edge on BehindLiveWindow.
-            /// WinUI has no BLWE API — rebuild AdaptiveMediaSource for the same URL instead of
-            /// raising Error (which removes the stream from the pool).
+            /// A network-class <c>MediaFailed</c> (not auth, unsupported or aborted). It is
+            /// never reattached to the same URL (that replays watched segments): the
+            /// Error carries <see cref="PlaybackPolicy.WindowsMidPlayNetworkFailureMessage"/>
+            /// so the shared session switches and option 2 can return.
             /// </summary>
-            private bool TryRecoverLiveHlsFailure(MediaPlayerFailedEventArgs? args)
-            {
-                if (!IsRecoverableMediaFailure(args))
-                    return false;
-
-                // Nested MediaFailed while soft-reattach is already queued — absorb without stacking.
-                if (liveHlsSoftRecoverInFlight)
-                {
-                    _host._logger.LogDebug(
-                        "Live HLS MediaFailed while soft-recover in flight — coalescing");
-                    return true;
-                }
-
-                if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(liveHlsRecoveries, currentPlaybackUrl))
-                {
-                    _host._logger.LogWarning(
-                        "Live HLS recoveries exhausted ({Count}) — escalating MediaFailed",
-                        liveHlsRecoveries);
-                    return false;
-                }
-
-                var url = currentPlaybackUrl;
-                liveHlsRecoveries++;
-                liveHlsSoftRecoverInFlight = true;
-                MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
-                var errMsg = args?.ErrorMessage ?? "unknown";
-                _host._logger.LogWarning(
-                    "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
-                    liveHlsRecoveries,
-                    PlaybackPolicy.MaxLiveHlsRecoveries,
-                    errMsg);
-
-                try
-                {
-                    engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, true));
-                }
-                catch (Exception ex)
-                {
-                    _host._logger.LogDebug(ex, "Buffering raise during live recover failed");
-                }
-
-                // Do not BeginAttach — keep session generation / pool entry; only rebuild the OS source.
-                _ = SoftRecoverPlaybackAsync(url);
-                return true;
-            }
-
-            /// <summary>
-            /// Soft live reattach: clears <see cref="liveHlsSoftRecoverInFlight"/> when finished
-            /// so a later NetworkError can start another budgeted attempt.
-            /// </summary>
-            private async Task SoftRecoverPlaybackAsync(string url)
-            {
-                try
-                {
-                    await StartPlaybackAsync(url).ConfigureAwait(false);
-                }
-                finally
-                {
-                    liveHlsSoftRecoverInFlight = false;
-                    MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
-                }
-            }
-
             private static bool IsRecoverableMediaFailure(MediaPlayerFailedEventArgs? args)
             {
                 if (args == null)
@@ -1012,9 +947,6 @@ namespace VardyParty.Platforms.Windows
                                 }
 
                                 currentPlaybackUrl = url;
-                                // Do NOT zero liveHlsRecoveries here. Reset only in AttachViaSession
-                                // (intentional switch/start). Network-only recoverable classification +
-                                // this counter keeps MaxLiveHlsRecoveries effective.
                                 // Ready waits for the picture (PlaybackState Playing): see ArmReadyOnPlaying.
 
                                 // Ensure the grid is visible and hit testable
