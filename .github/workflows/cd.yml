@@ -432,28 +432,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
@@ -663,28 +692,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
@@ -824,28 +882,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
@@ -980,28 +1067,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
@@ -1250,28 +1366,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
@@ -1519,28 +1664,57 @@ jobs:
           # Never overwrite an asset that is already on the release (no --clobber):
           # a repackage_existing_release retry only fills in what is missing.
           publish_assets() {
-            local tag="$1" name="$2" existing b f
+            local tag="$1" name="$2" assets b f status detail
             shift 2
             if ! gh release view "$tag" >/dev/null 2>&1; then
               if gh release create "$tag" "$@" --title "$name" --notes "Automated package release for $name"; then
                 return 0
               fi
-              echo "Release create failed (probably created by a parallel job); uploading missing assets."
+              echo "Release create failed (probably created by a parallel job, or an upload broke); checking assets."
             fi
-            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            # An asset counts as present only when complete: state "uploaded" and size > 0.
+            # A failed or interrupted upload can leave a same-named asset in another state
+            # (e.g. "starter"); that is never skipped, deleted or overwritten automatically.
+            release_assets() {
+              gh release view "$1" --json assets --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv'
+            }
+            # Prints "complete", "absent", or "broken state=<s> size=<n>" for asset $2 in rows $1.
+            asset_status() {
+              awk -F'\t' -v n="$2" '$1 == n { found = 1; if ($2 == "uploaded" && $3 + 0 > 0) ok = 1; else bad = "state=" $2 " size=" $3 }
+                END { if (ok) print "complete"; else if (found) print "broken " bad; else print "absent" }' <<<"$1"
+            }
+            broken_asset() {
+              echo "::error::$1 is on release $2 but incomplete ($3). Delete that one asset by hand (gh release delete-asset $2 $1 --yes), then re-run CD with repackage_existing_release=true. It is not deleted or overwritten automatically."
+            }
+            assets=$(release_assets "$tag")
             for f in "$@"; do
               b=$(basename "$f")
-              if grep -Fxq "$b" <<<"$existing"; then
-                echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
-                continue
-              fi
-              if ! gh release upload "$tag" "$f"; then
-                if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$b"; then
-                  echo "::notice::$b was uploaded by a parallel job; leaving it."
-                else
-                  echo "::error::Failed to upload $b to release $tag."
+              read -r status detail <<<"$(asset_status "$assets" "$b")"
+              case "$status" in
+                complete)
+                  echo "::notice::$b is already on release $tag; leaving it (no overwrite)."
+                  continue
+                  ;;
+                broken)
+                  broken_asset "$b" "$tag" "$detail"
                   return 1
-                fi
+                  ;;
+              esac
+              if ! gh release upload "$tag" "$f"; then
+                read -r status detail <<<"$(asset_status "$(release_assets "$tag" || true)" "$b")"
+                case "$status" in
+                  complete)
+                    echo "::notice::$b was uploaded by a parallel job; leaving it."
+                    ;;
+                  broken)
+                    broken_asset "$b" "$tag" "$detail"
+                    return 1
+                    ;;
+                  *)
+                    echo "::error::Failed to upload $b to release $tag."
+                    return 1
+                    ;;
+                esac
               fi
             done
           }
