@@ -106,7 +106,15 @@ public class PlayerChromeTextTests
             PlayerChromeText.FormatVideoInfo(model),
             PlayerChromeText.FormatQualityLine(model),
             PlayerChromeText.FormatVideoInfoDetail(model),
-            PlayerChromeText.FormatStreamIdentityLine(model, model.SourceLabel)
+            PlayerChromeText.FormatStreamIdentityLine(model, model.SourceLabel),
+            // Top-right video overlay identity row and the channel-start stream toast.
+            PlayerChromeText.FormatStatusLine(model),
+            PlayerChromeText.FormatStreamIdentityIndex(model),
+            PlayerChromeText.FormatStreamIdentitySuffix(model),
+            new StreamToastModel(2, 9, "1920x1080", "V2", "Channel North").Text,
+            new StreamToastModel(2, 9, "1920x1080", "V2", "Channel North").Parts.Text,
+            PlayerChromeText.FormatStreamCount(2, 9, "1920x1080", "V1", "Channel North"),
+            enriched.GetQualityDisplay()
         };
 
         // Assert
@@ -114,6 +122,9 @@ public class PlayerChromeTextTests
         {
             Assert.DoesNotContain("Mbps", text, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("kbps", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("bps", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("5000", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("3400", text, StringComparison.Ordinal);
         });
     }
 
