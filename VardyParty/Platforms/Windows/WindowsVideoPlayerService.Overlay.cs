@@ -16,14 +16,13 @@ namespace VardyParty.Platforms.Windows
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible) return;
-
                     var session = mediaPlayer.PlaybackSession;
                     var width = session.NaturalVideoWidth;
                     var height = session.NaturalVideoHeight;
+                    ObserveDecodedPictureSize((int)width, (int)height);
                     var state = session.PlaybackState.ToString();
 
-                    if (mediaPlayer.Source is MediaPlaybackItem item)
+                    if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
                         _host.ExtractVideoMetadata(item, mediaPlayer);
 
                     AdaptiveMediaSource? ams = null;
@@ -48,21 +47,24 @@ namespace VardyParty.Platforms.Windows
                     var bitrateKbps = _host.ResolveBitrateKbps(ams, transferMeter);
 
                     var metrics = _host.GetCurrentMetrics();
+                    var measured = pictureSizeSettler.Published is { } size
+                        ? $"{size.Width}x{size.Height}"
+                        : null;
                     var overlay = new PlayerOverlayInfo
                     {
                         Index = streamIndex,
                         Total = streamTotal,
                         Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
-                        Resolution = width > 0 && height > 0
-                            ? $"{width}x{height}"
-                            : metrics?.Resolution is { } r ? $"{r.Width}x{r.Height}" : null,
+                        SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
+                        Resolution = measured,
+                        ProbedResolution = current?.Health?.GetProbedResolution(),
                         BitrateKbps = bitrateKbps ?? metrics?.BitrateKbps,
                         FrameRate = metrics?.Framerate is int fps ? fps : null,
                         VideoCodec = metrics?.VideoCodec,
                         AudioCodec = metrics?.AudioCodec,
-                        AspectRatio = width > 0 && height > 0
-                            ? PlayerOverlayFormatter.BuildAspect(width, height)
-                            : null,
+                        AspectRatio = pictureSizeSettler.Published is { } aspect
+                            ? PlayerOverlayFormatter.BuildAspect((uint)aspect.Width, (uint)aspect.Height)
+                            : PlayerOverlayFormatter.BuildAspect(current?.Health?.GetProbedResolution()),
                         // Live HLS leaves BufferingProgress at 0 while playing — use ranges.
                         BufferPercent = ReadPlaybackBufferPercent(session),
                         M3u8Url = currentPlaybackUrl,
@@ -78,16 +80,129 @@ namespace VardyParty.Platforms.Windows
                         refererUrl: _refererUrl,
                         bufferPercent: overlay.BufferPercent);
 
+                    // Live-update the switch toast once the picture size is known, without
+                    // restarting its auto-hide timer (ApplyStreamToastHoldVisuals is not called).
+                    // This must run even when the full video-info panel is hidden — that is
+                    // when the toast is actually on screen.
+                    if (!chrome.IsVideoInfoVisible)
+                    {
+                        chrome.ApplyOverlayInfo(overlay, streamSwitchInProgress);
+                        if (chrome.IsStreamToastVisible || chrome.ShouldHoldStreamToast)
+                        {
+                            if (chrome.StreamToast is { } toast)
+                                ApplyStreamToastText(toast.Parts);
+                        }
+                    }
+
+                    if (infoPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible)
+                        return;
+
                     ApplyVideoInfoPanel(model, streamSwitchInProgress, current?.Stream?.CatalogSourceBadgeLabel);
                 });
+            }
+
+
+            private void ObserveDecodedPictureSize(int width, int height)
+            {
+                var published = pictureSizeSettler.Observe(width, height);
+                measuredPictureConfirmed = published is not null;
+                NoteSettledPictureSize(published);
+                SchedulePictureSizeSettleTick();
+            }
+
+            private void NoteSettledPictureSize((int Width, int Height)? published)
+            {
+                if (published is not { Height: > 0 } size)
+                    return;
+                switchBack?.NoteBackupHeight(size.Height);
+                try
+                {
+                    // A mid-play size change replaces the stream's stored height too.
+                    MeasuredPictureSize.Remember(switchingService?.GetCurrentStream()?.Health, size);
+                }
+                catch (Exception ex) { _host.LogIgnored("RememberPictureSize", ex); }
+            }
+
+            private void SchedulePictureSizeSettleTick()
+            {
+                try
+                {
+                    pictureSizeSettleTimer?.Stop();
+                    // Also ticks for a mid-play size change waiting to settle.
+                    if (!pictureSizeSettler.NeedsTick)
+                        return;
+
+                    if (pictureSizeSettleTimer is null)
+                    {
+                        pictureSizeSettleTimer = new Microsoft.UI.Xaml.DispatcherTimer
+                        {
+                            Interval = DecodedPictureSizeSettler.Settle
+                        };
+                        pictureSizeSettleTimer.Tick += PictureSizeSettleTick;
+                    }
+
+                    pictureSizeSettleTimer.Start();
+                }
+                catch (Exception ex) { _host.LogIgnored("SchedulePictureSizeSettleTick", ex); }
+            }
+
+            private void PictureSizeSettleTick(object? sender, object e)
+            {
+                try
+                {
+                    pictureSizeSettleTimer?.Stop();
+                    var published = pictureSizeSettler.Tick();
+                    measuredPictureConfirmed = published is not null;
+                    NoteSettledPictureSize(published);
+                    if (pictureSizeSettler.NeedsTick)
+                        pictureSizeSettleTimer?.Start();
+                    ProbeVideo();
+                    if (measuredPictureConfirmed && mediaPlayer.Source is MediaPlaybackItem item)
+                    {
+                        _host.ExtractVideoMetadata(item, mediaPlayer);
+                        _host.UpdateBitrateFromAdaptiveSource(item);
+                    }
+                    UpdateInfo();
+                }
+                catch (Exception ex) { _host.LogIgnored("PictureSizeSettleTick", ex); }
+            }
+
+            /// <summary>
+            /// Stream toast row: prefix text, the V1/V2 chip as a badge in the shared
+            /// <see cref="SourceBadgeStyle"/> colours (same as video-info), then the suffix.
+            /// </summary>
+            private void ApplyStreamToastText(StreamIdentityParts parts)
+            {
+                if (!parts.HasChip || parts.ChipStyle is not { } style)
+                {
+                    streamCountText.Text = parts.Text;
+                    streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    streamSuffixText.Text = string.Empty;
+                    streamSuffixText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    return;
+                }
+
+                streamCountText.Text = parts.Prefix.TrimEnd();
+                streamSourceBadgeText.Text = parts.Chip;
+                streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
+                streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
+                streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                streamSuffixText.Text = parts.Suffix.TrimStart();
+                streamSuffixText.Visibility = string.IsNullOrEmpty(streamSuffixText.Text)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
             }
 
             private void ApplyVideoInfoPanel(VideoInfoPanelModel model, bool whileSwitching, string? sourceLabel)
             {
                 infoGameTitleText.Text = model.Title ?? string.Empty;
                 infoStatusText.Text = PlayerChromeText.FormatStatusLine(model, whileSwitching);
-                infoStreamIndexText.Text = PlayerChromeText.FormatStreamIndexLine(model);
-                infoStreamIndexText.Visibility = string.IsNullOrEmpty(infoStreamIndexText.Text)
+
+                var indexText = PlayerChromeText.FormatStreamIdentityIndex(model);
+                infoStreamIndexText.Text = indexText;
+                infoStreamIndexText.Visibility = string.IsNullOrEmpty(indexText)
                     ? Microsoft.UI.Xaml.Visibility.Collapsed
                     : Microsoft.UI.Xaml.Visibility.Visible;
 
@@ -106,7 +221,20 @@ namespace VardyParty.Platforms.Windows
                     infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 }
 
-                infoQualityText.Text = whileSwitching ? string.Empty : (model.Quality ?? string.Empty);
+                var suffix = PlayerChromeText.FormatStreamIdentitySuffix(model, whileSwitching);
+                infoIdentitySuffixText.Text = suffix;
+                infoIdentitySuffixText.Visibility = string.IsNullOrEmpty(suffix)
+                    ? Microsoft.UI.Xaml.Visibility.Collapsed
+                    : Microsoft.UI.Xaml.Visibility.Visible;
+
+                var identityVisible = infoStreamIndexText.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                    || infoSourceBadge.Visibility == Microsoft.UI.Xaml.Visibility.Visible
+                    || infoIdentitySuffixText.Visibility == Microsoft.UI.Xaml.Visibility.Visible;
+                infoIdentityRow.Visibility = identityVisible
+                    ? Microsoft.UI.Xaml.Visibility.Visible
+                    : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+                infoQualityText.Text = PlayerChromeText.FormatQualityLine(model, whileSwitching);
                 infoQualityText.Visibility = string.IsNullOrEmpty(infoQualityText.Text)
                     ? Microsoft.UI.Xaml.Visibility.Collapsed
                     : Microsoft.UI.Xaml.Visibility.Visible;
@@ -139,6 +267,9 @@ namespace VardyParty.Platforms.Windows
                         infoStreamIndexText.Text = string.Empty;
                         infoStreamIndexText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoIdentitySuffixText.Text = string.Empty;
+                        infoIdentitySuffixText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                        infoIdentityRow.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoQualityText.Text = string.Empty;
                         infoQualityText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                         infoDetailText.Text = string.Empty;
@@ -335,8 +466,7 @@ namespace VardyParty.Platforms.Windows
                 {
                     proposed = PlaybackChromeContentState.Switching;
                 }
-                else if (liveHlsSoftRecoverInFlight
-                    || session.Snapshot.IsRecovering
+                else if (session.Snapshot.IsRecovering
                     || session.Snapshot.IsRecoveringSwitch)
                 {
                     proposed = PlaybackChromeContentState.Recovering;
@@ -487,54 +617,46 @@ namespace VardyParty.Platforms.Windows
                     var index = switchingService.GetCurrentStreamIndex();
                     var current = switchingService.GetCurrentStream();
 
-                    // Video-info Resolution only — switch toast is index/total (no quality flash).
-                    var resolutionForInfo = current?.Health?.Resolution
-                        ?? current?.Stream?.Resolution
-                        ?? (_host._currentMetrics?.Resolution is { } r ? $"{r.Item2}p" : null);
+                    var measured = pictureSizeSettler.Published is { } settled
+                        ? $"{settled.Width}x{settled.Height}"
+                        : null;
 
                     var overlay = new PlayerOverlayInfo
                     {
                         Index = index,
                         Total = total,
-                        Channel = current?.Stream?.Channel,
-                        Resolution = resolutionForInfo,
-                        Title = current?.Stream?.Channel
+                        Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream),
+                        SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
+                        Resolution = measured,
+                        ProbedResolution = current?.Health?.GetProbedResolution(),
+                        Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream)
                     };
-                    chrome.ApplyOverlayInfo(overlay);
+                    chrome.ApplyOverlayInfo(overlay, streamSwitchInProgress);
                     chrome.NotifyHealthyCount(total);
 
                     var hasChanged = total != lastStreamTotal || index != lastStreamIndex;
                     lastStreamTotal = total;
                     lastStreamIndex = index;
-                    var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         ApplyNextButtonChrome();
 
-                        // Toast / badge stay hidden under the video-info panel.
+                        // Toast stays hidden under the video-info panel.
                         if (chrome.IsVideoInfoVisible)
                             return;
 
-                        streamCountText.Text = chrome.StreamToast?.Text
-                            ?? PlayerOverlayFormatter.FormatStreamToast(index, total, null);
+                        var toastText = chrome.StreamToast?.Text
+                            ?? PlayerOverlayFormatter.FormatStreamToast(
+                                index, total, measured ?? overlay.ProbedResolution,
+                                overlay.SourceLabel, overlay.Channel);
+                        // One row: index, coloured V1/V2 chip (video-info colours), name, height.
+                        ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(
+                            toastText, chrome.StreamToast?.SourceLabel ?? overlay.SourceLabel));
 
-                        var badgeStyle = SourceBadgeStyle.ForLabel(sourceLabel);
-                        if (badgeStyle is { } style && !string.IsNullOrWhiteSpace(sourceLabel))
-                        {
-                            streamSourceBadgeText.Text = sourceLabel;
-                            streamSourceBadge.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                global::Windows.UI.Color.FromArgb(style.BgA, style.BgR, style.BgG, style.BgB));
-                            streamSourceBadgeText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                global::Windows.UI.Color.FromArgb(style.FgA, style.FgR, style.FgG, style.FgB));
-                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-                        }
-                        else
-                        {
-                            streamSourceBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                        }
-
-                        // Index/total change or durable hold while awaiting playable content.
-                        if (total > 0 && (hasChanged || chrome.ShouldHoldStreamToast || chrome.IsStreamToastVisible))
+                        // Restart auto-hide only when the stream index/total changes, or
+                        // while awaiting playable content. Height-only refreshes already
+                        // updated the text above and must not reset the 10s timer.
+                        if (total > 0 && (hasChanged || chrome.ShouldHoldStreamToast))
                             ApplyStreamToastHoldVisuals();
                     });
                 }

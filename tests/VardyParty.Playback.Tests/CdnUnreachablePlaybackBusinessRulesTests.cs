@@ -24,6 +24,7 @@ public class CdnUnreachablePlaybackBusinessRulesTests
     [InlineData("Source error [network connection timeout] SocketTimeoutException: connect timed out", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("SSLHandshakeException: Connection closed by peer", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("Connection reset by peer", PlaybackErrorKind.CdnUnreachable)]
+    [InlineData("Source error HlsPlaylistTracker$PlaylistStuckException", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("UnknownHostException: Unable to resolve host \"hls.gone\": No address associated with hostname", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("Response code: 404 for index.m3u8", PlaybackErrorKind.ConfirmedDead)]
     [InlineData("decoy segment (image)", PlaybackErrorKind.ConfirmedDead)]
@@ -66,17 +67,23 @@ public class CdnUnreachablePlaybackBusinessRulesTests
     }
 
     [Fact]
-    public void Established_CdnUnreachable_RetriesThenMovesOn_KeepsRowUnreported()
+    public void Established_CdnUnreachable_SwitchesAtOnceWithoutReplay_KeepsRowUnreported()
     {
+        // Arrange
         var session = Established(healthy: 3);
 
-        var (all, last) = ErrorUntilGivenUp(session, Refused);
+        // Act
+        var effects = session.Handle(MediaEngineEvent.Error(session.Snapshot.AttachGeneration, Refused));
 
-        Assert.Contains(all, e => e.Kind == PlaybackEffectKind.Attach || e.Kind == PlaybackEffectKind.RetryFreshResolve);
-        Assert.Contains(last, e => e.Kind == PlaybackEffectKind.AdvanceToNext
-                                   && e.Reason!.StartsWith(PlaybackCloseReasons.CdnUnreachable, StringComparison.Ordinal));
-        Assert.Contains(last, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
-        Assert.DoesNotContain(all, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
+        // Assert
+        // No same-URL reload or fresh /play: both restart at the live offset and
+        // re-show watched segments. Option 1 already retried in the fetch layer.
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.Attach or PlaybackEffectKind.RetryFreshResolve);
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.AdvanceToNext
+                                      && e.Reason!.StartsWith(PlaybackCloseReasons.CdnUnreachable, StringComparison.Ordinal));
+        Assert.Contains(effects, e => e.Kind == PlaybackEffectKind.ClearResolvedUrl);
+        Assert.DoesNotContain(effects, e => e.Kind is PlaybackEffectKind.ReportFailed or PlaybackEffectKind.RemoveCurrentFromPool);
+        Assert.True(session.SwitchBack.IsArmed);
     }
 
     [Fact]

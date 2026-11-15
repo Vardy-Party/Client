@@ -51,6 +51,7 @@ public class SameStreamRecoveryBusinessRulesTests
     [InlineData("Media failed (source not supported): Unknown media error Forbidden (403). (0x80190193)", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("[parsing manifest malformed]", PlaybackErrorKind.TokenOrPlaylistInvalid)]
     [InlineData("HTTP 504 gateway #EXTM3U", PlaybackErrorKind.CdnUnreachable)]
+    [InlineData("Source error HlsPlaylistTracker$PlaylistStuckException", PlaybackErrorKind.CdnUnreachable)]
     [InlineData("bitrate 4030 kbps stall", PlaybackErrorKind.Transient)]
     [InlineData(null, PlaybackErrorKind.Transient)]
     public void ClassifyPlaybackError_SeparatesTransientTokenAndDead(string? message, PlaybackErrorKind expected)
@@ -325,7 +326,7 @@ public class SameStreamRecoveryBusinessRulesTests
     [Fact]
     public void MalformedPlaylist_WithOtherStreams_AdvancesImmediately_NoFreshWait()
     {
-        // Arrange — Bravia 8 Nov 2026: Hadcrack non-#EXTM3U closed to home after a
+        // Arrange — Bravia 8 Nov 2026: a provider's non-#EXTM3U playlist closed to home after a
         // late fresh /play; keep the player up and cut over when the pool has peers.
         var session = Established(healthy: 3);
         var effects = Error(

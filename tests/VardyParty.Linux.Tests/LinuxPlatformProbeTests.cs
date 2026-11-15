@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using VardyParty.Linux.Services;
+using VardyParty.Playback;
 using Xunit;
 
 namespace VardyParty.Linux.Tests;
@@ -258,5 +259,16 @@ public class LinuxPlatformProbeTests
         Assert.DoesNotContain(":avcodec-hw=none", options);
         Assert.DoesNotContain(":avcodec-skiploopfilter=all", options);
         Assert.DoesNotContain(options, o => o.StartsWith(":clock-jitter=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ResolveLiveNetworkCachingMs_UsesSharedPolicyConstants_AndNeverThe25sLiveOffset()
+    {
+        Assert.Equal(PlaybackPolicy.LibVlcNetworkCachingMs, LinuxPlatformProbe.DesktopLiveNetworkCachingMs);
+        Assert.Equal(PlaybackPolicy.LibVlcTestHostNetworkCachingMs, LinuxPlatformProbe.WslLiveNetworkCachingMs);
+        Assert.Equal(PlaybackPolicy.LibVlcNetworkCachingMs, LinuxPlatformProbe.ResolveLiveNetworkCachingMs(conservative: false));
+        Assert.Equal(PlaybackPolicy.LibVlcTestHostNetworkCachingMs, LinuxPlatformProbe.ResolveLiveNetworkCachingMs(conservative: true));
+        Assert.NotEqual(PlaybackPolicy.DesiredLiveOffsetSeconds * 1000, LinuxPlatformProbe.DesktopLiveNetworkCachingMs);
+        Assert.DoesNotContain($"--network-caching={PlaybackPolicy.DesiredLiveOffsetSeconds * 1000}", LinuxPlatformProbe.BuildLibVlcOptions(conservative: false));
     }
 }

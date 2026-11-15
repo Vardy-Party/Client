@@ -59,7 +59,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly IStreamHealthReporter _healthReporter;
     private readonly LinuxHlsLocalProxy? _hlsProxy;
     private readonly IPlaybackPlaylistProcessor? _playlistProcessor;
-    private readonly PlaybackSessionController _session = new();
+    private readonly PlaybackSessionController _session = CreateSession();
+    private readonly DecodedPictureSizeSettler _pictureSizeSettler = new();
+    private Timer? _pictureTickTimer;
+    private SwitchBackRunner? _switchBack;
+    private readonly ISwitchBackProbe? _switchBackProbe;
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
@@ -75,6 +79,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private bool _initFailed;
     private string? _refererUrl;
     private IReadOnlyDictionary<string, string>? _requestHeaders;
+
+    private const string LinuxBrowserUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     private Timer? _metricsTimer;
     private int _playbackSessionId;
     private string? _playbackTitle;
@@ -84,6 +91,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private bool _isNextStreamRequestInProgress;
     /// <summary>True while Next/Prev attach is in flight — video-info omits telemetry/URLs.</summary>
     public bool StreamSwitchInProgress { get; private set; }
+    private int _pictureFormatGenerationAtSwitch;
+    private bool _playerResolutionTrusted = true;
     /// <summary>
     /// When true, <see cref="CurrentStreamIndexChanged"/> must not re-attach —
     /// the session command path already owns Attach (same as Windows/Android).
@@ -129,9 +138,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         ResolveFreshPlaybackUrlAsync resolveFresh,
         IStreamHealthReporter healthReporter,
         IHttpClientFactory? httpClientFactory = null,
-        IPlaybackPlaylistProcessor? playlistProcessor = null)
+        IPlaybackPlaylistProcessor? playlistProcessor = null,
+        IPlaylistReloadRecoveryStrategy? playlistReload = null,
+        ISwitchBackProbe? switchBackProbe = null)
     {
         _logger = logger;
+        _switchBackProbe = switchBackProbe;
         _switching = switching;
         _healthReporter = healthReporter;
         _playlistProcessor = playlistProcessor;
@@ -139,7 +151,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             _hlsProxy = new LinuxHlsLocalProxy(
                 httpClientFactory.CreateClient(VardyParty.Hosting.PlaybackHttpClients.Media),
-                logger);
+                logger,
+                playlistReload,
+                _session.PlayedSegments);
             if (_playlistProcessor is not null)
                 _hlsProxy.SetPlaylistTransform(_playlistProcessor.Process);
         }
@@ -355,6 +369,12 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
     private void SetStreamSwitchInProgress(bool value)
     {
+        if (value)
+        {
+            _pictureFormatGenerationAtSwitch = _current?.FrameSink?.FormatGeneration ?? 0;
+            _playerResolutionTrusted = false;
+            _pictureSizeSettler.Reset();
+        }
         if (StreamSwitchInProgress == value)
             return;
         StreamSwitchInProgress = value;
@@ -439,9 +459,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 "[LinuxVideoPlayerService] Switching playback source (force={Force}) to {Channel}",
                 true,
                 current?.Stream?.Channel ?? "(unknown)");
-            _requestHeaders = current?.RequestHeaders ?? _requestHeaders;
-            if (!string.IsNullOrWhiteSpace(current?.Referer))
-                _refererUrl = current.Referer;
+            if (current is not null)
+                ApplyRequestContext(PlaybackRowRequestContext.ForRow(current));
             AttachViaSession(url, usedCachedUrl: false, force: true);
             if (!_session.Snapshot.IsPreparing)
                 SetStreamSwitchInProgress(false);
@@ -462,6 +481,8 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     public void StopPlayback()
     {
         _logger.LogInformation("[LinuxVideoPlayerService] Close requested (t={Timestamp:HH:mm:ss.fff})", DateTime.UtcNow);
+        _switchBack?.Stop();
+        StopPictureTick();
         StopMetricsLoop();
         var closed = new PlaybackResult
         {
@@ -884,6 +905,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     || engineEvent.Kind == MediaEngineEventKind.Error))
             {
                 SetStreamSwitchInProgress(false);
+                // No software-frame sink means no FormatGeneration bump — Ready
+                // is the best confirm we have. With a sink, wait for a new format.
+                if (engineEvent.Kind == MediaEngineEventKind.Ready
+                    && _current?.FrameSink is null)
+                    _playerResolutionTrusted = true;
             }
             else
             {
@@ -901,15 +927,27 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     /// </summary>
     private void AttachPoolUrl(string url, bool usedCachedUrl, bool force)
     {
-        var current = _switching.GetCurrentStream();
-        if (current != null && string.Equals(current.ResolvedM3U8Url, url, StringComparison.OrdinalIgnoreCase))
-        {
-            _requestHeaders = current.RequestHeaders ?? _requestHeaders;
-            if (!string.IsNullOrWhiteSpace(current.Referer))
-                _refererUrl = current.Referer;
-        }
-
+        ApplyRequestContextForUrl(url);
         AttachViaSession(url, usedCachedUrl, force);
+    }
+
+    /// <summary>
+    /// Every attach (switch, revert, retry) sends the headers of the row whose URL is attached
+    /// (<see cref="PlaybackRowRequestContext"/>, as Windows and Android); a URL of no pool row
+    /// keeps the current ones. Before round 13 a row with no headers / Referer kept the
+    /// previous stream's, and the LibVLC attach always took the CURRENT row's (a revert to the
+    /// last good stream sent the failed row's Referer).
+    /// </summary>
+    private void ApplyRequestContextForUrl(string url)
+        => ApplyRequestContext(PlaybackRowRequestContext.ForUrl(
+            _switching,
+            url,
+            new PlaybackRequestContext(_refererUrl ?? string.Empty, _requestHeaders)));
+
+    private void ApplyRequestContext(PlaybackRequestContext context)
+    {
+        _refererUrl = context.Referer;
+        _requestHeaders = context.Headers;
     }
 
     private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
@@ -929,6 +967,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         ApplyPlaybackCommand(PlaybackCommand.FromEffects(effects));
         RaisePlaybackLifecycleChanged();
     }
+
+    private SwitchBackRunner EnsureSwitchBackRunner()
+        => _switchBack ??= SwitchBackRunner.Create(
+            _session,
+            _switching,
+            _switchBackProbe,
+            settledHeight: () => _pictureSizeSettler.Published?.Height,
+            runOnUi: SwitchBackRunner.Dispatch(action => Avalonia.Threading.Dispatcher.UIThread.Post(action)),
+            log: msg => _logger.LogInformation("{Message}", msg));
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
     {
@@ -999,6 +1046,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         {
             if (isRevert)
                 player._logger.LogWarning("[LinuxVideoPlayerService] Reverting to last good stream: {Url}", url);
+            player.ApplyRequestContextForUrl(url);
             _ = player._engine.AttachAsync(url, player._requestHeaders);
         }
 
@@ -1035,6 +1083,9 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
 
         public void NotifyApplyFailed(Exception exception)
             => player._logger.LogWarning(exception, "[LinuxVideoPlayerService] ApplyPlaybackCommand failed");
+
+        public void ConsiderSwitchBack(PlaybackCommand cmd)
+            => player.EnsureSwitchBackRunner().Consider(cmd);
     }
 
     private async Task AttachLibVlcAsync(
@@ -1068,15 +1119,17 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         await TryEmbedSurfaceAsync(vlc);
 #endif
 
-        var current = _switching.GetCurrentStream();
-        if (current?.RequestHeaders is { Count: > 0 })
-            requestHeaders = current.RequestHeaders;
-        if (!string.IsNullOrWhiteSpace(current?.Referer))
-            _refererUrl = current.Referer;
-
+        // The row whose URL this is (not the current row: a revert attaches the last good
+        // one), with UA / Referer / Origin filled in by the shared rule.
+        var context = PlaybackRowRequestContext.ForUrl(
+            _switching,
+            m3u8Url,
+            new PlaybackRequestContext(_refererUrl ?? string.Empty, requestHeaders));
+        _refererUrl = context.Referer;
+        var resolvedHeaders = PlaybackRequestHeaders.ForContext(context, LinuxBrowserUserAgent);
+        requestHeaders = resolvedHeaders;
         var referer = ResolveHeader(requestHeaders, "referer") ?? _refererUrl;
-        var userAgent = ResolveHeader(requestHeaders, "user-agent")
-            ?? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        var userAgent = ResolveHeader(requestHeaders, "user-agent") ?? LinuxBrowserUserAgent;
         var origin = ResolveHeader(requestHeaders, "origin");
 
         // LibVLC's C HTTP stack cannot use DualStack/DoH and prefers AAAA on
@@ -1090,7 +1143,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _hlsProxy.SetPlaybackHeaders(requestHeaders, referer);
                 _hlsProxy.SetRewrittenSegments(_switching.GetCurrentStream()?.RewrittenSegments);
-                playUrl = _hlsProxy.Wrap(m3u8Url).AbsoluteUri;
+                playUrl = _hlsProxy.Wrap(m3u8Url, PlaylistReloadRowName.ForUrl(_switching, m3u8Url)).AbsoluteUri;
                 playViaProxy = true;
                 _logger.LogInformation(
                     "[LinuxVideoPlayerService] HLS via loopback proxy {ProxyUrl} (origin {Origin})",
@@ -1155,7 +1208,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     {
         try
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+            var deadline = DateTime.UtcNow + PlaybackPolicy.NoVideoTimeout;
             while (DateTime.UtcNow < deadline)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
@@ -1227,6 +1280,15 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         SetBufferingState(false);
         _engine.Raise(MediaEngineEvent.Ready(_session.Snapshot.AttachGeneration));
         StartMetricsLoop();
+        StartPictureTick();
+        ProbeVideo();
+    }
+
+    private static PlaybackSessionController CreateSession()
+    {
+        var session = new PlaybackSessionController();
+        session.EnableVideoConfirmation();
+        return session;
     }
 
     private static string? ResolveHeader(IReadOnlyDictionary<string, string>? headers, string name)
@@ -1286,6 +1348,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogError("[LinuxVideoPlayerService] Playback error encountered");
+        StopPictureTick();
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Error(_session.Snapshot.AttachGeneration, "Stream playback failed"));
     }
@@ -1298,6 +1361,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         }
 
         _logger.LogInformation("[LinuxVideoPlayerService] Playback ended");
+        StopPictureTick();
         StopMetricsLoop();
         _engine.Raise(MediaEngineEvent.Ended(_session.Snapshot.AttachGeneration));
         PlaybackVisibilityChanged?.Invoke(this, false);
@@ -1324,6 +1388,26 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         return stream == null ? null : StreamHealthIdentity.GetStreamName(stream);
     }
 
+    /// <summary>
+    /// True once the current attach has produced a new picture format (or Ready
+    /// when there is no software-frame sink). False during and after a switch
+    /// until then, so the previous stream's size cannot flash on the overlay.
+    /// </summary>
+    public bool IsPlayerResolutionTrusted()
+    {
+        if (_playerResolutionTrusted)
+            return true;
+
+        var generation = _current?.FrameSink?.FormatGeneration ?? 0;
+        if (generation > _pictureFormatGenerationAtSwitch)
+        {
+            _playerResolutionTrusted = true;
+            return true;
+        }
+
+        return false;
+    }
+
     public PlaybackMetrics? GetCurrentMetrics()
     {
         var vlc = _current;
@@ -1340,6 +1424,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                 return null;
             }
 
+            var resolutionTrusted = IsPlayerResolutionTrusted();
             (int Width, int Height)? resolution = null;
             int? framerate = null;
             int? trackBitrateKbps = null;
@@ -1351,7 +1436,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
                     continue;
 
                 var video = track.Data.Video;
-                if (video.Width > 0 && video.Height > 0)
+                if (resolutionTrusted && video.Width > 0 && video.Height > 0)
                     resolution = ((int)video.Width, (int)video.Height);
 
                 if (video.FrameRateNum > 0 && video.FrameRateDen > 0)
@@ -1365,11 +1450,22 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             }
 
             // Soft-present size is a fallback (WSL may cap width); prefer track geometry.
-            if (resolution is null)
+            if (resolutionTrusted && resolution is null)
             {
                 var frame = vlc.FrameSink?.LastFrameSize;
                 if (frame is { Width: > 0, Height: > 0 })
                     resolution = frame;
+            }
+
+            // Overlay and health metrics publish only after the shared 1s settle.
+            if (resolutionTrusted && resolution is { Width: > 0, Height: > 0 } raw)
+            {
+                var published = _pictureSizeSettler.Observe(raw.Width, raw.Height);
+                resolution = published;
+                NoteSettledPictureSize(published);
+                // A mid-play size change needs the tick to settle once the picture tick stopped.
+                if (_pictureSizeSettler.NeedsTick && _pictureTickTimer is null)
+                    StartPictureTick();
             }
 
             // LibVLC media stats report demux/input rates in bytes/s.
@@ -1455,7 +1551,95 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
             {
                 _logger.LogDebug(ex, "[LinuxVideoPlayerService] Metrics raise failed");
             }
-        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }, null, PlaybackPolicy.HealthMetricsInterval, PlaybackPolicy.HealthMetricsInterval);
+    }
+
+    private void StartPictureTick()
+    {
+        StopPictureTick();
+        _pictureTickTimer = new Timer(_ =>
+        {
+            try
+            {
+                NoteSettledPictureSize(_pictureSizeSettler.Tick());
+                ProbeVideo();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[LinuxVideoPlayerService] Picture tick failed");
+            }
+        }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private void NoteSettledPictureSize((int Width, int Height)? published)
+    {
+        if (published is not { Height: > 0 } size)
+            return;
+        _switchBack?.NoteBackupHeight(size.Height);
+        // A mid-play size change replaces the stream's stored height too.
+        MeasuredPictureSize.Remember(_switching.GetCurrentStream()?.Health, size);
+    }
+
+    private void StopPictureTick()
+    {
+        _pictureTickTimer?.Dispose();
+        _pictureTickTimer = null;
+    }
+
+    /// <summary>
+    /// Tells the session whether this attach has shown video. Called on Ready
+    /// and on every picture tick until confirmed; the session fails the stream
+    /// with "No video (audio only)" after <see cref="PlaybackPolicy.NoVideoTimeout"/>.
+    /// A first-frame size confirms the picture immediately; the overlay still
+    /// waits for <see cref="DecodedPictureSizeSettler"/> to settle.
+    /// </summary>
+    private void ProbeVideo()
+    {
+        try
+        {
+            if (_session.Snapshot.IsVideoConfirmed)
+            {
+                if (!_pictureSizeSettler.NeedsTick)
+                    StopPictureTick();
+                return;
+            }
+
+            var hasVideo = TryGetRawTrustedPictureSize() is { Height: > 0 };
+            _engine.Raise(MediaEngineEvent.VideoProbe(_session.Snapshot.AttachGeneration, hasVideo));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[LinuxVideoPlayerService] ProbeVideo failed");
+        }
+    }
+
+    private (int Width, int Height)? TryGetRawTrustedPictureSize()
+    {
+        if (!IsPlayerResolutionTrusted())
+            return null;
+
+        var vlc = _current;
+        if (vlc is not { Abandoned: false })
+            return null;
+
+        var media = vlc.Player.Media ?? _currentMedia;
+        if (media != null)
+        {
+            foreach (var track in media.Tracks)
+            {
+                if (track.TrackType != TrackType.Video)
+                    continue;
+                var video = track.Data.Video;
+                if (video.Width > 0 && video.Height > 0)
+                    return ((int)video.Width, (int)video.Height);
+            }
+        }
+
+        var frame = vlc.FrameSink?.LastFrameSize;
+        if (frame is { Width: > 0, Height: > 0 })
+            return frame;
+
+        return null;
     }
 
     private void StopMetricsLoop()

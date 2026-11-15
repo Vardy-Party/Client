@@ -58,6 +58,56 @@ public static partial class PlaybackPolicy
     public const int MaxSameStreamRetries = 3;
 
     /// <summary>
+    /// Shared mid-play hold for every platform (Android ExoPlayer <c>Open</c>,
+    /// Windows AMS <c>DownloadRequested</c>, Linux loopback proxy). If the next
+    /// retry delay would exceed this budget, give up as
+    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> so the session can switch
+    /// and option 2 can return later. Never serve a stale last-good playlist.
+    /// 2s is short enough to avoid ExoPlayer <c>PlaylistStuckException</c>
+    /// (TV 257 at 20:20:21: two 3–4s 503s stalled the picture for ~8s) and is
+    /// well under the Windows AMS deferral deadline
+    /// (<see cref="WindowsPlaylistDeferralBudget"/>).
+    /// </summary>
+    public static readonly TimeSpan PlaylistReloadHoldBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Windows Adaptive Media Source must finish a <c>DownloadRequested</c>
+    /// deferral within this engine deadline or AMS may abandon the request.
+    /// Mid-play retries use <see cref="PlaylistReloadHoldBudget"/>, which is
+    /// shorter, so give-up always completes the deferral in time.
+    /// </summary>
+    public static readonly TimeSpan WindowsPlaylistDeferralBudget = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// Wall-clock budget for mid-play same-URL retries in one playback session.
+    /// Three 503s of 3–4s cover about 12s; after this the row is kept as
+    /// CDN-unreachable and the session switches (option 2 may switch back).
+    /// </summary>
+    public static readonly TimeSpan PlaylistReloadGiveUpBudget = TimeSpan.FromSeconds(12);
+
+    /// <summary>Option 2 playlist-only re-probes: 5s, 15s, then 30s / 60s / 120s backoff.</summary>
+    public static readonly TimeSpan[] SwitchBackProbeSchedule =
+    [
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(15),
+        TimeSpan.FromSeconds(30),
+        TimeSpan.FromSeconds(60),
+        TimeSpan.FromSeconds(120)
+    ];
+
+    /// <summary>
+    /// Minimum time on the backup before auto-returning to a recovered user-chosen
+    /// stream that is not clearly higher resolution (flap guard).
+    /// </summary>
+    public static readonly TimeSpan SwitchBackMinBackupDwell = TimeSpan.FromSeconds(30);
+
+    public static bool IsUserNavigationReason(string? reason) =>
+        reason is not null
+        && (reason.Equals("User next", StringComparison.Ordinal)
+            || reason.Equals("User previous", StringComparison.Ordinal)
+            || reason.StartsWith("User ", StringComparison.Ordinal));
+
+    /// <summary>
     /// Extra fresh <c>/play</c> attempts when a scrape returns no URL for a stream
     /// that was already playing. A wedd/premium page often emits an unsigned
     /// playlist first (rejected: no video bytes) and a signed one on the next
@@ -116,6 +166,11 @@ public static partial class PlaybackPolicy
         if (string.IsNullOrWhiteSpace(message))
             return PlaybackErrorKind.Transient;
 
+        // Our own CDN-unreachable verdict (KeepCdnUnreachableAndMoveOn, a Windows
+        // network failure with no dead/auth status): already classified by status.
+        if (message.StartsWith(VardyParty.Kernel.PlaybackCloseReasons.CdnUnreachable, StringComparison.Ordinal))
+            return PlaybackErrorKind.CdnUnreachable;
+
         var text = message.ToLowerInvariant();
 
         // A playlist that is 404/410 is gone. A segment 404 is often a transient
@@ -157,7 +212,8 @@ public static partial class PlaybackPolicy
             || ContainsStatus(text, "500")
             || ContainsStatus(text, "502")
             || ContainsStatus(text, "503")
-            || ContainsStatus(text, "504"))
+            || ContainsStatus(text, "504")
+            || IsStuckLivePlaylistFailure(message))
         {
             return PlaybackErrorKind.CdnUnreachable;
         }
@@ -242,6 +298,27 @@ public static partial class PlaybackPolicy
         if (!string.IsNullOrWhiteSpace(causeSummary))
             parts.Add(causeSummary.Trim());
         return string.Join(' ', parts);
+    }
+
+    /// <summary>
+    /// After a mid-play playlist give-up classified as CDN-unreachable, the
+    /// player may keep playing the live buffer (~<see cref="DesiredLiveOffsetSeconds"/>)
+    /// and then surface a parse error ("not #EXTM3U") when the buffer runs out —
+    /// often because Media3 retried the open and read an empty body. Prefer the
+    /// give-up wording so <see cref="ClassifyPlaybackError"/> stays
+    /// <see cref="PlaybackErrorKind.CdnUnreachable"/> and the row is kept for a recheck,
+    /// not marked tried+failed.
+    /// </summary>
+    public static string ResolvePlayerErrorAfterPlaylistGiveUp(string builtMessage, PlaylistReloadSession? session)
+    {
+        if (session?.LastGiveUpKind == PlaybackErrorKind.CdnUnreachable
+            && !string.IsNullOrWhiteSpace(session.LastGiveUpMessage)
+            && ClassifyPlaybackError(builtMessage) == PlaybackErrorKind.TokenOrPlaylistInvalid)
+        {
+            return session.LastGiveUpMessage!;
+        }
+
+        return builtMessage;
     }
 
     /// <summary>

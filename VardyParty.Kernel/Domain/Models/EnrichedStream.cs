@@ -61,14 +61,14 @@ public class EnrichedStream
     public StreamDeferReason DeferReason { get; set; }
 
     /// <summary>
-    /// Returns the quality label if metadata is available
-    /// (e.g., "1080p 60fps 5000kbps")
+    /// Returns the quality label shown in the player UI if metadata is available
+    /// (e.g., "1080p 60fps"). Never includes bitrate.
     /// </summary>
     public string GetQualityDisplay()
     {
         if (Health?.Status == StreamHealthStatus.Healthy)
         {
-            var label = Health.GetQualityLabel();
+            var label = Health.GetQualityLabel(includeBitrate: false);
             return string.IsNullOrEmpty(label) ? "Unknown Quality" : label;
         }
 
@@ -76,7 +76,7 @@ public class EnrichedStream
         {
             StreamResolutionStatus.Pending => "Loading...",
             StreamResolutionStatus.Resolved => "Testing...",
-            StreamResolutionStatus.Healthy => Health?.GetQualityLabel() ?? "Unknown Quality",
+            StreamResolutionStatus.Healthy => Health?.GetQualityLabel(includeBitrate: false) ?? "Unknown Quality",
             StreamResolutionStatus.Failed => $"Failed: {ErrorMessage}",
             StreamResolutionStatus.Deferred when DeferReason == StreamDeferReason.CdnUnreachable => CdnReachabilityPolicy.RecheckingMessage,
             StreamResolutionStatus.Deferred => "Waiting for local service...",

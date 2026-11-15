@@ -51,6 +51,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
     private bool _pendingResetScores;
     private readonly IDesktopUpdateService _updates;
     private readonly IRemoteComputeController? _remote;
+    private readonly IReadOnlySet<string> _leagueAcronyms;
     private DesktopUpdateOffer? _offer;
     private bool _updateBusy;
 
@@ -89,7 +90,8 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         SelectionState selection,
         ILogger<HomeViewModel> logger,
         IDesktopUpdateService updates,
-        IRemoteComputeController? remoteCompute = null)
+        IRemoteComputeController? remoteCompute = null,
+        Microsoft.Extensions.Options.IOptions<GamesApiSettings>? gamesApi = null)
     {
         _leagueFilter = leagueFilter ?? throw new ArgumentNullException(nameof(leagueFilter));
         _menu = menu ?? throw new ArgumentNullException(nameof(menu));
@@ -102,6 +104,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         _remote = remoteCompute;
+        _leagueAcronyms = LeagueDisplayName.AcronymSet(gamesApi?.Value?.LeagueAcronyms);
         if (_remote is not null)
         {
             _remote.Changed += OnRemoteComputeChanged;
@@ -693,7 +696,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
         var display = dict == null
             ? new List<Game>()
             : _leagueFilter.FilterGames(dict.ToDisplay());
-        var rowModels = HomeRowsBuilder.Build(display);
+        var rowModels = HomeRowsBuilder.Build(display, _leagueAcronyms);
 
         lock (_pendingLock)
         {
@@ -1130,7 +1133,7 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             row.Cards[i].IsResolving = HomePlaybackIntent.SameGame(_resolvingGame, game);
         }
 
-        row.Refresh(model.HasLiveGames);
+        row.Refresh(model.HasLiveGames, model.League);
     }
 
     private static int IndexOfCard(LeagueRowViewModel row, string key, int startAt)

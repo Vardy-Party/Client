@@ -115,12 +115,102 @@ public class LinuxHlsLocalProxyTests
         Assert.Equal(png, body);
     }
 
+    [Fact]
+    public async Task MidPlay_503Then200_RetriesSameUrlAndServesPlaylist()
+    {
+        var handler = new ScriptedHandler
+        {
+            PlaylistScript = new Queue<HttpResponseMessage>(
+            [
+                ScriptedHandler.Text(
+                    """
+                    #EXTM3U
+                    #EXTINF:2.0,
+                    seg.ts
+                    """),
+                ScriptedHandler.Text("<html>503</html>", HttpStatusCode.ServiceUnavailable),
+                ScriptedHandler.Text(
+                    """
+                    #EXTM3U
+                    #EXTINF:2.0,
+                    recovered.ts
+                    """)
+            ])
+        };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        var local = proxy.Wrap("https://cdn.example/live.m3u8");
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+
+        var first = await client.GetStringAsync(local);
+        Assert.Contains("#EXTM3U", first, StringComparison.Ordinal);
+
+        var second = await client.GetStringAsync(local);
+        Assert.Contains("#EXTM3U", second, StringComparison.Ordinal);
+        Assert.Equal(3, handler.PlaylistFetchCount);
+    }
+
+    [Fact]
+    public async Task FirstAttach_503_IsNotRetried()
+    {
+        var handler = new ScriptedHandler
+        {
+            PlaylistScript = new Queue<HttpResponseMessage>(
+            [
+                ScriptedHandler.Text("<html>503</html>", HttpStatusCode.ServiceUnavailable),
+                ScriptedHandler.Text("#EXTM3U\n#EXTINF:2.0,\nseg.ts\n")
+            ])
+        };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        var local = proxy.Wrap("https://cdn.example/live.m3u8");
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        using var response = await client.GetAsync(local);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(1, handler.PlaylistFetchCount);
+    }
+
+    [Fact]
+    public async Task MidPlay_Three503s_GivesUpWith503()
+    {
+        var handler = new ScriptedHandler
+        {
+            PlaylistScript = new Queue<HttpResponseMessage>(
+            [
+                ScriptedHandler.Text("#EXTM3U\n#EXTINF:2.0,\nseg.ts\n"),
+                ScriptedHandler.Text("bad", HttpStatusCode.ServiceUnavailable),
+                ScriptedHandler.Text("bad", HttpStatusCode.ServiceUnavailable),
+                ScriptedHandler.Text("bad", HttpStatusCode.ServiceUnavailable)
+            ])
+        };
+        using var upstream = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        using var proxy = new LinuxHlsLocalProxy(upstream);
+        Assert.True(proxy.TryStart());
+
+        var local = proxy.Wrap("https://cdn.example/live.m3u8");
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        Assert.StartsWith("#EXTM3U", (await client.GetStringAsync(local)).TrimStart());
+
+        using var failed = await client.GetAsync(local);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
+        Assert.Equal(4, handler.PlaylistFetchCount);
+    }
+
     private static string SegmentThroughProxy(LinuxHlsLocalProxy proxy, string target) =>
         LinuxHlsPlaylistRewriter.ToProxyUrl(target, proxy.Prefix);
 
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         public byte[]? WrappedSegment { get; init; }
+
+        public Queue<HttpResponseMessage>? PlaylistScript { get; init; }
+
+        public int PlaylistFetchCount { get; private set; }
 
         public string? LastReferer { get; private set; }
 
@@ -134,6 +224,12 @@ public class LinuxHlsLocalProxyTests
                               : null);
 
             var url = request.RequestUri?.AbsoluteUri ?? "";
+            if (PlaylistScript is not null && url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase))
+            {
+                PlaylistFetchCount++;
+                return Task.FromResult(PlaylistScript.Dequeue());
+            }
+
             if (url.EndsWith("ctu.m3u8", StringComparison.Ordinal))
             {
                 return Task.FromResult(Text(
@@ -169,10 +265,12 @@ public class LinuxHlsLocalProxyTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
-        private static HttpResponseMessage Text(string body) =>
-            new(HttpStatusCode.OK)
+        public static HttpResponseMessage Text(string body, HttpStatusCode status = HttpStatusCode.OK) =>
+            new(status)
             {
-                Content = new StringContent(body, Encoding.UTF8, "application/vnd.apple.mpegurl")
+                Content = new StringContent(body, Encoding.UTF8, status == HttpStatusCode.OK
+                    ? "application/vnd.apple.mpegurl"
+                    : "text/html")
             };
 
         private static HttpResponseMessage Bytes(byte[] body, string type)

@@ -148,8 +148,6 @@ namespace VardyParty.Platforms.Windows
                 ams?.CurrentDownloadBitrate ?? 0,
                 meter?.BitrateKbps);
 
-        private const string PlaybackUserAgent =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
         private static void ApplyManagedPlaybackHeaders(
             HttpRequestMessage request,
@@ -241,7 +239,8 @@ namespace VardyParty.Platforms.Windows
             Uri manifestUri,
             string refererUrl,
             IReadOnlyDictionary<string, string>? requestHeaders,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Func<byte[], byte[]>? transformManifest = null)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
             ApplyManagedPlaybackHeaders(request, refererUrl, requestHeaders);
@@ -255,7 +254,16 @@ namespace VardyParty.Platforms.Windows
                 response.Content.Headers.ContentType,
                 manifestUri.AbsolutePath,
                 AdaptiveMediaSourceResourceType.Manifest);
-            InMemoryRandomAccessStream? manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            InMemoryRandomAccessStream? manifestStream;
+            if (transformManifest is null)
+            {
+                manifestStream = await CopyToRandomAccessStreamAsync(response, cancellationToken);
+            }
+            else
+            {
+                var manifestBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                manifestStream = await CopyToRandomAccessStreamAsync(transformManifest(manifestBytes));
+            }
             try
             {
                 var streamResult = await AdaptiveMediaSource.CreateFromStreamAsync(
@@ -285,37 +293,11 @@ namespace VardyParty.Platforms.Windows
             }
         }
 
+        /// <summary>Row headers win; User-Agent, Referer and Origin fill the gaps (shared rule).</summary>
         private static IEnumerable<KeyValuePair<string, string>> ResolvePlaybackHeaders(
             string refererUrl,
             IReadOnlyDictionary<string, string>? requestHeaders)
-        {
-            if (requestHeaders is { Count: > 0 })
-            {
-                foreach (var pair in requestHeaders)
-                {
-                    if (!string.IsNullOrWhiteSpace(pair.Value))
-                    {
-                        yield return pair;
-                    }
-                }
-
-                yield break;
-            }
-
-            yield return new KeyValuePair<string, string>("User-Agent", PlaybackUserAgent);
-            if (string.IsNullOrWhiteSpace(refererUrl))
-            {
-                yield break;
-            }
-
-            yield return new KeyValuePair<string, string>("Referer", refererUrl);
-            if (Uri.TryCreate(refererUrl, UriKind.Absolute, out var refererUri))
-            {
-                yield return new KeyValuePair<string, string>(
-                    "Origin",
-                    $"{refererUri.Scheme}://{refererUri.Authority}");
-            }
-        }
+            => PlaybackRequestHeaders.Resolve(refererUrl, requestHeaders);
 
         /// <summary>
         /// Back off from the live edge so brief rebuffers are less likely to stall/fail

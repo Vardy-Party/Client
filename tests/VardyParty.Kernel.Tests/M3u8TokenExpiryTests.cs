@@ -50,6 +50,29 @@ public class M3u8TokenExpiryTests
     }
 
     [Fact]
+    public void TryGetExpiry_TwoPartSignedJsonToken_ReadsExpClaim()
+    {
+        // Arrange - Windows log 13 Nov 2026 19:40:38 (LiveStreams, sharpnessonline):
+        // token=<base64 {"stream","ip","exp","rand"}>.<hex sig>, no JWT header part.
+        var url = "https://sha.sharpnessonline.store/simpch21/index.m3u8?token="
+            + "eyJzdHJlYW0iOiJzaW1wY2gyMSIsImlwIjoiMC4wLjAuMCIsImV4cCI6MTc5NDYwMDYzMCwicmFuZCI6ImFhYzU1ZTEyZGNiYTZmMDEifQ"
+            + ".333773ca98f510135eaebe006df0f72aa";
+
+        // Act
+        var found = M3u8TokenExpiry.TryGetExpiry(url, out var expiry);
+
+        // Assert
+        Assert.True(found);
+        Assert.Equal(1794600630, expiry.ToUnixTimeSeconds());
+    }
+
+    [Theory]
+    [InlineData("https://cdn.oak.test/live/index.m3u8?token=abcdefghij.0123abcd")]
+    [InlineData("https://cdn.oak.test/live/index.m3u8?v=1.2")]
+    public void TryGetExpiry_TwoPartValueThatIsNotSignedJson_IsUnreadable(string url)
+        => Assert.False(M3u8TokenExpiry.TryGetExpiry(url, out _));
+
+    [Fact]
     public void TryGetExpiry_JwtTokenQuery_ReadsExpClaim()
     {
         // Arrange

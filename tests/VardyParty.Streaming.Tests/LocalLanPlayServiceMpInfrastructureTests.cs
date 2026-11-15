@@ -84,7 +84,9 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 """{"type":"error","statusCode":500,"error":"mp play execution failed"}""")),
             out _);
 
-        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service));
+        // The chip list may release the seed first (rule 5); the chip row then
+        // meets the fault.
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service, chip: "Chip A"));
 
         Assert.Equal(LocalServiceUnavailableReason.ServiceError, ex.Reason);
     }
@@ -168,9 +170,49 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 """{"type":"done"}""")),
             out _);
 
-        var result = await ResolveMp(service);
+        var seed = await ResolveMp(service);
+        var chip = await ResolveMp(service, chip: "Chip A");
 
-        Assert.Equal("https://cdn.example.test/mp.m3u8", result?.Url);
+        // The seed answers with the probe-ready chip or, if the chip list got in
+        // first, with the list (rule 5); either way the chip resolves.
+        Assert.Equal(["Chip A"], seed?.Streams);
+        Assert.Equal("https://cdn.example.test/mp.m3u8", chip?.Url);
+    }
+
+    [Fact]
+    public async Task Rule_TwoClientInstancesSharingTheHub_JoinOneHarvest_OnlyOnePostMp()
+    {
+        // Regression, TV log 13 Nov 2026 18:40:32: the typed HttpClient made ApiService,
+        // the resolver and the prewarmer separate LocalLanPlayService instances, each with
+        // its own harvest. [Prewarm] POSTed /mp for Fubo US while the resolver's harvest of
+        // the same page was running; LocalService (one /mp at a time) sent it nothing and
+        // it failed "sent nothing for 30s". With one MpHarvestHub the second caller joins.
+        var hub = new MpHarvestHub();
+        var counts = new Counts();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var posted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> work = async (_, _) =>
+        {
+            posted.TrySetResult();
+            await release.Task;
+            return Ndjson(HttpStatusCode.OK,
+                """{"type":"chips","streams":["VUS","Fubo US"],"selectedStream":"VUS"}""",
+                """{"type":"chip","label":"VUS","url":"https://cdn.example.test/vus.m3u8"}""",
+                """{"type":"chip","label":"Fubo US","url":"https://cdn.example.test/fubo.m3u8"}""",
+                """{"type":"done"}""");
+        };
+        var resolver = CreateService(work, counts, hub: hub);
+        var prewarmer = CreateService(work, counts, hub: hub);
+
+        var seed = ResolveMp(resolver);
+        await posted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var fubo = ResolveMp(prewarmer, chip: "Fubo US");
+        release.TrySetResult();
+
+        var fuboResult = await fubo.WaitAsync(TimeSpan.FromSeconds(10));
+        await seed.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("https://cdn.example.test/fubo.m3u8", fuboResult?.Url);
+        Assert.Equal(1, counts.Mp);
     }
 
     [Theory]
@@ -194,8 +236,8 @@ public class LocalLanPlayServiceMpInfrastructureTests
         Assert.Equal(LocalServiceUnavailableReason.Unauthorized, ex.Reason);
     }
 
-    private static Task<M3U8Response?> ResolveMp(LocalLanPlayService service, string page = Page)
-        => service.ResolveM3U8UrlAsync(page, playerStreamName: null, resolutionStrategy: "v2", source: "mp", CancellationToken.None);
+    private static Task<M3U8Response?> ResolveMp(LocalLanPlayService service, string page = Page, string? chip = null)
+        => service.ResolveM3U8UrlAsync(page, playerStreamName: chip, resolutionStrategy: "v2", source: "mp", CancellationToken.None);
 
     private sealed class Counts
     {
@@ -207,8 +249,16 @@ public class LocalLanPlayServiceMpInfrastructureTests
         out Counts counts,
         bool healthAnswers = true)
     {
-        var c = new Counts();
-        counts = c;
+        counts = new Counts();
+        return CreateService(work, counts, healthAnswers);
+    }
+
+    private static LocalLanPlayService CreateService(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> work,
+        Counts c,
+        bool healthAnswers = true,
+        MpHarvestHub? hub = null)
+    {
         var service = new LocalLanPlayService(
             new HttpClient(new ScriptHandler((request, ct) =>
             {
@@ -232,7 +282,8 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 M3U8CallTimeoutSeconds = 5
             }),
             Array.Empty<IPlaybackTransportPlugin>(),
-            NullLogger<LocalLanPlayService>.Instance);
+            NullLogger<LocalLanPlayService>.Instance,
+            mpHub: hub);
         service.DiscoverOverrideForTests = _ => Task.FromResult<string?>(null);
         service.DelayAsync = (_, _) => Task.CompletedTask;
         service.EndpointsForTests.Remember(Endpoint, DateTimeOffset.UtcNow);

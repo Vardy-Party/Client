@@ -1,0 +1,214 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace VardyParty.Streaming.Tests.Timeline;
+
+[CollectionDefinition(nameof(ProbeTimelineCollection), DisableParallelization = true)]
+public sealed class ProbeTimelineCollection
+{
+}
+
+/// <summary>
+/// docs/PROBE_SCHEDULING_RULES.md as timeline tests. Each case runs the real resolver,
+/// LocalLanPlayService and throttle against scripted LocalService milestones on a
+/// fake clock (instant). On failure the message carries the whole milestone table.
+/// Runs alone (no parallel tests) because the harness waits for the thread pool to go
+/// quiet between milestones.
+/// </summary>
+[Collection(nameof(ProbeTimelineCollection))]
+public class ProbeSchedulingRulesTests(ITestOutputHelper output)
+{
+    public static TheoryData<string> CurrentCases()
+    {
+        var data = new TheoryData<string>();
+        foreach (var c in ProbeSchedulingScenarios.Current)
+            data.Add(c.Name);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(CurrentCases))]
+    public async Task Current(string name)
+    {
+        // Arrange
+        var probeCase = ProbeSchedulingScenarios.Find(name);
+
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(probeCase.Scenario());
+
+        // Assert
+        output.WriteLine($"{name}: {timeline.SettleCount} settles, {timeline.SettleTotalMs:0} ms, slowest {timeline.SettleMaxMs:0} ms");
+        var failures = probeCase.Expect
+            .Select(e => (e, Why: e.Check(timeline)))
+            .Where(x => x.Why is not null)
+            .Select(x => $"  - {x.e.Description}: {x.Why}")
+            .ToList();
+        Assert.True(failures.Count == 0,
+            $"{name} [{probeCase.Rules}]\n{string.Join("\n", failures)}\n\n{timeline.Render()}");
+    }
+
+    /// <summary>
+    /// The user-experience targets (docs/PROBE_SCHEDULING_RULES.md "Acceptance") for every
+    /// scenario, written to the test output (run with a detailed console logger to read it).
+    /// Fails only when a measure that applies is missed: picture (A1) when there is a healthy
+    /// row, backup when a second row turns healthy, switches and channel numbers always; the
+    /// supporting A2 and A4 when there is an MP page, A3 always, A5 when there are tiers.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllScenarios))]
+    public async Task Acceptance(string scenario)
+    {
+        // Arrange
+        var make = ProbeSchedulingScenarios.All.Single(s => s.Name == scenario).Scenario;
+        var mpIds = make().Rows.Where(r => r.IsMp).Select(r => r.Id).ToList();
+
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(make());
+
+        // Assert
+        var rows = new List<(string Measure, string? Why, bool Applies)>
+        {
+            ("Picture", Expect.FirstPlayWithinOfFirstHealthy().Check(timeline),
+                timeline.HealthVerdicts.Any(h => h.Status == VardyParty.Kernel.StreamHealthStatus.Healthy)),
+            ("Backup", Expect.BackupReadyWithinOfSecondHealthy().Check(timeline), timeline.NthHealthy(2) is not null),
+            ("Switches", Expect.NoNeedlessSwitch().Check(timeline), true),
+            ("Channels", Expect.ChannelNumbersStable().Check(timeline), true),
+            ("A3", Expect.NoIdleSlotWhileQueued().Check(timeline), true),
+            ("A5", Expect.TopTierHeadStartHeld().Check(timeline), timeline.HeadStart is not null),
+        };
+        foreach (var id in mpIds)
+        {
+            var listed = timeline.ListedAt(id) is not null;
+            rows.Add(($"A2 {id}", Expect.ChipsVisibleWithin(id).Check(timeline), listed));
+            rows.Add(($"A4 {id}", Expect.SeedReleasesSlotWithinOfPost(id).Check(timeline), true));
+        }
+
+        foreach (var (measure, why, applies) in rows)
+        {
+            var known = KnownMisses.TryGetValue($"{scenario} {measure}", out var reason) ? $" (known: {reason})" : "";
+            output.WriteLine($"{scenario} {measure}: {(!applies ? "n/a" : why is null ? "PASS" : "FAIL " + why + known)}");
+        }
+
+        var failed = rows.Where(r => r.Applies && r.Why is not null && !KnownMisses.ContainsKey($"{scenario} {r.Measure}")).ToList();
+        Assert.True(failed.Count == 0,
+            $"{scenario}: {string.Join("; ", failed.Select(f => $"{f.Measure} {f.Why}"))}\n\n{timeline.Render()}");
+    }
+
+    /// <summary>Acceptance misses the rules accept, with why. Reported, not failed.</summary>
+    private static readonly Dictionary<string, string> KnownMisses = new()
+    {
+        ["SeedSilent A2 mp"] =
+            "the seed gave up at t+30s (R7) and its infrastructure retry asks again at t+37s; LocalService listed the chips at t+34s",
+    };
+
+    /// <summary>
+    /// The per-scenario table in docs/PROBE_SCHEDULING_RULES.md (between the ux-table
+    /// markers) is generated by the harness: picture time, backup time, switches and
+    /// renumbering for every scenario in <see cref="ProbeSchedulingScenarios.All"/>. Fails
+    /// when the doc and the timelines disagree, printing the table to paste in.
+    /// </summary>
+    [Fact]
+    public async Task UxTable_MatchesTheRulesDoc()
+    {
+        // Arrange
+        var doc = FindRulesDoc();
+        var text = File.ReadAllText(doc).Replace("\r\n", "\n");
+        var begin = text.IndexOf(UxTableBegin, StringComparison.Ordinal);
+        var end = text.IndexOf(UxTableEnd, StringComparison.Ordinal);
+        Assert.True(begin >= 0 && end > begin, $"{doc} has no {UxTableBegin} ... {UxTableEnd} block");
+        var inDoc = Lines(text[(begin + UxTableBegin.Length)..end]);
+
+        // Act
+        var table = new StringBuilder();
+        table.AppendLine("| Scenario | Picture | First healthy | Backup ready | Second healthy | Switches | Renumbered |");
+        table.AppendLine("|---|---|---|---|---|---|---|");
+        foreach (var (name, make) in ProbeSchedulingScenarios.All)
+        {
+            var t = await ProbeTimelineHarness.RunAsync(make());
+            table.AppendLine($"| {name} | {Secs(t.PictureAt)} | {Secs(t.NthHealthy(1)?.At)} | {Secs(t.FirstBackupReadyAt)} | {Secs(t.NthHealthy(2)?.At)} | {t.Switches} | {t.Renumbered} |");
+        }
+
+        var generated = Lines(table.ToString());
+        output.WriteLine(table.ToString());
+
+        // Assert
+        Assert.True(generated.SequenceEqual(inDoc),
+            $"docs/PROBE_SCHEDULING_RULES.md UX table is out of date. Generated:\n{table}");
+    }
+
+    /// <summary>
+    /// The <c>[probe-timing]</c> lines for an early chip that fails and passes on its retry:
+    /// chip listed and handed over (early, then retry), each health check with its result and
+    /// duration, the retry, the verdict, and slot grant/release with tier. Prints them (the
+    /// sample in docs/PROBE_SCHEDULING_RULES.md).
+    /// </summary>
+    [Fact]
+    public async Task ProbeTimingLog_EarlyChipRetry_EmitsTheKeyLines()
+    {
+        // Arrange
+        var scenario = ProbeSchedulingScenarios.EarlyChipRetryPasses();
+
+        // Act
+        var timeline = await ProbeTimelineHarness.RunAsync(scenario);
+
+        // Assert
+        foreach (var line in timeline.ProbeTimingLines)
+            output.WriteLine(line);
+        var why = Expect.ProbeTimingLogged(
+            "slot-grant:lane=fb", "slot-grant:lane=mp", "slot-grant:lane=mp-seed", "slot-release:lane=mp-seed",
+            "slot-release:result=retry-queued", "mp-chips", "chip-listed:chip=A",
+            "chip-handover:handover=early", "health-start:early=true", "health-end:result=ManifestNotFound",
+            "chip-retry-queued:first_result=ManifestNotFound", "chip-handover:handover=retry",
+            "health-start:retry=true", "health-end:result=Healthy", "verdict:after_retry=true",
+            "verdict:reason=no-playlist").Check(timeline);
+        Assert.True(why is null, why + "\n" + string.Join("\n", timeline.ProbeTimingLines));
+    }
+
+    private const string UxTableBegin = "<!-- ux-table:begin -->";
+    private const string UxTableEnd = "<!-- ux-table:end -->";
+
+    private static string Secs(double? t) => t is { } v ? v.ToString("0.0", CultureInfo.InvariantCulture) : "-";
+
+    private static List<string> Lines(string block) =>
+        block.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+
+    private static string FindRulesDoc()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "docs", "PROBE_SCHEDULING_RULES.md");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        throw new FileNotFoundException("docs/PROBE_SCHEDULING_RULES.md not found above " + AppContext.BaseDirectory);
+    }
+
+    public static TheoryData<string> AllScenarios()
+    {
+        var data = new TheoryData<string>();
+        foreach (var s in ProbeSchedulingScenarios.All)
+            data.Add(s.Name);
+        return data;
+    }
+
+    [Fact]
+    public void NoOpenGaps()
+    {
+        // Arrange
+        var gaps = ProbeSchedulingScenarios.Gaps;
+
+        // Act
+        var open = gaps.Select(g => g.Name).ToList();
+
+        // Assert
+        Assert.Empty(open);
+    }
+}

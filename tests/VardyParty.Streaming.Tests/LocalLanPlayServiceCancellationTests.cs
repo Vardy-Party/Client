@@ -152,6 +152,23 @@ public class LocalLanPlayServiceCancellationTests
         Assert.True(service.EndpointsForTests.HasFresh(DateTimeOffset.UtcNow));
     }
 
+    [Fact]
+    public void EarlyChipRetryDelay_Is10sByDefault_AndFollowsTheSetting()
+    {
+        // Arrange - rule 7 (Jon, 13 Nov 2026: "30s is too long"): configurable, 10s by default.
+        var unset = new GamesApiSettings { CallTimeoutSeconds = 5, MaxRetries = 0, RefreshSchedule = 60, M3U8CallTimeoutSeconds = 5 };
+        var set = new GamesApiSettings { CallTimeoutSeconds = 5, MaxRetries = 0, RefreshSchedule = 60, M3U8CallTimeoutSeconds = 5, EarlyChipRetryDelaySeconds = 4 };
+
+        // Act
+        var byDefault = new LocalLanPlayService(new HttpClient(), Options.Create(unset), Array.Empty<IPlaybackTransportPlugin>(), new SilentLogger());
+        var configured = new LocalLanPlayService(new HttpClient(), Options.Create(set), Array.Empty<IPlaybackTransportPlugin>(), new SilentLogger());
+
+        // Assert
+        Assert.Equal(10, GamesApiSettings.DefaultEarlyChipRetryDelaySeconds);
+        Assert.Equal(TimeSpan.FromSeconds(10), byDefault.EarlyChipRetryDelay);
+        Assert.Equal(TimeSpan.FromSeconds(4), configured.EarlyChipRetryDelay);
+    }
+
     private static LocalLanPlayService CreateService(ScriptHandler handler)
     {
         var http = new HttpClient(handler);

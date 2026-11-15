@@ -12,13 +12,19 @@ public sealed class ResolverRaceThrottle
     public const int MaxConcurrent = 2;
 
     /// <summary>
-    /// How long find-phase stays paused after first playback starts so Next can take
-    /// a warm URL (unless prewarm depth is satisfied sooner).
+    /// How long after first playback starts the window may pause find-phase while a
+    /// backup needs warming (docs/PROBE_SCHEDULING_RULES.md rule 11).
     /// </summary>
     public static TimeSpan PlaybackPriorityTimeout =>
         VardyParty.Kernel.FirstPlayOpenStrategy.PlaybackPriorityTimeout;
 
     private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
+
+    /// <summary>
+    /// Slots held right now by <c>/play</c>, <c>/mp</c> or a race leg. Read-only seam for the
+    /// probe timeline harness (docs/PROBE_SCHEDULING_RULES.md); scheduling never reads it.
+    /// </summary>
+    internal int SlotsInUse => MaxConcurrent - _slots.CurrentCount;
     private readonly object _gate = new();
     private int _races;
     private int _othersHeld;
@@ -70,7 +76,11 @@ public sealed class ResolverRaceThrottle
         return new Release(() => RaceLegDepth.Value--);
     }
 
-    /// <summary>Waits until plays that started before the race have released their slots.</summary>
+    /// <summary>
+    /// Waits until plays that started before the race have released their slots.
+    /// No production caller since first play stopped draining (rule 12); kept for any
+    /// callers that need a full drain.
+    /// </summary>
     public async Task DrainOthersAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -85,6 +95,80 @@ public sealed class ResolverRaceThrottle
 
             await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private TopTierHeadStart? _headStart;
+    private StreamTiers? _tiers;
+    private volatile bool _backupWanted;
+
+    /// <summary>
+    /// The session's <c>[probe-timing]</c> log (docs/PROBE_SCHEDULING_RULES.md, "Probe timing
+    /// log"). The orchestrator (and the probe timeline harness) starts it per session; the
+    /// resolver and <c>LocalLanPlayService</c> write to it.
+    /// </summary>
+    public ProbeTimingLog Timing { get; } = new();
+    private TaskCompletionSource _backupWantedChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// A stream is playing and the pool holds no other playable row yet (rule 11 "backup
+    /// push"): until a backup exists, the resolver lifts the Medium cap so recommended rows
+    /// (High, then Medium) fill every free slot ahead of finding, and an <c>/mp</c> harvest
+    /// hands playlist-only chips over at once instead of after rule 7's 30s. Set by the
+    /// orchestrator as rows join the pool (and by the probe timeline harness).
+    /// </summary>
+    public bool BackupWanted => _backupWanted;
+
+    /// <summary>Sets <see cref="BackupWanted"/>: true from first play until a second row joins the pool.</summary>
+    public void SetBackupWanted(bool wanted)
+    {
+        if (_backupWanted == wanted)
+            return;
+        _backupWanted = wanted;
+        Interlocked.Exchange(
+            ref _backupWantedChanged,
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+    }
+
+    /// <summary>Completes the next time <see cref="BackupWanted"/> changes (the resolver's wake).</summary>
+    public Task WaitForBackupWantedChangeAsync(CancellationToken cancellationToken) =>
+        Volatile.Read(ref _backupWantedChanged).Task.WaitAsync(cancellationToken);
+
+    /// <summary>
+    /// The running top-tier head start (rule 1), or null. The resolver reads it when a
+    /// run starts; the orchestrator (and the timeline harness) owns it.
+    /// </summary>
+    public TopTierHeadStart? CurrentHeadStart => Volatile.Read(ref _headStart);
+
+    /// <summary>
+    /// The session's tiers (rule 1), or null when nothing is recommended High or Medium. Set
+    /// by <see cref="BeginTopTierHeadStart"/> at the start of every session's first pass and
+    /// kept after the head start ends, so the Medium cap (one LocalService slot, always)
+    /// also holds in later passes: the Deferred re-queue passes and the CDN rechecks.
+    /// </summary>
+    public StreamTiers? CurrentTiers => Volatile.Read(ref _tiers);
+
+    /// <summary>
+    /// Starts the head start for the High rows (<paramref name="topTier"/>) and the Medium
+    /// rows (<paramref name="medium"/>) on <paramref name="time"/>, and makes them the session's
+    /// <see cref="CurrentTiers"/>. Dispose when the first resolver pass ends. Null (and no
+    /// tiers) when there is neither.
+    /// </summary>
+    public TopTierHeadStart? BeginTopTierHeadStart(
+        IReadOnlyCollection<VardyParty.Kernel.Stream> topTier,
+        IReadOnlyCollection<VardyParty.Kernel.Stream> medium,
+        TimeProvider time)
+    {
+        if (topTier.Count == 0 && medium.Count == 0)
+        {
+            // A new session with no tiers: the last session's tiers no longer apply.
+            Volatile.Write(ref _tiers, null);
+            return null;
+        }
+
+        var headStart = new TopTierHeadStart(topTier, medium, time, ended => Interlocked.CompareExchange(ref _headStart, null, ended));
+        Volatile.Write(ref _tiers, headStart.Tiers);
+        Volatile.Write(ref _headStart, headStart);
+        return headStart;
     }
 
     /// <summary>Candidate testing awaits this while <see cref="RaceInFlight"/> and nothing else is in flight.</summary>

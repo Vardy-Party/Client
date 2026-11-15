@@ -4,7 +4,7 @@ using StreamModel = VardyParty.Kernel.Stream;
 namespace VardyParty.Streaming;
 
 /// <summary>
-/// Living recommendation business rules: empty-rec discovery spread, MP chip
+/// Living recommendation business rules: empty-rec discovery spread (MP first), MP chip
 /// hoist from crowd keys, stale snapshot detection, and preferred-next selection.
 /// </summary>
 public static class StreamRecommendationPolicy
@@ -85,9 +85,10 @@ public static class StreamRecommendationPolicy
     }
 
     /// <summary>
-    /// When there are no recommendations, rotate the full catalog by
-    /// <paramref name="sessionSalt"/> so concurrent joiners spread discovery.
-    /// FB and MP stay mixed — first healthy wins; no source-bucket preference.
+    /// When there are no recommendations (or none match the catalog), try MP
+    /// (V2) rows first in catalog order, then rotate only the non-MP rows by
+    /// <paramref name="sessionSalt"/> so concurrent joiners spread FB discovery.
+    /// A slow serial FB sweep must not bury the MP page (e5444f7 regression).
     /// </summary>
     public static List<int> SpreadDiscoveryOrder(
         int totalStreams,
@@ -99,14 +100,21 @@ public static class StreamRecommendationPolicy
             return [];
         }
 
-        // getStream retained so call sites stay stable; order is index-based FCFS + rotate.
-        _ = getStream;
+        var mp = new List<int>();
+        var rest = new List<int>();
+        for (var i = 0; i < totalStreams; i++)
+        {
+            if (IsMpLike(getStream(i)))
+                mp.Add(i);
+            else
+                rest.Add(i);
+        }
+
+        RotateInPlace(rest, sessionSalt);
 
         var ordered = new List<int>(totalStreams);
-        for (var i = 0; i < totalStreams; i++)
-            ordered.Add(i);
-
-        RotateInPlace(ordered, sessionSalt);
+        ordered.AddRange(mp);
+        ordered.AddRange(rest);
         return ordered;
     }
 
@@ -206,9 +214,14 @@ public static class StreamRecommendationPolicy
         indexes.AddRange(rotated);
     }
 
-    private static bool IsMpLike(StreamModel stream) =>
+    /// <summary>
+    /// MP (V2) catalog row: resolved through LocalService <c>/mp</c>. Shared by
+    /// chip hoisting and try-order (<see cref="StreamTestOrderPolicy"/>).
+    /// </summary>
+    internal static bool IsMpLike(StreamModel stream) =>
         stream.RequiresV2StreamSelection
-        || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase)
+        || MpPageUrl.IsV2Stream(stream);
 
     private static StreamModel CloneMpChip(StreamModel source, string chip) =>
         new()

@@ -19,6 +19,8 @@ public class PlaybackPoolCommandActionsTests
         // Arrange — find-phase URL must not be handed to ExoPlayer (one-shot soak).
         var oakLane = CreateOakLane("http://oak-lane-burned.m3u8");
         oakLane.Referer = "http://northgate.test/oak-lane";
+        // Cookie-bound: the one-shot case that still re-resolves first (round 12).
+        oakLane.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "http://northgate.test/oak-lane", ["Cookie"] = "fb=1" };
         var (_, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
             oakLane,
             freshUrl: "http://oak-lane-fresh.m3u8");
@@ -40,6 +42,7 @@ public class PlaybackPoolCommandActionsTests
         // Arrange
         var oakLane = CreateOakLane("http://oak-lane.m3u8");
         oakLane.Referer = "http://northgate.test/oak-lane";
+        oakLane.RequestHeaders = new Dictionary<string, string> { ["Referer"] = "http://northgate.test/oak-lane", ["Cookie"] = "fb=1" };
         var (_, actions, attaches, applies, resolved, cachedFlags) = CreateSut(
             oakLane,
             freshUrl: null);

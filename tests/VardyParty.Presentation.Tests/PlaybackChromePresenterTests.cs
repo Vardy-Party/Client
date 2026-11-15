@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using AutoFixture;
 using VardyParty.Catalog;
@@ -84,6 +85,8 @@ public class PlaybackChromePresenterTests
             .With(i => i.Index, 2)
             .With(i => i.Total, 4)
             .With(i => i.Resolution, "1920x1080")
+            .With(i => i.Channel, "Channel West")
+            .With(i => i.SourceLabel, "V1")
             .Create();
 
         // Act
@@ -92,8 +95,43 @@ public class PlaybackChromePresenterTests
         // Assert
         Assert.False(toastRequested);
         Assert.False(sut.IsStreamToastVisible);
-        Assert.Null(sut.StreamToast!.VerticalResolutionLabel);
-        Assert.Equal("Stream: 2/4", sut.StreamToast.Text);
+        Assert.Equal("1080p", sut.StreamToast!.VerticalResolutionLabel);
+        Assert.Equal("2/4 · V1 · Channel West · 1080p", sut.StreamToast.Text);
+    }
+
+    [Fact]
+    public void ApplyOverlayInfo_UpdatesToastTextWhenResolutionBecomesKnown()
+    {
+        // Arrange
+        var sut = new PlaybackChromePresenter();
+        var requests = new List<string>();
+        sut.StreamToastRequested += (_, toast) => requests.Add(toast.Text);
+        var opening = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 1)
+            .With(i => i.Total, 2)
+            .With(i => i.Channel, "Channel West")
+            .With(i => i.SourceLabel, "V1")
+            .With(i => i.Resolution, (string?)null)
+            .Create();
+        sut.ApplyOverlayInfo(opening);
+        Assert.Equal("1/2 · V1 · Channel West", sut.StreamToast!.Text);
+
+        // Act — picture size arrives; index/total stay the same
+        var measured = _fixture.Build<PlayerOverlayInfo>()
+            .With(i => i.Index, 1)
+            .With(i => i.Total, 2)
+            .With(i => i.Channel, "Channel West")
+            .With(i => i.SourceLabel, "V1")
+            .With(i => i.Resolution, "1280x720")
+            .Create();
+        sut.ApplyOverlayInfo(measured);
+
+        // Assert
+        Assert.Equal("1/2 · V1 · Channel West · 720p", sut.StreamToast!.Text);
+        Assert.Equal("720p", sut.StreamToast.VerticalResolutionLabel);
+        Assert.True(sut.IsStreamToastVisible);
+        // Height-only updates must not re-request the toast (would restart auto-hide).
+        Assert.Equal("1/2 · V1 · Channel West", Assert.Single(requests));
     }
 
     [Fact]
@@ -413,5 +451,54 @@ public class PlaybackChromePresenterTests
 
         // Assert
         Assert.Equal(proposed, next);
+    }
+
+    [Fact]
+    public void ApplyOverlayInfo_WhileSwitching_OmitsPreviousMeasuredHeight()
+    {
+        var sut = new PlaybackChromePresenter();
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 1,
+            Total = 2,
+            Channel = "Channel West",
+            SourceLabel = "V1",
+            Resolution = "1280x720"
+        });
+        Assert.Equal("1/2 · V1 · Channel West · 720p", sut.StreamToast!.Text);
+
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 2,
+            Total = 2,
+            Channel = "Channel North",
+            SourceLabel = "V1",
+            Resolution = "1280x720"
+        }, whileSwitching: true);
+
+        Assert.Equal("2/2 · V1 · Channel North", sut.StreamToast!.Text);
+        Assert.Null(sut.StreamToast.VerticalResolutionLabel);
+        Assert.True(sut.IsStreamToastVisible);
+    }
+
+    [Fact]
+    public void ApplyOverlayInfo_WhileSwitching_ShowsTargetBitstreamProbe()
+    {
+        var sut = new PlaybackChromePresenter();
+        sut.SetContentState(PlaybackChromeContentState.Switching);
+        sut.ApplyOverlayInfo(new PlayerOverlayInfo
+        {
+            Index = 2,
+            Total = 2,
+            Channel = "Channel North",
+            SourceLabel = "V1",
+            Resolution = "960x540",
+            ProbedResolution = "1920x1080"
+        }, whileSwitching: true);
+
+        Assert.Equal("2/2 · V1 · Channel North · 1080p", sut.StreamToast!.Text);
+        Assert.Equal("1080p", sut.StreamToast.VerticalResolutionLabel);
+        Assert.DoesNotContain("540p", sut.StreamToast.Text);
     }
 }

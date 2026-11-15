@@ -20,6 +20,7 @@ public sealed class PlaybackSessionController
     private int _healthyStreamCount;
     private bool _isBuffering;
     private int _consecutiveDownloadFailures;
+    private int _consecutiveRefusedDownloads;
 
     // Same-stream recovery: an established stream that errors is retried
     // (reload, then a fresh /play) before the session switches away from it.
@@ -38,6 +39,8 @@ public sealed class PlaybackSessionController
     /// scrape advances immediately (no multi-minute EmptyFreshPlay loop).
     /// </summary>
     private bool _malformedPlaylistRecovery;
+    public SwitchBackSession SwitchBack { get; } = new();
+    public bool SwitchBackEnabled { get; set; } = true;
 
     // Same-stream recovery of a SWITCH TARGET (a row we switched to that has not
     // played yet, with a last-good stream to fall back on). A failure that is not
@@ -63,6 +66,13 @@ public sealed class PlaybackSessionController
     {
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
+
+    /// <summary>
+    /// Segments this player has fetched, for the no-replay rule. Adapters record every
+    /// segment download here and hand it to each attach's <see cref="PlaylistReloadSession"/>
+    /// so a same-URL reattach (or switch-back) never replays watched video.
+    /// </summary>
+    public PlayedSegmentMemory PlayedSegments { get; } = new();
 
     /// <summary>
     /// When true, Ready alone does not make a stream "working": it must also show a
@@ -197,6 +207,7 @@ public sealed class PlaybackSessionController
         _isBuffering = false;
         _usedCachedUrl = usedCachedUrl;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _videoConfirmed = false;
         _videoSeen = false;
         _readyAt = null;
@@ -404,21 +415,30 @@ public sealed class PlaybackSessionController
     /// Windows AdaptiveMediaSource download failures. After
     /// <see cref="PlaybackPolicy.MaxConsecutiveDownloadFailures"/> this is a hard Error.
     /// </summary>
-    public IReadOnlyList<PlaybackEffect> NotifyDownloadFailure(string? reason = null)
+    /// <param name="statusCode">HTTP status of the failed download (0 when unknown).
+    /// <see cref="PlaybackPolicy.MaxConsecutiveRefusedDownloads"/> refused (401/403) ones in a
+    /// row are a hard Error at once: Windows 13 Nov 2026, every fhlsport955 segment of three
+    /// V2 chips was 403 and the black screen lasted until Media Foundation gave up (~5s).</param>
+    public IReadOnlyList<PlaybackEffect> NotifyDownloadFailure(string? reason = null, int statusCode = 0)
     {
         if (_state == PlaybackSessionState.Closed)
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Session closed")];
 
         RefreshHealthyStreamCount();
         _consecutiveDownloadFailures++;
-        if (!PlaybackPolicy.IsHardDownloadFailure(_consecutiveDownloadFailures))
+        _consecutiveRefusedDownloads = PlaybackPolicy.IsRefusedStatus(statusCode) ? _consecutiveRefusedDownloads + 1 : 0;
+        if (!PlaybackPolicy.IsHardDownloadFailure(_consecutiveDownloadFailures, _consecutiveRefusedDownloads))
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: "Download failure below threshold")];
 
+        var refused = _consecutiveRefusedDownloads >= PlaybackPolicy.MaxConsecutiveRefusedDownloads;
+        var message = refused
+            ? PlaybackPolicy.RefusedDownloadReason(statusCode) + (string.IsNullOrWhiteSpace(reason) ? string.Empty : $": {reason}")
+            : reason ?? "Consecutive download failures";
         return OnError(new MediaEngineEvent
         {
             Kind = MediaEngineEventKind.Error,
             Generation = _attachGeneration,
-            Message = reason ?? "Consecutive download failures"
+            Message = message
         });
     }
 
@@ -426,12 +446,20 @@ public sealed class PlaybackSessionController
     /// An index-driven switch (chip, Next, Prev) that started outside the engine
     /// event path replaces any same-stream retry in flight.
     /// </summary>
-    public void CancelSameStreamRecovery() => ResetSameStreamRecovery(clearBudget: true);
+    public void CancelSameStreamRecovery()
+    {
+        SwitchBack.Cancel("user picked another stream");
+        ResetSameStreamRecovery(clearBudget: true);
+    }
 
     /// <summary>
     /// A successful segment/manifest download resets the consecutive-failure counter.
     /// </summary>
-    public void NotifyDownloadSuccess() => _consecutiveDownloadFailures = 0;
+    public void NotifyDownloadSuccess()
+    {
+        _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
+    }
 
     public void Reset()
     {
@@ -446,6 +474,7 @@ public sealed class PlaybackSessionController
         _healthyStreamCount = 0;
         _isBuffering = false;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _metricsWindow = new StreamMetricsWindow();
         _videoConfirmed = false;
         _videoSeen = false;
@@ -465,6 +494,7 @@ public sealed class PlaybackSessionController
         _cacheRetryUsed = false;
         _usedCachedUrl = false;
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _cdnUnreachableSkips = 0;
         _state = PlaybackSessionState.Playing;
         // The retry worked. The budget refills once SameStreamRetryWindow passes
@@ -476,7 +506,18 @@ public sealed class PlaybackSessionController
 
         if (!RequireVideoConfirmation)
         {
+            // Hosts without video confirmation (Apple, or a host that has not
+            // called EnableVideoConfirmation): Ready is the picture, so it is also
+            // the "stream confirmed" moment. Without this the pool never cleared
+            // tried-this-cycle marks there and the switch counter/trace
+            // (IStreamSwitchingService.PlayingConfirmed) never saw a switch (Windows log
+            // 13 Nov 2026 19:41:28: LiveStreams played, from_row stayed techydeals).
             _lastGoodUrl = _currentUrl;
+            var key = FeedKey(_currentUrl);
+            if (key.Length > 0)
+                _failedFeeds.Remove(key);
+            try { StreamConfirmedInCycle?.Invoke(_currentUrl); }
+            catch { /* the pool mark is advisory */ }
             return
             [
                 new PlaybackEffect(PlaybackEffectKind.MarkEstablished, Url: _currentUrl, Generation: _attachGeneration),
@@ -648,6 +689,14 @@ public sealed class PlaybackSessionController
                 return KeepUnresolvedPlayAndMoveOn(reason);
             }
 
+            // CDN unreachable mid-play: option 1 already retried the playlist in
+            // the fetch layer. A same-URL reload or a fresh /play restarts at the
+            // live offset and re-shows watched segments ("like the Matrix"), so
+            // switch to another row instead and let option 2 return. Only a lone
+            // row (nothing to switch to) still gets the same-stream retries.
+            if (kind == PlaybackErrorKind.CdnUnreachable && CanSwitchAwayFromCdnUnreachable())
+                return KeepCdnUnreachableAndMoveOn(reason);
+
             return TryRecoverSameStream(reason, kind) ?? FailEstablishedOrAdvance(reason);
         }
 
@@ -716,7 +765,9 @@ public sealed class PlaybackSessionController
         if (!HasUntriedStream())
             return [new PlaybackEffect(PlaybackEffectKind.None, Reason: PlaybackPolicy.NoOtherWorkingStreamText)];
 
-        // The user picked another stream, so drop any same-stream retry.
+        // The user picked another stream, so drop any same-stream retry and
+        // cancel auto-return to a recovering row.
+        SwitchBack.Cancel(next ? "User next" : "User previous");
         ResetSameStreamRecovery(clearBudget: true);
 
         // Abandon a stuck/in-flight prepare so BeginAttach for the next URL is allowed.
@@ -801,6 +852,7 @@ public sealed class PlaybackSessionController
         // Every failure past the threshold re-enters OnError. Without this reset,
         // one burst of segment failures burned the whole budget in a single tick.
         _consecutiveDownloadFailures = 0;
+        _consecutiveRefusedDownloads = 0;
         _isBuffering = true;
         _state = PlaybackSessionState.Buffering;
         _metricsWindow = new StreamMetricsWindow();
@@ -974,6 +1026,15 @@ public sealed class PlaybackSessionController
     private bool HasEligibleLastGood()
         => !string.IsNullOrWhiteSpace(_lastGoodUrl) && !IsFeedFailedInCycle(_lastGoodUrl);
 
+    /// <summary>
+    /// Whether <see cref="KeepCdnUnreachableAndMoveOn"/> would advance (rather than
+    /// close): another untried row exists and this lap has not skipped them all.
+    /// </summary>
+    private bool CanSwitchAwayFromCdnUnreachable()
+        => _healthyStreamCount > 1
+           && _cdnUnreachableSkips + 1 < _healthyStreamCount
+           && HasUntriedStream();
+
     private bool HasUntriedStream()
     {
         if (UntriedStreamAvailableProvider is not { } provider)
@@ -1046,6 +1107,14 @@ public sealed class PlaybackSessionController
         // have not failed this cycle, so a pool of failed rows plus this one closes.
         if (_healthyStreamCount > 1 && _cdnUnreachableSkips < _healthyStreamCount && HasUntriedStream())
         {
+            // Only arm when a backup will actually start. The executor re-arms with
+            // the row name and last known height before this URL is cleared.
+            if (SwitchBackEnabled && !string.IsNullOrWhiteSpace(_currentUrl))
+            {
+                SwitchBack.Arm(
+                    new SwitchBackCandidate(_currentUrl, RowName: null, IdentityKey: _currentUrl, LastHeight: null, null, null),
+                    _clock());
+            }
             effects.Add(new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: message));
             return effects;
         }

@@ -15,6 +15,8 @@ namespace VardyParty.Platforms.Android
         // "working" once it shows a picture (docs/STREAM_PLAYBACK_RULES.md "Audio-only streams").
         private readonly PlaybackSessionController _session = CreateSession();
         private long _videoSeenGeneration = -1;
+        private PlaylistReloadSession? _playlistReloadSession;
+        private SwitchBackRunner? _switchBack;
 
         private static PlaybackSessionController CreateSession()
         {
@@ -23,15 +25,75 @@ namespace VardyParty.Platforms.Android
             return session;
         }
 
+        private void ObserveDecodedPictureSize(int width, int height)
+        {
+            var published = _pictureSizeSettler.Observe(width, height);
+            ApplySettledPictureSize(published);
+            SchedulePictureSizeSettleTick();
+        }
+
+        private void ApplySettledPictureSize((int Width, int Height)? published)
+        {
+            if (published is { } size)
+            {
+                _videoWidth = size.Width;
+                _videoHeight = size.Height;
+                // A mid-play size change replaces the stream's stored height too.
+                MeasuredPictureSize.Remember(_switching?.GetCurrentStream()?.Health, size);
+            }
+            else
+            {
+                _videoWidth = null;
+                _videoHeight = null;
+            }
+        }
+
+        private void SchedulePictureSizeSettleTick()
+        {
+            CancelPictureSizeSettleTick();
+            if (!_pictureSizeSettler.NeedsTick)
+                return;
+            _pictureSizeSettleHandler ??= new global::Android.OS.Handler(global::Android.OS.Looper.MainLooper!);
+            _pictureSizeSettleRunnable ??= new Java.Lang.Runnable(PictureSizeSettleTick);
+            _pictureSizeSettleHandler.PostDelayed(
+                _pictureSizeSettleRunnable,
+                (long)DecodedPictureSizeSettler.Settle.TotalMilliseconds);
+        }
+
+        private void PictureSizeSettleTick()
+        {
+            try
+            {
+                ApplySettledPictureSize(_pictureSizeSettler.Tick());
+                if (_pictureSizeSettler.NeedsTick)
+                    SchedulePictureSizeSettleTick();
+                UpdateOverlayFromCurrentStream();
+            }
+            catch (Exception ex) { LogIgnored("PictureSizeSettleTick", ex); }
+        }
+
+        private void CancelPictureSizeSettleTick()
+        {
+            if (_pictureSizeSettleHandler is null || _pictureSizeSettleRunnable is null)
+                return;
+            _pictureSizeSettleHandler.RemoveCallbacks(_pictureSizeSettleRunnable);
+        }
+
         /// <summary>ExoPlayer showed a picture for the current attach (first frame or a real video size).</summary>
         private void NoteVideoSeen(string signal)
         {
+            // A frame of the stream being replaced (player not yet handed the session's URL)
+            // must not confirm the new attach.
+            if (!PlaybackPolicy.IsPictureForCurrentAttach(_m3u8Url, _session.Snapshot.CurrentUrl))
+                return;
             var gen = CurrentAttachGeneration;
             if (Interlocked.Exchange(ref _videoSeenGeneration, gen) != gen)
             {
                 _logger?.LogInformation("[NativeVideoActivity] Video confirmed ({Signal})", signal);
                 EndStreamSwitchOverlayScrub();
             }
+            if (_videoHeight is > 0)
+                EnsureSwitchBackRunner().NoteBackupHeight(_videoHeight);
             ProbeVideo();
         }
 
@@ -107,6 +169,15 @@ namespace VardyParty.Platforms.Android
             SyncHealthyStreamCount();
             ApplyPlaybackCommand(PlaybackCommand.FromEffects(_session.BeginAttach(url, usedCachedUrl, force)));
         }
+
+        private SwitchBackRunner EnsureSwitchBackRunner()
+            => _switchBack ??= SwitchBackRunner.Create(
+                _session,
+                _switching,
+                VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(ISwitchBackProbe)) as ISwitchBackProbe,
+                settledHeight: () => _pictureSizeSettler.Published?.Height,
+                runOnUi: SwitchBackRunner.Dispatch(RunOnUiThread),
+                log: msg => _logger?.LogInformation("{Message}", msg));
 
         private void ApplyPlaybackCommand(PlaybackCommand cmd)
         {
@@ -196,6 +267,18 @@ namespace VardyParty.Platforms.Android
 
             public void NotifyApplyFailed(Exception exception)
                 => activity._logger?.LogWarning(exception, "[NativeVideoActivity] ApplyPlaybackCommand failed");
+
+            public void ConsiderSwitchBack(PlaybackCommand cmd)
+                => activity.EnsureSwitchBackRunner().Consider(cmd);
+
+            /// <summary>Short accurate failure text (e.g. "Stream refused (403) - trying the next stream").</summary>
+            public void ShowFailureToUser(string userText)
+            {
+                if (string.IsNullOrWhiteSpace(userText) || activity.IsLifecycleClosing)
+                    return;
+                activity._logger?.LogInformation("[NativeVideoActivity] Showing failure: {Text}", userText);
+                activity.ShowSwitchStatusToast(userText);
+            }
         }
 
         /// <summary>
@@ -258,12 +341,22 @@ namespace VardyParty.Platforms.Android
             if (_player == null || string.IsNullOrWhiteSpace(_m3u8Url))
                 return false;
 
-            _behindLiveWindowRecoveries++;
-            PlayedSegmentMemory.ArmTrimOnce();
-
             var stuckPlaylist = PlaybackPolicy.IsStuckLivePlaylistFailure(
                 error.Message,
                 DescribeCauses(error));
+
+            // Reloading the MediaSource on PlaylistStuck (TV 257 20:20:21) froze
+            // the picture for ~8s and can re-show already-watched segments. Switch
+            // instead; option 2 keeps the row recovering.
+            if (stuckPlaylist)
+            {
+                _logger?.LogInformation(
+                    "[NativeVideoActivity] Live HLS stall — switching rather than reloading a stuck playlist");
+                return false;
+            }
+
+            _behindLiveWindowRecoveries++;
+            _session.PlayedSegments.ArmTrimOnce();
 
             try
             {
@@ -272,18 +365,6 @@ namespace VardyParty.Platforms.Android
                 _isPreparing = true;
                 _playerFaulted = false;
                 _statusTracker.Reset();
-
-                if (stuckPlaylist)
-                {
-                    // Seek alone cannot unstick a frozen media playlist — rebuild the
-                    // MediaSource so ExoPlayer reloads it (same attach generation / budget).
-                    _logger?.LogWarning(
-                        "[NativeVideoActivity] Live HLS stall — reloading playlist (attempt {Attempt}/{Max})",
-                        _behindLiveWindowRecoveries,
-                        PlaybackPolicy.MaxLiveHlsRecoveries);
-                    AttachEngine(_m3u8Url);
-                    return true;
-                }
 
                 _logger?.LogWarning(
                     "[NativeVideoActivity] Live HLS stall — seeking to live edge (attempt {Attempt}/{Max})",
@@ -341,89 +422,111 @@ namespace VardyParty.Platforms.Android
         }
 
         /// <summary>
-        /// Prefer V2 / LocalService headers (referer, origin, UA, cookie) when
-        /// present — same contract Windows AdaptiveMediaSource uses.
+        /// Headers ExoPlayer sends for this attach: the row's own (V2 / LocalService Referer,
+        /// Origin, UA, Cookie) plus a browser UA and Referer/Origin filled in from the row -
+        /// <see cref="PlaybackRequestHeaders"/>, the rule Windows applies per segment. Before
+        /// round 13 a row with headers (e.g. Cookie only) went out without UA/Referer.
         /// </summary>
         private System.Collections.Generic.Dictionary<string, string?> BuildPlaybackRequestHeaders()
         {
             var headers = new System.Collections.Generic.Dictionary<string, string?>(
                 System.StringComparer.OrdinalIgnoreCase);
-            if (_requestHeaders is { Count: > 0 })
+            foreach (var pair in PlaybackRequestHeaders.ForContext(
+                         new PlaybackRequestContext(_refererUrl ?? string.Empty, _requestHeaders)))
             {
-                foreach (var pair in _requestHeaders)
-                {
-                    if (!string.IsNullOrWhiteSpace(pair.Value))
-                        headers[pair.Key] = pair.Value;
-                }
-
-                return headers;
+                headers[pair.Key] = pair.Value;
             }
 
-            headers["User-Agent"] =
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-            if (string.IsNullOrWhiteSpace(_refererUrl))
-                return headers;
-
-            headers["Referer"] = _refererUrl;
-            if (System.Uri.TryCreate(_refererUrl, System.UriKind.Absolute, out var refererUri))
-                headers["Origin"] = $"{refererUri.Scheme}://{refererUri.Authority}";
             return headers;
         }
 
+        /// <summary>
+        /// Every attach (switch, revert, retry) sends the headers of the row whose URL is
+        /// attached; a URL of no pool row (mirror retry) keeps the current ones. Before round 13
+        /// a row without headers / Referer kept the PREVIOUS stream's (403 on its CDN).
+        /// </summary>
         private void ApplySoakHeadersForPlaybackUrl(string? m3u8Url)
         {
             if (string.IsNullOrWhiteSpace(m3u8Url) || _switching is null)
                 return;
 
-            EnrichedStream? match = null;
-            var current = _switching.GetCurrentStream();
-            if (current is not null
-                && string.Equals(current.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
-            {
-                match = current;
-            }
-            else
-            {
-                foreach (var stream in _switching.GetHealthyStreams())
-                {
-                    if (string.Equals(stream.ResolvedM3U8Url, m3u8Url, StringComparison.OrdinalIgnoreCase))
-                    {
-                        match = stream;
-                        break;
-                    }
-                }
-            }
-
-            ApplySoakHeadersFromStream(match);
+            ApplyRequestContext(PlaybackRowRequestContext.ForUrl(
+                _switching,
+                m3u8Url,
+                new PlaybackRequestContext(_refererUrl ?? string.Empty, _requestHeaders)));
         }
 
+        /// <summary>The row's Referer (else its page) and its own headers - never the previous row's.</summary>
         private void ApplySoakHeadersFromStream(EnrichedStream? stream)
         {
             if (stream is null)
                 return;
 
-            if (stream.RequestHeaders is { Count: > 0 })
-                _requestHeaders = stream.RequestHeaders;
+            ApplyRequestContext(PlaybackRowRequestContext.ForRow(stream));
+        }
 
-            if (!string.IsNullOrWhiteSpace(stream.Referer))
+        private void ApplyRequestContext(PlaybackRequestContext context)
+        {
+            if (!string.Equals(context.Referer, _refererUrl, StringComparison.Ordinal))
+                _logger?.LogInformation("[NativeVideoActivity] Playback Referer: {Referer}", context.Referer);
+            _refererUrl = context.Referer;
+            _requestHeaders = context.Headers;
+        }
+
+        /// <summary>
+        /// Loader-thread callback for every data-source open of attach <paramref name="generation"/>
+        /// (status 0 = opened). Refused downloads (401/403) go to the session's quick-fail rule
+        /// (<see cref="PlaybackPolicy.MaxConsecutiveRefusedDownloads"/> in a row = hard error,
+        /// "Stream refused (403) - trying the next stream"), as on Windows; ExoPlayer's own
+        /// error used to come only after its load retries.
+        /// </summary>
+        private Action<int> DownloadOutcomeReporter(long generation) => status =>
+        {
+            try
             {
-                _refererUrl = stream.Referer;
-                return;
-            }
-
-            if (_requestHeaders is null)
-                return;
-
-            foreach (var pair in _requestHeaders)
-            {
-                if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(pair.Value))
+                if (PlaybackPolicy.IsRefusedStatus(status))
                 {
-                    _refererUrl = pair.Value;
-                    return;
+                    Interlocked.Exchange(ref _refusedDownloadPending, 1);
+                    RunOnUiThread(() => OnRefusedDownload(generation, status));
+                }
+                else if (status == 0 && Interlocked.Exchange(ref _refusedDownloadPending, 0) == 1)
+                {
+                    RunOnUiThread(() =>
+                    {
+                        if (generation == CurrentAttachGeneration)
+                            _session.NotifyDownloadSuccess();
+                    });
                 }
             }
+            catch (Exception ex) { LogIgnored("DownloadOutcome", ex); }
+        };
+
+        private int _refusedDownloadPending;
+        private long _refusedFailedGeneration = -1;
+
+        private void OnRefusedDownload(long generation, int status)
+        {
+            try
+            {
+                if (IsLifecycleClosing || generation != CurrentAttachGeneration)
+                    return;
+
+                _logger?.LogWarning("[NativeVideoActivity] Download refused (HTTP {Status}) for {Url}", status, _m3u8Url);
+                SyncHealthyStreamCount();
+                var cmd = PlaybackCommand.FromEffects(
+                    _session.NotifyDownloadFailure($"Segment download failed (status={status})", status));
+                if (cmd.IsNoOp)
+                    return;
+
+                // ExoPlayer's own error for these refusals (after its retries) is the same failure.
+                _refusedFailedGeneration = generation;
+                ApplyPlaybackCommand(cmd);
+            }
+            catch (Exception ex) { LogIgnored("OnRefusedDownload", ex); }
         }
+
+        /// <summary>True when the player error is the refused-download failure already acted on.</summary>
+        private bool IsRefusalAlreadyHandled() => _refusedFailedGeneration == CurrentAttachGeneration;
 
         private void OnPlayingTokenReady(string url)
         {
@@ -543,7 +646,11 @@ namespace VardyParty.Platforms.Android
                             }
                             catch (Exception ex) { LogIgnored("LoadDnsOverHttpsPreference", ex); }
 
-                            var customFactory = new UnwrappingDataSourceFactory(ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled), _transferMeter);
+                            var customFactory = new UnwrappingDataSourceFactory(
+                                ManagedHttpDataSourceFactory.CreateForPlayback(headers, dohEnabled),
+                                _transferMeter,
+                                DownloadOutcomeReporter(CurrentAttachGeneration),
+                                CreatePlaylistReloadSession(m3u8Url));
                             var mediaSourceFactory = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(customFactory);
                             var headerBuilder = new AndroidX.Media3.Common.MediaItem.Builder();
                             headerBuilder.SetUri(m3u8Url);
@@ -592,7 +699,7 @@ namespace VardyParty.Platforms.Android
                         ApplyLiveBackoff(fallbackBuilder);
                         var fallbackItem = fallbackBuilder.Build()
                             ?? throw new InvalidOperationException("MediaItem.Build returned null.");
-                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter))
+                        var mediaSource = new AndroidX.Media3.ExoPlayer.Hls.HlsMediaSource.Factory(new UnwrappingDataSourceFactory(dataSourceFactory, _transferMeter, DownloadOutcomeReporter(CurrentAttachGeneration), CreatePlaylistReloadSession(m3u8Url)))
                             .CreateMediaSource(fallbackItem)
                             ?? throw new InvalidOperationException("CreateMediaSource returned null.");
 
@@ -624,6 +731,22 @@ namespace VardyParty.Platforms.Android
             {
                 _logger?.LogError(ex, "[NativeVideoActivity] AttachEngine outer exception");
             }
+        }
+
+        private PlaylistReloadSession CreatePlaylistReloadSession(string? m3u8Url)
+        {
+            IPlaylistReloadRecoveryStrategy? strategy = null;
+            try
+            {
+                strategy = VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy;
+            }
+            catch { /* default strategy */ }
+            var created = new PlaylistReloadSession(strategy, PlaylistReloadRowName.ForUrl(_switching, m3u8Url))
+            {
+                PlayedSegments = _session.PlayedSegments
+            };
+            _playlistReloadSession = created;
+            return created;
         }
     }
 }

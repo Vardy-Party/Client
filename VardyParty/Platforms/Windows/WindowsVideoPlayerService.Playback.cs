@@ -104,6 +104,8 @@ namespace VardyParty.Platforms.Windows
             {
                 if (cleanupInvoked) return;
                 cleanupInvoked = true;
+                StopVideoProbe();
+                StopHealthMetricsLoop();
                 CancelPlaybackDownloads();
                 _host.UnbindTransferMeter(transferMeter);
                 transferMeter.Reset();
@@ -193,6 +195,7 @@ namespace VardyParty.Platforms.Windows
             private void ClosePlayerSession(string message)
             {
                 if (cleanupInvoked) return;
+                switchBack?.Stop();
                 Restore();
                 _tcs.TrySetResult(PlaybackResult.Completed(message, true));
             }
@@ -217,81 +220,16 @@ namespace VardyParty.Platforms.Windows
 
             private void AttachViaSession(string url, bool usedCachedUrl = false, bool force = false)
             {
-                // Intentional attach (switch / start) — reset soft live recoveries.
-                liveHlsRecoveries = 0;
-                liveHlsSoftRecoverInFlight = false;
                 SyncHealthyStreamCount();
                 ApplyPlaybackCommand(PlaybackCommand.FromEffects(session.BeginAttach(url, usedCachedUrl, force)));
             }
 
             /// <summary>
-            /// Linux LibVLC reconnects; Android seeks to live edge on BehindLiveWindow.
-            /// WinUI has no BLWE API — rebuild AdaptiveMediaSource for the same URL instead of
-            /// raising Error (which removes the stream from the pool).
+            /// A network-class <c>MediaFailed</c> (not auth, unsupported or aborted). It is
+            /// never reattached to the same URL (that replays watched segments): the
+            /// Error carries <see cref="PlaybackPolicy.WindowsMidPlayNetworkFailureMessage"/>
+            /// so the shared session switches and option 2 can return.
             /// </summary>
-            private bool TryRecoverLiveHlsFailure(MediaPlayerFailedEventArgs? args)
-            {
-                if (!IsRecoverableMediaFailure(args))
-                    return false;
-
-                // Nested MediaFailed while soft-reattach is already queued — absorb without stacking.
-                if (liveHlsSoftRecoverInFlight)
-                {
-                    _host._logger.LogDebug(
-                        "Live HLS MediaFailed while soft-recover in flight — coalescing");
-                    return true;
-                }
-
-                if (!PlaybackPolicy.ShouldAttemptLiveHlsRecovery(liveHlsRecoveries, currentPlaybackUrl))
-                {
-                    _host._logger.LogWarning(
-                        "Live HLS recoveries exhausted ({Count}) — escalating MediaFailed",
-                        liveHlsRecoveries);
-                    return false;
-                }
-
-                var url = currentPlaybackUrl;
-                liveHlsRecoveries++;
-                liveHlsSoftRecoverInFlight = true;
-                MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
-                var errMsg = args?.ErrorMessage ?? "unknown";
-                _host._logger.LogWarning(
-                    "Live HLS MediaFailed — reattaching to live edge (attempt {Attempt}/{Max}): {Error}",
-                    liveHlsRecoveries,
-                    PlaybackPolicy.MaxLiveHlsRecoveries,
-                    errMsg);
-
-                try
-                {
-                    engine.Raise(MediaEngineEvent.Buffering(session.Snapshot.AttachGeneration, true));
-                }
-                catch (Exception ex)
-                {
-                    _host._logger.LogDebug(ex, "Buffering raise during live recover failed");
-                }
-
-                // Do not BeginAttach — keep session generation / pool entry; only rebuild the OS source.
-                _ = SoftRecoverPlaybackAsync(url);
-                return true;
-            }
-
-            /// <summary>
-            /// Soft live reattach: clears <see cref="liveHlsSoftRecoverInFlight"/> when finished
-            /// so a later NetworkError can start another budgeted attempt.
-            /// </summary>
-            private async Task SoftRecoverPlaybackAsync(string url)
-            {
-                try
-                {
-                    await StartPlaybackAsync(url).ConfigureAwait(false);
-                }
-                finally
-                {
-                    liveHlsSoftRecoverInFlight = false;
-                    MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
-                }
-            }
-
             private static bool IsRecoverableMediaFailure(MediaPlayerFailedEventArgs? args)
             {
                 if (args == null)
@@ -314,6 +252,229 @@ namespace VardyParty.Platforms.Windows
                     detailMessage: detail);
             }
 
+            /// <summary>
+            /// How long an attach may go without reaching <c>Playing</c> before it
+            /// counts as a failed start. This is an AMS engine failsafe, not the
+            /// shared no-picture check: <see cref="PlaybackPolicy.NoVideoTimeout"/>
+            /// (8s) starts once Ready/Playing is raised. AMS can take longer than
+            /// 8s to reach Playing, so this remains 20s.
+            /// </summary>
+            private static readonly TimeSpan StartWithoutPictureTimeout = TimeSpan.FromSeconds(20);
+
+            /// <summary>
+            /// Ready means "the picture is playing": PlaybackSession reached Playing. It used to be
+            /// raised as soon as the MediaPlaybackItem was assigned, before a single segment, so a
+            /// stream whose segments were all 403 counted as established and working (last good,
+            /// ReportWorking, and three same-stream retries instead of one fresh resolve and Next;
+            /// Windows log 13 Nov 2026 19:55:26-31).
+            /// </summary>
+            private void ArmReadyOnPlaying()
+            {
+                var generation = session.Snapshot.AttachGeneration;
+                Interlocked.Exchange(ref readyPendingGeneration, generation);
+                lastDownloadFailureStatus = 0;
+                CancelReadyWatchdog();
+                var cts = new CancellationTokenSource();
+                readyWatchdogCts = cts;
+                _ = WatchStartAsync(generation, cts.Token);
+            }
+
+            private async Task WatchStartAsync(long generation, CancellationToken cancellationToken)
+            {
+                try
+                {
+                    await Task.Delay(StartWithoutPictureTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref readyPendingGeneration, -1, generation) != generation
+                    || cleanupInvoked)
+                    return;
+                _host._logger.LogWarning(
+                    "No picture {Seconds}s after attach (generation {Generation}) - failing the start",
+                    (int)StartWithoutPictureTimeout.TotalSeconds,
+                    generation);
+                var refused = lastDownloadFailureStatus;
+                engine.Raise(MediaEngineEvent.Error(
+                    generation,
+                    PlaybackPolicy.IsRefusedStatus(refused)
+                        ? PlaybackPolicy.RefusedDownloadReason(refused)
+                        : $"Start timed out: no picture after {(int)StartWithoutPictureTimeout.TotalSeconds}s"));
+            }
+
+            private void RaiseReadyIfPending()
+            {
+                var generation = Interlocked.Exchange(ref readyPendingGeneration, -1);
+                if (generation < 0 || generation != session.Snapshot.AttachGeneration)
+                    return;
+                CancelReadyWatchdog();
+                engine.Raise(MediaEngineEvent.Ready(generation));
+                ArmVideoProbe();
+                ProbeVideo();
+            }
+
+            private (string? Url, string? Name) CurrentHealthIdentity()
+                => StreamHealthIdentity.ResolvePlaybackReportIdentity(
+                    switchingService?.GetCurrentStream(),
+                    session.Snapshot.CurrentUrl,
+                    _refererUrl);
+
+            private void PostHealthError(string? error)
+            {
+                try
+                {
+                    var (url, name) = CurrentHealthIdentity();
+                    _ = _host._healthReporter.ReportPlaybackErrorAsync(url, _refererUrl, name, error: error);
+                }
+                catch (Exception ex) { _host.LogIgnored("ReportPlaybackError", ex); }
+            }
+
+            private void PostHealthBuffering()
+            {
+                try
+                {
+                    var metrics = _host.GetCurrentMetrics();
+                    if (metrics != null)
+                        metrics.IsBuffering = true;
+                    var (url, name) = CurrentHealthIdentity();
+                    _ = _host._healthReporter.ReportBufferingAsync(url, _refererUrl, name, metrics: metrics);
+                }
+                catch (Exception ex) { _host.LogIgnored("ReportBuffering", ex); }
+            }
+
+            private void StartHealthMetricsLoop()
+            {
+                StopHealthMetricsLoop();
+                healthMetricsTimer = new Timer(_ =>
+                {
+                    try
+                    {
+                        var queue = nativeWindow?.DispatcherQueue;
+                        if (queue != null && !queue.HasThreadAccess)
+                        {
+                            queue.TryEnqueue(PostHealthMetrics);
+                            return;
+                        }
+                        PostHealthMetrics();
+                    }
+                    catch (Exception ex) { _host.LogIgnored("HealthMetricsTimer", ex); }
+                }, null, PlaybackPolicy.HealthMetricsInterval, PlaybackPolicy.HealthMetricsInterval);
+            }
+
+            private void StopHealthMetricsLoop()
+            {
+                var timer = Interlocked.Exchange(ref healthMetricsTimer, null);
+                try { timer?.Dispose(); } catch (Exception ex) { _host.LogIgnored("StopHealthMetricsLoop", ex); }
+            }
+
+            private void PostHealthMetrics()
+            {
+                if (cleanupInvoked)
+                    return;
+                var metrics = _host.GetCurrentMetrics();
+                var (url, name) = CurrentHealthIdentity();
+                _ = _host._healthReporter.ReportPlaybackMetricsAsync(url, _refererUrl, name, metrics: metrics);
+                var buffering = false;
+                try { buffering = mediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Buffering; }
+                catch { }
+                engine.Raise(MediaEngineEvent.Metrics(session.Snapshot.AttachGeneration, metrics?.BitrateKbps, buffering));
+            }
+
+            /// <summary>
+            /// Tells the session whether this attach has shown video. A natural
+            /// size confirms the picture immediately; the overlay still waits
+            /// for <see cref="DecodedPictureSizeSettler"/> to settle.
+            /// </summary>
+            private void ProbeVideo()
+            {
+                try
+                {
+                    if (cleanupInvoked || session.Snapshot.IsVideoConfirmed)
+                    {
+                        StopVideoProbe();
+                        return;
+                    }
+
+                    var width = 0;
+                    var height = 0;
+                    try
+                    {
+                        width = (int)mediaPlayer.PlaybackSession.NaturalVideoWidth;
+                        height = (int)mediaPlayer.PlaybackSession.NaturalVideoHeight;
+                    }
+                    catch { }
+
+                    engine.Raise(MediaEngineEvent.VideoProbe(
+                        session.Snapshot.AttachGeneration,
+                        width > 0 && height > 0));
+                }
+                catch (Exception ex) { _host.LogIgnored("ProbeVideo", ex); }
+            }
+
+            private void ArmVideoProbe()
+            {
+                try
+                {
+                    if (videoProbeTimer is null)
+                    {
+                        videoProbeTimer = new Microsoft.UI.Xaml.DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromSeconds(1)
+                        };
+                        videoProbeTimer.Tick += (_, _) => ProbeVideo();
+                    }
+                    videoProbeTimer.Start();
+                }
+                catch (Exception ex) { _host.LogIgnored("ArmVideoProbe", ex); }
+            }
+
+            private void StopVideoProbe()
+            {
+                try { videoProbeTimer?.Stop(); }
+                catch (Exception ex) { _host.LogIgnored("StopVideoProbe", ex); }
+            }
+
+            private void CancelReadyWatchdog()
+            {
+                var cts = Interlocked.Exchange(ref readyWatchdogCts, null);
+                if (cts is null)
+                    return;
+                try { cts.Cancel(); } catch { }
+                cts.Dispose();
+            }
+
+            /// <summary>
+            /// Once per attached URL: which headers the segment requests carry (names, plus the
+            /// Referer/Origin values; never cookie values), so a 403 can be matched to them in the log.
+            /// </summary>
+            private void LogSegmentHeadersOnce(Uri segmentUri, string referer, IReadOnlyDictionary<string, string>? requestHeaders)
+            {
+                var key = currentPlaybackUrl ?? segmentUri.Host;
+                if (string.Equals(Volatile.Read(ref segmentHeadersLoggedFor), key, StringComparison.Ordinal))
+                    return;
+                Volatile.Write(ref segmentHeadersLoggedFor, key);
+                var headers = PlaybackRequestHeaders.Resolve(referer, requestHeaders);
+                string? Value(string name) => headers.FirstOrDefault(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+                _host._logger.LogInformation(
+                    "Segment headers for {Host}: Referer={Referer} Origin={Origin} names=[{Names}]",
+                    segmentUri.Host,
+                    Value("Referer") ?? "(none)",
+                    Value("Origin") ?? "(none)",
+                    string.Join(",", headers.Select(h => h.Key)));
+            }
+
+            private SwitchBackRunner CreateSwitchBackRunner()
+                => SwitchBackRunner.Create(
+                    session,
+                    switchingService,
+                    _host._services.GetService(typeof(ISwitchBackProbe)) as ISwitchBackProbe,
+                    settledHeight: () => pictureSizeSettler.Published?.Height,
+                    runOnUi: SwitchBackRunner.Dispatch(action => MainThread.BeginInvokeOnMainThread(action)),
+                    log: msg => _host._logger.LogInformation("{Message}", msg));
+
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
             {
                 PlaybackCommandExecutor.Apply(cmd, new WindowsPlaybackCommandHost(this));
@@ -331,9 +492,20 @@ namespace VardyParty.Platforms.Windows
 
                 public void SyncHealthyStreamCount() => session.pool.SyncHealthyStreamCount();
 
-                public void ReportFailed(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+                public void ReportFailed(string? reason)
+                {
+                    session._host._logger.LogInformation("Stream failed: {Reason}", reason ?? "Playback error");
+                    session.PostHealthError(reason);
+                }
 
-                public void ReportDeclined(string? reason) => session.ShowStreamError(reason ?? "Playback error");
+                public void ReportDeclined(string? reason)
+                {
+                    session._host._logger.LogInformation("Stream declined: {Reason}", reason ?? "Health declined");
+                    session.PostHealthError(reason);
+                }
+
+                /// <summary>Short, accurate text (never the raw Media Foundation message).</summary>
+                public void ShowFailureToUser(string userText) => session.ShowStreamError(userText);
 
                 public void ReportWorking()
                 {
@@ -347,6 +519,7 @@ namespace VardyParty.Platforms.Windows
                         session._refererUrl,
                         streamName,
                         metrics: session._host.GetCurrentMetrics());
+                    session.StartHealthMetricsLoop();
                 }
 
                 public void MarkEstablished()
@@ -355,12 +528,19 @@ namespace VardyParty.Platforms.Windows
                 }
 
                 public void RaiseBuffering(bool isBuffering)
-                    => session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
+                {
+                    session._host.BufferingStateChanged?.Invoke(session._host, isBuffering);
+                    if (isBuffering)
+                        session.PostHealthBuffering();
+                }
 
                 public void Attach(string url, bool isRevert)
                 {
                     if (isRevert)
                         session._host._logger.LogWarning("Reverting to last good stream: {Url}", url);
+                    // Each row's CDN checks its own Referer: send the attached row's, never the
+                    // opening stream's (403 on Next, Windows log 13 Nov 2026 19:41:33).
+                    session.ApplyRequestContextForUrl(url);
                     _ = session.engine.AttachAsync(url, session._requestHeaders);
                 }
 
@@ -398,6 +578,9 @@ namespace VardyParty.Platforms.Windows
 
                 public void NotifyApplyFailed(Exception exception)
                     => session._host._logger.LogError(exception, "ApplyPlaybackCommand failed");
+
+                public void ConsiderSwitchBack(PlaybackCommand cmd)
+                    => session.switchBack?.Consider(cmd);
             }
 
             private async Task InvokeNextStreamAsync()
@@ -433,6 +616,24 @@ namespace VardyParty.Platforms.Windows
                 catch { }
             }
 
+            private void ApplyRequestContextForUrl(string url)
+            {
+                var context = PlaybackRowRequestContext.ForUrl(
+                    switchingService,
+                    url,
+                    new PlaybackRequestContext(_refererUrl, _requestHeaders));
+                if (!string.Equals(context.Referer, _refererUrl, StringComparison.Ordinal))
+                {
+                    _host._logger.LogInformation(
+                        "Playback Referer for {Host}: {Referer}",
+                        Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host : "(relative)",
+                        context.Referer);
+                }
+
+                _refererUrl = context.Referer;
+                _requestHeaders = context.Headers;
+            }
+
             private bool IsStaleAttach(int generation) =>
                 cleanupInvoked || generation != (int)session.Snapshot.AttachGeneration;
 
@@ -462,12 +663,32 @@ namespace VardyParty.Platforms.Windows
                     var managedHttp = _host._httpClientFactory.CreateClient(PlaybackHttpClients.Media);
                     var uri = new Uri(url);
                     var manifestToken = CurrentPlaybackDownloadToken;
+                    // This attach's headers: a later switch must not change an older source's.
+                    var referer = _refererUrl;
+                    var requestHeaders = _requestHeaders;
+                    // One session per attach. Its first media playlist (this manifest, or the
+                    // first variant AMS loads) drops segments this player already fetched, so a
+                    // same-URL reattach or switch-back never replays watched video.
+                    var playlistReload = new PlaylistReloadSession(
+                        _host._services.GetService(typeof(IPlaylistReloadRecoveryStrategy)) as IPlaylistReloadRecoveryStrategy,
+                        PlaylistReloadRowName.ForUrl(switchingService, url))
+                    {
+                        FirstPlaylistCompleted = true,
+                        PlayedSegments = session.PlayedSegments
+                    };
                     var created = await _host.CreateAdaptiveMediaSourceAsync(
                         managedHttp,
                         uri,
-                        _refererUrl,
-                        _requestHeaders,
-                        manifestToken);
+                        referer,
+                        requestHeaders,
+                        manifestToken,
+                        manifest =>
+                        {
+                            var unplayed = playlistReload.DropPlayedSegments(manifest, url, out var dropped);
+                            if (dropped > 0)
+                                _host._logger.LogInformation("[no-replay] row=\"{Row}\" dropped {Dropped} played segments", PlaylistReloadLogging.RowLabel(playlistReload.Row), dropped);
+                            return unplayed;
+                        });
                     var adaptiveResult = created.Result;
                     var manifestStream = created.ManifestStream;
 
@@ -496,6 +717,11 @@ namespace VardyParty.Platforms.Windows
                         manifestStream = null;
 
                         var segmentToken = CurrentPlaybackDownloadToken;
+                        // AMS already loaded the first playlist; DownloadRequested playlist
+                        // fetches are mid-play. If the next retry would exceed the deferral
+                        // budget, give up as CDN-unreachable and switch — never serve a
+                        // stale last-good playlist (already-watched segments).
+                        playlistReloadSession = playlistReload;
                         TypedEventHandler<AdaptiveMediaSource, AdaptiveMediaSourceDownloadRequestedEventArgs> downloadHandler = async (sender, args) =>
                         {
                             if (IsStaleAttach(generation))
@@ -509,11 +735,84 @@ namespace VardyParty.Platforms.Windows
                                 if (IsStaleAttach(generation))
                                     return;
 
+                                var resourceUrl = args.ResourceUri.ToString();
+                                var isPlaylist = args.ResourceType == AdaptiveMediaSourceResourceType.Manifest
+                                    || PlaylistReloadEvaluation.IsPlaylistUrl(resourceUrl);
+                                if (isPlaylist)
+                                {
+                                    var outcome = await PlaylistReloadCoordinator.RunAsync(
+                                        playlistReload.Strategy,
+                                        PlaylistReloadRequest.MidPlay(
+                                            isFirstAttach: !playlistReload.FirstPlaylistCompleted,
+                                            playlistReload,
+                                            playlistReload.Row,
+                                            log: (isInfo, line) =>
+                                            {
+                                                if (isInfo)
+                                                    _host._logger.LogInformation("{Line}", line);
+                                                else
+                                                    _host._logger.LogDebug("{Line}", line);
+                                            },
+                                            playlistUrl: resourceUrl),
+                                        async ct =>
+                                        {
+                                            using var req = new System.Net.Http.HttpRequestMessage(
+                                                System.Net.Http.HttpMethod.Get, resourceUrl);
+                                            ApplyManagedPlaybackHeaders(req, referer, requestHeaders);
+                                            using var resp = await managedHttp.SendAsync(
+                                                req,
+                                                System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                                                ct).ConfigureAwait(false);
+                                            var bodyBytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                                            return PlaylistReloadFetchResult.FromHttp(
+                                                (int)resp.StatusCode,
+                                                bodyBytes,
+                                                resp.Content.Headers.ContentType?.MediaType);
+                                        },
+                                        segmentToken).ConfigureAwait(false);
+
+                                    if (outcome.Kind is PlaylistReloadOutcomeKind.Serve)
+                                    {
+                                        var playlistBody = outcome.Body ?? Array.Empty<byte>();
+                                        var playlistType = PlaybackContentTypes.Resolve(
+                                            outcome.ContentType,
+                                            args.ResourceUri.AbsolutePath,
+                                            ToPlaybackResourceKind(args.ResourceType));
+                                        transferMeter.Add(playlistBody.Length, Environment.TickCount64);
+                                        var playlistStream = await CopyToRandomAccessStreamAsync(playlistBody);
+                                        if (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
+                                        {
+                                            playlistStream.Dispose();
+                                            return;
+                                        }
+
+                                        if (!TryRootPlaybackStream(playlistStream, generation))
+                                            return;
+
+                                        args.Result.InputStream = playlistStream.GetInputStreamAt(0);
+                                        args.Result.ContentType = playlistType;
+                                        if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
+                                            playlistReload.NoteServed();
+                                        lastDownloadFailureStatus = 0;
+                                        session.NotifyDownloadSuccess();
+                                        return;
+                                    }
+
+                                    throw new System.Net.Http.HttpRequestException(
+                                        outcome.Message ?? $"HTTP {outcome.StatusCode} playlist reload failed",
+                                        inner: null,
+                                        statusCode: outcome.StatusCode is >= 100 and <= 599
+                                            ? (System.Net.HttpStatusCode)outcome.StatusCode
+                                            : null);
+                                }
+
                                 managedRequest = new System.Net.Http.HttpRequestMessage(
                                     System.Net.Http.HttpMethod.Get,
                                     args.ResourceUri.ToString());
-                                ApplyManagedPlaybackHeaders(managedRequest, _refererUrl, _requestHeaders);
+                                ApplyManagedPlaybackHeaders(managedRequest, referer, requestHeaders);
                                 ApplyResourceByteRange(managedRequest, args);
+                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment && lastDownloadFailureStatus == 0)
+                                    LogSegmentHeadersOnce(args.ResourceUri, referer, requestHeaders);
 
                                 managedResponse = await managedHttp.SendAsync(
                                     managedRequest,
@@ -562,6 +861,9 @@ namespace VardyParty.Platforms.Windows
 
                                 args.Result.InputStream = winrtStream.GetInputStreamAt(0);
                                 args.Result.ContentType = contentType;
+                                if (args.ResourceType == AdaptiveMediaSourceResourceType.MediaSegment)
+                                    playlistReload.NoteSegmentFetched(args.ResourceUri.ToString());
+                                lastDownloadFailureStatus = 0;
                                 session.NotifyDownloadSuccess();
                             }
                             catch (OperationCanceledException) when (IsStaleAttach(generation) || segmentToken.IsCancellationRequested)
@@ -581,10 +883,11 @@ namespace VardyParty.Platforms.Windows
                                     statusCode,
                                     args.ResourceUri);
 
+                                lastDownloadFailureStatus = statusCode;
                                 var failureMessage =
                                     $"Segment download failed ({args.ResourceType}, status={statusCode})";
                                 var downloadCmd = PlaybackCommand.FromEffects(
-                                    session.NotifyDownloadFailure(failureMessage));
+                                    session.NotifyDownloadFailure(failureMessage, statusCode));
                                 if (!downloadCmd.IsNoOp)
                                 {
                                     MainThread.BeginInvokeOnMainThread(() =>
@@ -604,11 +907,13 @@ namespace VardyParty.Platforms.Windows
 
                                 try
                                 {
-                                    args.Result.ExtendedStatus = statusCode > 0 ? (uint)statusCode : 1;
+                                    // A failure HRESULT (HTTP_E_STATUS_*), not the bare HTTP status:
+                                    // WinRT threw "The parameter is incorrect" for 403 on 13 Nov.
+                                    args.Result.ExtendedStatus = PlaybackPolicy.WindowsDownloadFailureStatus(statusCode);
                                 }
                                 catch (Exception statusEx)
                                 {
-                                    _host._logger.LogWarning(statusEx, "Failed to set download extended status");
+                                    _host._logger.LogDebug(statusEx, "Failed to set download extended status");
                                 }
                             }
                             finally
@@ -637,6 +942,7 @@ namespace VardyParty.Platforms.Windows
                                 if (IsStaleAttach(generation))
                                     return;
 
+                                ArmReadyOnPlaying();
                                 mediaPlayer.Source = playbackItem;
                                 _host._currentPlaybackItem = playbackItem;
 
@@ -655,11 +961,7 @@ namespace VardyParty.Platforms.Windows
                                 }
 
                                 currentPlaybackUrl = url;
-                                // Do NOT zero liveHlsRecoveries here: soft-reattach Ready fires as soon as
-                                // MediaPlaybackItem is assigned (before sustained play). Reset only in
-                                // AttachViaSession (intentional switch/start). Network-only recoverable
-                                // classification + this counter keeps MaxLiveHlsRecoveries effective.
-                                engine.Raise(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
+                                // Ready waits for the picture (PlaybackState Playing): see ArmReadyOnPlaying.
 
                                 // Ensure the grid is visible and hit testable
                                 if (playerGrid is { } overlay)
@@ -727,7 +1029,7 @@ namespace VardyParty.Platforms.Windows
                     try
                     {
                         chrome.SetContentState(PlaybackChromeContentState.Switching);
-                        streamCountText.Text = message;
+                        ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(message, null));
                         if (!chrome.IsVideoInfoVisible)
                         {
                             streamInfoPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
@@ -757,6 +1059,10 @@ namespace VardyParty.Platforms.Windows
                         plan.Reason);
 
                     streamSwitchInProgress = true;
+                    pictureSizeSettler.Reset();
+                    measuredPictureConfirmed = false;
+                    try { pictureSizeSettleTimer?.Stop(); }
+                    catch (Exception ex) { _host.LogIgnored("StopPictureSizeSettleTimer", ex); }
                     transferMeter.Reset();
                     MainThread.BeginInvokeOnMainThread(SyncChromeContentStateFromPlayback);
                     UpdateInfo();

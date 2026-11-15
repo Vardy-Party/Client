@@ -5,7 +5,7 @@
 	<PropertyGroup>
 		<!--
 			Linux head: the shared .NET MAUI homepage drawn by Avalonia
-			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11 RC1
+			(Avalonia.Controls.Maui full-hosting mode). Requires the .NET 11
 			SDK and the maui-tizen workload (the plain-TFM MAUI SDK on Linux).
 			The Avalonia.Controls.Maui.Desktop source generator emits Program.Main.
 		-->
@@ -58,7 +58,8 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.*-*" />
+		<PackageReference Include="Microsoft.Maui.Controls" Version="11.0.*" />
+		<!-- No stable 11.0.x yet; latest is 11.0.0-rc.3. 11.0.* would fail restore. -->
 		<PackageReference Include="Avalonia.Controls.Maui.Desktop" Version="11.0.*-*" />
 		<!--
 			Avalonia.Controls.Maui.Desktop needs SkiaSharp native 4.151; Svg.Skia
@@ -66,10 +67,10 @@
 			libSkiaSharp.so is deployed (startup native mismatch / NU1605).
 		-->
 		<PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="11.0.*-*" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.*-*" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.*-*" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.*-*" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="11.0.*" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.*" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.*" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.*" />
 		<!-- UI sounds: miniaudio-backed engine with linux-x64/arm64 natives. -->
 		<PackageReference Include="SoundFlow" Version="1.4.1" />
 		<!--

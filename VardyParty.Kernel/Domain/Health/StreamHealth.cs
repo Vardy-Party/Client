@@ -40,6 +40,31 @@ public class StreamHealth
     public string? AudioCodec { get; set; }
 
     /// <summary>
+    /// Picture size parsed from a media segment or init bitstream (SPS),
+    /// never from playlist RESOLUTION metadata. Null until the health check
+    /// has seen enough bytes, or if the stream is encrypted / unreadable.
+    /// </summary>
+    public int? ProbedVideoWidth { get; set; }
+
+    /// <summary>Vertical size companion to <see cref="ProbedVideoWidth"/>.</summary>
+    public int? ProbedVideoHeight { get; set; }
+
+    /// <summary>
+    /// Completes when the non-blocking bitstream size probe has finished
+    /// (parsed, skipped, or failed). Already completed when the size was
+    /// read from bytes the health check already had, or no probe was started.
+    /// </summary>
+    public Task WhenBitstreamSizeProbed { get; set; } = Task.CompletedTask;
+
+    /// <summary><c>1920x1080</c> when both probed dimensions are known.</summary>
+    public string? GetProbedResolution()
+    {
+        if (ProbedVideoWidth is > 0 && ProbedVideoHeight is > 0)
+            return $"{ProbedVideoWidth}x{ProbedVideoHeight}";
+        return ProbedVideoHeight is > 0 ? $"{ProbedVideoHeight}p" : null;
+    }
+
+    /// <summary>
     /// What the passing media playlist looked like (segment names, 90 kHz numbers,
     /// PROGRAM-DATE-TIME, target duration, when it was read). Only set when the check
     /// passed. <see cref="MirrorProofPolicy"/> uses it to prove two URLs are one stream.
@@ -50,7 +75,11 @@ public class StreamHealth
     /// Human-readable quality string for UI display (e.g., "1080p 60fps 5000kbps")
     /// Derived from Resolution, FrameRate, and Bitrate
     /// </summary>
-    public string GetQualityLabel()
+    /// <param name="includeBitrate">
+    /// False for anything shown in the player UI (bitrate is never displayed; it only
+    /// feeds health metrics). Logs and tools keep it.
+    /// </param>
+    public string GetQualityLabel(bool includeBitrate = true)
     {
         var parts = new List<string>();
 
@@ -73,7 +102,7 @@ public class StreamHealth
             parts.Add($"{FrameRate}fps");
         }
 
-        if (Bitrate.HasValue)
+        if (includeBitrate && Bitrate.HasValue)
         {
             parts.Add($"{Bitrate}kbps");
         }

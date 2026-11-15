@@ -61,6 +61,12 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
         }
     }
 
+    /// <summary>
+    /// Bumped each time LibVLC renegotiates the software-frame format (new
+    /// picture size). Used to ignore the previous stream's size during a switch.
+    /// </summary>
+    public int FormatGeneration { get; private set; }
+
     public void Attach(MediaPlayer player)
     {
         ArgumentNullException.ThrowIfNull(player);
@@ -111,6 +117,7 @@ public sealed class LibVlcSoftwareFrameSink : IDisposable
             _width = w;
             _height = h;
             _pitch = pitch;
+            FormatGeneration++;
             EnsureAlignedBuffer(LibVlcFrameGeometry.BufferByteLength(w, h));
             EnsureCopyBuffer();
         }

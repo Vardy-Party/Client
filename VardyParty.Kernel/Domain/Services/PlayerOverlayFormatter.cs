@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -55,25 +56,127 @@ public static class PlayerOverlayFormatter
         return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
     }
 
-    /// <summary>Extracts <c>1080p</c> from <c>1920x1080</c> (or spaced variants).</summary>
+    /// <summary>Extracts <c>1080p</c> from <c>1920x1080</c> (or spaced variants), or passes through <c>720p</c>.</summary>
     public static string? ExtractVerticalResolutionLabel(string? resolution)
     {
         if (string.IsNullOrWhiteSpace(resolution)) return null;
         var match = VerticalResolutionRegex.Match(resolution);
-        return match.Success ? $"{match.Groups[2].Value}p" : null;
+        if (match.Success) return $"{match.Groups[2].Value}p";
+        var trimmed = resolution.Trim();
+        return Regex.IsMatch(trimmed, @"^\d{3,4}p$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+            ? trimmed.ToLowerInvariant()
+            : null;
+    }
+
+    /// <summary>Max characters for the stream name on the identity / toast row (including ellipsis).</summary>
+    public const int StreamNameMaxLength = 32;
+
+    /// <summary>Trim and ellipsize a stream/channel name so the identity row stays on one line.</summary>
+    public static string? EllipsizeStreamName(string? name, int maxLength = StreamNameMaxLength)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        var trimmed = name.Trim();
+        if (maxLength <= 0)
+            return null;
+        if (trimmed.Length <= maxLength)
+            return trimmed;
+        if (maxLength == 1)
+            return "…";
+
+        return trimmed[..(maxLength - 1)] + "…";
     }
 
     /// <summary>
-    /// Stream toast / flash copy while switching. Empty total → <c>Streams: 0</c>;
-    /// otherwise <c>Stream: i/n</c> only — no resolution or bitrate (those belong on
-    /// the video-info panel after the new picture is measured).
+    /// One-row stream identity, e.g. <c>1/2 · V1 · Fubo US · 720p</c>.
+    /// Omits the chip, the name, and/or the height when they are unknown.
+    /// Empty when <paramref name="total"/> is not positive.
     /// </summary>
-    /// <param name="verticalResolutionLabel">Ignored; kept so call sites stay stable.</param>
-    public static string FormatStreamToast(int index, int total, string? verticalResolutionLabel)
+    public static string FormatStreamIdentityLine(
+        int index,
+        int total,
+        string? sourceLabel = null,
+        string? channelName = null,
+        string? verticalResolutionLabel = null,
+        int maxNameLength = StreamNameMaxLength)
     {
-        _ = verticalResolutionLabel;
+        if (total <= 0)
+            return string.Empty;
+
+        var parts = new List<string> { $"{index}/{total}" };
+        if (!string.IsNullOrWhiteSpace(sourceLabel))
+            parts.Add(sourceLabel.Trim());
+
+        var name = EllipsizeStreamName(channelName, maxNameLength);
+        if (!string.IsNullOrEmpty(name)
+            && (string.IsNullOrWhiteSpace(sourceLabel)
+                || !string.Equals(name, sourceLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+            && !IsCatalogBadgeChannel(name))
+        {
+            parts.Add(name);
+        }
+
+        var height = ExtractVerticalResolutionLabel(verticalResolutionLabel);
+        if (!string.IsNullOrEmpty(height))
+            parts.Add(height);
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Stream toast (channel-start info bar) copy. Empty total → <c>Streams: 0</c>;
+    /// otherwise <c>1/2 · V1 · Fubo US · 720p</c>. Height is included once known. The
+    /// video-info panel's identity row omits the height; there it sits beside the bitrate.
+    /// </summary>
+    public static string FormatStreamToast(
+        int index,
+        int total,
+        string? verticalResolutionLabel,
+        string? sourceLabel = null,
+        string? channelName = null)
+    {
         if (total <= 0) return "Streams: 0";
-        return $"Stream: {index}/{total}";
+        return FormatStreamIdentityLine(index, total, sourceLabel, channelName, verticalResolutionLabel);
+    }
+
+    /// <summary>
+    /// Splits a one-row identity (<c>2/9 · V2 · North Sports · 720p</c>) around its
+    /// source chip so every host can draw the chip in the same colours as the
+    /// video-info badge (<see cref="SourceBadgeStyle.ForLabel"/>): Android spans,
+    /// Windows and Linux a badge between two text runs. No chip when
+    /// <paramref name="sourceLabel"/> is blank or not on the row.
+    /// </summary>
+    public static StreamIdentityParts SplitSourceChip(string? identityLine, string? sourceLabel)
+    {
+        var text = identityLine ?? string.Empty;
+        if (text.Length == 0 || string.IsNullOrWhiteSpace(sourceLabel))
+            return new StreamIdentityParts(text, null, string.Empty, null);
+
+        const string separator = " · ";
+        var chip = sourceLabel.Trim();
+        var search = 0;
+        while (search < text.Length)
+        {
+            var at = text.IndexOf(separator + chip, search, StringComparison.Ordinal);
+            if (at < 0)
+                break;
+            var chipStart = at + separator.Length;
+            var chipEnd = chipStart + chip.Length;
+            if (chipEnd == text.Length
+                || string.CompareOrdinal(text, chipEnd, separator, 0, separator.Length) == 0)
+            {
+                return new StreamIdentityParts(
+                    text[..chipStart],
+                    chip,
+                    text[chipEnd..],
+                    SourceBadgeStyle.ForLabel(chip));
+            }
+
+            search = at + 1;
+        }
+
+        return new StreamIdentityParts(text, null, string.Empty, null);
     }
 
     public static string? MapCodecToFriendlyName(string? codec)
@@ -101,9 +204,11 @@ public static class PlayerOverlayFormatter
     }
 
     /// <summary>
-    /// Shared overlay payload for stream switching and host chrome. Prefers
-    /// health resolution/codecs; maps codec tokens via
-    /// <see cref="MapCodecToFriendlyName"/>.
+    /// Shared overlay payload for stream switching and host chrome. Maps codec
+    /// tokens via <see cref="MapCodecToFriendlyName"/>. The identity row never
+    /// uses playlist or catalog RESOLUTION — only a bitstream probe
+    /// (<see cref="PlayerOverlayInfo.ProbedResolution"/>) or a later
+    /// player-measured size filled in by the host.
     /// </summary>
     public static PlayerOverlayInfo? BuildOverlayInfo(
         EnrichedStream? current,
@@ -115,19 +220,21 @@ public static class PlayerOverlayFormatter
         if (current is null && total <= 0)
             return null;
 
-        var resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution;
+        var probed = current?.Health?.GetProbedResolution();
         var chip = ResolveChipOrChannelLabel(current?.Stream);
         return new PlayerOverlayInfo
         {
             Index = index,
             Total = total,
             Channel = chip,
+            SourceLabel = current?.Stream?.CatalogSourceBadgeLabel,
             BitrateKbps = current?.Stream?.BitrateKbps ?? current?.Health?.Bitrate,
-            Resolution = resolution,
+            Resolution = null,
+            ProbedResolution = probed,
             FrameRate = current?.Health?.FrameRate,
             VideoCodec = MapCodecToFriendlyName(current?.Health?.VideoCodec),
             AudioCodec = MapCodecToFriendlyName(current?.Health?.AudioCodec),
-            AspectRatio = BuildAspect(resolution),
+            AspectRatio = BuildAspect(probed),
             M3u8Url = current?.ResolvedM3U8Url ?? fallbackM3u8Url,
             RefererUrl = refererUrl,
             // Hosts supply the game title separately; keep chip identity on Channel.
@@ -164,6 +271,18 @@ public static class PlayerOverlayFormatter
         || string.Equals(channel, "FB", StringComparison.OrdinalIgnoreCase);
 
     private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
+}
+
+/// <summary>
+/// A one-row identity split around its source chip (see
+/// <see cref="PlayerOverlayFormatter.SplitSourceChip"/>). <see cref="Text"/> is the
+/// original row; <see cref="ChipStart"/> indexes the chip within it.
+/// </summary>
+public readonly record struct StreamIdentityParts(string Prefix, string? Chip, string Suffix, SourceBadgeStyle? ChipStyle)
+{
+    public bool HasChip => !string.IsNullOrEmpty(Chip) && ChipStyle is not null;
+    public int ChipStart => Prefix.Length;
+    public string Text => Prefix + (Chip ?? string.Empty) + Suffix;
 }
 
 /// <summary>ARGB tokens for catalog source badges (V1/FB vs other).</summary>

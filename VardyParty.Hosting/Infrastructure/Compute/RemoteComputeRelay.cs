@@ -512,7 +512,9 @@ public sealed class RemoteComputePlayClient(
 
         public MpHarvestSession ArmHarvest(string id)
         {
-            var harvest = new MpHarvestSession();
+            // The relay reads an empty URL as a miss (EmptyHarvestFault), so its seed keeps
+            // waiting for a probe-ready chip rather than answering with the chip list.
+            var harvest = new MpHarvestSession(mode: MpSeedMode.ProbeReadyOnly);
             _harvests[id] = harvest;
             return harvest;
         }

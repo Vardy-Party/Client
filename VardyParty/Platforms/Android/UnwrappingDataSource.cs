@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Android.Runtime;
 using AndroidX.Media3.Common;
 using AndroidX.Media3.DataSource;
@@ -20,20 +22,32 @@ namespace VardyParty.Platforms.Android
     /// (playlists, keys, plain TS / fMP4, real images) streams through untouched
     /// after a 12-byte peek. Ranged opens (Position &gt; 0 / explicit Length) pass
     /// through: a slice of a wrapper cannot be unwrapped.
+    /// Mid-play playlist reloads go through <see cref="IPlaylistReloadRecoveryStrategy"/>
+    /// so a transitory 5xx or non-#EXTM3U body is retried before the player sees it.
     /// </summary>
     public sealed class UnwrappingDataSource : Java.Lang.Object, IDataSource
     {
         private readonly IDataSource _upstream;
         private readonly PlaybackTransferMeter? _meter;
+        private readonly PlaylistReloadSession? _playlistSession;
         private byte[] _pending = Array.Empty<byte>();
         private int _pendingOffset;
         private bool _upstreamDone;
         private IDictionary<string, IList<string>>? _unwrappedHeaders;
+        private readonly Action<int>? _onOpenOutcome;
 
-        public UnwrappingDataSource(IDataSource upstream, PlaybackTransferMeter? meter = null)
+        /// <param name="onOpenOutcome">Called once per open: 0 when the server answered,
+        /// else the HTTP status of the failure (0 when unknown). Feeds the refused-download rule.</param>
+        public UnwrappingDataSource(
+            IDataSource upstream,
+            PlaybackTransferMeter? meter = null,
+            Action<int>? onOpenOutcome = null,
+            PlaylistReloadSession? playlistSession = null)
         {
             _upstream = upstream ?? throw new ArgumentNullException(nameof(upstream));
             _meter = meter;
+            _onOpenOutcome = onOpenOutcome;
+            _playlistSession = playlistSession;
         }
 
         public void AddTransferListener(ITransferListener? transferListener)
@@ -52,8 +66,27 @@ namespace VardyParty.Platforms.Android
             if (dataSpec is not null)
                 dataSpec = PlayingPlaylistRedirect.Apply(dataSpec);
 
+            if (dataSpec is not null
+                && IsPlaylist(dataSpec)
+                && dataSpec.Position <= 0
+                && (dataSpec.Length <= 0 || dataSpec.Length == C.LengthUnset))
+            {
+                return OpenPlaylistWithRecovery(dataSpec);
+            }
+
             // Upstream IOExceptions (HTTP 403, DNS) must reach Media3 unchanged.
-            var length = _upstream.Open(dataSpec);
+            long length;
+            try
+            {
+                length = _upstream.Open(dataSpec);
+            }
+            catch (Exception ex)
+            {
+                ReportOpenOutcome(PlaybackPolicy.HttpStatusFromErrorText(ex.Message), failed: true);
+                throw;
+            }
+
+            ReportOpenOutcome(0, failed: false);
             if (dataSpec is null
                 || dataSpec.Position > 0
                 || (dataSpec.Length > 0 && dataSpec.Length != C.LengthUnset))
@@ -61,10 +94,7 @@ namespace VardyParty.Platforms.Android
                 return length;
             }
 
-            if (IsPlaylist(dataSpec))
-                return OpenTrimmedPlaylist(dataSpec);
-
-            PlayedSegmentMemory.Note(dataSpec.Uri?.ToString());
+            _playlistSession?.NoteSegmentFetched(dataSpec.Uri?.ToString());
 
             WrappedSegmentRead read;
             try
@@ -95,17 +125,92 @@ namespace VardyParty.Platforms.Android
             return _pending.Length;
         }
 
-        private static bool IsPlaylist(DataSpec dataSpec)
+        private long OpenPlaylistWithRecovery(DataSpec dataSpec)
         {
-            var path = dataSpec.Uri?.Path;
-            return path is not null && path.Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
+            var session = _playlistSession;
+            var strategy = session?.Strategy ?? PlaylistReloadStrategies.Default;
+            // A redirected playlist repeats the window: drop what was already fetched.
+            if (PlayingPlaylistRedirect.LastApplyRewrote)
+                session?.PlayedSegments?.ArmTrimOnce();
+            var request = PlaylistReloadRequest.MidPlay(
+                isFirstAttach: session is null || !session.FirstPlaylistCompleted,
+                session,
+                session?.Row,
+                log: (isInfo, line) =>
+                {
+                    if (isInfo)
+                        global::Android.Util.Log.Info("VardyParty", line);
+                    else
+                        global::Android.Util.Log.Debug("VardyParty", line);
+                },
+                playlistUrl: dataSpec.Uri?.ToString());
+
+            PlaylistReloadOutcome outcome;
+            try
+            {
+                outcome = PlaylistReloadCoordinator.Run(
+                    strategy,
+                    request,
+                    _ => Task.FromResult(FetchPlaylistOnce(dataSpec)),
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                ReportOpenOutcome(PlaybackPolicy.HttpStatusFromErrorText(ex.Message), failed: true);
+                throw;
+            }
+
+            if (outcome.Kind == PlaylistReloadOutcomeKind.Failed)
+            {
+                // The coordinator already recorded the give-up kind from the HTTP
+                // status (404/410 ConfirmedDead, 401/403 TokenOrPlaylistInvalid,
+                // status 0 CdnUnreachable). Do not overwrite it.
+                ReportOpenOutcome(outcome.StatusCode, failed: true);
+                throw new Java.IO.IOException(outcome.Message ?? "playlist reload failed");
+            }
+
+            var served = outcome.Body ?? Array.Empty<byte>();
+            session?.NoteServed();
+
+            // The shared coordinator already dropped played segments (no-replay rule).
+            var bytes = served;
+            ReportOpenOutcome(0, failed: false);
+            _pending = bytes;
+            _upstreamDone = true;
+            return bytes.Length;
         }
 
-        /// <summary>
-        /// Media playlists are small. Read the body, drop the segment URLs already fetched
-        /// for this path, and hand ExoPlayer only the tail.
-        /// </summary>
-        private long OpenTrimmedPlaylist(DataSpec dataSpec)
+        private PlaylistReloadFetchResult FetchPlaylistOnce(DataSpec dataSpec)
+        {
+            try { _upstream.Close(); } catch { /* reopen */ }
+
+            try
+            {
+                _upstream.Open(dataSpec);
+                var body = ReadUpstreamBody();
+                var contentType = ContentTypeOf(_upstream);
+                try { _upstream.Close(); } catch { /* next attempt reopens */ }
+                return PlaylistReloadFetchResult.FromHttp(200, body, contentType);
+            }
+            catch (Exception)
+            {
+                try { _upstream.Close(); } catch { /* next attempt reopens */ }
+                // An HTTP error response: keep its status and body for the strategy.
+                if (_upstream is ManagedHttpDataSource managed && managed.LastOpenStatus is >= 100 and <= 599)
+                {
+                    return PlaylistReloadFetchResult.FromHttp(
+                        managed.LastOpenStatus,
+                        managed.LastErrorBody,
+                        managed.LastErrorContentType);
+                }
+
+                // A dropped connection: PlaylistReloadCoordinator maps it to status 0
+                // on every platform (same retries, same CDN-unreachable give-up).
+                throw;
+            }
+        }
+
+        private byte[] ReadUpstreamBody()
         {
             const int maxBytes = 1024 * 1024;
             var buffer = new byte[8192];
@@ -118,30 +223,39 @@ namespace VardyParty.Platforms.Android
                 body.Write(buffer, 0, n);
             }
 
-            var bytes = body.ToArray();
-            var text = Encoding.UTF8.GetString(bytes);
-            if (text.AsSpan().TrimStart().StartsWith("#EXTM3U", StringComparison.Ordinal))
+            return body.ToArray();
+        }
+
+        private static string? ContentTypeOf(IDataSource source)
+        {
+            var headers = source.ResponseHeaders;
+            if (headers is null)
+                return null;
+            foreach (var pair in headers)
             {
-                var playlistUrl = dataSpec.Uri?.ToString();
-                PlayedSegmentMemory.NotePlaylist(playlistUrl);
-                var rewritten = PlayingPlaylistRedirect.LastApplyRewrote;
-                var stallPrepare = PlayedSegmentMemory.ConsumeTrim();
-                var dropPlayed = rewritten || stallPrepare;
-                var trimmed = dropPlayed
-                    ? UnplayedPlaylist.TrimPlayedPrefix(text, PlayedSegmentMemory.WasPlayed, playlistUrl)
-                    : new UnplayedPlaylist.Trim(text, 0);
-                if (trimmed.Dropped > 0)
+                if (pair.Key is not null
+                    && pair.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
+                    && pair.Value is { Count: > 0 })
                 {
-                    global::Android.Util.Log.Info(
-                        "VardyParty",
-                        $"Playlist reload dropped {trimmed.Dropped} played segments");
-                    bytes = Encoding.UTF8.GetBytes(trimmed.Text);
+                    return pair.Value[0];
                 }
             }
 
-            _pending = bytes;
-            _upstreamDone = true;
-            return bytes.Length;
+            return null;
+        }
+
+        private void ReportOpenOutcome(int status, bool failed)
+        {
+            if (_onOpenOutcome is null || (failed && status == 0))
+                return;
+            try { _onOpenOutcome(status); }
+            catch { /* reporting must never break a load */ }
+        }
+
+        private static bool IsPlaylist(DataSpec dataSpec)
+        {
+            var path = dataSpec.Uri?.Path;
+            return path is not null && path.Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
         }
 
         public int Read(byte[]? buffer, int offset, int length)
@@ -225,18 +339,26 @@ namespace VardyParty.Platforms.Android
     {
         private readonly IDataSourceFactory _inner;
         private readonly PlaybackTransferMeter? _meter;
+        private readonly Action<int>? _onOpenOutcome;
+        private readonly PlaylistReloadSession _playlistSession;
 
-        public UnwrappingDataSourceFactory(IDataSourceFactory inner, PlaybackTransferMeter? meter = null)
+        public UnwrappingDataSourceFactory(
+            IDataSourceFactory inner,
+            PlaybackTransferMeter? meter = null,
+            Action<int>? onOpenOutcome = null,
+            PlaylistReloadSession? playlistSession = null)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _meter = meter;
+            _onOpenOutcome = onOpenOutcome;
+            _playlistSession = playlistSession ?? new PlaylistReloadSession();
         }
 
         public IDataSource CreateDataSource()
         {
             var upstream = _inner.CreateDataSource()
                 ?? throw new InvalidOperationException("Upstream data source factory returned null.");
-            return new UnwrappingDataSource(upstream, _meter);
+            return new UnwrappingDataSource(upstream, _meter, _onOpenOutcome, _playlistSession);
         }
     }
 }

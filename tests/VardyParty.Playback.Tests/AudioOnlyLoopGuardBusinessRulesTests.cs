@@ -216,7 +216,8 @@ public class AudioOnlyLoopGuardBusinessRulesTests
     public async Task AutoAdvance_OntoRowResolvingToFailedFeed_SkipsIt_AndStops()
     {
         var a = Row("A", "http://cdn/premium261/index.m3u8?t=1");
-        var b = Row("B", "http://other/b.m3u8");
+        // No probed link: B resolves fresh, onto the failed feed (round 12 plays a probed link at once).
+        var b = Row("B", null!);
         var pool = new StreamSwitchingService();
         pool.Initialize("l", "h", "a");
         pool.AddHealthyStream(a);

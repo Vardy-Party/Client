@@ -22,6 +22,7 @@ namespace VardyParty.Platforms.Android
                 }
 
                 UpdateOverlayText(info);
+                ShowStreamToastIfNeeded();
             }
             catch (Exception ex) { LogIgnored("UpdateOverlayFromCurrentStream", ex); }
         }
@@ -82,10 +83,9 @@ namespace VardyParty.Platforms.Android
                 var measuredResolution = _videoWidth is > 0 && _videoHeight is > 0
                     ? $"{_videoWidth}x{_videoHeight}"
                     : null;
-                var resolution = measuredResolution
-                    ?? current.Stream?.Resolution
-                    ?? current.Health?.Resolution;
-                // Match Windows: MeasuredBitrate so video-info and /health share one number.
+                var probedResolution = current.Health?.GetProbedResolution();
+                var resolution = measuredResolution;
+                // Match Windows: MeasuredBitrate feeds /health metrics only; video-info never shows bitrate.
                 var bitrateKbps = MeasuredBitrate.ResolveKbps(
                     current.Stream?.BitrateKbps ?? current.Health?.Bitrate,
                     amsBitsPerSecond: 0,
@@ -95,8 +95,10 @@ namespace VardyParty.Platforms.Android
                     Index = _switching?.GetCurrentStreamIndex() ?? 0,
                     Total = _switching?.GetHealthyStreams().Count ?? 0,
                     Channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream),
+                    SourceLabel = current.Stream?.CatalogSourceBadgeLabel,
                     BitrateKbps = bitrateKbps,
                     Resolution = resolution,
+                    ProbedResolution = probedResolution,
                     M3u8Url = current.ResolvedM3U8Url ?? _m3u8Url,
                     RefererUrl = _refererUrl,
                     BufferPercent = ReadPlaybackBufferPercent(),
@@ -106,7 +108,7 @@ namespace VardyParty.Platforms.Android
                     AspectRatio = PlayerOverlayFormatter.BuildAspect(
                         _videoWidth is > 0 && _videoHeight is > 0
                             ? $"{_videoWidth}x{_videoHeight}"
-                            : resolution ?? current.Stream?.Resolution ?? current.Health?.Resolution),
+                            : probedResolution),
                     Title = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current.Stream)
                 };
             }
@@ -144,7 +146,9 @@ namespace VardyParty.Platforms.Android
                 if (_titleView != null) _titleView.Text = string.Empty;
                 if (_statusView != null) _statusView.Text = string.Empty;
                 if (_indexView != null) _indexView.Text = string.Empty;
+                if (_identitySuffixView != null) _identitySuffixView.Text = string.Empty;
                 if (_sourceBadgeView != null) _sourceBadgeView.Visibility = global::Android.Views.ViewStates.Gone;
+                if (_identityRow != null) _identityRow.Visibility = global::Android.Views.ViewStates.Gone;
                 if (_qualityView != null) _qualityView.Text = string.Empty;
                 if (_resBrView != null) _resBrView.Text = string.Empty;
                 return;
@@ -165,10 +169,34 @@ namespace VardyParty.Platforms.Android
 
             if (_titleView != null) _titleView.Text = model.Title ?? string.Empty;
             if (_statusView != null) _statusView.Text = PlayerChromeText.FormatStatusLine(model, _streamSwitchInProgress);
-            if (_indexView != null) _indexView.Text = PlayerChromeText.FormatStreamIndexLine(model);
+            var indexText = PlayerChromeText.FormatStreamIdentityIndex(model);
+            if (_indexView != null)
+            {
+                _indexView.Text = indexText;
+                _indexView.Visibility = string.IsNullOrEmpty(indexText)
+                    ? global::Android.Views.ViewStates.Gone
+                    : global::Android.Views.ViewStates.Visible;
+            }
             ApplySourceBadge(current?.Stream?.CatalogSourceBadgeLabel);
+            var suffix = PlayerChromeText.FormatStreamIdentitySuffix(model, _streamSwitchInProgress);
+            if (_identitySuffixView != null)
+            {
+                _identitySuffixView.Text = suffix;
+                _identitySuffixView.Visibility = string.IsNullOrEmpty(suffix)
+                    ? global::Android.Views.ViewStates.Gone
+                    : global::Android.Views.ViewStates.Visible;
+            }
+            if (_identityRow != null)
+            {
+                var identityVisible = !string.IsNullOrEmpty(indexText)
+                    || (_sourceBadgeView?.Visibility == global::Android.Views.ViewStates.Visible)
+                    || !string.IsNullOrEmpty(suffix);
+                _identityRow.Visibility = identityVisible
+                    ? global::Android.Views.ViewStates.Visible
+                    : global::Android.Views.ViewStates.Gone;
+            }
             if (_qualityView != null)
-                _qualityView.Text = _streamSwitchInProgress ? string.Empty : (model.Quality ?? string.Empty);
+                _qualityView.Text = PlayerChromeText.FormatQualityLine(model, _streamSwitchInProgress);
             if (_resBrView != null)
                 _resBrView.Text = PlayerChromeText.FormatVideoInfoDetail(model, _streamSwitchInProgress);
 
@@ -316,6 +344,35 @@ namespace VardyParty.Platforms.Android
 
         private void HideInfoOverlay() => EnsureChrome().HideVideoInfo();
 
+        /// <summary>
+        /// One-row toast with the V1/V2 chip drawn in the video-info badge colours
+        /// (shared <see cref="SourceBadgeStyle"/> via <see cref="StreamIdentityParts"/>).
+        /// </summary>
+        private void ApplyStreamToastText(StreamIdentityParts parts)
+        {
+            if (_streamToastView == null)
+                return;
+            if (!parts.HasChip || parts.ChipStyle is not { } style)
+            {
+                _streamToastView.Text = parts.Text;
+                return;
+            }
+
+            // Non-breaking spaces pad the coloured chip like the video-info badge.
+            var chip = "\u00A0" + parts.Chip + "\u00A0";
+            var text = parts.Prefix + chip + parts.Suffix;
+            var start = parts.ChipStart;
+            var end = start + chip.Length;
+            var spannable = new global::Android.Text.SpannableString(text);
+            spannable.SetSpan(
+                new global::Android.Text.Style.BackgroundColorSpan(global::Android.Graphics.Color.ParseColor(style.BackgroundHex)),
+                start, end, global::Android.Text.SpanTypes.ExclusiveExclusive);
+            spannable.SetSpan(
+                new global::Android.Text.Style.ForegroundColorSpan(global::Android.Graphics.Color.ParseColor(style.ForegroundHex)),
+                start, end, global::Android.Text.SpanTypes.ExclusiveExclusive);
+            _streamToastView.TextFormatted = spannable;
+        }
+
         private void ShowStreamToastIfNeeded()
         {
             if (_streamToastView == null || _streamToastHandler == null || _streamToastRunnable == null) return;
@@ -328,32 +385,48 @@ namespace VardyParty.Platforms.Android
             var total = _switching.GetHealthyStreams().Count;
             if (total <= 0) return;
 
-            if (index == _lastToastIndex && total == _lastToastTotal) return;
-            _lastToastIndex = index;
-            _lastToastTotal = total;
-
             var current = _switching.GetCurrentStream();
-            string? vertRes = null;
+            string? resolution = null;
+            string? probedResolution = null;
             try
             {
-                var res = current?.Health?.Resolution ?? current?.Stream?.Resolution;
-                vertRes = PlayerOverlayFormatter.ExtractVerticalResolutionLabel(res);
-                if (vertRes == null && _videoHeight.HasValue)
-                    vertRes = $"{_videoHeight}p";
+                resolution = _videoWidth is > 0 && _videoHeight is > 0
+                    ? $"{_videoWidth}x{_videoHeight}"
+                    : null;
+                probedResolution = current?.Health?.GetProbedResolution();
             }
             catch (Exception ex) { LogIgnored("ParseToastResolution", ex); }
 
+            var channel = PlayerOverlayFormatter.ResolveChipOrChannelLabel(current?.Stream);
+            var sourceLabel = current?.Stream?.CatalogSourceBadgeLabel;
             chrome.ApplyOverlayInfo(new PlayerOverlayInfo
             {
                 Index = index,
                 Total = total,
-                Resolution = current?.Health?.Resolution ?? current?.Stream?.Resolution ?? vertRes,
-                Channel = current?.Stream?.Channel,
-                Title = current?.Stream?.Channel
-            });
+                Resolution = resolution,
+                ProbedResolution = probedResolution,
+                Channel = channel,
+                SourceLabel = sourceLabel,
+                Title = channel
+            }, _streamSwitchInProgress);
 
-            _streamToastView.Text = chrome.StreamToast?.Text
-                ?? PlayerOverlayFormatter.FormatStreamToast(index, total, vertRes);
+            var toastText = chrome.StreamToast?.Text
+                ?? PlayerOverlayFormatter.FormatStreamToast(index, total, resolution, sourceLabel, channel);
+            ApplyStreamToastText(PlayerOverlayFormatter.SplitSourceChip(toastText, chrome.StreamToast?.SourceLabel ?? sourceLabel));
+
+            var indexChanged = index != _lastToastIndex || total != _lastToastTotal;
+            _lastToastIndex = index;
+            _lastToastTotal = total;
+
+            // Height/name-only: refresh the one-row text in place, do not restart auto-hide,
+            // and do not re-show a toast that already auto-hid.
+            if (!indexChanged && !chrome.ShouldHoldStreamToast)
+            {
+                if (_streamToastView.Visibility == global::Android.Views.ViewStates.Visible)
+                    return;
+                return;
+            }
+
             _streamToastView.Visibility = global::Android.Views.ViewStates.Visible;
             RemoveCallback(_streamToastHandler, _streamToastRunnable);
             PostDelayedCallback(_streamToastHandler, _streamToastRunnable, (int)PlaybackChromePresenter.StreamToastAutoHide.TotalMilliseconds);

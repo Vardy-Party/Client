@@ -8,8 +8,9 @@ name: CD - Package & Release
 # Manual dispatch still works (feature branches / retries). Pass application_version
 # to stamp the package; omit it to use Version.props from the checked-out ref.
 env:
-  # Everything targets net11.0(-*). 11.0.x is the latest SDK on the 11.0 channel.
-  DOTNET_VERSION: "11.0.x"
+  # Everything targets net11.0(-*). SDK pinned by global.json (11.0.100,
+  # latestPatch); workloads from set 11.0.100.1. Bump steps: AGENTS.md "Toolchain".
+  DOTNET_VERSION: "11.0.1xx"
   VARDYPARTY_CSPROJ: "VardyParty/VardyParty.csproj"
   VARDYPARTY_HOSTING_CSPROJ: "VardyParty.Hosting/VardyParty.Hosting.csproj"
   ANDROID_KEYSTORE_PATH: "VardyParty/certs/vardyparty.keystore"
@@ -93,7 +94,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -101,7 +102,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui --skip-manifest-update
+        run: dotnet workload install maui --version 11.0.100.1
       - name: Download Windows build artifact
         uses: actions/download-artifact@v8
         with:
@@ -381,7 +382,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -389,7 +390,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
-        run: dotnet workload install maui-android --ignore-failed-sources
+        run: dotnet workload install maui-android --version 11.0.100.1 --ignore-failed-sources
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -570,8 +571,11 @@ jobs:
 
   package-ios:
     name: Package iOS
-    # .NET 11 RC2 requires Xcode 27.0 exactly. The xcode-27 image default is
-    # now 27.1; Xcode 27.0 remains at /Applications/Xcode_27.0.app.
+    # .NET 11 GA Apple workloads (27.2.11039, workload set 11.0.100.1)
+    # require Xcode 27.2. The xcode-27 image includes that app at
+    # /Applications/Xcode_27.2.app; its default is still 27.1, and 27.0
+    # remains installed. Workload installs are pinned to 11.0.100.1 so a
+    # later set cannot float to a newer Xcode than the image has.
     runs-on: xcode-27
     needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -590,12 +594,12 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Select Xcode 27.0
+      - name: Select Xcode 27.2
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.0.app
+          sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 27.0'
-      - name: Setup .NET 11 preview
+          xcodebuild -version | grep -q '^Xcode 27.2'
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -604,8 +608,8 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
-          dotnet workload install maui --ignore-failed-sources
-          dotnet workload install ios --ignore-failed-sources
+          dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
+          dotnet workload install ios --version 11.0.100.1 --ignore-failed-sources
       - name: Download iOS build artifact
         uses: actions/download-artifact@v8
         with:
@@ -703,7 +707,7 @@ jobs:
 
   package-macos:
     name: Package macOS
-    # Same Xcode 27.0 pin as Package iOS.
+    # Same Xcode 27.2 and workload-set pin as Package iOS.
     runs-on: xcode-27
     needs: [guard-unique-display]
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -721,12 +725,12 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Select Xcode 27.0
+      - name: Select Xcode 27.2
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.0.app
+          sudo xcode-select -s /Applications/Xcode_27.2.app
           xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 27.0'
-      - name: Setup .NET 11 preview
+          xcodebuild -version | grep -q '^Xcode 27.2'
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -735,8 +739,8 @@ jobs:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workloads
         run: |
-          dotnet workload install maui --ignore-failed-sources
-          dotnet workload install maccatalyst --ignore-failed-sources
+          dotnet workload install maui --version 11.0.100.1 --ignore-failed-sources
+          dotnet workload install maccatalyst --version 11.0.100.1 --ignore-failed-sources
       - name: Download macOS build artifact
         uses: actions/download-artifact@v8
         with:
@@ -855,7 +859,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -863,7 +867,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen --version 11.0.100.1 --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux
@@ -1100,7 +1104,7 @@ jobs:
           sed -i.bak "s/<ApplicationVersion>[0-9]*<\/ApplicationVersion>/<ApplicationVersion>${APPLICATION_VERSION}<\/ApplicationVersion>/" Version.props
           rm -f Version.props.bak
           echo "Packaging ApplicationVersion=${APPLICATION_VERSION}"
-      - name: Setup .NET 11 preview
+      - name: Setup .NET 11
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -1108,7 +1112,7 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_READ_TOKEN }}
       - name: Install MAUI workload (plain-TFM MAUI SDK on Linux)
-        run: dotnet workload install maui-tizen --ignore-failed-sources
+        run: dotnet workload install maui-tizen --version 11.0.100.1 --ignore-failed-sources
       - name: Restore dependencies
         run: dotnet restore VardyParty.Linux/VardyParty.Linux.csproj --ignore-failed-sources
       - name: Generate appsettings.json for Linux

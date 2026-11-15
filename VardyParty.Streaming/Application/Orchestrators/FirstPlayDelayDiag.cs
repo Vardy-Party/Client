@@ -19,6 +19,9 @@ internal sealed class FirstPlayDelayDiag
     private string? _secondHealthyChannel;
     private bool _playerOpenedLogged;
 
+    /// <summary>The session's <c>[probe-timing]</c> trace (picture, backup, switches).</summary>
+    public ProbeSessionTrace? Trace { get; set; }
+
     public long? MsSinceFirstHealthy =>
         _msAtFirstHealthy is { } t ? _sinceSession.ElapsedMilliseconds - t : null;
 

@@ -117,7 +117,7 @@ public class SegmentPlayabilityBusinessRulesTests
         var result = await Checker(cdn).CheckStreamHealthAsync(Manifest, "https://page.example.invalid/");
 
         Assert.Equal(StreamHealthStatus.Healthy, result.Status);
-        Assert.Contains(cdn.Requests, r => r.Url == TikTokSegment && r.Range == "bytes=0-65535");
+        Assert.Contains(cdn.SnapshotRequests(), r => r.Url == TikTokSegment && r.Range == "bytes=0-65535");
     }
 
     [Theory]
@@ -195,7 +195,7 @@ public class SegmentPlayabilityBusinessRulesTests
         // Soak evidence is present, but bytes say "image": rejected.
         Assert.Equal(StreamHealthStatus.SegmentUnreachable, result.Status);
         // And the byte probe itself carried the soak headers (never bare).
-        Assert.Contains(cdn.Requests, r => r.Url == TikTokSegment && r.Cookie == "cf=1");
+        Assert.Contains(cdn.SnapshotRequests(), r => r.Url == TikTokSegment && r.Cookie == "cf=1");
     }
 
     [Fact]
@@ -294,8 +294,14 @@ public class SegmentPlayabilityBusinessRulesTests
     private sealed class Cdn : HttpMessageHandler
     {
         private readonly Dictionary<string, (string Type, byte[] Body)> _objects = new();
-        public List<Seen> Requests { get; } = [];
+        private readonly List<Seen> _requests = [];
         public string? RequireCookie { get; init; }
+
+        public IReadOnlyList<Seen> SnapshotRequests()
+        {
+            lock (_requests)
+                return _requests.ToArray();
+        }
 
         public void Add(string url, string type, byte[] body) => _objects[url] = (type, body);
 
@@ -304,8 +310,8 @@ public class SegmentPlayabilityBusinessRulesTests
             var url = request.RequestUri!.ToString();
             var cookie = request.Headers.TryGetValues("Cookie", out var c) ? string.Join(";", c) : null;
             var range = request.Headers.Range?.ToString();
-            lock (Requests)
-                Requests.Add(new Seen(request.Method.Method, url, range, cookie));
+            lock (_requests)
+                _requests.Add(new Seen(request.Method.Method, url, range, cookie));
 
             if (!_objects.TryGetValue(url, out var obj))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

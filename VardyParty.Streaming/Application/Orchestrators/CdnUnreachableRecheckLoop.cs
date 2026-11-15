@@ -6,7 +6,8 @@ namespace VardyParty.Streaming;
 
 /// <summary>
 /// Rechecks rows whose CDN could not be reached (<see cref="StreamDeferReason.CdnUnreachable"/>)
-/// after a back-off: 2 min, then 5 min, then every 10 min, while the game is live
+/// after a back-off: 2 min (30s for the first recheck while the viewer has no backup
+/// stream), then 5 min, then every 10 min, while the game is live
 /// (<see cref="CdnReachabilityPolicy"/>). Such a row is never reported as failed and
 /// never dropped. A recheck that comes back Healthy is accepted like any other row
 /// (so it is appended to the pool and keeps stable numbering); one that is now dead
@@ -31,6 +32,10 @@ internal static class CdnUnreachableRecheckLoop
     /// <param name="keepRechecking">False once the game is no longer live.</param>
     /// <param name="delay">The back-off wait (a test seam).</param>
     /// <param name="onWaiting">Called before each wait with the row count and the wait.</param>
+    /// <param name="noBackup">
+    /// True while the viewer has no backup stream: the first recheck then waits
+    /// <see cref="CdnReachabilityPolicy.FirstRecheckWithoutBackup"/> instead of 2 min. Null: never.
+    /// </param>
     public static async Task<bool> RunWhileSessionLiveAsync(
         List<StreamModel> pending,
         Func<List<StreamModel>, CancellationToken, IAsyncEnumerable<EnrichedStream>> resolve,
@@ -41,11 +46,12 @@ internal static class CdnUnreachableRecheckLoop
         Func<TimeSpan, CancellationToken, Task> delay,
         Action<int, TimeSpan> onWaiting,
         ILogger logger,
-        CancellationToken sessionToken)
+        CancellationToken sessionToken,
+        Func<bool>? noBackup = null)
     {
         using var recheckCts = CancellationTokenSource.CreateLinkedTokenSource(sessionToken);
         var rounds = new RoundSignal();
-        var run = RunAsync(pending, resolve, accept, keepRechecking, delay, onWaiting, rounds, logger, recheckCts.Token);
+        var run = RunAsync(pending, resolve, accept, keepRechecking, delay, onWaiting, noBackup, rounds, logger, recheckCts.Token);
 
         while (!run.IsCompleted)
         {
@@ -75,6 +81,7 @@ internal static class CdnUnreachableRecheckLoop
         Func<bool> keepRechecking,
         Func<TimeSpan, CancellationToken, Task> delay,
         Action<int, TimeSpan> onWaiting,
+        Func<bool>? noBackup,
         RoundSignal rounds,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -98,10 +105,10 @@ internal static class CdnUnreachableRecheckLoop
                     return;
                 }
 
-                var wait = CdnReachabilityPolicy.RecheckDelay(attempt);
+                var wait = CdnReachabilityPolicy.RecheckDelay(attempt, noBackup?.Invoke() == true);
                 logger.LogInformation(
-                    "[StreamResolution] {Count} stream(s) CDN unreachable; recheck {Attempt} in {Minutes} min (not reported, not dropped)",
-                    count, attempt + 1, wait.TotalMinutes);
+                    "[StreamResolution] {Count} stream(s) CDN unreachable; recheck {Attempt} in {Seconds}s (not reported, not dropped)",
+                    count, attempt + 1, wait.TotalSeconds);
                 onWaiting(count, wait);
                 await delay(wait, cancellationToken).ConfigureAwait(false);
                 if (!keepRechecking())

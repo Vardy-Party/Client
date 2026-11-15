@@ -123,7 +123,10 @@ public partial class LinuxHomePage
         Dispatcher.Dispatch(() =>
         {
             SyncChromeContentStateFromPlayback();
+            PushOverlayInfoFromSwitching();
             ApplyPlayerChromeVisuals();
+            if (_playbackChrome?.IsVideoInfoVisible == true)
+                RefreshVideoInfoText();
         });
     }
 
@@ -205,6 +208,30 @@ public partial class LinuxHomePage
         return timer;
     }
 
+    /// <summary>
+    /// Toast row: prefix, the V1/V2 chip as a badge in the shared
+    /// <see cref="SourceBadgeStyle"/> colours (same as Android / Windows), then the suffix.
+    /// </summary>
+    private void ApplyStreamToastText(StreamIdentityParts parts)
+    {
+        if (!parts.HasChip || parts.ChipStyle is not { } style)
+        {
+            StreamToastLabel.Text = parts.Text;
+            StreamSourceBadge.IsVisible = false;
+            StreamToastSuffixLabel.Text = string.Empty;
+            StreamToastSuffixLabel.IsVisible = false;
+            return;
+        }
+
+        StreamToastLabel.Text = parts.Prefix.TrimEnd();
+        StreamSourceBadgeLabel.Text = parts.Chip;
+        StreamSourceBadge.BackgroundColor = Microsoft.Maui.Graphics.Color.FromArgb(style.BackgroundHex);
+        StreamSourceBadgeLabel.TextColor = Microsoft.Maui.Graphics.Color.FromArgb(style.ForegroundHex);
+        StreamSourceBadge.IsVisible = true;
+        StreamToastSuffixLabel.Text = parts.Suffix.TrimStart();
+        StreamToastSuffixLabel.IsVisible = !string.IsNullOrEmpty(StreamToastSuffixLabel.Text);
+    }
+
     private void ApplyPlayerChromeVisuals()
     {
         ApplyCloseChipVisuals();
@@ -223,24 +250,7 @@ public partial class LinuxHomePage
         var chromeRevealed = _closeChip.ChipVisible || needsExpanded;
 
         StreamToastPanel.IsVisible = toastVisible;
-        StreamToastLabel.Text = toast?.Text ?? string.Empty;
-
-        var badge = _switching.GetCurrentStream()?.Stream?.CatalogSourceBadgeLabel;
-        StreamSourceBadge.IsVisible = !string.IsNullOrWhiteSpace(badge) && toastVisible;
-        if (!string.IsNullOrWhiteSpace(badge))
-        {
-            StreamSourceBadgeLabel.Text = badge;
-            if (PlayerChromeText.IsFacebookSource(badge))
-            {
-                StreamSourceBadge.BackgroundColor = Color.FromRgba(0x1E, 0x3A, 0x5F, 0xFF);
-                StreamSourceBadgeLabel.TextColor = Color.FromRgba(0x93, 0xC5, 0xFD, 0xFF);
-            }
-            else
-            {
-                StreamSourceBadge.BackgroundColor = Color.FromRgba(0x3B, 0x07, 0x64, 0xFF);
-                StreamSourceBadgeLabel.TextColor = Color.FromRgba(0xD8, 0xB4, 0xFE, 0xFF);
-            }
-        }
+        ApplyStreamToastText(toast?.Parts ?? PlayerOverlayFormatter.SplitSourceChip(null, null));
 
         PlaybackBufferingIndicator.IsVisible = _isPlaybackBuffering;
         PlaybackBufferingIndicator.IsRunning = _isPlaybackBuffering;
@@ -346,30 +356,35 @@ public partial class LinuxHomePage
         if (info is null)
             return null;
 
-        // Same as Android/Windows: prefer live player metrics over find-phase health.
+        // Same as Android/Windows: prefer live player metrics over a bitstream
+        // probe, and never playlist RESOLUTION. Ignore player size until the
+        // new attach confirms a picture.
         var linux = _videoPlayer as LinuxVideoPlayerService;
         var metrics = linux?.GetCurrentMetrics();
-        if (metrics is null)
-            return info;
-
-        var resolution = metrics.Resolution is { } size
+        var measured = linux?.IsPlayerResolutionTrusted() == true
+            && metrics?.Resolution is { } size
             ? $"{size.Width}x{size.Height}"
-            : info.Resolution;
+            : null;
         var bitrateKbps = MeasuredBitrate.ResolveKbps(
             info.BitrateKbps,
             amsBitsPerSecond: 0,
-            metrics.BitrateKbps);
+            metrics?.BitrateKbps);
         return new PlayerOverlayInfo
         {
             Index = info.Index,
             Total = info.Total,
             Channel = info.Channel,
+            SourceLabel = info.SourceLabel,
             BitrateKbps = bitrateKbps,
-            Resolution = resolution,
-            FrameRate = metrics.Framerate ?? info.FrameRate,
-            VideoCodec = metrics.VideoCodec ?? info.VideoCodec,
-            AudioCodec = metrics.AudioCodec ?? info.AudioCodec,
-            AspectRatio = PlayerOverlayFormatter.BuildAspect(resolution) ?? info.AspectRatio,
+            Resolution = measured,
+            ProbedResolution = info.ProbedResolution
+                ?? _switching.GetCurrentStream()?.Health?.GetProbedResolution(),
+            FrameRate = metrics?.Framerate ?? info.FrameRate,
+            VideoCodec = metrics?.VideoCodec ?? info.VideoCodec,
+            AudioCodec = metrics?.AudioCodec ?? info.AudioCodec,
+            AspectRatio = PlayerOverlayFormatter.BuildAspect(measured)
+                ?? PlayerOverlayFormatter.BuildAspect(info.ProbedResolution)
+                ?? info.AspectRatio,
             BufferPercent = linux?.BufferPercent ?? info.BufferPercent,
             M3u8Url = info.M3u8Url,
             RefererUrl = info.RefererUrl,

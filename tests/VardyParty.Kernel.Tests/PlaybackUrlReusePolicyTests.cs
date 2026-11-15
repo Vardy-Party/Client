@@ -144,7 +144,8 @@ public class PlaybackUrlReusePolicyTests
         Assert.Equal(PlaybackSwitchKind.None, plainNoUrl.Kind);
         Assert.Equal(PlaybackSwitchKind.AttachCached, reusable.Kind);
         Assert.Equal(M3u8TokenExpiryTests.UzhiUrl, reusable.Url);
-        Assert.Equal(PlaybackSwitchKind.ResolveFresh, unknown.Kind);
+        // A V1 soak row with an unreadable expiry plays its probed link (round 12).
+        Assert.Equal(PlaybackSwitchKind.AttachCached, unknown.Kind);
         Assert.Equal(PlaybackSwitchKind.ResolveFresh, cookie.Kind);
         Assert.Contains("single-use", cookie.Reason);
     }
@@ -205,6 +206,23 @@ public class PlaybackUrlReusePolicyTests
         Assert.Empty(PlaybackUrlReusePolicy.UpcomingInSwitchOrder(new List<EnrichedStream> { a }, a, 2));
         Assert.Equal(new[] { a, b }, PlaybackUrlReusePolicy.UpcomingInSwitchOrder(pool, null, 2));
         Assert.Empty(PlaybackUrlReusePolicy.UpcomingInSwitchOrder(pool, a, 0));
+    }
+
+    [Fact]
+    public void UpcomingInSwitchOrder_PassesOverSkippedRows()
+    {
+        // Arrange
+        var a = Row("a", "a");
+        var b = Row("b", "b");
+        var c = Row("c", "c");
+        var d = Row("d", "d");
+        var pool = new List<EnrichedStream> { a, b, c, d };
+
+        // Act
+        var upcoming = PlaybackUrlReusePolicy.UpcomingInSwitchOrder(pool, a, 2, row => ReferenceEquals(row, b));
+
+        // Assert
+        Assert.Equal(new[] { c, d }, upcoming);
     }
 
     [Fact]

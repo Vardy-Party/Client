@@ -1,5 +1,9 @@
 # Linux Support
 
+> **Guides:** install and run a release build →
+> [LINUX_USER_GUIDE.md](LINUX_USER_GUIDE.md). Build from source with .NET 11 GA
+> (and remove preview/RC SDKs first) → [LINUX_DEVELOPER_GUIDE.md](LINUX_DEVELOPER_GUIDE.md).
+
 Linux is served by **`VardyParty.Linux`**: the shared .NET MAUI XAML homepage
 (`VardyParty.HomeUi`) drawn by the Avalonia 12 preview MAUI backend, with Auth0
 device-code/QR sign-in and **LibVLC playback**. With `EmbeddedLinuxVideo` on
@@ -21,26 +25,28 @@ flowchart LR
 Deep dive: [architecture/homepage-maui-avalonia.md](architecture/homepage-maui-avalonia.md).
 
 The Linux head targets **net11.0**. A .NET 10 SDK (Ubuntu apt or an old
-`~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 RC1 SDK**, same
-band as the Windows MAUI head: `11.0.100-rc.1` or later
-(`11.0.100-rc.1.26425.128` is the known-good pin).
+`~/.dotnet`) fails with `NETSDK1045`. Use the **.NET 11 GA SDK**, same
+band as the Windows MAUI head: `11.0.100` or later.
 
-## Install the .NET 11 RC1 SDK (Ubuntu)
+## Install the .NET 11 SDK (Ubuntu)
 
-Do **not** retarget the repo to net10. Install the RC1 SDK locally so it
+Do **not** retarget the repo to net10. Install the .NET 11 SDK locally so it
 does not fight distro packages.
 
 ```bash
 curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 chmod +x /tmp/dotnet-install.sh
-/tmp/dotnet-install.sh --version 11.0.100-rc.1.26425.128 --install-dir "$HOME/.dotnet"
+/tmp/dotnet-install.sh --channel 11.0 --install-dir "$HOME/.dotnet"
 ```
 
-To pin the same SDK as Windows/CI:
+To pin the same SDK as `global.json` / CI:
 
 ```bash
-/tmp/dotnet-install.sh --version 11.0.100-rc.1.26425.128 --install-dir "$HOME/.dotnet"
+/tmp/dotnet-install.sh --version 11.0.100 --install-dir "$HOME/.dotnet"
 ```
+
+Remove any preview / RC .NET 11 SDKs first — see
+[LINUX_DEVELOPER_GUIDE.md → Removing preview / RC .NET](LINUX_DEVELOPER_GUIDE.md#removing-preview--rc-net).
 
 Put that host **first** on `PATH` (otherwise `/usr/lib/dotnet` 10.x wins):
 
@@ -54,7 +60,7 @@ Check:
 
 ```bash
 which dotnet
-dotnet --version    # 11.0.100-rc.1… not 10.0.x
+dotnet --version    # 11.0.100… not 10.0.x
 dotnet --list-sdks
 ```
 
@@ -78,7 +84,7 @@ workload is absent. CI's build-linux job, the unit-test job and
 target never enters the Linux build graph.
 
 ```bash
-dotnet workload install maui-tizen
+dotnet workload install maui-tizen --version 11.0.100.1
 dotnet restore VardyParty.Linux/VardyParty.Linux.csproj -p:HomeUiTargetFrameworks=net11.0
 dotnet run --project VardyParty.Linux/VardyParty.Linux.csproj -c Release --no-restore -p:HomeUiTargetFrameworks=net11.0
 ```

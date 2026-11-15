@@ -83,6 +83,140 @@ public class UnplayedPlaylistTests
         Assert.Contains("#EXT-X-MEDIA-SEQUENCE:11", trimmed.Text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Trim_KeyBeforeFirstDroppedSegment_IsCarriedAheadOfFirstKeptSegment()
+    {
+        // Arrange
+        const string key = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.test/k1\",IV=0x1";
+        var playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:100\n"
+            + key + "\n#EXTINF:6.000,\n" + Segments[0] + "\n#EXTINF:6.000,\n" + Segments[1] + "\n#EXTINF:6.000,\n" + Segments[2] + "\n";
+        var played = Identities(Segments[0], Segments[1]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.Equal(2, trimmed.Dropped);
+        Assert.Contains(key, trimmed.Text, StringComparison.Ordinal);
+        Assert.True(trimmed.Text.IndexOf(key, StringComparison.Ordinal) < trimmed.Text.IndexOf("ccc~origin", StringComparison.Ordinal));
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:102", trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_KeyRotatedInsideDroppedSegments_CarriesOnlyTheLastEffectiveKey()
+    {
+        // Arrange
+        const string oldKey = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.test/k1\"";
+        const string newKey = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.test/k2\"";
+        var playlist = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:7\n"
+            + oldKey + "\n#EXTINF:6.000,\n" + Segments[0]
+            + "\n" + newKey + "\n#EXTINF:6.000,\n" + Segments[1]
+            + "\n#EXTINF:6.000,\n" + Segments[2] + "\n";
+        var played = Identities(Segments[0], Segments[1]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.DoesNotContain(oldKey, trimmed.Text, StringComparison.Ordinal);
+        Assert.Contains(newKey, trimmed.Text, StringComparison.Ordinal);
+        Assert.True(trimmed.Text.IndexOf(newKey, StringComparison.Ordinal) < trimmed.Text.IndexOf("ccc~origin", StringComparison.Ordinal));
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:9", trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_FirstKeptSegmentHasItsOwnKey_DoesNotDuplicateTheDroppedKey()
+    {
+        // Arrange
+        const string oldKey = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.test/k1\"";
+        const string ownKey = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.test/k3\"";
+        var playlist = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n"
+            + oldKey + "\n#EXTINF:6.000,\n" + Segments[0]
+            + "\n" + ownKey + "\n#EXTINF:6.000,\n" + Segments[1] + "\n";
+        var played = Identities(Segments[0]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.DoesNotContain(oldKey, trimmed.Text, StringComparison.Ordinal);
+        Assert.Contains(ownKey, trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_MapInsideDroppedSegments_IsCarriedAheadOfFirstKeptSegment()
+    {
+        // Arrange
+        const string map = "#EXT-X-MAP:URI=\"init-2.mp4\"";
+        var playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MAP:URI=\"init-1.mp4\"\n#EXT-X-MEDIA-SEQUENCE:20\n"
+            + "#EXTINF:6.000,\n" + Segments[0]
+            + "\n" + map + "\n#EXTINF:6.000,\n" + Segments[1]
+            + "\n#EXTINF:6.000,\n" + Segments[2] + "\n";
+        var played = Identities(Segments[0], Segments[1]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.Contains(map, trimmed.Text, StringComparison.Ordinal);
+        Assert.True(trimmed.Text.IndexOf(map, StringComparison.Ordinal) < trimmed.Text.IndexOf("ccc~origin", StringComparison.Ordinal));
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:22", trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_DroppedDiscontinuity_BumpsExistingDiscontinuitySequence()
+    {
+        // Arrange
+        var playlist = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:50\n#EXT-X-DISCONTINUITY-SEQUENCE:4\n"
+            + "#EXTINF:6.000,\n" + Segments[0]
+            + "\n#EXT-X-DISCONTINUITY\n#EXTINF:6.000,\n" + Segments[1]
+            + "\n#EXTINF:6.000,\n" + Segments[2] + "\n";
+        var played = Identities(Segments[0], Segments[1]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.Contains("#EXT-X-DISCONTINUITY-SEQUENCE:5", trimmed.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("#EXT-X-DISCONTINUITY\n", trimmed.Text, StringComparison.Ordinal);
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:52", trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_DroppedDiscontinuity_InsertsDiscontinuitySequenceWhenAbsent()
+    {
+        // Arrange
+        var playlist = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:50\n"
+            + "#EXT-X-DISCONTINUITY\n#EXTINF:6.000,\n" + Segments[0]
+            + "\n#EXT-X-DISCONTINUITY\n#EXTINF:6.000,\n" + Segments[1]
+            + "\n#EXTINF:6.000,\n" + Segments[2] + "\n";
+        var played = Identities(Segments[0], Segments[1]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:52\n#EXT-X-DISCONTINUITY-SEQUENCE:2\n", trimmed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trim_DiscontinuityOnFirstKeptSegment_IsKeptAndNotCounted()
+    {
+        // Arrange
+        var playlist = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:50\n#EXT-X-DISCONTINUITY-SEQUENCE:4\n"
+            + "#EXTINF:6.000,\n" + Segments[0]
+            + "\n#EXT-X-DISCONTINUITY\n#EXTINF:6.000,\n" + Segments[1] + "\n";
+        var played = Identities(Segments[0]);
+
+        // Act
+        var trimmed = UnplayedPlaylist.TrimPlayedPrefix(playlist, played, PlaylistUrl);
+
+        // Assert
+        Assert.Contains("#EXT-X-DISCONTINUITY-SEQUENCE:4\n", trimmed.Text, StringComparison.Ordinal);
+        Assert.Contains("#EXT-X-DISCONTINUITY\n#EXTINF", trimmed.Text, StringComparison.Ordinal);
+        Assert.Contains("#EXT-X-MEDIA-SEQUENCE:51", trimmed.Text, StringComparison.Ordinal);
+    }
+
     private static string Playlist(long sequence, params string[] segments)
     {
         var lines = new List<string>

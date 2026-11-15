@@ -9,6 +9,7 @@
     <ProjectReference Include="..\..\VardyParty.Catalog\VardyParty.Catalog.csproj" />
     <ProjectReference Include="..\..\VardyParty.Kernel\VardyParty.Kernel.csproj" />
     <!-- LinuxHlsLocalProxy unwraps PNG-wrapped TS via VardyParty.Streaming. -->
+    <ProjectReference Include="..\..\VardyParty.Playback\VardyParty.Playback.csproj" />
     <ProjectReference Include="..\..\VardyParty.Streaming\VardyParty.Streaming.csproj" />
     <!--
       Policy-only sources: the Linux head is a MAUI/Avalonia exe and is

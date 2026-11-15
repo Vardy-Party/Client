@@ -64,7 +64,16 @@ public sealed class HomeViewModelTests : IDisposable
             _bus,
             _selection,
             NullLogger<HomeViewModel>.Instance,
-            new NullDesktopUpdateService());
+            new NullDesktopUpdateService(),
+            remoteCompute: null,
+            Microsoft.Extensions.Options.Options.Create(new GamesApiSettings
+            {
+                CallTimeoutSeconds = 5,
+                MaxRetries = 0,
+                RefreshSchedule = 60,
+                M3U8CallTimeoutSeconds = 5,
+                LeagueAcronyms = ["ZFA"],
+            }));
     }
 
     public void Dispose() => _sut.Dispose();
@@ -394,6 +403,64 @@ public sealed class HomeViewModelTests : IDisposable
         Assert.Same(card, _sut.Rows[0].Cards[0]);
         Assert.Equal("1 - 0", card.ScoreText);
         Assert.Contains("23", card.StatusText);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_TitleCasesAllCapsApiLeagueInPlace()
+    {
+        // Arrange — the shell is built with GamesApi:LeagueAcronyms = ["ZFA"].
+        _sut.UpdateGames(CatalogWithNamedLeague("ZFA NORTHERN CUP", bbcLeague: null, resolvedLeague: null));
+        _sut.FlushPendingApply();
+        var row = Assert.Single(_sut.Rows);
+        var card = Assert.Single(row.Cards);
+        var firstHeading = row.League;
+
+        // Act
+        _sut.UpdateGames(CatalogWithNamedLeague(
+            "ZFA NORTHERN CUP",
+            bbcLeague: "ZFA Northern Cup",
+            resolvedLeague: "ZFA Northern Cup"));
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.Equal("ZFA Northern Cup", firstHeading);
+        Assert.Equal("ZFA NORTHERN CUP", card.Game.League);
+        Assert.Same(row, Assert.Single(_sut.Rows));
+        Assert.Same(card, Assert.Single(_sut.Rows[0].Cards));
+        Assert.Equal("ZFA Northern Cup", _sut.Rows[0].League);
+        Assert.Equal("ZFA NORTHERN CUP", _sut.Rows[0].Cards[0].Game.ApiLeague);
+    }
+
+    [Fact]
+    public void FlushPendingApply_Refresh_UpdatesLeagueHeadingSpellingOnExistingRow()
+    {
+        // Arrange
+        _sut.UpdateGames(CatalogWithNamedLeague("sample premier division", bbcLeague: null, resolvedLeague: null));
+        _sut.FlushPendingApply();
+        var row = Assert.Single(_sut.Rows);
+        var firstHeading = row.League;
+        string? changed = null;
+        row.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LeagueRowViewModel.League))
+            {
+                changed = e.PropertyName;
+            }
+        };
+
+        // Act
+        _sut.UpdateGames(CatalogWithNamedLeague(
+            "sample premier division",
+            bbcLeague: "Sample Premier Division",
+            resolvedLeague: "Sample Premier Division"));
+        _sut.FlushPendingApply();
+
+        // Assert
+        Assert.Equal("sample premier division", firstHeading);
+        Assert.Same(row, Assert.Single(_sut.Rows));
+        Assert.Equal("Sample Premier Division", row.League);
+        Assert.Equal(nameof(LeagueRowViewModel.League), changed);
+        Assert.Equal("sample premier division", row.Cards[0].Game.ApiLeague);
     }
 
     [Fact]
@@ -1154,6 +1221,42 @@ public sealed class HomeViewModelTests : IDisposable
         };
     }
 
+    private Dictionary<string, List<Game>> CatalogWithNamedLeague(
+        string apiLeague,
+        string? bbcLeague,
+        string? resolvedLeague)
+    {
+        var game = _fixture.Build<Game>()
+            .With(g => g.Home, "Home United")
+            .With(g => g.Away, "Away City")
+            .With(g => g.BBCHome, "")
+            .With(g => g.BBCAway, "")
+            .With(g => g.League, apiLeague)
+            .With(g => g.ApiLeague, apiLeague)
+            .With(g => g.BBCLeague, bbcLeague ?? "")
+            .With(g => g.StatusText, "")
+            .With(g => g.IsFinished, false)
+            .With(g => g.IsInProgress, true)
+            .With(g => g.IsHalfTime, false)
+            .With(g => g.Minute, (int?)76)
+            .With(g => g.HomeScore, (int?)0)
+            .With(g => g.AwayScore, (int?)4)
+            .With(g => g.PenaltyHomeScore, (int?)null)
+            .With(g => g.PenaltyAwayScore, (int?)null)
+            .With(g => g.Start, DateTime.UtcNow.Date.AddHours(-1))
+            .With(g => g.HomeBadgeUrl, "https://example.test/home.svg")
+            .With(g => g.AwayBadgeUrl, "https://example.test/away.svg")
+            .Create();
+        if (!string.IsNullOrWhiteSpace(resolvedLeague))
+        {
+            game.ResolveLeague(resolvedLeague);
+        }
+
+        return new Dictionary<string, List<Game>>
+        {
+            [apiLeague] = [game],
+        };
+    }
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var i = 0; i < 50; i++)

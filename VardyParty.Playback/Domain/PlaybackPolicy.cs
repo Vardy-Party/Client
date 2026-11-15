@@ -91,19 +91,68 @@ public static partial class PlaybackPolicy
         => consecutiveFailures >= MaxConsecutiveDownloadFailures;
 
     /// <summary>
-    /// Soft live-HLS recoveries (Android BehindLiveWindow or PlaylistStuck seek,
-    /// Windows AdaptiveMediaSource reattach) before escalating to
-    /// <see cref="MediaEngineEventKind.Error"/> / pool remove.
-    /// Linux LibVLC uses --http-reconnect instead of this budget.
+    /// Soft live-HLS recoveries before escalating to <see cref="MediaEngineEventKind.Error"/>.
+    /// Only Android's BehindLiveWindow seek uses it (a forward seek to the live
+    /// edge, never a replay). Windows no longer reattaches the same URL on a
+    /// mid-play network failure: that restarts at the live offset and re-shows
+    /// watched footage, so it escalates as CDN-unreachable instead
+    /// (<see cref="WindowsMidPlayNetworkFailureMessage"/>) and the session switches.
     /// </summary>
     public const int MaxLiveHlsRecoveries = 5;
 
     /// <summary>
-    /// Live-edge backoff (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
-    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>. Larger = more
-    /// media held behind the edge (the only place a live buffer can exist).
+    /// The Error message for a Windows <c>MediaPlayerError.NetworkError</c>. The
+    /// kind comes from the last download HTTP status, not the OS error text:
+    /// 404/410 is a dead playlist, 401/403/442 a token reject, and anything else
+    /// (no status, 5xx, reset, timeout) is CDN-unreachable, so the session switches
+    /// streams and option 2 can return later. No same-URL reattach (that replays
+    /// already-watched segments).
+    /// </summary>
+    public static string WindowsMidPlayNetworkFailureMessage(int lastDownloadStatus, string detail)
+    {
+        var text = string.IsNullOrWhiteSpace(detail) ? "network error" : detail.Trim();
+        if (lastDownloadStatus is 404 or 410)
+            return $"HTTP {lastDownloadStatus} playlist not found: {text}";
+        if (IsRefusedStatus(lastDownloadStatus))
+            return $"{RefusedDownloadReason(lastDownloadStatus)}: {text}";
+        return $"{PlaybackCloseReasons.CdnUnreachable}: network error mid-play ({text})";
+    }
+
+    /// <summary>
+    /// Shared live-buffer target (seconds). WinUI <c>AdaptiveMediaSource.DesiredLiveOffset</c>;
+    /// Android Media3 <c>MediaItem.LiveConfiguration.targetOffsetMs</c>; Linux overlay
+    /// accounting when a buffer-ahead can be measured. Larger = more media held
+    /// behind the edge (the only place a live buffer can exist). LibVLC has no
+    /// live-edge offset API — do not map this 25s value onto
+    /// <c>--network-caching</c> (see <see cref="LibVlcNetworkCachingMs"/>).
     /// </summary>
     public const int DesiredLiveOffsetSeconds = 25;
+
+    /// <summary>
+    /// Closest LibVLC input-cache that does not delay the first picture.
+    /// Mapping <see cref="DesiredLiveOffsetSeconds"/> (25s) to
+    /// <c>--network-caching</c> / <c>--live-caching</c> would stall start by
+    /// about 25s: those options are a pre-roll cache, not a live-edge offset.
+    /// Desktop Linux therefore uses this value. Overlay still treats
+    /// <see cref="DesiredLiveOffsetSeconds"/> as the shared product target.
+    /// </summary>
+    public const int LibVlcNetworkCachingMs = 4_000;
+
+    /// <summary>
+    /// WSL/test-host only: extra cache for software present delay. Not a
+    /// second product live-buffer target.
+    /// </summary>
+    public const int LibVlcTestHostNetworkCachingMs = 12_000;
+
+    /// <summary>LibVLC cache for a desktop product build, or the WSL test-host override.</summary>
+    public static int ResolveLibVlcNetworkCachingMs(bool conservativeTestHost)
+        => conservativeTestHost ? LibVlcTestHostNetworkCachingMs : LibVlcNetworkCachingMs;
+
+    /// <summary>
+    /// Period for crowd-health <c>PlaybackMetrics</c> reports on Android,
+    /// Windows, and Linux. Never surface bitrate in the player UI from these samples.
+    /// </summary>
+    public static readonly TimeSpan HealthMetricsInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Android Media3 <c>DefaultLoadControl</c> min buffer (ms) — how much to keep

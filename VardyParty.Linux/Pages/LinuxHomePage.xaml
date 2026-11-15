@@ -202,9 +202,15 @@
                                     StrokeShape="RoundRectangle 999"
                                     Padding="6,1">
                                 <Label x:Name="StreamSourceBadgeLabel"
-                                       FontSize="10"
+                                       FontSize="12"
                                        FontAttributes="Bold" />
                             </Border>
+                            <Label x:Name="StreamToastSuffixLabel"
+                                   IsVisible="False"
+                                   TextColor="White"
+                                   FontSize="14"
+                                   FontAttributes="Bold"
+                                   VerticalOptions="Center" />
                         </HorizontalStackLayout>
                     </Border>
 

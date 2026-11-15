@@ -40,7 +40,11 @@ public sealed class PlaybackPoolCommandActions(
             streamFailed: (url, reason, feedFailed) =>
                 switching.MarkTriedInCycle(FindRowByUrl(switching, url) ?? switching.GetCurrentStream(), feedFailed ? url : null, reason),
             streamConfirmed: url =>
-                switching.ClearTriedInCycle(FindRowByUrl(switching, url) ?? switching.GetCurrentStream(), url),
+            {
+                var row = FindRowByUrl(switching, url) ?? switching.GetCurrentStream();
+                switching.ClearTriedInCycle(row, url);
+                switching.ConfirmPlaying(row);
+            },
             untriedStreamAvailable: switching.HasUntriedOther);
         return true;
     }
@@ -106,6 +110,39 @@ public sealed class PlaybackPoolCommandActions(
             applyCommand(PlaybackCommand.FromEffects(session.NotifyNoUntriedStream()));
     }
 
+    /// <summary>
+    /// A switch whose target could not be resolved (Next / chip onto a row whose fresh
+    /// resolve returned nothing or LocalService was unavailable). The user asked to move,
+    /// so do not silently stay: tell them, mark the target tried this cycle (docs "No
+    /// loops"; nothing is reported or removed), put the index back on the playing row
+    /// without re-attaching it, then advance to the next untried row. Only when no other
+    /// row is left does the player stay where it is.
+    /// </summary>
+    public void SkipFailedSwitchTarget(
+        EnrichedStream target,
+        string? playingUrl,
+        Action<string>? showStatus,
+        Action<Action> runWithIndexSwitchSuppressed)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(runWithIndexSwitchSuppressed);
+        var channel = target.Stream?.Channel;
+        switching.MarkTriedInCycle(target, null, "Couldn't switch");
+        var playing = FindPlayingRow(playingUrl, target);
+        if (playing != null)
+            RevertIndexTo(playing, runWithIndexSwitchSuppressed);
+        if (switching.HasUntriedOther())
+        {
+            showStatus?.Invoke(PlaybackUrlReusePolicy.SwitchFailedMovingOnText(channel));
+            applyCommand(PlaybackCommand.FromEffects([new PlaybackEffect(PlaybackEffectKind.AdvanceToNext, Reason: "Couldn't switch")]));
+            return;
+        }
+
+        showStatus?.Invoke(PlaybackUrlReusePolicy.SwitchFailedText(channel));
+        if (playing is null && string.IsNullOrWhiteSpace(playingUrl) && !string.IsNullOrWhiteSpace(target.ResolvedM3U8Url))
+            AttachAndConsume(target, target.ResolvedM3U8Url, true, true);
+    }
+
     public void ClearCurrentResolvedUrl()
     {
         var failed = switching.GetCurrentStream();
@@ -160,7 +197,8 @@ public sealed class PlaybackPoolCommandActions(
         // Expiry-aware reuse: a readable token with comfortable life left (and not a
         // known single-use source) plays now; a failed start still re-/plays once.
         if (resolveFresh != null
-            && PlaybackUrlReusePolicy.CanReuseCached(current, DateTimeOffset.UtcNow))
+            && (PlaybackUrlReusePolicy.CanReuseCached(current, DateTimeOffset.UtcNow)
+                || PlaybackUrlReusePolicy.CanTryProbedLink(current, DateTimeOffset.UtcNow)))
         {
             if (TryRejectFailedFeed(current.ResolvedM3U8Url))
                 return;
@@ -282,11 +320,7 @@ public sealed class PlaybackPoolCommandActions(
 
         if (string.IsNullOrWhiteSpace(fresh))
         {
-            showStatus?.Invoke(PlaybackUrlReusePolicy.SwitchFailedText(channel));
-            if (playing != null)
-                RevertIndexTo(playing, runWithIndexSwitchSuppressed);
-            else if (string.IsNullOrWhiteSpace(playingUrl) && !string.IsNullOrWhiteSpace(target.ResolvedM3U8Url))
-                AttachAndConsume(target, target.ResolvedM3U8Url, true, true);
+            SkipFailedSwitchTarget(target, playingUrl, showStatus, runWithIndexSwitchSuppressed);
             return false;
         }
 

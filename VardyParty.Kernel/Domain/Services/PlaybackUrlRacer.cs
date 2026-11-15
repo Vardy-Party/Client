@@ -80,8 +80,9 @@ public static class PlaybackUrlRacer
                     : Task.CompletedTask;
             }
 
+            var graceElapsed = graceTask?.IsCompleted == true;
             var decision = PlaybackRacePolicy.Decide(
-                r, p, graceTask?.IsCompleted == true, otherRowCanPlayNow?.Invoke() == true);
+                r, p, graceElapsed, otherRowCanPlayNow?.Invoke() == true);
             switch (decision)
             {
                 case RaceDecision.Recommended:
@@ -98,16 +99,22 @@ public static class PlaybackUrlRacer
 
             cancellationToken.ThrowIfCancellationRequested();
             var waits = new List<Task>(4);
-            if (!recommendedLeg.IsCompleted)
+            // Wait on what this decision saw as still running: the r, p and graceElapsed
+            // snapshot above, not a second IsCompleted read. A leg (or the grace delay)
+            // that finished after the snapshot then completes WhenAny at once and the next
+            // pass decides on it. Reading IsCompleted again here could drop a leg that had
+            // just finished, so the race either ended with no winner or parked on the
+            // other leg's /play until it answered (or forever).
+            if (r == RaceLegState.Pending)
                 waits.Add(recommendedLeg);
-            if (!partnerLeg.IsCompleted)
+            if (p == RaceLegState.Pending)
                 waits.Add(partnerLeg);
-            if (graceTask is { IsCompleted: false })
+            if (graceTask is not null && !graceElapsed)
                 waits.Add(graceTask);
             // Recommended already failed while the partner /play is still out: a cached
             // pool row may join after this Decide. Re-poll otherRowCanPlayNow on a short
             // tick instead of parking only on the partner (which can hang the finding dialog).
-            if (partnerLeg.IsCompleted == false
+            if (p == RaceLegState.Pending
                 && r is RaceLegState.Empty or RaceLegState.AudioOnly or RaceLegState.Infrastructure)
             {
                 waits.Add(Task.Delay(TimeSpan.FromMilliseconds(25), time, cancellationToken));

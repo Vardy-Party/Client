@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using VardyParty.Playback;
 
 namespace VardyParty.Linux.Services;
 
@@ -57,16 +58,18 @@ public static class LinuxPlatformProbe
     public const string AnyAudioOutput = "any";
 
     /// <summary>
-    /// Live HLS cache on a real desktop. VLC's 3s default plus a small
-    /// cushion — do not use the WSL 12s value here (that is extra delay).
+    /// Live HLS input-cache on a real desktop. Aliased from
+    /// <see cref="PlaybackPolicy.LibVlcNetworkCachingMs"/> — not the 25s
+    /// live-edge target (LibVLC has no live-offset API; a 25s cache would
+    /// delay the first picture). Do not use the WSL test-host value here.
     /// </summary>
-    public const int DesktopLiveNetworkCachingMs = 4_000;
+    public const int DesktopLiveNetworkCachingMs = PlaybackPolicy.LibVlcNetworkCachingMs;
 
     /// <summary>
-    /// WSL-only: 3s plus software RV32 present late/flush/silence. Not
-    /// applied on native Ubuntu.
+    /// WSL/test-host only: extra cache for software present delay. Not
+    /// applied on native Ubuntu and not a second product live-buffer target.
     /// </summary>
-    public const int WslLiveNetworkCachingMs = 12_000;
+    public const int WslLiveNetworkCachingMs = PlaybackPolicy.LibVlcTestHostNetworkCachingMs;
 
     /// <summary>
     /// Extra input-clock slack (µs). WSL-only: default 5ms makes Pulse/WSLg
@@ -232,7 +235,7 @@ public static class LinuxPlatformProbe
             Environment.GetEnvironmentVariable(AudioOutputVariableName));
 
     public static int ResolveLiveNetworkCachingMs(bool conservative) =>
-        conservative ? WslLiveNetworkCachingMs : DesktopLiveNetworkCachingMs;
+        PlaybackPolicy.ResolveLibVlcNetworkCachingMs(conservative);
 
     /// <summary>
     /// Software-callback present limits. Native desktop is uncapped

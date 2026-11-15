@@ -222,6 +222,116 @@ public class PlaybackRaceBusinessRulesTests
         Assert.Contains(race.StreamVerdicts, leg => ReferenceEquals(leg.Row, recommended));
     }
 
+    [Fact]
+    public async Task Race_PartnerFinishesWhileTheRacerDecides_PartnerStillWins()
+    {
+        // Arrange - the recommended leg is audio-only; the partner's /play is held on a
+        // TaskCompletionSource that runs its continuation inline. On the second decision
+        // (the racer has seen the recommended verdict by then) otherRowCanPlayNow
+        // completes the partner with video, so the partner leg finishes after the racer
+        // read it as Pending but before it builds its wait list. That window used to end
+        // the race with no winner. The window is hit when the partner leg finished inside
+        // the callback (its continuation ran inline); a few attempts make sure it is.
+        var recommended = Row("north", url: null, oneShot: true);
+        var partner = Row("south", url: null, oneShot: true);
+        var results = new List<PlaybackRaceResult<Payload>>();
+        var windowHits = 0;
+
+        // Act
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var partnerPlay = new TaskCompletionSource<Payload?>();
+            var partnerFinished = false;
+            var decisions = 0;
+            var race = await PlaybackUrlRacer.RaceAsync(
+                    recommended,
+                    partner,
+                    (row, _) => ReferenceEquals(row, partner)
+                        ? partnerPlay.Task
+                        : Task.FromResult<Payload?>(new Payload("https://cdn.example.com/north.m3u8")),
+                    (payload, _) => Task.FromResult(
+                        payload.Url.Contains("north", StringComparison.Ordinal)
+                            ? RaceLegState.AudioOnly
+                            : RaceLegState.Video),
+                    onFinished: leg => partnerFinished |= ReferenceEquals(leg.Row, partner),
+                    otherRowCanPlayNow: () =>
+                    {
+                        if (Interlocked.Increment(ref decisions) == 2)
+                        {
+                            partnerPlay.TrySetResult(new Payload("https://cdn.example.com/south.m3u8"));
+                            if (partnerFinished)
+                                windowHits++;
+                        }
+
+                        return false;
+                    },
+                    CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            results.Add(race);
+        }
+
+        // Assert
+        Assert.True(windowHits > 0, "the partner leg never finished inside the decision");
+        Assert.All(results, race =>
+        {
+            Assert.Same(partner, race.Winner);
+            Assert.Equal("https://cdn.example.com/south.m3u8", race.WinnerValue?.Url);
+            Assert.Equal(RaceLegState.AudioOnly, race.Recommended?.State);
+        });
+    }
+
+    [Fact]
+    public async Task Race_RecommendedFinishesWhileTheRacerDecides_RacerDoesNotParkOnThePartner()
+    {
+        // Arrange - the recommended /play is held on a TaskCompletionSource that runs its
+        // continuation inline, and the partner /play never answers. The first decision
+        // (both legs read as Pending) completes the recommended leg with an empty answer
+        // from inside otherRowCanPlayNow, so it finishes after the racer read it as
+        // Pending but before it builds its wait list. The racer used to wait on the
+        // partner alone and never decide again; it must see the verdict and play the
+        // ready row. The window is hit when the recommended leg finished inside the
+        // callback; a few attempts make sure it is.
+        var recommended = Row("north", url: null, oneShot: true);
+        var partner = Row("south", url: null, oneShot: true);
+        var results = new List<PlaybackRaceResult<Payload>>();
+        var windowHits = 0;
+
+        // Act
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var recommendedPlay = new TaskCompletionSource<Payload?>();
+            var recommendedFinished = false;
+            var decisions = 0;
+            var race = await PlaybackUrlRacer.RaceAsync(
+                    recommended,
+                    partner,
+                    (row, _) => ReferenceEquals(row, partner) ? Never() : recommendedPlay.Task,
+                    (_, _) => Task.FromResult(RaceLegState.Video),
+                    onFinished: leg => recommendedFinished |= ReferenceEquals(leg.Row, recommended),
+                    otherRowCanPlayNow: () =>
+                    {
+                        if (Interlocked.Increment(ref decisions) > 1)
+                            return true;
+                        recommendedPlay.TrySetResult(null);
+                        if (recommendedFinished)
+                            windowHits++;
+                        return false;
+                    },
+                    CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            results.Add(race);
+        }
+
+        // Assert
+        Assert.True(windowHits > 0, "the recommended leg never finished inside the decision");
+        Assert.All(results, race =>
+        {
+            Assert.True(race.PlayReadyRow);
+            Assert.Null(race.Winner);
+            Assert.Equal(RaceLegState.Empty, race.Recommended?.State);
+        });
+    }
+
     private static async Task<Payload?> WaitForPartner(EnrichedStream row, EnrichedStream recommended, Task partnerHit)
     {
         if (!ReferenceEquals(row, recommended))

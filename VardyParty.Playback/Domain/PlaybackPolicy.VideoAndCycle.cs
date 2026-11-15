@@ -13,6 +13,13 @@ public static partial class PlaybackPolicy
     /// </summary>
     public static readonly TimeSpan NoVideoTimeout = TimeSpan.FromSeconds(8);
 
+    /// <summary>
+    /// How long a decoded picture size must stay unchanged before any overlay
+    /// publishes it. Used by <see cref="DecodedPictureSizeSettler"/> on
+    /// Android, Windows, and Linux.
+    /// </summary>
+    public static readonly TimeSpan DecodedPictureSettle = TimeSpan.FromSeconds(1);
+
     /// <summary>Failure reason for a stream that plays sound but no picture.</summary>
     public const string NoVideoReason = "No video (audio only)";
 

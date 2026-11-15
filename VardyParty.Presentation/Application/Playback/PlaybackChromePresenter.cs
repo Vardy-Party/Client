@@ -30,9 +30,18 @@ public enum PlaybackChromeContentState
     Error
 }
 
-public sealed record StreamToastModel(int Index, int Total, string? VerticalResolutionLabel)
+public sealed record StreamToastModel(
+    int Index,
+    int Total,
+    string? VerticalResolutionLabel,
+    string? SourceLabel = null,
+    string? Channel = null)
 {
-    public string Text => PlayerOverlayFormatter.FormatStreamToast(Index, Total, VerticalResolutionLabel);
+    public string Text => PlayerOverlayFormatter.FormatStreamToast(
+        Index, Total, VerticalResolutionLabel, SourceLabel, Channel);
+
+    /// <summary><see cref="Text"/> split around the V1/V2 chip, coloured like the video-info badge.</summary>
+    public StreamIdentityParts Parts => PlayerOverlayFormatter.SplitSourceChip(Text, SourceLabel);
 }
 
 /// <summary>
@@ -154,7 +163,7 @@ public sealed class PlaybackChromePresenter
         return PlaybackChromeContentState.Error;
     }
 
-    public void ApplyOverlayInfo(PlayerOverlayInfo? info)
+    public void ApplyOverlayInfo(PlayerOverlayInfo? info, bool whileSwitching = false)
     {
         OverlayInfo = info;
         if (info is null)
@@ -165,22 +174,32 @@ public sealed class PlaybackChromePresenter
         }
 
         CanGoNext = info.Total > 1;
-        // Switch toast is index/total only — do not flash resolution/bitrate here.
-        var toast = new StreamToastModel(info.Index, info.Total, VerticalResolutionLabel: null);
-        var changed = StreamToast is null
+        var toast = new StreamToastModel(
+            info.Index,
+            info.Total,
+            VerticalResolutionLabel: PlayerChromeText.FormatIdentityResolution(
+                info.Resolution, info.ProbedResolution, whileSwitching),
+            SourceLabel: info.SourceLabel,
+            Channel: info.Channel);
+        var indexChanged = StreamToast is null
             || StreamToast.Index != toast.Index
             || StreamToast.Total != toast.Total;
 
         StreamToast = toast;
 
-        // Show on index/total change, and keep showing while awaiting playable content
-        // so auto-switch feedback does not vanish mid-attempt.
-        if (info.Total > 0 && !IsVideoInfoVisible
-            && (changed || ShouldHoldStreamToast))
+        // Show (and restart auto-hide) on index/total change or while awaiting
+        // playable content. Height/name-only updates refresh Text in place
+        // (via StateChanged) without re-requesting the toast, so the 10s timer
+        // keeps running. Do not re-show a toast that already auto-hid.
+        if (info.Total > 0 && !IsVideoInfoVisible)
         {
-            IsStreamToastVisible = true;
-            if (changed)
-                StreamToastRequested?.Invoke(this, toast);
+            if (indexChanged || ShouldHoldStreamToast)
+            {
+                var wasVisible = IsStreamToastVisible;
+                IsStreamToastVisible = true;
+                if (indexChanged || !wasVisible)
+                    StreamToastRequested?.Invoke(this, toast);
+            }
         }
 
         RaiseStateChanged();
