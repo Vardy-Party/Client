@@ -109,7 +109,7 @@ public class PlayerChromeTextTests
         var quality = PlayerChromeText.FormatQualityLine(model);
         var identity = PlayerChromeText.FormatStreamIdentityLine(model, model.SourceLabel);
         var suffix = PlayerChromeText.FormatStreamIdentitySuffix(model);
-        var panelLines = PlayerChromeText.FormatVideoInfo(model).Split('\n');
+        var panelLines = PlayerChromeText.FormatVideoInfo(model).ReplaceLineEndings("\n").Split('\n');
 
         // Assert — one line carries height and bitrate; the stream-name row carries neither
         Assert.Equal("720p · 3.4 Mbps", quality);
@@ -235,7 +235,7 @@ public class PlayerChromeTextTests
         var text = PlayerChromeText.FormatVideoInfo(model);
 
         // Assert — title, status, identity row (index · chip · name), height · bitrate, detail
-        var lines = text.Split('\n');
+        var lines = text.ReplaceLineEndings("\n").Split('\n');
         Assert.StartsWith("Home United vs Away City", text);
         Assert.Contains("Status: Playing", text);
         Assert.Contains("2/5 · V1 · Channel North", lines);
