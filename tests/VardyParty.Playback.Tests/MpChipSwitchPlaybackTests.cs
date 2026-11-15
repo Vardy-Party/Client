@@ -9,16 +9,16 @@ using Xunit;
 namespace VardyParty.Playback.Tests;
 
 /// <summary>
-/// Regression for the TV log of 13 Nov 2026 (Moldova v Kazakhstan, 18:40:50-18:41:46):
-/// Next onto MP chips probed Healthy (Fubo US, NW IT) asked LocalService for a fresh link,
-/// got "POST /mp sent nothing for 30s", and stayed on VUS. Jon: "i am used to v2 switching
+/// Regression for the TV log of 13 Nov 2026 (Home United v Away City, 18:40:50-18:41:46):
+/// Next onto MP chips probed Healthy (Chip North, Chip West) asked LocalService for a fresh link,
+/// got "POST /mp sent nothing for 30s", and stayed on Chip Home. Jon: "i am used to v2 switching
 /// being immediate". A V2 chip with a usable probed link must switch with no LocalService
 /// call; a switch whose target cannot be resolved must not silently stay put.
 /// </summary>
 public class MpChipSwitchPlaybackTests
 {
-    private const string VusUrl = "https://fhlsport955.cdx904gouh.xyz/token-LU4q/cfall/s2001/v3b/4qqp/super/3x_942237.m3u8";
-    private const string FuboUrl = "https://fhlsport955.cdx904gouh.xyz/token-LBV6/cfall/s2001/v3b/s538/hedy/sx_944566.m3u8";
+    private const string HomeChipUrl = "https://edge.cdn-chip.test/token-LU4q/cfall/s2001/v3b/4qqp/super/3x_942237.m3u8";
+    private const string NorthChipUrl = "https://edge.cdn-chip.test/token-LBV6/cfall/s2001/v3b/s538/hedy/sx_944566.m3u8";
 
     private readonly StreamSwitchingService _pool = new();
     private readonly PlaybackSessionController _session = new();
@@ -30,14 +30,14 @@ public class MpChipSwitchPlaybackTests
 
     public MpChipSwitchPlaybackTests()
     {
-        _pool.Initialize("UEFA Nations League", "Moldova", "Kazakhstan");
+        _pool.Initialize("Fictional League", "Home United", "Away City");
     }
 
     private static EnrichedStream Chip(string chip, string? url) => new()
     {
         Stream = new Stream
         {
-            Url = "https://www.fctv33go.autos/football/moldova-vs-kazakhstan.html",
+            Url = "https://www.match-page.test/football/home-united-vs-away-city.html",
             Channel = chip,
             PlayerStream = chip,
             Source = "mp",
@@ -45,7 +45,7 @@ public class MpChipSwitchPlaybackTests
         },
         Status = StreamResolutionStatus.Healthy,
         ResolvedM3U8Url = url,
-        RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://vida01eo.example.sbs/" },
+        RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://chip-player.test/" },
         UnusedResolvedUrl = false,
     };
 
@@ -67,14 +67,14 @@ public class MpChipSwitchPlaybackTests
     [Fact]
     public async Task Rule_NextOntoProbedHealthyMpChip_UnknownExpiry_SwitchesImmediately_WithNoLocalServiceCall()
     {
-        // Arrange - VUS plays; Fubo US was probed Healthy (unreadable token, Referer soak).
-        var vus = Chip("VUS", VusUrl);
-        var fubo = Chip("Fubo US", FuboUrl);
-        _pool.AddHealthyStream(vus);
-        _pool.AddHealthyStream(fubo);
-        _session.BeginAttach(VusUrl, usedCachedUrl: true);
+        // Arrange - Chip Home plays; Chip North was probed Healthy (unreadable token, Referer soak).
+        var chipHome = Chip("Chip Home", HomeChipUrl);
+        var chipNorth = Chip("Chip North", NorthChipUrl);
+        _pool.AddHealthyStream(chipHome);
+        _pool.AddHealthyStream(chipNorth);
+        _session.BeginAttach(HomeChipUrl, usedCachedUrl: true);
         _pool.SwitchToNextStream();
-        _resolve = (_, _) => throw new InvalidOperationException("POST /mp sent nothing for 30s; chip Fubo US not harvested yet");
+        _resolve = (_, _) => throw new InvalidOperationException("POST /mp sent nothing for 30s; chip Chip North not harvested yet");
         var sut = CreateSut();
 
         // Act
@@ -83,16 +83,16 @@ public class MpChipSwitchPlaybackTests
         // Assert
         Assert.True(switched);
         Assert.Empty(_localServiceCalls);
-        Assert.Equal(new[] { (FuboUrl, true) }, _attaches);
+        Assert.Equal(new[] { (NorthChipUrl, true) }, _attaches);
         Assert.Empty(_status);
     }
 
     [Fact]
     public async Task Rule_AutoAdvanceOntoProbedMpChip_AttachesProbedLink_WithNoLocalServiceCall()
     {
-        // Arrange - the playing row was removed after a failure; the pool's current row is Fubo US.
-        var fubo = Chip("Fubo US", FuboUrl);
-        _pool.AddHealthyStream(fubo);
+        // Arrange - the playing row was removed after a failure; the pool's current row is Chip North.
+        var chipNorth = Chip("Chip North", NorthChipUrl);
+        _pool.AddHealthyStream(chipNorth);
         var sut = CreateSut();
 
         // Act
@@ -100,49 +100,49 @@ public class MpChipSwitchPlaybackTests
 
         // Assert
         Assert.Empty(_localServiceCalls);
-        Assert.Equal(new[] { (FuboUrl, true) }, _attaches);
+        Assert.Equal(new[] { (NorthChipUrl, true) }, _attaches);
     }
 
     [Fact]
     public async Task Rule_NextWhoseTargetCannotBeResolved_MovesOnToTheNextPlayableRow()
     {
-        // Arrange - VUS plays; NW IT has no link and its fresh /mp fails; TyR is playable.
-        var vus = Chip("VUS", VusUrl);
-        var nwIt = Chip("NW IT", null);
-        var tyr = Chip("TyR", FuboUrl);
-        _pool.AddHealthyStream(vus);
-        _pool.AddHealthyStream(nwIt);
-        _pool.AddHealthyStream(tyr);
-        _session.BeginAttach(VusUrl, usedCachedUrl: true);
+        // Arrange - Chip Home plays; Chip West has no link and its fresh /mp fails; Chip East is playable.
+        var chipHome = Chip("Chip Home", HomeChipUrl);
+        var chipWest = Chip("Chip West", null);
+        var chipEast = Chip("Chip East", NorthChipUrl);
+        _pool.AddHealthyStream(chipHome);
+        _pool.AddHealthyStream(chipWest);
+        _pool.AddHealthyStream(chipEast);
+        _session.BeginAttach(HomeChipUrl, usedCachedUrl: true);
         _pool.SwitchToNextStream();
         var sut = CreateSut();
 
         // Act
         var switched = await SwitchAsync(sut);
 
-        // Assert - not a switch, the user is told, NW IT is skipped this cycle, Next goes on.
+        // Assert - not a switch, the user is told, Chip West is skipped this cycle, Next goes on.
         Assert.False(switched);
-        Assert.Equal(new[] { "NW IT" }, _localServiceCalls);
+        Assert.Equal(new[] { "Chip West" }, _localServiceCalls);
         Assert.Empty(_attaches);
-        Assert.Same(vus, _pool.GetCurrentStream());
-        Assert.True(_pool.IsSkippedInCycle(nwIt));
+        Assert.Same(chipHome, _pool.GetCurrentStream());
+        Assert.True(_pool.IsSkippedInCycle(chipWest));
         Assert.Contains("trying the next stream", _status[^1]);
         var command = Assert.Single(_commands);
         Assert.True(command.SwitchPoolToNext);
-        // Host applies SwitchPoolToNext: the pool skips NW IT (tried this cycle) and lands on TyR.
+        // Host applies SwitchPoolToNext: the pool skips Chip West (tried this cycle) and lands on Chip East.
         Assert.True(_pool.SwitchToNextStream());
-        Assert.Same(tyr, _pool.GetCurrentStream());
+        Assert.Same(chipEast, _pool.GetCurrentStream());
     }
 
     [Fact]
     public async Task Rule_NextWhoseTargetCannotBeResolved_StaysOnlyWhenNothingElseIsLeft()
     {
         // Arrange
-        var vus = Chip("VUS", VusUrl);
-        var nwIt = Chip("NW IT", null);
-        _pool.AddHealthyStream(vus);
-        _pool.AddHealthyStream(nwIt);
-        _session.BeginAttach(VusUrl, usedCachedUrl: true);
+        var chipHome = Chip("Chip Home", HomeChipUrl);
+        var chipWest = Chip("Chip West", null);
+        _pool.AddHealthyStream(chipHome);
+        _pool.AddHealthyStream(chipWest);
+        _session.BeginAttach(HomeChipUrl, usedCachedUrl: true);
         _pool.SwitchToNextStream();
         var sut = CreateSut();
 
@@ -153,7 +153,7 @@ public class MpChipSwitchPlaybackTests
         Assert.False(switched);
         Assert.Empty(_attaches);
         Assert.Empty(_commands);
-        Assert.Same(vus, _pool.GetCurrentStream());
+        Assert.Same(chipHome, _pool.GetCurrentStream());
         Assert.Contains("staying on the current stream", _status[^1]);
     }
 }

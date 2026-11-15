@@ -6,21 +6,27 @@ namespace VardyParty.Playback.Tests;
 
 public class DecodedPictureSizeSettlerTests
 {
+    private static readonly DateTimeOffset Start = new(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public void FirstSample_IsNotPublishedUntilItHasStayedForSettle()
     {
-        var now = new DateTimeOffset(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+        // Arrange
+        var now = Start;
         var sut = new DecodedPictureSizeSettler(() => now);
 
-        Assert.Null(sut.Observe(1920, 1080));
-        Assert.False(sut.HasPublished);
-
+        // Act
+        var onObserve = sut.Observe(1920, 1080);
+        var publishedOnObserve = sut.HasPublished;
         now += TimeSpan.FromMilliseconds(200);
-        Assert.Null(sut.Tick());
-
+        var early = sut.Tick();
         now += TimeSpan.FromMilliseconds(800);
         var published = sut.Tick();
 
+        // Assert
+        Assert.Null(onObserve);
+        Assert.False(publishedOnObserve);
+        Assert.Null(early);
         Assert.Equal((1920, 1080), published);
         Assert.True(sut.HasPublished);
     }
@@ -28,21 +34,25 @@ public class DecodedPictureSizeSettlerTests
     [Fact]
     public void Flash1080ThenRealSize_NeverPublishesTheFlash()
     {
-        var now = new DateTimeOffset(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+        // Arrange
+        var now = Start;
         var sut = new DecodedPictureSizeSettler(() => now);
 
-        Assert.Null(sut.Observe(1920, 1080));
-
+        // Act
+        var flash = sut.Observe(1920, 1080);
         now += TimeSpan.FromMilliseconds(150);
-        Assert.Null(sut.Observe(854, 480));
-        Assert.False(sut.HasPublished);
-
+        var real = sut.Observe(854, 480);
+        var publishedAfterReal = sut.HasPublished;
         now += TimeSpan.FromMilliseconds(800);
-        Assert.Null(sut.Tick());
-
+        var early = sut.Tick();
         now += TimeSpan.FromMilliseconds(200);
         var published = sut.Tick();
 
+        // Assert
+        Assert.Null(flash);
+        Assert.Null(real);
+        Assert.False(publishedAfterReal);
+        Assert.Null(early);
         Assert.Equal((854, 480), published);
         Assert.NotEqual(1080, published!.Value.Height);
     }
@@ -50,47 +60,66 @@ public class DecodedPictureSizeSettlerTests
     [Fact]
     public void Observe_IgnoresZeroDimensions()
     {
-        var now = new DateTimeOffset(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+        // Arrange
+        var now = Start;
         var sut = new DecodedPictureSizeSettler(() => now);
 
-        Assert.Null(sut.Observe(0, 0));
-        Assert.Null(sut.Observe(1920, 0));
-        Assert.False(sut.HasPublished);
-
+        // Act
+        var zero = sut.Observe(0, 0);
+        var zeroHeight = sut.Observe(1920, 0);
+        var publishedAfterObserve = sut.HasPublished;
         now += TimeSpan.FromSeconds(2);
-        Assert.Null(sut.Tick());
+        var tick = sut.Tick();
+
+        // Assert
+        Assert.Null(zero);
+        Assert.Null(zeroHeight);
+        Assert.False(publishedAfterObserve);
+        Assert.Null(tick);
     }
 
     [Fact]
     public void Reset_ClearsPublishedAndPendingSize()
     {
-        var now = new DateTimeOffset(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+        // Arrange
+        var now = Start;
         var sut = new DecodedPictureSizeSettler(() => now);
         sut.Observe(1280, 720);
         now += TimeSpan.FromSeconds(1);
-        Assert.Equal((1280, 720), sut.Tick());
+        var publishedBeforeReset = sut.Tick();
 
+        // Act
         sut.Reset();
+        var afterReset = sut.Observe(1920, 1080);
 
+        // Assert
+        Assert.Equal((1280, 720), publishedBeforeReset);
         Assert.Null(sut.Published);
         Assert.False(sut.HasPublished);
-        Assert.Null(sut.Observe(1920, 1080));
+        Assert.Null(afterReset);
     }
 
     [Fact]
     public void PublishedSizeThatThenChanges_IsWithdrawnUntilTheNewSizeSettles()
     {
-        var now = new DateTimeOffset(2026, 11, 14, 20, 0, 0, TimeSpan.Zero);
+        // Arrange
+        var now = Start;
         var sut = new DecodedPictureSizeSettler(() => now);
         sut.Observe(1280, 720);
         now += TimeSpan.FromSeconds(1);
-        Assert.Equal((1280, 720), sut.Tick());
+        var first = sut.Tick();
 
+        // Act
         now += TimeSpan.FromMilliseconds(50);
-        Assert.Null(sut.Observe(1920, 1080));
-        Assert.False(sut.HasPublished);
-
+        var onChange = sut.Observe(1920, 1080);
+        var publishedAfterChange = sut.HasPublished;
         now += TimeSpan.FromSeconds(1);
-        Assert.Equal((1920, 1080), sut.Tick());
+        var settled = sut.Tick();
+
+        // Assert
+        Assert.Equal((1280, 720), first);
+        Assert.Null(onChange);
+        Assert.False(publishedAfterChange);
+        Assert.Equal((1920, 1080), settled);
     }
 }

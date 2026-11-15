@@ -10,10 +10,13 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_AnnexB_AvcBaseline1080()
     {
+        // Arrange
         var annexB = VideoBitstreamFixtures.AnnexB(VideoBitstreamFixtures.AvcSps(1920, 1080));
 
+        // Act
         var ok = VideoBitstreamSize.TryRead(annexB, out var size);
 
+        // Assert
         Assert.True(ok);
         Assert.Equal(1920, size.Width);
         Assert.Equal(1080, size.Height);
@@ -22,11 +25,14 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_MpegTs_Avc720()
     {
+        // Arrange
         var ts = VideoBitstreamFixtures.MpegTs(
             VideoBitstreamFixtures.AnnexB(VideoBitstreamFixtures.AvcSps(1280, 720)));
 
+        // Act
         var ok = VideoBitstreamSize.TryRead(ts, out var size);
 
+        // Assert
         Assert.True(ok);
         Assert.Equal(1280, size.Width);
         Assert.Equal(720, size.Height);
@@ -35,12 +41,15 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_MpegTs_FindsSpsSplitAcrossPackets()
     {
+        // Arrange
         var ts = VideoBitstreamFixtures.MpegTs(
             VideoBitstreamFixtures.AnnexB(VideoBitstreamFixtures.AvcSps(1920, 1080)),
             splitStartCode: true);
 
+        // Act
         var ok = VideoBitstreamSize.TryRead(ts, out var size);
 
+        // Assert
         Assert.True(ok);
         Assert.Equal(1920, size.Width);
         Assert.Equal(1080, size.Height);
@@ -49,10 +58,13 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_Fmp4_AvcCBox()
     {
+        // Arrange
         var init = VideoBitstreamFixtures.AvcCBox(VideoBitstreamFixtures.AvcSps(1920, 1080));
 
+        // Act
         var ok = VideoBitstreamSize.TryRead(init, out var size);
 
+        // Assert
         Assert.True(ok);
         Assert.Equal(1920, size.Width);
         Assert.Equal(1080, size.Height);
@@ -61,9 +73,14 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_HtmlPrefix_ReturnsFalse()
     {
+        // Arrange
         var html = "<html><body>503</body></html>"u8.ToArray();
 
-        Assert.False(VideoBitstreamSize.TryRead(html, out var size));
+        // Act
+        var ok = VideoBitstreamSize.TryRead(html, out var size);
+
+        // Assert
+        Assert.False(ok);
         Assert.Equal(0, size.Width);
         Assert.Equal(0, size.Height);
     }
@@ -71,7 +88,12 @@ public class VideoBitstreamSizeTests
     [Fact]
     public void TryRead_Empty_ReturnsFalse()
     {
-        Assert.False(VideoBitstreamSize.TryRead(ReadOnlySpan<byte>.Empty, out _));
+        // Arrange
+        // Act
+        var ok = VideoBitstreamSize.TryRead(ReadOnlySpan<byte>.Empty, out _);
+
+        // Assert
+        Assert.False(ok);
     }
 }
 

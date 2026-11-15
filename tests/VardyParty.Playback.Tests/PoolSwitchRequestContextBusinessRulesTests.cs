@@ -8,10 +8,10 @@ using Xunit;
 namespace VardyParty.Playback.Tests;
 
 /// <summary>
-/// Windows build 251, 13 Nov 2026 19:41 (Slovakia v Faroe Islands): picture on techydeals,
-/// then Next onto LiveStreams, streamhd247 and sportswatcher. LiveStreams played but was never
-/// counted; streamhd247 and sportswatcher were probed Healthy with their own Referer and got
-/// 403 in the player, which still sent techydeals' Referer.
+/// Windows build 251, 13 Nov 2026 19:41 (Home United v Away City): picture on birchsite,
+/// then Next onto PineSite, maplesite and cedarsite. PineSite played but was never
+/// counted; maplesite and cedarsite were probed Healthy with their own Referer and got
+/// 403 in the player, which still sent birchsite' Referer.
 /// </summary>
 public class PoolSwitchRequestContextBusinessRulesTests
 {
@@ -24,45 +24,45 @@ public class PoolSwitchRequestContextBusinessRulesTests
         RequestHeaders = headers,
     };
 
-    private static readonly EnrichedStream Techydeals = Row(
-        "techydeals", "https://c2807p.7odxv0l067ka.net:8443/hls/cd4dh6iarhr2p.m3u8?s=x&e=1794620397", "https://lineagest.click/");
+    private static readonly EnrichedStream Birch = Row(
+        "birchsite", "https://c2807p.cdn-birch.test:8443/hls/cd4dh6iarhr2p.m3u8?s=x&e=1794620397", "https://birch-player.test/");
 
-    private static readonly PlaybackRequestContext Opening = new("https://lineagest.click/", null);
+    private static readonly PlaybackRequestContext Opening = new("https://birch-player.test/", null);
 
     [Fact]
     public void Rule_NextAttach_SendsTheTargetRowsReferer_NotTheOpeningStreams()
     {
         // Arrange
         var pool = new StreamSwitchingService();
-        pool.Initialize("UEFA Nations League", "Slovakia", "Faroe Islands");
-        var streamhd = Row("streamhd247", "https://edge2.candyshop.st/live3/streamhd3/index.m3u8?st=a&e=1794609641", "https://xstream.st/");
-        pool.AddHealthyStream(Techydeals);
-        pool.AddHealthyStream(streamhd);
+        pool.Initialize("Fictional League", "Home United", "Away City");
+        var maple = Row("maplesite", "https://edge2.cdn-maple.test/live3/maple3/index.m3u8?st=a&e=1794609641", "https://maple-player.test/");
+        pool.AddHealthyStream(Birch);
+        pool.AddHealthyStream(maple);
         pool.SwitchToNextStream();
 
         // Act
-        var context = PlaybackRowRequestContext.ForUrl(pool, streamhd.ResolvedM3U8Url, Opening);
+        var context = PlaybackRowRequestContext.ForUrl(pool, maple.ResolvedM3U8Url, Opening);
 
         // Assert
-        Assert.Equal("https://xstream.st/", context.Referer);
+        Assert.Equal("https://maple-player.test/", context.Referer);
     }
 
     [Fact]
     public void Rule_RevertAttach_GoesBackToTheLastGoodRowsReferer()
     {
-        // Arrange - the index is on sportswatcher; the session reverts to techydeals' URL.
+        // Arrange - the index is on cedarsite; the session reverts to birchsite' URL.
         var pool = new StreamSwitchingService();
-        pool.Initialize("UEFA Nations League", "Slovakia", "Faroe Islands");
-        var sportswatcher = Row("sportswatcher", "https://hls.lshls.st/secure_hls.php?path=a&e=1794600641", "https://matchli.st/");
-        pool.AddHealthyStream(Techydeals);
-        pool.AddHealthyStream(sportswatcher);
+        pool.Initialize("Fictional League", "Home United", "Away City");
+        var cedarsite = Row("cedarsite", "https://hls.cdn-cedar.test/secure_hls.php?path=a&e=1794600641", "https://cedar-player.test/");
+        pool.AddHealthyStream(Birch);
+        pool.AddHealthyStream(cedarsite);
         pool.SwitchToNextStream();
 
         // Act
-        var context = PlaybackRowRequestContext.ForUrl(pool, Techydeals.ResolvedM3U8Url, new("https://matchli.st/", null));
+        var context = PlaybackRowRequestContext.ForUrl(pool, Birch.ResolvedM3U8Url, new("https://cedar-player.test/", null));
 
         // Assert
-        Assert.Equal("https://lineagest.click/", context.Referer);
+        Assert.Equal("https://birch-player.test/", context.Referer);
     }
 
     [Fact]
@@ -99,11 +99,11 @@ public class PoolSwitchRequestContextBusinessRulesTests
     {
         // Arrange - e.g. a mirror retry inside the player.
         var pool = new StreamSwitchingService();
-        pool.Initialize("UEFA Nations League", "Slovakia", "Faroe Islands");
-        pool.AddHealthyStream(Techydeals);
+        pool.Initialize("Fictional League", "Home United", "Away City");
+        pool.AddHealthyStream(Birch);
 
         // Act
-        var context = PlaybackRowRequestContext.ForUrl(pool, "https://edge.candyshop.st/live3/streamhd3/index.m3u8", Opening);
+        var context = PlaybackRowRequestContext.ForUrl(pool, "https://edge.cdn-maple.test/live3/maple3/index.m3u8", Opening);
 
         // Assert
         Assert.Same(Opening, context);
@@ -114,15 +114,15 @@ public class PoolSwitchRequestContextBusinessRulesTests
     {
         // Arrange - Windows/Linux/Apple keep video confirmation off: Ready is the picture.
         var pool = new StreamSwitchingService();
-        pool.Initialize("UEFA Nations League", "Slovakia", "Faroe Islands");
-        var live = Row("LiveStreams", "https://sha.sharpnessonline.store/simpch21/index.m3u8?token=a.b", "https://universaltokenforall.st/");
-        pool.AddHealthyStream(Techydeals);
+        pool.Initialize("Fictional League", "Home United", "Away City");
+        var live = Row("PineSite", "https://sha.cdn-ash.test/simpch21/index.m3u8?token=a.b", "https://ash-player.test/");
+        pool.AddHealthyStream(Birch);
         pool.AddHealthyStream(live);
         var session = new PlaybackSessionController();
         _ = new PlaybackPoolCommandActions(session, pool, null, (_, _, _) => { }, _ => { });
         var confirmed = new List<EnrichedStream?>();
         using var sub = pool.PlayingConfirmed!.Subscribe(new Collect(confirmed));
-        session.BeginAttach(Techydeals.ResolvedM3U8Url!, usedCachedUrl: true);
+        session.BeginAttach(Birch.ResolvedM3U8Url!, usedCachedUrl: true);
         session.Handle(MediaEngineEvent.Ready(session.Snapshot.AttachGeneration));
         pool.SwitchToNextStream();
         pool.MarkTriedInCycle(live, null, "earlier failure");
@@ -133,7 +133,7 @@ public class PoolSwitchRequestContextBusinessRulesTests
         await Task.Yield();
 
         // Assert
-        Assert.Equal(new[] { Techydeals, live }, confirmed);
+        Assert.Equal(new[] { Birch, live }, confirmed);
         Assert.False(pool.IsSkippedInCycle(live));
     }
 

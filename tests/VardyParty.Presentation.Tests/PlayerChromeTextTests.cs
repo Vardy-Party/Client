@@ -272,6 +272,7 @@ public class PlayerChromeTextTests
     public void FromPlayback_BufferZeroPercent_FormatsBufferLine()
     {
         // Arrange
+        // Act
         var model = PlayerChromeText.FromPlayback(
             overlay: null,
             current: null,
@@ -324,12 +325,12 @@ public class PlayerChromeTextTests
     }
 
     [Theory]
-    [InlineData(2, 9, "V2", "Fubo US", "1280x720", false, "2/9 · V2 · Fubo US · 720p")]
-    [InlineData(2, 9, null, "Fubo US", "1280x720", false, "2/9 · Fubo US · 720p")]
+    [InlineData(2, 9, "V2", "Channel West", "1280x720", false, "2/9 · V2 · Channel West · 720p")]
+    [InlineData(2, 9, null, "Channel West", "1280x720", false, "2/9 · Channel West · 720p")]
     [InlineData(2, 9, "V1", null, "1280x720", false, "2/9 · V1 · 720p")]
-    [InlineData(2, 9, "V2", "Fubo US", null, false, "2/9 · V2 · Fubo US")]
-    [InlineData(2, 9, "V2", "Fubo US", "1280x720", true, "2/9 · V2 · Fubo US")]
-    [InlineData(1, 0, "V2", "Fubo US", "1280x720", false, "")]
+    [InlineData(2, 9, "V2", "Channel West", null, false, "2/9 · V2 · Channel West")]
+    [InlineData(2, 9, "V2", "Channel West", "1280x720", true, "2/9 · V2 · Channel West")]
+    [InlineData(1, 0, "V2", "Channel West", "1280x720", false, "")]
     public void FormatStreamIdentityLine_JoinsIndexChipNameAndResolution(
         int index,
         int total,
@@ -365,14 +366,14 @@ public class PlayerChromeTextTests
         // Act
         var shortened = PlayerChromeText.EllipsizeStreamName(longName);
         var blank = PlayerChromeText.EllipsizeStreamName("   ");
-        var shortName = PlayerChromeText.EllipsizeStreamName("  Fubo US  ");
+        var shortName = PlayerChromeText.EllipsizeStreamName("  Channel West  ");
 
         // Assert
         Assert.Equal(PlayerChromeText.StreamNameMaxLength, shortened!.Length);
         Assert.EndsWith("…", shortened);
         Assert.StartsWith("A very long stream name that e", shortened);
         Assert.Null(blank);
-        Assert.Equal("Fubo US", shortName);
+        Assert.Equal("Channel West", shortName);
     }
 
     [Fact]
@@ -435,53 +436,68 @@ public class PlayerChromeTextTests
     public void FormatStreamIdentitySuffix_OmitsResolutionUntilKnown()
     {
         // Arrange
-        var without = new VideoInfoPanelModel { Channel = "Fubo US", Resolution = null };
-        var withRes = new VideoInfoPanelModel { Channel = "Fubo US", Resolution = "1280x720" };
+        var without = new VideoInfoPanelModel { Channel = "Channel West", Resolution = null };
+        var withRes = new VideoInfoPanelModel { Channel = "Channel West", Resolution = "1280x720" };
 
         // Act
         // Assert
-        Assert.Equal("Fubo US", PlayerChromeText.FormatStreamIdentitySuffix(without));
-        Assert.Equal("Fubo US · 720p", PlayerChromeText.FormatStreamIdentitySuffix(withRes));
-        Assert.Equal("Fubo US", PlayerChromeText.FormatStreamIdentitySuffix(withRes, whileSwitching: true));
+        Assert.Equal("Channel West", PlayerChromeText.FormatStreamIdentitySuffix(without));
+        Assert.Equal("Channel West · 720p", PlayerChromeText.FormatStreamIdentitySuffix(withRes));
+        Assert.Equal("Channel West", PlayerChromeText.FormatStreamIdentitySuffix(withRes, whileSwitching: true));
     }
 
     [Fact]
     public void FormatIdentityResolution_WhileSwitching_OmitsPreviousMeasuredSize()
     {
+        // Arrange
         var model = new VideoInfoPanelModel { Resolution = "1280x720" };
 
-        Assert.Equal("720p", PlayerChromeText.FormatIdentityResolution(model));
-        Assert.Null(PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true));
+        // Act
+        var settled = PlayerChromeText.FormatIdentityResolution(model);
+        var switching = PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true);
+
+        // Assert
+        Assert.Equal("720p", settled);
+        Assert.Null(switching);
     }
 
     [Fact]
     public void FormatIdentityResolution_WhileSwitching_ShowsTargetBitstreamProbe()
     {
+        // Arrange
         var model = new VideoInfoPanelModel
         {
             Resolution = "960x540",
             ProbedResolution = "1920x1080"
         };
 
-        Assert.Equal("540p", PlayerChromeText.FormatIdentityResolution(model));
-        Assert.Equal("1080p", PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true));
+        // Act
+        var settled = PlayerChromeText.FormatIdentityResolution(model);
+        var switching = PlayerChromeText.FormatIdentityResolution(model, whileSwitching: true);
+
+        // Assert
+        Assert.Equal("540p", settled);
+        Assert.Equal("1080p", switching);
     }
 
     [Fact]
     public void FormatStreamIdentityLine_WhileSwitching_UsesProbedHeightWhenKnown()
     {
+        // Arrange
         var model = new VideoInfoPanelModel
         {
             StreamIndex = 2,
             StreamTotal = 9,
-            Channel = "Match Wawes",
+            Channel = "Channel North",
             Resolution = "960x540",
             ProbedResolution = "1920x1080"
         };
 
+        // Act
         var line = PlayerChromeText.FormatStreamIdentityLine(model, "V1", whileSwitching: true);
 
-        Assert.Equal("2/9 · V1 · Match Wawes · 1080p", line);
+        // Assert
+        Assert.Equal("2/9 · V1 · Channel North · 1080p", line);
         Assert.DoesNotContain("540p", line);
     }
 

@@ -55,7 +55,7 @@ public class ProbeTimingLogTests
         var m1 = Row("M1");
         var tiers = new StreamTiers([h1.Stream], [m1.Stream]);
         var pool = new StreamSwitchingService();
-        pool.Initialize("Premier League", "Home United", "Away City");
+        pool.Initialize("Fictional League", "Home United", "Away City");
         var trace = new ProbeSessionTrace(timing, logger, pool, () => tiers);
         pool.AddHealthyStream(h1);
 
@@ -83,22 +83,22 @@ public class ProbeTimingLogTests
     [Fact]
     public void SessionTrace_FailedSwitchThatStaysOnPlayingStream_IsNotCounted()
     {
-        // Arrange - TV log 13 Nov 2026: Next onto Fubo US and NW IT, the fresh resolve
-        // failed, playback stayed on VUS, yet switches=3 was logged.
+        // Arrange - TV log 13 Nov 2026: Next onto Chip North and Chip West, the fresh resolve
+        // failed, playback stayed on Chip Home, yet switches=3 was logged.
         var timing = new ProbeTimingLog();
         var logger = new CapturingLogger();
-        var vus = Row("VUS");
-        var fubo = Row("Fubo US");
+        var homeChip = Row("Chip Home");
+        var northChip = Row("Chip North");
         var tiers = new StreamTiers([], []);
         var pool = new StreamSwitchingService();
-        pool.Initialize("UEFA Nations League", "Moldova", "Kazakhstan");
+        pool.Initialize("Fictional League", "Home United", "Away City");
         var trace = new ProbeSessionTrace(timing, logger, pool, () => tiers);
-        pool.AddHealthyStream(vus);
-        pool.AddHealthyStream(fubo);
-        trace.Picture(vus);
-        pool.ConfirmPlaying(vus);
+        pool.AddHealthyStream(homeChip);
+        pool.AddHealthyStream(northChip);
+        trace.Picture(homeChip);
+        pool.ConfirmPlaying(homeChip);
 
-        // Act - Next onto Fubo US, the switch fails, the index goes back to VUS.
+        // Act - Next onto Chip North, the switch fails, the index goes back to Chip Home.
         pool.SwitchToNextStream();
         pool.SwitchToStream(0);
         trace.Dispose();
@@ -106,7 +106,7 @@ public class ProbeTimingLogTests
         // Assert
         Assert.Equal(0, trace.Switches);
         Assert.DoesNotContain(logger.Lines, l => l.Contains("event=switch ", StringComparison.Ordinal));
-        Assert.Contains(logger.Lines, l => l.Contains("event=switch-requested ") && l.Contains("to_row=\"Fubo US\""));
+        Assert.Contains(logger.Lines, l => l.Contains("event=switch-requested ") && l.Contains("to_row=\"Chip North\""));
         Assert.Contains(logger.Lines, l => l.Contains("event=session-end ") && l.Contains("switches=0"));
     }
 

@@ -18,6 +18,7 @@ public class StreamHealthCheckerBitstreamSizeTests
     [Fact]
     public async Task HealthyHeadPath_DoesNotBlockOnBitstreamProbe()
     {
+        // Arrange
         var ts = VideoBitstreamFixtures.MpegTs(
             VideoBitstreamFixtures.AnnexB(VideoBitstreamFixtures.AvcSps(1920, 1080)));
         var handler = new ScriptedHandler();
@@ -27,11 +28,13 @@ public class StreamHealthCheckerBitstreamSizeTests
         handler.Head(segment, "video/mp2t");
         handler.GetBytes(segment, ts, delay: TimeSpan.FromMilliseconds(1200));
 
+        // Act
         var checker = Create(handler);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var health = await checker.CheckStreamHealthAsync(manifest, "http://player.example.com");
         sw.Stop();
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
         Assert.Null(health.ProbedVideoHeight);
         Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(700),
@@ -45,6 +48,7 @@ public class StreamHealthCheckerBitstreamSizeTests
     [Fact]
     public async Task ClassifyBytesPath_ParsesHeightFromAlreadyFetchedPrefix()
     {
+        // Arrange
         var ts = VideoBitstreamFixtures.MpegTs(
             VideoBitstreamFixtures.AnnexB(VideoBitstreamFixtures.AvcSps(1280, 720)));
         var handler = new ScriptedHandler();
@@ -53,9 +57,11 @@ public class StreamHealthCheckerBitstreamSizeTests
         handler.Playlist(manifest, "#EXTM3U\n#EXTINF:4,\nseg.image\n");
         handler.GetBytes(segment, ts);
 
+        // Act
         var checker = Create(handler);
         var health = await checker.CheckStreamHealthAsync(manifest, "http://player.example.com");
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
         Assert.Equal(1280, health.ProbedVideoWidth);
         Assert.Equal(720, health.ProbedVideoHeight);
@@ -65,6 +71,7 @@ public class StreamHealthCheckerBitstreamSizeTests
     [Fact]
     public async Task EncryptedPlaylist_DoesNotFetchSegmentBodyForHeight()
     {
+        // Arrange
         var handler = new ScriptedHandler();
         var manifest = "http://streams.example.com/live.m3u8";
         var segment = "http://streams.example.com/seg.ts";
@@ -76,10 +83,12 @@ public class StreamHealthCheckerBitstreamSizeTests
             """);
         handler.Head(segment, "video/mp2t");
 
+        // Act
         var checker = Create(handler);
         var health = await checker.CheckStreamHealthAsync(manifest, "http://player.example.com");
         await health.WhenBitstreamSizeProbed.WaitAsync(TimeSpan.FromSeconds(2));
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
         Assert.Null(health.ProbedVideoHeight);
         Assert.DoesNotContain(handler.Requests, r =>
@@ -89,6 +98,7 @@ public class StreamHealthCheckerBitstreamSizeTests
     [Fact]
     public async Task InitMap_IsPreferredOverMediaSegment()
     {
+        // Arrange
         var init = VideoBitstreamFixtures.AvcCBox(VideoBitstreamFixtures.AvcSps(1920, 1080));
         var handler = new ScriptedHandler();
         var manifest = "http://streams.example.com/live.m3u8";
@@ -103,10 +113,12 @@ public class StreamHealthCheckerBitstreamSizeTests
         handler.Head(segment, "video/mp4");
         handler.GetBytes(map, init);
 
+        // Act
         var checker = Create(handler);
         var health = await checker.CheckStreamHealthAsync(manifest, "http://player.example.com");
         await health.WhenBitstreamSizeProbed.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
         Assert.Equal(1920, health.ProbedVideoWidth);
         Assert.Equal(1080, health.ProbedVideoHeight);
