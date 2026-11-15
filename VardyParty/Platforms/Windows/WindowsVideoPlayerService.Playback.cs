@@ -532,29 +532,13 @@ namespace VardyParty.Platforms.Windows
             }
 
             private SwitchBackRunner CreateSwitchBackRunner()
-                => new(
+                => SwitchBackRunner.Create(
                     session,
-                    () => SwitchBackCommands.FromRow(switchingService.GetCurrentStream(), null),
-                    SwitchBackPlaylistProbe.GetAsync,
-                    (candidate, reason, _) =>
-                    {
-                        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                        MainThread.BeginInvokeOnMainThread(() =>
-                        {
-                            try
-                            {
-                                if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(switchingService, candidate))
-                                    _host._logger.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
-                                tcs.TrySetResult(true);
-                            }
-                            catch (Exception ex)
-                            {
-                                tcs.TrySetException(ex);
-                            }
-                        });
-                        return tcs.Task;
-                    },
-                    msg => _host._logger.LogInformation("{Message}", msg));
+                    switchingService,
+                    _host._services.GetService(typeof(ISwitchBackProbe)) as ISwitchBackProbe,
+                    settledHeight: () => pictureSizeSettler.Published?.Height,
+                    runOnUi: SwitchBackRunner.Dispatch(action => MainThread.BeginInvokeOnMainThread(action)),
+                    log: msg => _host._logger.LogInformation("{Message}", msg));
 
             private void ApplyPlaybackCommand(PlaybackCommand cmd)
             {
@@ -861,7 +845,7 @@ namespace VardyParty.Platforms.Windows
                                         args.Result.InputStream = playlistStream.GetInputStreamAt(0);
                                         args.Result.ContentType = playlistType;
                                         if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
-                                            playlistReload.NoteServed(playlistBody);
+                                            playlistReload.NoteServed();
                                         lastDownloadFailureStatus = 0;
                                         session.NotifyDownloadSuccess();
                                         return;

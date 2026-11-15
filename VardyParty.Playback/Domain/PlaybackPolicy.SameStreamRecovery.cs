@@ -70,9 +70,6 @@ public static partial class PlaybackPolicy
     /// </summary>
     public static readonly TimeSpan PlaylistReloadHoldBudget = TimeSpan.FromSeconds(2);
 
-    /// <summary>Same as <see cref="PlaylistReloadHoldBudget"/> (historical Android name).</summary>
-    public static readonly TimeSpan AndroidPlaylistHoldBudget = PlaylistReloadHoldBudget;
-
     /// <summary>
     /// Windows Adaptive Media Source must finish a <c>DownloadRequested</c>
     /// deferral within this engine deadline or AMS may abandon the request.

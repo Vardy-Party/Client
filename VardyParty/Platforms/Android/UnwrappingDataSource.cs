@@ -156,23 +156,17 @@ namespace VardyParty.Platforms.Android
                 throw;
             }
 
-            if (outcome.Kind == PlaylistReloadOutcomeKind.Failed
-                || outcome.Kind == PlaylistReloadOutcomeKind.ServeLastGood)
+            if (outcome.Kind == PlaylistReloadOutcomeKind.Failed)
             {
+                // The coordinator already recorded the give-up kind from the HTTP
+                // status (404/410 ConfirmedDead, 401/403 TokenOrPlaylistInvalid,
+                // status 0 CdnUnreachable). Do not overwrite it.
                 ReportOpenOutcome(outcome.StatusCode, failed: true);
-                var message = outcome.Kind == PlaylistReloadOutcomeKind.ServeLastGood
-                    ? PlaylistReloadEvaluation.GiveUpMessage(
-                        PlaybackErrorKind.CdnUnreachable,
-                        outcome.StatusCode,
-                        "stale playlist not served")
-                    : (outcome.Message ?? "playlist reload failed");
-                session?.NoteGiveUp(PlaybackErrorKind.CdnUnreachable, message);
-                throw new Java.IO.IOException(message);
+                throw new Java.IO.IOException(outcome.Message ?? "playlist reload failed");
             }
 
             var served = outcome.Body ?? Array.Empty<byte>();
-            if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
-                session?.NoteServed(served);
+            session?.NoteServed();
 
             var bytes = TrimPlayedSegments(dataSpec, served);
             ReportOpenOutcome(0, failed: false);
@@ -193,9 +187,10 @@ namespace VardyParty.Platforms.Android
                 try { _upstream.Close(); } catch { /* next attempt reopens */ }
                 return PlaylistReloadFetchResult.FromHttp(200, body, contentType);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 try { _upstream.Close(); } catch { /* next attempt reopens */ }
+                // An HTTP error response: keep its status and body for the strategy.
                 if (_upstream is ManagedHttpDataSource managed && managed.LastOpenStatus is >= 100 and <= 599)
                 {
                     return PlaylistReloadFetchResult.FromHttp(
@@ -204,8 +199,9 @@ namespace VardyParty.Platforms.Android
                         managed.LastErrorContentType);
                 }
 
-                var status = PlaybackPolicy.HttpStatusFromException(ex);
-                return PlaylistReloadFetchResult.FromHttp(status, [], null);
+                // A dropped connection: PlaylistReloadCoordinator maps it to status 0
+                // on every platform (same retries, same CDN-unreachable give-up).
+                throw;
             }
         }
 

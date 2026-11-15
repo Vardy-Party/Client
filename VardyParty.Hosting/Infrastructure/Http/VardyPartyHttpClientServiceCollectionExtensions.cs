@@ -87,6 +87,11 @@ public static class VardyPartyHttpClientServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(5));
 
+        // Option 2 switch-back playlist probe: one shared implementation for every platform.
+        services.AddHttpClient<ISwitchBackProbe, HttpSwitchBackProbe>()
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateHandler(sp))
+            .ConfigureHttpClient(client => client.Timeout = HttpSwitchBackProbe.Timeout);
+
         // Named client for Android ExoPlayer / managed media fetches (DoH-aware).
         // Timeout is infinite so Media3 Open/Close own stall detection.
         services.AddHttpClient(PlaybackHttpClients.Media)

@@ -1,4 +1,5 @@
 using VardyParty.Kernel;
+using VardyParty.Ports;
 namespace VardyParty.Playback;
 
 /// <summary>Arms or cancels option 2 from a playback command (tested with a fake clock).</summary>
@@ -62,5 +63,36 @@ public static class SwitchBackCommands
             LastHeight: height,
             RequestHeaders: row.RequestHeaders,
             Referer: row.Referer);
+    }
+
+    /// <summary>
+    /// Puts the abandoned playlist back on its pool row and switches to it. Must run
+    /// on the UI thread (it drives <see cref="IStreamSwitchingService"/> and the
+    /// attach); <see cref="SwitchBackRunner.Create"/> always dispatches it there.
+    /// Returns false when the row is no longer in the pool.
+    /// </summary>
+    public static bool RestoreAndSwitchTo(IStreamSwitchingService? switching, SwitchBackCandidate candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (switching is null)
+            return false;
+
+        var rows = switching.GetHealthyStreams();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var catalog = row.Stream?.Url;
+            var match = (!string.IsNullOrWhiteSpace(candidate.IdentityKey)
+                    && string.Equals(catalog, candidate.IdentityKey, StringComparison.OrdinalIgnoreCase))
+                || string.Equals(row.ResolvedM3U8Url, candidate.PlaylistUrl, StringComparison.OrdinalIgnoreCase);
+            if (!match)
+                continue;
+
+            row.ResolvedM3U8Url = candidate.PlaylistUrl;
+            row.UnusedResolvedUrl = true;
+            return switching.SwitchToStream(i);
+        }
+
+        return false;
     }
 }

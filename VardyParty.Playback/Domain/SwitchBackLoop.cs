@@ -2,13 +2,21 @@ namespace VardyParty.Playback;
 
 /// <summary>
 /// Drives option 2 probes and the switch-back attach. Call from the player host
-/// with a fake clock / fetch in tests, or HttpClient + attach in production.
+/// with a fake clock / probe in tests, or <see cref="ISwitchBackProbe"/> + the UI
+/// dispatcher in production (<see cref="SwitchBackRunner.Create"/>).
 /// </summary>
+/// <remarks>
+/// The loop never dies on an exception. A probe that throws (connection refused,
+/// DNS, timeout — the usual CDN-unreachable cases) counts as an unhealthy probe
+/// and the backoff carries on. A switch-back that throws is logged and cancels
+/// that arm. Every result is tied to the arm id it was made for, so a re-arm
+/// while a probe or switch is in flight is never cancelled or credited by it.
+/// </remarks>
 public static class SwitchBackLoop
 {
     public static async Task RunAsync(
         SwitchBackSession session,
-        Func<SwitchBackCandidate, CancellationToken, Task<(bool Playable, int StatusCode)>> probe,
+        Func<SwitchBackCandidate, CancellationToken, Task<SwitchBackProbeResult>> probe,
         Func<SwitchBackCandidate, string, CancellationToken, Task> switchBack,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         Func<DateTimeOffset>? clock = null,
@@ -25,15 +33,8 @@ public static class SwitchBackLoop
         {
             if (!session.IsArmed)
             {
-                try
-                {
-                    await delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
+                if (!await DelayAsync(delay, TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false))
                     return;
-                }
-
                 continue;
             }
 
@@ -42,37 +43,77 @@ public static class SwitchBackLoop
             {
                 case SwitchBackAction.Stop:
                     return;
+
                 case SwitchBackAction.Wait:
+                    if (!await DelayAsync(delay, decision.Wait ?? TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false))
+                        return;
+                    continue;
+
+                case SwitchBackAction.Probe:
+                {
+                    var candidate = decision.Candidate!;
+                    log?.Invoke($"[switch-back] probing row=\"{candidate.RowName ?? "(unknown)"}\"");
+                    SwitchBackProbeResult result;
                     try
                     {
-                        await delay(decision.Wait ?? TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                        result = await probe(candidate, cancellationToken).ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException)
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
                         return;
                     }
+                    catch (Exception ex)
+                    {
+                        log?.Invoke($"[switch-back] probe failed ({ex.GetType().Name})");
+                        result = SwitchBackProbeResult.Unreachable;
+                    }
 
+                    decision = session.NoteProbe(decision.ArmId, result, clock());
+                    if (decision.Action != SwitchBackAction.SwitchBack)
+                        continue;
                     break;
-                case SwitchBackAction.Probe:
-                    var candidate = session.Candidate!;
-                    log?.Invoke($"[switch-back] probing row=\"{candidate.RowName ?? "(unknown)"}\"");
-                    var result = await probe(candidate, cancellationToken).ConfigureAwait(false);
-                    decision = session.NoteProbe(result.Playable, result.StatusCode, clock());
-                    if (decision.Action == SwitchBackAction.SwitchBack)
-                        goto switchNow;
-                    break;
+                }
+
                 case SwitchBackAction.SwitchBack:
-                    goto switchNow;
+                    break;
             }
 
-            continue;
-
-        switchNow:
-            var target = session.Candidate!;
+            var target = decision.Candidate!;
             var why = decision.Reason ?? "recovered";
             log?.Invoke($"[switch-back] returning to row=\"{target.RowName ?? "(unknown)"}\" ({why})");
-            await switchBack(target, why, cancellationToken).ConfigureAwait(false);
-            session.Cancel("switched back");
+            try
+            {
+                await switchBack(target, why, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke($"[switch-back] switch-back failed ({ex.GetType().Name}: {ex.Message})");
+                session.Cancel(decision.ArmId, "switch-back failed");
+                continue;
+            }
+
+            // Only this arm: if the attach failed and re-armed, the new arm stays.
+            session.Cancel(decision.ArmId, "switched back");
+        }
+    }
+
+    private static async Task<bool> DelayAsync(
+        Func<TimeSpan, CancellationToken, Task> delay,
+        TimeSpan wait,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await delay(wait, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
     }
 }

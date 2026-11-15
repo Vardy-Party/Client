@@ -63,6 +63,7 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     private readonly DecodedPictureSizeSettler _pictureSizeSettler = new();
     private Timer? _pictureTickTimer;
     private SwitchBackRunner? _switchBack;
+    private readonly ISwitchBackProbe? _switchBackProbe;
     private readonly DelegatingMediaEngine _engine = new();
     private readonly PlaybackPoolCommandActions _pool;
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
@@ -138,9 +139,11 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
         IStreamHealthReporter healthReporter,
         IHttpClientFactory? httpClientFactory = null,
         IPlaybackPlaylistProcessor? playlistProcessor = null,
-        IPlaylistReloadRecoveryStrategy? playlistReload = null)
+        IPlaylistReloadRecoveryStrategy? playlistReload = null,
+        ISwitchBackProbe? switchBackProbe = null)
     {
         _logger = logger;
+        _switchBackProbe = switchBackProbe;
         _switching = switching;
         _healthReporter = healthReporter;
         _playlistProcessor = playlistProcessor;
@@ -965,23 +968,13 @@ public class LinuxVideoPlayerService : INativeVideoPlayerService, IDisposable
     }
 
     private SwitchBackRunner EnsureSwitchBackRunner()
-    {
-        if (_switchBack is not null)
-            return _switchBack;
-
-        _switchBack = new SwitchBackRunner(
+        => _switchBack ??= SwitchBackRunner.Create(
             _session,
-            () => SwitchBackCommands.FromRow(_switching.GetCurrentStream(), null),
-            SwitchBackPlaylistProbe.GetAsync,
-            (candidate, reason, _) =>
-            {
-                if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(_switching, candidate))
-                    _logger.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
-                return Task.CompletedTask;
-            },
-            msg => _logger.LogInformation("{Message}", msg));
-        return _switchBack;
-    }
+            _switching,
+            _switchBackProbe,
+            settledHeight: () => _pictureSizeSettler.Published?.Height,
+            runOnUi: SwitchBackRunner.Dispatch(action => Avalonia.Threading.Dispatcher.UIThread.Post(action)),
+            log: msg => _logger.LogInformation("{Message}", msg));
 
     private void ApplyPlaybackCommand(PlaybackCommand cmd)
     {

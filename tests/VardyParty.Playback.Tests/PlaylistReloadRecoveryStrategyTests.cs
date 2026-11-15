@@ -167,7 +167,7 @@ public class PlaylistReloadRecoveryStrategyTests
     }
 
     [Fact]
-    public async Task Coordinator_DeferralBudget_GivesUpAsCdnUnreachableEvenWhenLastGoodExists()
+    public async Task Coordinator_DeferralBudget_GivesUpAsCdnUnreachable()
     {
         var fetches = new Queue<PlaylistReloadFetchResult>(
         [
@@ -182,7 +182,6 @@ public class PlaylistReloadRecoveryStrategyTests
             fetches,
             delays,
             logs,
-            lastGood: Playable,
             maxHold: TimeSpan.FromMilliseconds(100));
 
         Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
@@ -194,59 +193,37 @@ public class PlaylistReloadRecoveryStrategyTests
     }
 
     [Fact]
-    public async Task Coordinator_DeferralBudget_GivesUpWhenNoLastGood()
-    {
-        var fetches = new Queue<PlaylistReloadFetchResult>(
-        [
-            PlaylistReloadFetchResult.FromStatus(503, Html, "text/html"),
-            PlaylistReloadFetchResult.FromStatus(503, Html, "text/html")
-        ]);
-
-        var outcome = await RunAsync(
-            firstAttach: false,
-            fetches,
-            new List<TimeSpan>(),
-            maxHold: TimeSpan.FromMilliseconds(100));
-
-        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
-        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
-        Assert.Contains("HTTP 503", outcome.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void MidPlayRequest_IsSharedAcrossPlatforms_NoLastGoodAndSameHoldBudget()
+    public void MidPlayRequest_IsSharedAcrossPlatforms_SameHoldBudget()
     {
         Assert.Equal(TimeSpan.FromSeconds(2), PlaybackPolicy.PlaylistReloadHoldBudget);
-        Assert.Equal(PlaybackPolicy.PlaylistReloadHoldBudget, PlaybackPolicy.AndroidPlaylistHoldBudget);
         Assert.True(PlaybackPolicy.WindowsPlaylistDeferralBudget > PlaybackPolicy.PlaylistReloadHoldBudget);
 
-        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North");
         session.FirstPlaylistCompleted = true;
-        var android = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
-        var windows = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
-        var linux = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Match Wawes");
+        var android = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Channel North");
+        var windows = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Channel North");
+        var linux = PlaylistReloadRequest.MidPlay(isFirstAttach: false, session, "Channel North");
 
         foreach (var request in new[] { android, windows, linux })
         {
-            Assert.Null(request.LastGoodPlaylist);
             Assert.Equal(PlaybackPolicy.PlaylistReloadHoldBudget, request.MaxHold);
             Assert.False(request.IsFirstAttach);
             Assert.Same(session, request.Session);
-            Assert.Equal("Match Wawes", request.Row);
+            Assert.Equal("Channel North", request.Row);
         }
     }
 
     [Fact]
-    public async Task MidPlay_Slow503_GivesUpAsCdnUnreachableWithoutServingLastGood()
+    public async Task MidPlay_Slow503_GivesUpAsCdnUnreachableWithoutServingAStalePlaylist()
     {
         var now = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
-        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North");
         session.FirstPlaylistCompleted = true;
         var logs = new List<string>();
         var request = PlaylistReloadRequest.MidPlay(
             isFirstAttach: false,
             session,
-            "Match Wawes",
+            "Channel North",
             log: (isInfo, line) => logs.Add(isInfo ? $"INFO {line}" : $"DEBUG {line}"),
             delay: (delay, _) =>
             {
@@ -275,14 +252,14 @@ public class PlaylistReloadRecoveryStrategyTests
     public void Logging_RedactsUrlsAndTrimsBody()
     {
         var line = PlaylistReloadLogging.Format(
-            "Match Wawes",
+            "Channel North",
             attempt: 1,
             status: 503,
             contentType: "text/html",
             body: Html,
             outcome: "retry",
             delayMs: 0);
-        Assert.StartsWith("[playlist-retry] row=\"Match Wawes\" attempt=1 status=503", line, StringComparison.Ordinal);
+        Assert.StartsWith("[playlist-retry] row=\"Channel North\" attempt=1 status=503", line, StringComparison.Ordinal);
         Assert.Contains("outcome=retry delay_ms=0", line, StringComparison.Ordinal);
         Assert.Contains("https://(redacted)", line, StringComparison.Ordinal);
         Assert.DoesNotContain("cdn.example", line, StringComparison.Ordinal);
@@ -317,7 +294,7 @@ public class PlaylistReloadRecoveryStrategyTests
         Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
         var line = Assert.Single(logs);
         Assert.StartsWith("DEBUG ", line, StringComparison.Ordinal);
-        Assert.Contains("row=\"Match Wawes\"", line, StringComparison.Ordinal);
+        Assert.Contains("row=\"Channel North\"", line, StringComparison.Ordinal);
         Assert.Contains("attempt=1", line, StringComparison.Ordinal);
         Assert.Contains("status=200", line, StringComparison.Ordinal);
         Assert.Contains("outcome=serve", line, StringComparison.Ordinal);
@@ -352,10 +329,10 @@ public class PlaylistReloadRecoveryStrategyTests
     }
 
     [Fact]
-    public async Task Coordinator_Slow503WithLastGood_GivesUpWithinHoldBudget()
+    public async Task Coordinator_Slow503_GivesUpWithinHoldBudget()
     {
         var now = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
-        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North");
         session.FirstPlaylistCompleted = true;
         var logs = new List<string>();
 
@@ -364,9 +341,8 @@ public class PlaylistReloadRecoveryStrategyTests
             new PlaylistReloadRequest
             {
                 IsFirstAttach = false,
-                LastGoodPlaylist = Playable,
-                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
-                Row = "Match Wawes",
+                MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
+                Row = "Channel North",
                 Session = session,
                 Delay = (delay, _) =>
                 {
@@ -385,7 +361,6 @@ public class PlaylistReloadRecoveryStrategyTests
 
         Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
         Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
-        Assert.Null(session.LastHeldLastGoodAt);
         Assert.Contains(logs, l => l.Contains("give-up (deferral budget)", StringComparison.Ordinal) && l.Contains("status=503", StringComparison.Ordinal));
         Assert.Equal(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(outcome.Message));
     }
@@ -395,9 +370,8 @@ public class PlaylistReloadRecoveryStrategyTests
     {
         var started = DateTimeOffset.Parse("2026-11-14T20:20:14Z");
         var now = started;
-        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North");
         session.FirstPlaylistCompleted = true;
-        session.LastGoodPlaylist = Playable;
         session.NoteFailure(started);
         now = started + PlaybackPolicy.PlaylistReloadGiveUpBudget;
 
@@ -406,9 +380,8 @@ public class PlaylistReloadRecoveryStrategyTests
             new PlaylistReloadRequest
             {
                 IsFirstAttach = false,
-                LastGoodPlaylist = Playable,
-                MaxHold = PlaybackPolicy.AndroidPlaylistHoldBudget,
-                Row = "Match Wawes",
+                MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
+                Row = "Channel North",
                 Session = session,
                 Delay = (_, _) => Task.CompletedTask,
                 Clock = () => now
@@ -437,7 +410,7 @@ public class PlaylistReloadRecoveryStrategyTests
     [Fact]
     public async Task Coordinator_StatusZeroGiveUp_StampsCdnUnreachableAndSurvivesLaterParserException()
     {
-        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Match Wawes");
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North");
         session.FirstPlaylistCompleted = true;
         var fetches = new Queue<PlaylistReloadFetchResult>(
         [
@@ -451,7 +424,7 @@ public class PlaylistReloadRecoveryStrategyTests
             new PlaylistReloadRequest
             {
                 IsFirstAttach = false,
-                Row = "Match Wawes",
+                Row = "Channel North",
                 Session = session,
                 Delay = (_, _) => Task.CompletedTask,
                 Clock = () => DateTimeOffset.Parse("2026-11-14T20:27:20Z")
@@ -467,7 +440,7 @@ public class PlaylistReloadRecoveryStrategyTests
 
         // TV 257 at 20:27: after give-up, ExoPlayer kept the live buffer then
         // raised ParserException (~DesiredLiveOffsetSeconds later). That must
-        // not take the Hadcrack tried+failed path.
+        // not take the decoy-body tried+failed path.
         var laterParse = PlaybackPolicy.BuildEngineErrorMessage(
             "Source error",
             3002,
@@ -490,12 +463,172 @@ public class PlaylistReloadRecoveryStrategyTests
         Assert.Equal(PlaybackErrorKind.TokenOrPlaylistInvalid, PlaybackPolicy.ClassifyPlaybackError(parse));
     }
 
+    [Fact]
+    public async Task Coordinator_FetchThrowsThen200_RetriesSameUrlAndServesOnAttempt2()
+    {
+        // Arrange
+        var attempts = 0;
+        var delays = new List<TimeSpan>();
+        var logs = new List<string>();
+        var request = MidPlayRequest(new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North"), delays, logs);
+
+        // Act
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ => ++attempts == 1
+                ? throw new System.Net.Http.HttpRequestException("An existing connection was forcibly closed by the remote host.")
+                : Task.FromResult(PlaylistReloadFetchResult.FromStatus(200, Playable, "application/vnd.apple.mpegurl")),
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(PlaylistReloadOutcomeKind.Serve, outcome.Kind);
+        Assert.Equal(2, attempts);
+        Assert.Equal([TimeSpan.Zero], delays);
+        Assert.Contains(logs, l => l.Contains("attempt=1 status=0", StringComparison.Ordinal)
+                                   && l.Contains("outcome=retry", StringComparison.Ordinal)
+                                   && l.EndsWith("error=HttpRequestException", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Coordinator_FetchKeepsThrowing_GivesUpCdnUnreachableAfterThreeAttempts()
+    {
+        // Arrange
+        var attempts = 0;
+        var delays = new List<TimeSpan>();
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North") { FirstPlaylistCompleted = true };
+        var request = MidPlayRequest(session, delays, logs: null, maxHold: null);
+
+        // Act
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ =>
+            {
+                attempts++;
+                return Task.FromException<PlaylistReloadFetchResult>(new TaskCanceledException("HttpClient.Timeout elapsed"));
+            },
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(3, attempts);
+        Assert.Equal([TimeSpan.Zero, TimeSpan.FromSeconds(1)], delays);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, outcome.ErrorKind);
+        Assert.Equal(PlaybackErrorKind.CdnUnreachable, session.LastGiveUpKind);
+    }
+
+    [Fact]
+    public async Task Coordinator_CallerCancelled_PropagatesCancellation()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var request = MidPlayRequest(new PlaylistReloadSession(), new List<TimeSpan>(), logs: null);
+
+        // Act
+        var run = PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            ct =>
+            {
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult(PlaylistReloadFetchResult.FromStatus(200, Playable));
+            },
+            cts.Token);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+    }
+
+    [Theory]
+    [InlineData(404, PlaybackErrorKind.ConfirmedDead)]
+    [InlineData(410, PlaybackErrorKind.ConfirmedDead)]
+    [InlineData(401, PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    [InlineData(403, PlaybackErrorKind.TokenOrPlaylistInvalid)]
+    public async Task Coordinator_DeadOrRejectedGiveUp_RecordsTheStatusKindNotCdnUnreachable(int status, PlaybackErrorKind expected)
+    {
+        // Arrange
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North") { FirstPlaylistCompleted = true };
+        var request = MidPlayRequest(session, new List<TimeSpan>(), logs: null);
+
+        // Act
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ => Task.FromResult(PlaylistReloadFetchResult.FromStatus(status)),
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(PlaylistReloadOutcomeKind.Failed, outcome.Kind);
+        Assert.Equal(expected, outcome.ErrorKind);
+        Assert.Equal(expected, session.LastGiveUpKind);
+        Assert.NotEqual(PlaybackErrorKind.CdnUnreachable, PlaybackPolicy.ClassifyPlaybackError(outcome.Message));
+    }
+
+    [Fact]
+    public async Task Coordinator_ThrownHttpErrorWithStatus_KeepsThatStatus()
+    {
+        // Arrange
+        var session = new PlaylistReloadSession(PlaylistReloadStrategies.Default, "Channel North") { FirstPlaylistCompleted = true };
+        var request = MidPlayRequest(session, new List<TimeSpan>(), logs: null);
+
+        // Act
+        var outcome = await PlaylistReloadCoordinator.RunAsync(
+            PlaylistReloadStrategies.Default,
+            request,
+            _ => throw new System.Net.Http.HttpRequestException("Not Found", null, System.Net.HttpStatusCode.NotFound),
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(404, outcome.StatusCode);
+        Assert.Equal(PlaybackErrorKind.ConfirmedDead, session.LastGiveUpKind);
+    }
+
+    [Fact]
+    public void FromException_ConnectionFailureWithoutStatus_IsStatusZero()
+    {
+        // Arrange
+        var refused = new System.Net.Http.HttpRequestException("Connection refused (cdn.example.com:443)");
+
+        // Act
+        var result = PlaylistReloadFetchResult.FromException(refused);
+
+        // Assert
+        Assert.Equal(0, result.StatusCode);
+        Assert.Empty(result.Body);
+    }
+
+    private static PlaylistReloadRequest MidPlayRequest(
+        PlaylistReloadSession session,
+        List<TimeSpan> delays,
+        List<string>? logs,
+        TimeSpan? maxHold = null)
+    {
+        var now = DateTimeOffset.Parse("2026-11-14T18:00:00Z");
+        session.FirstPlaylistCompleted = true;
+        return new PlaylistReloadRequest
+        {
+            IsFirstAttach = false,
+            MaxHold = maxHold,
+            Row = session.Row,
+            Session = session,
+            Delay = (delay, _) =>
+            {
+                delays.Add(delay);
+                now += delay;
+                return Task.CompletedTask;
+            },
+            Clock = () => now,
+            Log = (isInfo, line) => logs?.Add(isInfo ? $"INFO {line}" : $"DEBUG {line}")
+        };
+    }
+
     private static Task<PlaylistReloadOutcome> RunAsync(
         bool firstAttach,
         Queue<PlaylistReloadFetchResult> fetches,
         List<TimeSpan> delays,
         List<string>? logs = null,
-        byte[]? lastGood = null,
         TimeSpan? maxHold = null)
     {
         var now = DateTimeOffset.Parse("2026-11-14T18:00:00Z");
@@ -504,9 +637,8 @@ public class PlaylistReloadRecoveryStrategyTests
             new PlaylistReloadRequest
             {
                 IsFirstAttach = firstAttach,
-                LastGoodPlaylist = lastGood,
                 MaxHold = maxHold,
-                Row = "Match Wawes",
+                Row = "Channel North",
                 Delay = (delay, _) =>
                 {
                     delays.Add(delay);

@@ -14,13 +14,14 @@ namespace VardyParty.Playback;
 public static class PlaylistReloadCoordinator
 {
     /// <summary>
-    /// Shared mid-play hold (see <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>).
-    /// If the next retry delay would exceed the remaining budget, give up as
-    /// CDN-unreachable so the session can switch (option 2). Never serve a stale
-    /// last-good playlist — that re-shows already-watched segments.
+    /// Fetches the same playlist URL until the strategy serves it or gives up.
+    /// A non-cancellation exception from <paramref name="fetch"/> (connection
+    /// reset, refused, DNS, timeout) is a dropped response: it becomes
+    /// <c>status=0</c> via <see cref="PlaylistReloadFetchResult.FromException"/>
+    /// so every platform gets the same option 1 retries and the same
+    /// CDN-unreachable give-up. Never serves a stale playlist — that re-shows
+    /// already-watched segments; the session switches streams instead (option 2).
     /// </summary>
-    public static readonly TimeSpan WindowsDeferralBudget = PlaybackPolicy.PlaylistReloadHoldBudget;
-
     public static async Task<PlaylistReloadOutcome> RunAsync(
         IPlaylistReloadRecoveryStrategy strategy,
         PlaylistReloadRequest request,
@@ -40,7 +41,17 @@ public static class PlaylistReloadCoordinator
         {
             cancellationToken.ThrowIfCancellationRequested();
             attempt++;
-            last = await fetch(cancellationToken).ConfigureAwait(false);
+            string? fetchError = null;
+            try
+            {
+                last = await fetch(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                last = PlaylistReloadFetchResult.FromException(ex);
+                fetchError = ex.GetType().Name;
+            }
+
             var observation = new PlaylistReloadObservation(
                 attempt,
                 request.IsFirstAttach,
@@ -48,7 +59,7 @@ public static class PlaylistReloadCoordinator
                 last.Body,
                 last.ContentType);
             var decision = strategy.Decide(observation);
-            Log(request, observation, decision, outcome: Describe(decision));
+            Log(request, observation, decision, outcome: Describe(decision), fetchError);
 
             if (decision.Action == PlaylistReloadAction.Serve)
                 return PlaylistReloadOutcome.Serve(last.Body, last.ContentType, last.StatusCode);
@@ -60,7 +71,7 @@ public static class PlaylistReloadCoordinator
             {
                 var kind = decision.ErrorKind ?? PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
                 var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "playlist reload time budget exhausted");
-                Log(request, observation, decision, outcome: "give-up (time budget)");
+                Log(request, observation, decision, outcome: "give-up (time budget)", fetchError);
                 request.Session?.NoteGiveUp(kind, message);
                 return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
             }
@@ -82,7 +93,7 @@ public static class PlaylistReloadCoordinator
                 {
                     var kind = PlaylistReloadEvaluation.ClassifyFailure(last.StatusCode, last.Body);
                     var message = PlaylistReloadEvaluation.GiveUpMessage(kind, last.StatusCode, "deferral budget exhausted");
-                    Log(request, observation, decision, outcome: "give-up (deferral budget)");
+                    Log(request, observation, decision, outcome: "give-up (deferral budget)", fetchError);
                     request.Session?.NoteGiveUp(kind, message);
                     return PlaylistReloadOutcome.Failed(kind, message, last.StatusCode);
                 }
@@ -105,7 +116,8 @@ public static class PlaylistReloadCoordinator
         PlaylistReloadRequest request,
         in PlaylistReloadObservation observation,
         in PlaylistReloadDecision decision,
-        string outcome)
+        string outcome,
+        string? fetchError = null)
     {
         if (request.Log is null)
             return;
@@ -113,6 +125,8 @@ public static class PlaylistReloadCoordinator
         var line = PlaylistReloadLogging.Format(
             request.Row, observation.Attempt, observation.StatusCode, observation.ContentType,
             observation.Body.Span, outcome, delayMs);
+        if (fetchError is not null)
+            line += $" error={fetchError}";
         request.Log(PlaylistReloadLogging.IsInfo(observation.Attempt, outcome), line);
     }
 
@@ -129,7 +143,6 @@ public static class PlaylistReloadCoordinator
 public sealed class PlaylistReloadRequest
 {
     public required bool IsFirstAttach { get; init; }
-    public byte[]? LastGoodPlaylist { get; init; }
     public TimeSpan? MaxHold { get; init; }
     public string? Row { get; init; }
     public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
@@ -142,8 +155,7 @@ public sealed class PlaylistReloadRequest
     public PlaylistReloadSession? Session { get; init; }
 
     /// <summary>
-    /// Mid-play request used by Android, Windows, and Linux: no last-good
-    /// playlist, shared <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>.
+    /// Mid-play request used by Android, Windows, and Linux: shared <see cref="PlaybackPolicy.PlaylistReloadHoldBudget"/>.
     /// </summary>
     public static PlaylistReloadRequest MidPlay(
         bool isFirstAttach,
@@ -155,7 +167,6 @@ public sealed class PlaylistReloadRequest
         new()
         {
             IsFirstAttach = isFirstAttach,
-            LastGoodPlaylist = null,
             MaxHold = PlaybackPolicy.PlaylistReloadHoldBudget,
             Row = row,
             Session = session,
@@ -185,12 +196,23 @@ public sealed class PlaylistReloadFetchResult
             return new() { StatusCode = 0, Body = [], ContentType = contentType };
         return new() { StatusCode = statusCode, Body = body, ContentType = contentType };
     }
+
+    /// <summary>
+    /// A fetch that threw. Keeps an HTTP status carried by the exception
+    /// (<see cref="PlaybackPolicy.HttpStatusFromException"/>); a reset, refused,
+    /// DNS or timed-out request has none and becomes <c>status=0</c>
+    /// (CDN-unreachable after the retries).
+    /// </summary>
+    public static PlaylistReloadFetchResult FromException(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return FromHttp(PlaybackPolicy.HttpStatusFromException(exception));
+    }
 }
 
 public enum PlaylistReloadOutcomeKind
 {
     Serve,
-    ServeLastGood,
     Failed
 }
 
@@ -205,9 +227,6 @@ public sealed class PlaylistReloadOutcome
 
     public static PlaylistReloadOutcome Serve(byte[] body, string? contentType, int statusCode) =>
         new() { Kind = PlaylistReloadOutcomeKind.Serve, Body = body, ContentType = contentType, StatusCode = statusCode };
-
-    public static PlaylistReloadOutcome ServeLastGood(byte[] body) =>
-        new() { Kind = PlaylistReloadOutcomeKind.ServeLastGood, Body = body, StatusCode = 200, ContentType = "application/vnd.apple.mpegurl" };
 
     public static PlaylistReloadOutcome Failed(PlaybackErrorKind kind, string message, int statusCode) =>
         new() { Kind = PlaylistReloadOutcomeKind.Failed, ErrorKind = kind, Message = message, StatusCode = statusCode };

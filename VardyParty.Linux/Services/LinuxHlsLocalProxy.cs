@@ -279,7 +279,7 @@ public sealed class LinuxHlsLocalProxy : IDisposable
         }
 
         if (outcome.Kind == PlaylistReloadOutcomeKind.Serve)
-            session.NoteServed(outcome.Body ?? []);
+            session.NoteServed();
 
         var text = Encoding.UTF8.GetString(outcome.Body ?? []);
         await WritePlaylistAsync(ctx, text, target).ConfigureAwait(false);

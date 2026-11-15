@@ -169,35 +169,13 @@ namespace VardyParty.Platforms.Android
         }
 
         private SwitchBackRunner EnsureSwitchBackRunner()
-        {
-            if (_switchBack is not null)
-                return _switchBack;
-
-            _switchBack = new SwitchBackRunner(
+            => _switchBack ??= SwitchBackRunner.Create(
                 _session,
-                () => SwitchBackCommands.FromRow(_switching?.GetCurrentStream(), _videoHeight is > 0 ? _videoHeight : null),
-                SwitchBackPlaylistProbe.GetAsync,
-                (candidate, reason, _) =>
-                {
-                    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    RunOnUiThread(() =>
-                    {
-                        try
-                        {
-                            if (!SwitchBackPlaylistProbe.RestoreAndSwitchTo(_switching, candidate))
-                                _logger?.LogInformation("[switch-back] abandoned row not in pool ({Reason})", reason);
-                            tcs.TrySetResult(true);
-                        }
-                        catch (Exception ex)
-                        {
-                            tcs.TrySetException(ex);
-                        }
-                    });
-                    return tcs.Task;
-                },
-                msg => _logger?.LogInformation("{Message}", msg));
-            return _switchBack;
-        }
+                _switching,
+                VardyParty.AppServiceProvider.ServiceProvider?.GetService(typeof(ISwitchBackProbe)) as ISwitchBackProbe,
+                settledHeight: () => _pictureSizeSettler.Published?.Height,
+                runOnUi: SwitchBackRunner.Dispatch(RunOnUiThread),
+                log: msg => _logger?.LogInformation("{Message}", msg));
 
         private void ApplyPlaybackCommand(PlaybackCommand cmd)
         {
