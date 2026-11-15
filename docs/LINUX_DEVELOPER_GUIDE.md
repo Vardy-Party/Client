@@ -6,8 +6,9 @@ Linux. To install a release build instead, see
 [LINUX_USER_GUIDE.md](LINUX_USER_GUIDE.md). Design notes, audio and
 fullscreen behaviour, and secrets live in [LINUX_SUPPORT.md](LINUX_SUPPORT.md).
 
-Every command below mirrors `.github/workflows/ci.yml` (`build-linux`,
-`linux-runtime-smoke` and the unit-test job), which run on **Ubuntu 24.04**.
+Every command below mirrors `.github/workflows/ci.yml`. `build-linux` and
+`linux-runtime-smoke` are pinned to **Ubuntu 24.04**; the unit-test (`test`) and
+`code-quality` jobs run on `ubuntu-latest`.
 
 ## 1. Remove preview and RC .NET bits first
 
@@ -56,7 +57,9 @@ dotnet workload install maui-tizen --version 11.0.100.1
 dotnet workload list
 ```
 
-You do **not** need the `android` workload for the Linux head.
+You do **not** need the `android` workload to build or run the Linux head. The
+full format / analyzer check in [step 8](#8-run-the-tests-and-the-format-check)
+does need it, because Code Quality also builds the Android head.
 
 ## 4. Get access to the private NuGet feed
 
@@ -137,11 +140,34 @@ export HomeUiTargetFrameworks=net11.0   # only in a throwaway shell for tests
 find tests -name '*Tests.csproj' -print0 | xargs -0 -n1 -I{} dotnet test "{}" -c Release
 ```
 
-Format check (as Code Quality runs it):
+Code Quality (the same sequence as the `code-quality` job). It needs the
+Android workload too, builds every non-test project with warnings as errors
+(this also restores them), restores the test projects, and only then runs the
+format check with `--no-restore`:
 
 ```bash
+dotnet workload install maui-android maui-tizen --version 11.0.100.1
+
+# 1. Analyzers: warnings as errors (excludes tests, HomeUi and Linux, like CI)
+find . -name '*.csproj' -not -name '*Tests.csproj' \
+  -not -name 'VardyParty.HomeUi.csproj' -not -name 'VardyParty.Linux.csproj' \
+  -type f -print0 | while IFS= read -r -d '' proj; do
+    dotnet build "$proj" -c Release \
+      /p:TreatWarningsAsErrors=true /p:EnforceCodeStyleInBuild=true /p:AndroidKeyStore=false
+  done
+
+# 2. Restore the test projects so format can check them
+find tests -name '*Tests.csproj' -type f -print0 | while IFS= read -r -d '' proj; do
+  HomeUiTargetFrameworks=net11.0 dotnet restore "$proj"
+done
+
+# 3. Format check
 dotnet format --verify-no-changes --no-restore --exclude VardyParty.HomeUi/ VardyParty.Linux/
 ```
+
+Run as a single `dotnet format` on a fresh checkout, `--no-restore` fails on
+unrestored projects, and the analyzer build (the part that most often fails
+CI) is skipped.
 
 ## 9. Publish a self-contained build
 
