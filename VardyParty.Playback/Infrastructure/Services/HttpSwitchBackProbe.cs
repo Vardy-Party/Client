@@ -21,7 +21,31 @@ public sealed class HttpSwitchBackProbe(HttpClient httpClient) : ISwitchBackProb
     public async Task<SwitchBackProbeResult> ProbeAsync(SwitchBackCandidate candidate, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(candidate);
-        using var req = new HttpRequestMessage(HttpMethod.Get, candidate.PlaylistUrl);
+        var (code, body) = await FetchAsync(candidate.PlaylistUrl, candidate, cancellationToken).ConfigureAwait(false);
+        var playable = PlaylistReloadEvaluation.IsPlayable(code, body);
+        if (!playable)
+            return new SwitchBackProbeResult(false, code);
+
+        // A master playlist never changes, so its own fingerprint would look frozen on
+        // every second probe. Follow one variant and judge that media playlist instead.
+        var variantUrl = SwitchBackPlaylistProgress.VariantUrl(body, candidate.PlaylistUrl);
+        if (variantUrl is null)
+            return new SwitchBackProbeResult(true, code, SwitchBackPlaylistProgress.Of(body));
+
+        var (variantCode, variantBody) = await FetchAsync(variantUrl, candidate, cancellationToken).ConfigureAwait(false);
+        var variantPlayable = PlaylistReloadEvaluation.IsPlayable(variantCode, variantBody);
+        return new SwitchBackProbeResult(
+            variantPlayable,
+            variantCode,
+            variantPlayable ? SwitchBackPlaylistProgress.Of(variantBody) : null);
+    }
+
+    private async Task<(int Code, byte[] Body)> FetchAsync(
+        string url,
+        SwitchBackCandidate candidate,
+        CancellationToken cancellationToken)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         if (!string.IsNullOrWhiteSpace(candidate.Referer))
             req.Headers.TryAddWithoutValidation("Referer", candidate.Referer);
@@ -54,8 +78,6 @@ public sealed class HttpSwitchBackProbe(HttpClient httpClient) : ISwitchBackProb
             read += n;
         }
 
-        var body = buffer.AsSpan(0, read);
-        var playable = PlaylistReloadEvaluation.IsPlayable(code, body);
-        return new SwitchBackProbeResult(playable, code, playable ? SwitchBackPlaylistProgress.Of(body) : null);
+        return (code, buffer.AsSpan(0, read).ToArray());
     }
 }
