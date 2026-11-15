@@ -57,7 +57,7 @@ Full index: **[docs/INDEX.md](docs/INDEX.md)**
 | [docs/STREAM_PLAYBACK_RULES.md](docs/STREAM_PLAYBACK_RULES.md) | Playback session / engine contract |
 | [docs/STREAM_HEALTH_PROTOCOL.md](docs/STREAM_HEALTH_PROTOCOL.md) | Health-check protocol |
 | [docs/LINUX_SUPPORT.md](docs/LINUX_SUPPORT.md) | .NET 11 SDK + run Desktop / WSL |
-| [docs/LINUX_USER_GUIDE.md](docs/LINUX_USER_GUIDE.md) | Install and run the Linux client (snap / tarball, LibVLC) |
+| [docs/LINUX_USER_GUIDE.md](docs/LINUX_USER_GUIDE.md) | Install and run the Linux client (snap; LibVLC for self-built runs) |
 | [docs/LINUX_DEVELOPER_GUIDE.md](docs/LINUX_DEVELOPER_GUIDE.md) | Build the Linux client from source with .NET 11 GA; remove preview SDKs |
 | [docs/LOCAL_ANDROID_BUILD.md](docs/LOCAL_ANDROID_BUILD.md) | Local APK (`package-android.ps1 -Api preview`) |
 | [docs/REMOTE_COMPUTE_PREVIEW_USB.md](docs/REMOTE_COMPUTE_PREVIEW_USB.md) | Preview test with a phone on USB, Wi-Fi off |

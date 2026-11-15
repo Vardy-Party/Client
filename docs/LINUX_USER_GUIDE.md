@@ -4,16 +4,19 @@ This guide is for people who want to **run** the Linux client. To build it
 from source, see [LINUX_DEVELOPER_GUIDE.md](LINUX_DEVELOPER_GUIDE.md). Design
 notes and troubleshooting live in [LINUX_SUPPORT.md](LINUX_SUPPORT.md).
 
-Everything here matches what the release pipelines build and what CI tests
-(Ubuntu 24.04, x64; ARM64 packages are built on Ubuntu 24.04 ARM). Other distros are listed as examples and are **not
-tested in CI**.
+Everything here matches what `cd.yml` ships on the GitHub **Releases** page
+(for example `3.5.1-b249`): for Linux that is **only** the two snaps (x64 and
+ARM64), each with its `.minisig`, plus `minisign.pub`. The x64 snap is built on
+`ubuntu-24.04` and the ARM64 snap natively on `ubuntu-24.04-arm`; CI's runtime
+smoke test runs on Ubuntu 24.04 x64. Other distros are listed as examples and
+are **not tested in CI**.
 
 ## What you need
 
 | Need | Why |
 |------|-----|
 | A 64-bit Linux desktop (X11 or Wayland), Ubuntu 24.04 or newer recommended | The app is built on Ubuntu 24.04 (glibc of 24.04). Older distros may fail to start the binary. |
-| LibVLC (VLC's library and plugins) | All video playback goes through LibVLC. The snap bundles it; the tarball needs it from your distro. |
+| LibVLC (VLC's library and plugins) | All video playback goes through LibVLC. The snap bundles it; a self-built publish needs it from your distro. |
 | PulseAudio, or PipeWire with its Pulse layer | Stream audio uses `--aout=pulse` by default (see [audio](#audio)). |
 | ICU and fonts (`libicu`, `fontconfig`, a font such as DejaVu) | .NET needs ICU; the UI needs fonts. Most desktop installs already have them. |
 | Network access | Streams, sign-in and the Vardy Party API. |
@@ -54,14 +57,18 @@ you do not need VLC installed.
 To upgrade, install the newer `.snap` the same way. To remove it:
 `sudo snap remove vardyparty`.
 
-## Option 2: tarball (x64 or ARM64)
+## Option 2: run a self-built publish (no snap)
 
-Releases built by `release.yml` also carry
-`VardyParty-linux-x64-<tag>.tar.gz` and `VardyParty-linux-arm64-<tag>.tar.gz`.
-These are self-contained .NET publishes, but they use **your distro's
-LibVLC**.
+The snap is the supported way to install. Normal releases do **not** include a
+Linux tarball. (`release.yml` can pack `VardyParty-linux-x64-<tag>.tar.gz` and
+`VardyParty-linux-arm64-<tag>.tar.gz`, cross-published on x64 `ubuntu-24.04`,
+but it only runs for a rare `v*` tag push or a manual run.) If you want to run
+without snapd, build a self-contained publish from source as described in
+[LINUX_DEVELOPER_GUIDE.md §9](LINUX_DEVELOPER_GUIDE.md#9-publish-a-self-contained-build),
+then:
 
-1. Install LibVLC. These are the packages CI installs for its runtime test:
+1. Install LibVLC. A self-built publish (or a `v*` tarball) uses **your
+   distro's LibVLC**. These are the packages CI installs for its runtime test:
 
    ```bash
    # Ubuntu / Debian (tested in CI on Ubuntu 24.04)
@@ -78,15 +85,13 @@ LibVLC**.
    sudo pacman -S vlc
    ```
 
-2. Unpack and run:
+2. Run the published binary:
 
    ```bash
-   mkdir -p ~/apps/vardyparty
-   tar -xzf VardyParty-linux-x64-<tag>.tar.gz -C ~/apps/vardyparty
-   ~/apps/vardyparty/linux-x64/VardyPartyLinux
+   VardyParty.Linux/bin/Release/net11.0/linux-x64/publish/VardyPartyLinux
    ```
 
-   Use the `linux-arm64` archive and folder on ARM64 machines.
+   Use the `linux-arm64` folder if you published with `-r linux-arm64`.
 
 ## First run
 
@@ -115,7 +120,7 @@ The client runs under WSLg. If fullscreen misbehaves there, start it with
 
 | Symptom | Check |
 |---------|-------|
-| Tarball build starts but no video | Is LibVLC installed (`vlc --version`)? Install `vlc libvlc-dev` as above. |
+| Self-built publish starts but no video | Is LibVLC installed (`vlc --version`)? Install `vlc libvlc-dev` as above. |
 | `GLIBC_… not found` when starting | Your distro is older than Ubuntu 24.04's glibc. Use a newer distro. |
 | App starts but text is missing or boxes | Install fonts (`fonts-dejavu-core` on Ubuntu/Debian) and `fontconfig`. |
 | No sound | See [Audio](#audio). |
