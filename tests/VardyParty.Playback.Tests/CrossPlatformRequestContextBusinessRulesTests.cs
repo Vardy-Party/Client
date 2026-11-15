@@ -129,8 +129,11 @@ public class CrossPlatformRequestContextBusinessRulesTests
     [Fact]
     public void Rule_PlatformBrowserUserAgent_IsUsedWhenTheRowHasNone()
     {
+        // Arrange
+        var context = new PlaybackRequestContext("https://embed.oak.test/", null);
+
         // Act
-        var headers = PlaybackRequestHeaders.ForContext(new PlaybackRequestContext("https://embed.oak.test/", null), "Linux UA");
+        var headers = PlaybackRequestHeaders.ForContext(context, "Linux UA");
 
         // Assert
         Assert.Equal("Linux UA", headers["User-Agent"]);
@@ -148,6 +151,8 @@ public class CrossPlatformRequestContextBusinessRulesTests
     [InlineData(null, 0)]
     public void HttpStatusFromErrorText_ReadsTheStatusOfAFailedDownload(string? text, int expected)
     {
+        // Arrange - text and expected status come from the InlineData row.
+
         // Act
         var status = PlaybackPolicy.HttpStatusFromErrorText(text);
 
@@ -158,15 +163,23 @@ public class CrossPlatformRequestContextBusinessRulesTests
     [Fact]
     public void HttpStatusFromException_ReadsHttpRequestExceptionStatusCode()
     {
+        // Arrange
         var http = new System.Net.Http.HttpRequestException(
             "Response status code does not indicate success: 503 (Service Unavailable).",
             inner: null,
             statusCode: System.Net.HttpStatusCode.ServiceUnavailable);
         var wrapped = new InvalidOperationException("playlist open failed", http);
+        var noStatus = new InvalidOperationException("Unable to connect");
 
-        Assert.Equal(503, PlaybackPolicy.HttpStatusFromException(http));
-        Assert.Equal(503, PlaybackPolicy.HttpStatusFromException(wrapped));
-        Assert.Equal(0, PlaybackPolicy.HttpStatusFromException(new InvalidOperationException("Unable to connect")));
+        // Act
+        var direct = PlaybackPolicy.HttpStatusFromException(http);
+        var inner = PlaybackPolicy.HttpStatusFromException(wrapped);
+        var none = PlaybackPolicy.HttpStatusFromException(noStatus);
+
+        // Assert
+        Assert.Equal(503, direct);
+        Assert.Equal(503, inner);
+        Assert.Equal(0, none);
     }
 
     [Fact]
@@ -248,6 +261,8 @@ public class CrossPlatformRequestContextBusinessRulesTests
     [InlineData("https://cdn.elm.test/index.m3u8", null, false)]
     public void Rule_APictureCountsOnlyForTheAttachThePlayerWasGiven(string? playerUrl, string? sessionUrl, bool counts)
     {
+        // Arrange - player and session URLs come from the InlineData row.
+
         // Act
         var result = PlaybackPolicy.IsPictureForCurrentAttach(playerUrl, sessionUrl);
 

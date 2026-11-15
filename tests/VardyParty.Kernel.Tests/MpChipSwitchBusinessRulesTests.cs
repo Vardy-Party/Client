@@ -8,21 +8,21 @@ namespace VardyParty.Kernel.Tests;
 
 /// <summary>
 /// Business rules for switching onto an MP (V2) chip (Jon, 13 Nov 2026: "i am used to v2
-/// switching being immediate"). TV log 18:40:50: Next onto Fubo US, a chip probed Healthy,
+/// switching being immediate"). TV log 18:40:50: Next onto North Sports US, a chip probed Healthy,
 /// took ResolveFresh ("token expiry unknown or too close"), the fresh /mp failed and the
-/// player stayed on VUS. A chip with a probed link plays that link at once; a fresh
+/// player stayed on the previous row. A chip with a probed link plays that link at once; a fresh
 /// resolve is only the fallback after that start fails.
 /// </summary>
 public class MpChipSwitchBusinessRulesTests
 {
-    // fhlsport-style token: no readable expiry.
-    private const string ProbedChipUrl = "https://fhlsport955.cdx904gouh.xyz/token-LU4qnrSUfa/cfall/s2001/v3b/4qqp/super/3x_942237.m3u8";
+    // Path-token style link: no readable expiry.
+    private const string ProbedChipUrl = "https://edge7.cdn.example.com/token-AbCdEf1234/live/s2001/v3b/main/super/3x_100001.m3u8";
 
     internal static EnrichedStream MpChip(string chip, string? url = ProbedChipUrl, Dictionary<string, string>? headers = null) => new()
     {
         Stream = new Stream
         {
-            Url = "https://www.fctv33go.autos/football/moldova-vs-kazakhstan.html",
+            Url = "https://streams.example.com/football/home-united-vs-away-city.html",
             Channel = chip,
             PlayerStream = chip,
             Source = "mp",
@@ -30,18 +30,18 @@ public class MpChipSwitchBusinessRulesTests
         },
         Status = StreamResolutionStatus.Healthy,
         ResolvedM3U8Url = url,
-        RequestHeaders = headers ?? new Dictionary<string, string> { ["Referer"] = "https://vida01eo.example.sbs/" },
+        RequestHeaders = headers ?? new Dictionary<string, string> { ["Referer"] = "https://player.example.com/" },
         UnusedResolvedUrl = false,
     };
 
     [Fact]
     public void Rule_NextOntoProbedMpChip_UnknownExpiry_PlaysProbedLinkAtOnce()
     {
-        // Arrange - the TV log's Fubo US row: probed Healthy, Referer soak, unreadable token.
-        var fubo = MpChip("Fubo US");
+        // Arrange - the TV log's North Sports US row: probed Healthy, Referer soak, unreadable token.
+        var northSports = MpChip("North Sports US");
 
         // Act
-        var plan = PlaybackUrlReusePolicy.PlanSwitch(fubo, Now);
+        var plan = PlaybackUrlReusePolicy.PlanSwitch(northSports, Now);
 
         // Assert
         Assert.Equal(PlaybackSwitchKind.AttachCached, plan.Kind);
@@ -52,24 +52,24 @@ public class MpChipSwitchBusinessRulesTests
     public void Rule_NextPrepare_KeepsTheProbedChipLink_NeverClearsItForAFreshResolve()
     {
         // Arrange
-        var fubo = MpChip("Fubo US");
+        var northSports = MpChip("North Sports US");
 
         // Act
-        var kind = FirstPlayOpenStrategy.PlanNextPrepare(fubo, Now, warmEntryReady: false);
+        var kind = FirstPlayOpenStrategy.PlanNextPrepare(northSports, Now, warmEntryReady: false);
 
         // Assert
         Assert.Equal(FirstPlayOpenStrategy.NextPrepareKind.AttachAsIs, kind);
-        Assert.Equal(ProbedChipUrl, fubo.ResolvedM3U8Url);
+        Assert.Equal(ProbedChipUrl, northSports.ResolvedM3U8Url);
     }
 
     [Fact]
     public void Rule_ProbedMpChip_IsNotPrewarmed()
     {
         // Arrange - a pre-resolve would start another POST /mp beside the page's harvest.
-        var fubo = MpChip("Fubo US");
+        var northSports = MpChip("North Sports US");
 
         // Act
-        var prewarm = PlaybackUrlReusePolicy.ShouldPrewarm(fubo);
+        var prewarm = PlaybackUrlReusePolicy.ShouldPrewarm(northSports);
 
         // Assert
         Assert.False(prewarm);
@@ -92,7 +92,7 @@ public class MpChipSwitchBusinessRulesTests
     public void Rule_MpChipWithAKnownSingleUseLink_StillResolvesFresh()
     {
         // Arrange - a cookie-bound session cannot be reused.
-        var chip = MpChip("TD Arabic", headers: new Dictionary<string, string> { ["Referer"] = "https://p.example/", ["Cookie"] = "s=1" });
+        var chip = MpChip("Desert Sports Arabic", headers: new Dictionary<string, string> { ["Referer"] = "https://p.example/", ["Cookie"] = "s=1" });
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(chip, Now);

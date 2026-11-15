@@ -145,7 +145,17 @@ public class FullScreenRestoreTrackerTests
     [InlineData(-50, -20, 800, 600, 0, 0, 800, 600)]
     [InlineData(0, 0, 4000, 3000, 0, 0, 2560, 1392)]
     public void Fit_KeepsTheWindowInsideTheWorkArea(int x, int y, int w, int h, int ex, int ey, int ew, int eh)
-        => Assert.Equal(new WindowRect(ex, ey, ew, eh), FullScreenRestoreTracker.Fit(new WindowRect(x, y, w, h), WorkArea));
+    {
+        // Arrange
+        var window = new WindowRect(x, y, w, h);
+        var expected = new WindowRect(ex, ey, ew, eh);
+
+        // Act
+        var fitted = FullScreenRestoreTracker.Fit(window, WorkArea);
+
+        // Assert
+        Assert.Equal(expected, fitted);
+    }
 
     [Fact]
     public void Minimized_IsNeitherRememberedNorFought()

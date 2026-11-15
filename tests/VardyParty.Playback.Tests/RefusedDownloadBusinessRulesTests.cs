@@ -92,7 +92,15 @@ public class RefusedDownloadBusinessRulesTests
     [InlineData(404, 0x80190194u)]
     [InlineData(0, 0x80004005u)]
     public void WindowsExtendedStatus_IsAFailureHResult_NotTheBareStatus(int status, uint expected)
-        => Assert.Equal(expected, PlaybackPolicy.WindowsDownloadFailureStatus(status));
+    {
+        // Arrange - status and expected HRESULT come from the InlineData row.
+
+        // Act
+        var extended = PlaybackPolicy.WindowsDownloadFailureStatus(status);
+
+        // Assert
+        Assert.Equal(expected, extended);
+    }
 
     [Fact]
     public void RefusedReason_IsATokenReject_EvenWithMediaFoundationsUnsupportedText()
@@ -117,7 +125,15 @@ public class RefusedDownloadBusinessRulesTests
     [InlineData("connection refused", false, "Stream server unreachable")]
     [InlineData(null, false, "Stream failed")]
     public void UserFacingText_IsShortAndAccurate_NeverTheRawEngineMessage(string? reason, bool movingOn, string expected)
-        => Assert.Equal(expected, PlaybackPolicy.UserFacingStreamError(reason, movingOn));
+    {
+        // Arrange - reason, moving-on flag and expected text come from the InlineData row.
+
+        // Act
+        var text = PlaybackPolicy.UserFacingStreamError(reason, movingOn);
+
+        // Assert
+        Assert.Equal(expected, text);
+    }
 
     [Fact]
     public void Executor_ShowsTheUserFacingText_AfterTheReport()
@@ -196,5 +212,15 @@ public class PlaybackRequestHeadersTests
 
     [Fact]
     public void NoHeadersNoReferer_SendsJustTheBrowserUserAgent()
-        => Assert.Equal(["User-Agent"], PlaybackRequestHeaders.Resolve(null, null).Select(h => h.Key));
+    {
+        // Arrange
+        string? noReferer = null;
+        IReadOnlyDictionary<string, string>? noHeaders = null;
+
+        // Act
+        var keys = PlaybackRequestHeaders.Resolve(noReferer, noHeaders).Select(h => h.Key);
+
+        // Assert
+        Assert.Equal(["User-Agent"], keys);
+    }
 }
