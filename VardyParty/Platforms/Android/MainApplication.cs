@@ -1,8 +1,9 @@
-﻿using Android.App;
+using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Runtime;
 using Android.Widget;
+using VardyParty.Presentation;
 
 namespace VardyParty
 {
@@ -47,7 +48,9 @@ namespace VardyParty
             }
 
             DetectTv();
-            ApplyLauncherComponents();
+            // Entry activity is not known yet — assume Splash so we never
+            // disable it here. MainActivity reapplies once the intent is known.
+            ApplyLauncherComponents(launchEnteredViaSplash: true);
 
             // Never build the MAUI host here — on TV or phone. Application.OnCreate
             // runs before any activity window exists; a multi-second EnsureMauiApp
@@ -72,7 +75,21 @@ namespace VardyParty
             base.OnCreate();
         }
 
-        void ApplyLauncherComponents()
+        /// <summary>
+        /// Aligns Splash and TvLeanbackAlias enabled state with the device.
+        /// Only calls <c>SetComponentEnabledSetting</c> when the effective
+        /// state differs. Never disables Splash in a launch that entered
+        /// through it: on Android 9+ that finishes the foreground task
+        /// (<c>disabled-package</c>) and sends the user to the TV home
+        /// screen. Application.OnCreate therefore defers the Splash disable.
+        /// MainActivity reapplies when the intent is TvLeanbackAlias.
+        /// Trade-off: Splash stays advertised (CATEGORY_LAUNCHER) on TV
+        /// until a later Leanback launch. Android TV homes typically list
+        /// only LEANBACK_LAUNCHER, so a duplicate tile is unlikely for that
+        /// first session; GetLaunchIntentForPackage may still resolve to
+        /// Splash until the disable runs.
+        /// </summary>
+        internal void ApplyLauncherComponents(bool launchEnteredViaSplash)
         {
             try
             {
@@ -82,21 +99,63 @@ namespace VardyParty
                     return;
                 }
 
-                var splash = new ComponentName("com.vardyparty", "com.vardyparty.SplashActivity");
-                var tvAlias = new ComponentName("com.vardyparty", "com.vardyparty.TvLeanbackAlias");
-                var splashState = MauiProgram.IsTv
-                    ? ComponentEnabledState.Disabled
-                    : ComponentEnabledState.Enabled;
-                var tvState = MauiProgram.IsTv
-                    ? ComponentEnabledState.Enabled
-                    : ComponentEnabledState.Disabled;
-                pm.SetComponentEnabledSetting(splash, splashState, ComponentEnableOption.DontKillApp);
-                pm.SetComponentEnabledSetting(tvAlias, tvState, ComponentEnableOption.DontKillApp);
+                var isTv = MauiProgram.IsTv;
+                var splash = new ComponentName("com.vardyparty", LauncherComponentRules.PhoneLauncherClassName);
+                var tvAlias = new ComponentName("com.vardyparty", LauncherComponentRules.TvLeanbackAliasClassName);
+
+                var splashEnabled = LauncherComponentRules.IsEffectivelyEnabled(
+                    (int)pm.GetComponentEnabledSetting(splash),
+                    manifestDefaultEnabled: true);
+                var aliasEnabled = LauncherComponentRules.IsEffectivelyEnabled(
+                    (int)pm.GetComponentEnabledSetting(tvAlias),
+                    manifestDefaultEnabled: ResolveShowTvLauncherDefault());
+
+                if (LauncherComponentRules.ShouldApplyPhoneLauncherState(
+                    isTv, launchEnteredViaSplash, splashEnabled))
+                {
+                    var splashState = LauncherComponentRules.DesiredPhoneLauncherEnabled(isTv)
+                        ? ComponentEnabledState.Enabled
+                        : ComponentEnabledState.Disabled;
+                    pm.SetComponentEnabledSetting(splash, splashState, ComponentEnableOption.DontKillApp);
+                    Console.WriteLine($"[MainApplication] Splash launcher set to {splashState}");
+                }
+                else if (isTv
+                    && !LauncherComponentRules.DesiredPhoneLauncherEnabled(isTv)
+                    && !LauncherComponentRules.CanDisablePhoneLauncher(launchEnteredViaSplash))
+                {
+                    Console.WriteLine("[MainApplication] Deferring Splash disable until a launch that did not enter via SplashActivity");
+                }
+
+                if (LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTv, aliasEnabled))
+                {
+                    var tvState = LauncherComponentRules.DesiredTvLeanbackLauncherEnabled(isTv)
+                        ? ComponentEnabledState.Enabled
+                        : ComponentEnabledState.Disabled;
+                    pm.SetComponentEnabledSetting(tvAlias, tvState, ComponentEnableOption.DontKillApp);
+                    Console.WriteLine($"[MainApplication] TvLeanbackAlias set to {tvState}");
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[MainApplication] Launcher component update failed: {ex.Message}");
             }
+        }
+
+        bool ResolveShowTvLauncherDefault()
+        {
+            try
+            {
+                var id = Resources?.GetIdentifier("show_tv_launcher", "bool", PackageName) ?? 0;
+                if (id != 0)
+                {
+                    return Resources!.GetBoolean(id);
+                }
+            }
+            catch
+            {
+            }
+
+            return MauiProgram.IsTv;
         }
 
         void DetectTv()
