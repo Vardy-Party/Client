@@ -871,6 +871,23 @@ public sealed class HomeViewModel : INotifyPropertyChanged, IDisposable
             string.Equals(HomeBoardDiffer.GameKey(c.Game), key, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Re-arms the one-shot first-card focus flag so a new HomeView, or the
+    /// hide of the auth overlay, can run the initial-focus retry after this
+    /// singleton already consumed the flag on an earlier view. Returns
+    /// <c>true</c> when a first card was armed.
+    /// </summary>
+    public bool RearmInitialFocus()
+    {
+        if (Rows.Count == 0 || Rows[0].Cards.Count == 0)
+        {
+            return false;
+        }
+
+        Rows[0].Cards[0].RequestsInitialFocus = true;
+        return true;
+    }
+
     private void Apply(IReadOnlyList<LeagueRowModel> rowModels, int gameCount, IDictionary<string, List<Game>>? dict)
     {
         _menu.RefreshKnownLeagues(dict);

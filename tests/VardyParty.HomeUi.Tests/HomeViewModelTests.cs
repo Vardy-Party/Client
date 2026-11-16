@@ -194,6 +194,26 @@ public sealed class HomeViewModelTests : IDisposable
     }
 
     [Fact]
+    public void RearmInitialFocus_AfterConsumedFlag_ReArmsFirstCard()
+    {
+        _sut.UpdateGames(CatalogWithOneGame("Alpha"));
+        _sut.FlushPendingApply();
+        Assert.True(_sut.Rows[0].Cards[0].TryConsumeInitialFocus());
+
+        Assert.True(_sut.RearmInitialFocus());
+        Assert.True(_sut.Rows[0].Cards[0].RequestsInitialFocus);
+    }
+
+    [Fact]
+    public void RearmInitialFocus_EmptyBoard_ReturnsFalse()
+    {
+        Assert.False(_sut.RearmInitialFocus());
+        _sut.UpdateGames(new Dictionary<string, List<Game>>());
+        _sut.FlushPendingApply();
+        Assert.False(_sut.RearmInitialFocus());
+    }
+
+    [Fact]
     public void FlushPendingApply_SecondCatalog_DoesNotReArmInitialFocus()
     {
         _sut.UpdateGames(CatalogWithOneGame("Alpha"));

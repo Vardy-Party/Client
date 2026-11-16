@@ -352,13 +352,79 @@ public partial class HomeView
         _wiredMenuButton = native;
         native.SoundEffectsEnabled = false;
         native.FocusChange += OnTvItemFocusChange;
-        // Before any rail exists Android's default search lands on Menu
-        // (field: Menu selected, first rail not on screen). Hold Menu out of
-        // the focus order until the first card autofocus finishes — or until
-        // an empty board settles (see OnTvGamesUpdated).
-        TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+
+        // Hold Menu only when a release path will run. A new HomeView on the
+        // singleton VM that already has games must re-arm first-card focus
+        // (the one-shot flag was consumed on the earlier view).
+        var boardHasCards = BoardHasCards(ViewModel);
+        var initialPending = boardHasCards && ViewModel!.Rows[0].Cards[0].RequestsInitialFocus;
+        var streamExitPending = _streamExitLayoutPass is not null;
+        if (TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
+                isTelevision: true, boardHasCards, initialPending))
+        {
+            ViewModel!.RearmInitialFocus();
+            initialPending = true;
+        }
+
+        if (TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+                isTelevision: true, boardHasCards, initialPending, streamExitPending))
+        {
+            TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+            TryStartInitialFocusRetryFromFirstCard();
+        }
+        else
+        {
+            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+        }
+
         TvDpadFocusRouter.RegisterHeaderTarget(native);
     }
+
+    partial void NotifyTvAuthOverlayHidden()
+    {
+        if (!IsTelevision())
+        {
+            return;
+        }
+
+        var boardHasCards = BoardHasCards(ViewModel);
+        if (!TvHeaderFocusGate.ShouldRearmInitialFocusWhenAuthOverlayHides(
+                isTelevision: true, boardHasCards))
+        {
+            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+            return;
+        }
+
+        ViewModel!.RearmInitialFocus();
+        TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+        TryStartInitialFocusRetryFromFirstCard();
+    }
+
+    private void TryStartInitialFocusRetryFromFirstCard()
+    {
+        var vm = ViewModel;
+        if (!BoardHasCards(vm))
+        {
+            return;
+        }
+
+        var card = vm!.Rows[0].Cards[0];
+        var key = HomeBoardDiffer.GameKey(card.Game);
+        var native = TvCardFocusRegistry.TryGet(key);
+        if (native is null)
+        {
+            // Leave RequestsInitialFocus armed for MatchCardView.HandlerChanged.
+            return;
+        }
+
+        if (card.TryConsumeInitialFocus())
+        {
+            MatchCardView.StartInitialFocusRetry(native);
+        }
+    }
+
+    private static bool BoardHasCards(HomeViewModel? vm) =>
+        vm is { HasGames: true, Rows.Count: > 0 } && vm.Rows[0].Cards.Count > 0;
 
     private void UnwireMenuButton()
     {

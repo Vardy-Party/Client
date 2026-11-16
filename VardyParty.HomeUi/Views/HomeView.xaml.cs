@@ -58,6 +58,15 @@ public partial class HomeView : ContentView
     public void RestoreFocusAfterOverlay() => RestoreTvCardFocus();
 
     /// <summary>
+    /// Android TV only: the auth overlay just hid (device-code sign-in
+    /// finished, or the host already had tokens). Re-arm first-card focus
+    /// so the Menu hold has a release path; no-op on phones.
+    /// </summary>
+    public void NotifyAuthOverlayHidden() => NotifyTvAuthOverlayHidden();
+
+    partial void NotifyTvAuthOverlayHidden();
+
+    /// <summary>
     /// Android TV only: after the native player closes, focus the watched
     /// game if it is still on the board, otherwise the first card of the
     /// first rail. Never the header Menu.
