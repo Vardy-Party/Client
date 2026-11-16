@@ -173,7 +173,7 @@ public class RefererHandlingTests
     {
         // Arrange — LocalService forwarded chrome-error:// after a failed scrape frame.
         var stream = _fixture.Build<Stream>()
-            .With(s => s.Url, "https://live2.example.test/Switzerland-vs-Scotland/80909")
+            .With(s => s.Url, "https://live2.example.test/Home-United-vs-Away-City/80909")
             .With(s => s.Channel, "C1")
             .Create();
         var m3u8Resp = _fixture.Build<M3U8Response>()
