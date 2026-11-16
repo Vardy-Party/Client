@@ -95,6 +95,25 @@ public class PoolSwitchRequestContextBusinessRulesTests
     }
 
     [Fact]
+    public void ForRow_ChromeErrorReferer_FallsBackToTheRowsPage()
+    {
+        // Arrange — health/play captured chrome-error:// from a failed scrape frame.
+        var headers = new Dictionary<string, string>
+        {
+            ["Referer"] = "chrome-error://chromewebdata/",
+            ["Origin"] = "chrome-error://chromewebdata"
+        };
+        var row = Row("elm", "https://cdn.elm.test/index.m3u8", referer: "chrome-error://chromewebdata/", headers);
+
+        // Act
+        var context = PlaybackRowRequestContext.ForRow(row);
+
+        // Assert
+        Assert.Equal("https://elm.page.test/watch", context.Referer);
+        Assert.Same(headers, context.Headers);
+    }
+
+    [Fact]
     public void ForUrl_UrlOfNoPoolRow_KeepsTheCurrentContext()
     {
         // Arrange - e.g. a mirror retry inside the player.

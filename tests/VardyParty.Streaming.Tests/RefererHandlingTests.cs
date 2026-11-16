@@ -167,6 +167,119 @@ public class RefererHandlingTests
             "Segment HEAD missing referer header");
     }
 
+
+    [Fact]
+    public async Task ResolveStreams_ChromeErrorReferer_FallsBackToPageUrl()
+    {
+        // Arrange — LocalService forwarded chrome-error:// after a failed scrape frame.
+        var stream = _fixture.Build<Stream>()
+            .With(s => s.Url, "https://live2.example.test/Switzerland-vs-Scotland/80909")
+            .With(s => s.Channel, "C1")
+            .Create();
+        var m3u8Resp = _fixture.Build<M3U8Response>()
+            .With(r => r.Url, "https://cdn.example.test/playlist.m3u8")
+            .With(r => r.RequestHeaders, new Dictionary<string, string>
+            {
+                ["referer"] = "chrome-error://chromewebdata/",
+                ["origin"] = "chrome-error://chromewebdata"
+            })
+            .With(r => r.RewrittenSegments, (List<string>?)null)
+            .Create();
+
+        var healthChecker = new CapturingHealthChecker();
+        var localLanPlayService = _fixture.GetMock<ILocalLanPlayService>();
+        localLanPlayService
+            .Setup(s => s.ResolveM3U8UrlAsync(
+                stream.Url,
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(m3u8Resp);
+
+        var resolver = new StreamResolver(
+            healthChecker,
+            localLanPlayService.Object,
+            new VardyParty.LocalService.V2.V2PlaybackTransportPlugin(),
+            NullLogger<StreamResolver>.Instance);
+
+        // Act
+        var list = new List<EnrichedStream>();
+        await foreach (var es in resolver.ResolveStreamsIncrementallyAsync([stream]))
+        {
+            list.Add(es);
+        }
+
+        // Assert
+        Assert.Single(list);
+        Assert.Equal(stream.Url, healthChecker.CapturedReferer);
+        Assert.Equal(stream.Url, list[0].Referer);
+    }
+
+    [Fact]
+    public async Task CheckStreamHealth_DropsNonHttpRefererAndOrigin()
+    {
+        // Arrange
+        var handler = new FakeHttpHandler();
+        var http = new HttpClient(handler);
+        var m3u8Url = "https://cdn.example.test/playlist.m3u8";
+        var segmentUrl = "https://cdn.example.test/segment.ts";
+        var manifest = "#EXTM3U\n#EXTINF:10,\n" + segmentUrl;
+        handler.AddResponse(m3u8Url, new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(manifest, Encoding.UTF8, "application/vnd.apple.mpegurl")
+        });
+        handler.AddResponse($"HEAD:{segmentUrl}", new HttpResponseMessage(HttpStatusCode.OK));
+        var streamHealthSettings = _fixture.Create<StreamHealthSettings>();
+        var checker = new StreamHealthChecker(http, NullLogger<StreamHealthChecker>.Instance,
+            Options.Create(streamHealthSettings));
+        var probe = new StreamHealthProbe
+        {
+            RequestHeaders = new Dictionary<string, string>
+            {
+                ["referer"] = "chrome-error://chromewebdata/",
+                ["origin"] = "chrome-error://chromewebdata"
+            }
+        };
+
+        // Act
+        var health = await checker.CheckStreamHealthAsync(m3u8Url, "chrome-error://chromewebdata/", probe);
+
+        // Assert
+        Assert.Equal(StreamHealthStatus.Healthy, health.Status);
+        Assert.NotEmpty(handler.Requests);
+        foreach (var req in handler.Requests)
+        {
+            Assert.Null(req.Headers.Referrer);
+            Assert.False(req.Headers.Contains("Origin"),
+                "Non-http Origin must not be forwarded");
+        }
+    }
+
+    [Fact]
+    public void ApplyM3U8_ChromeErrorReferer_LeavesExistingHttpReferer()
+    {
+        // Arrange
+        var current = new EnrichedStream
+        {
+            Stream = new Stream { Url = "https://page.example.test/match", Channel = "C1" },
+            Referer = "https://page.example.test/match"
+        };
+        var response = new M3U8Response
+        {
+            Url = "https://cdn.example.test/playlist.m3u8",
+            RequestHeaders = new Dictionary<string, string>
+            {
+                ["referer"] = "chrome-error://chromewebdata/"
+            }
+        };
+
+        // Act
+        EnrichedStreamM3U8Apply.Apply(current, response);
+
+        // Assert
+        Assert.Equal("https://page.example.test/match", current.Referer);
+    }
     private class FakeHttpHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new(StringComparer.OrdinalIgnoreCase);
