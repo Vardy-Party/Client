@@ -147,6 +147,8 @@ public class RefererHandlingTests
 
         // Act
         var health = await checker.CheckStreamHealthAsync(m3u8Url, referer);
+        // Healthy starts the background bitstream-size probe; wait so its requests are covered too.
+        await health.WhenBitstreamSizeProbed.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
@@ -244,6 +246,8 @@ public class RefererHandlingTests
 
         // Act
         var health = await checker.CheckStreamHealthAsync(m3u8Url, "chrome-error://chromewebdata/", probe);
+        // Healthy starts the background bitstream-size probe; wait so its requests are covered too.
+        await health.WhenBitstreamSizeProbed.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Assert
         Assert.Equal(StreamHealthStatus.Healthy, health.Status);
@@ -280,10 +284,27 @@ public class RefererHandlingTests
         // Assert
         Assert.Equal("https://page.example.test/match", current.Referer);
     }
+
     private class FakeHttpHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, HttpResponseMessage> _responses = new(StringComparer.OrdinalIgnoreCase);
-        public List<HttpRequestMessage> Requests { get; } = new();
+        private readonly object _requestsLock = new();
+        private readonly List<HttpRequestMessage> _requests = new();
+
+        /// <summary>
+        /// A snapshot of the requests sent so far. Background probes can still be
+        /// sending while a test reads this, so reads never enumerate the live list.
+        /// </summary>
+        public IReadOnlyList<HttpRequestMessage> Requests
+        {
+            get
+            {
+                lock (_requestsLock)
+                {
+                    return _requests.ToArray();
+                }
+            }
+        }
 
         public void AddResponse(string url, HttpResponseMessage response)
         {
@@ -293,7 +314,11 @@ public class RefererHandlingTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            Requests.Add(request);
+            lock (_requestsLock)
+            {
+                _requests.Add(request);
+            }
+
             var key = request.RequestUri?.ToString() ?? string.Empty;
 
             if (request.Method == HttpMethod.Head)
