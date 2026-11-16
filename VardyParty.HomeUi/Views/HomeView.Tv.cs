@@ -53,6 +53,21 @@ public partial class HomeView
     private int _streamExitFocusGeneration;
     private IStreamExitPass? _streamExitLayoutPass;
 
+    /// <summary>
+    /// A stream-exit focus pass is in flight (from <c>RestoreTvFocusAfterStreamExit</c>
+    /// until its card takes focus or its budget ends). It owns the Menu hold and
+    /// wins over first-card focus.
+    /// </summary>
+    private bool _streamExitFocusInFlight;
+
+    /// <summary>
+    /// The auth overlay hid before any card existed: re-arm first-card focus
+    /// when the next non-empty board is applied (<see cref="TvGamesUpdatedAction.RearmAndRetry"/>).
+    /// </summary>
+    private bool _rearmInitialFocusOnNextCards;
+
+    private bool StreamExitFocusPending => _streamExitFocusInFlight || _streamExitLayoutPass is not null;
+
     private readonly TvMenuFocusMemory _menuFocusMemory = new();
     private readonly List<AView> _wiredTrapItems = new();
     private AView? _wiredMenuButton;
@@ -132,6 +147,9 @@ public partial class HomeView
         var generation = ++_streamExitFocusGeneration;
         _streamExitLayoutPass?.Cancel();
         _streamExitLayoutPass = null;
+        _streamExitFocusInFlight = true;
+        // Stream exit wins: a pending first-card re-arm would pull focus off the watched game.
+        _rearmInitialFocusOnNextCards = false;
         // Menu is the default focus target when the video activity returns
         // and the window has nothing focused. Hold it out until the card lands.
         TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
@@ -148,6 +166,7 @@ public partial class HomeView
 
         if (attemptsLeft <= 0)
         {
+            _streamExitFocusInFlight = false;
             FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
             return;
         }
@@ -216,6 +235,7 @@ public partial class HomeView
         var frameClock = global::Android.Views.Choreographer.Instance;
         if (frameClock is null)
         {
+            _streamExitFocusInFlight = false;
             FocusAttachedCardThenReleaseMenu(gameKey, railIndex);
             return;
         }
@@ -247,6 +267,7 @@ public partial class HomeView
                     TvDpadFocusRouter.PostTopAlignContaining(card);
                 }
 
+                _streamExitFocusInFlight = false;
                 TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
                 return;
             }
@@ -325,13 +346,38 @@ public partial class HomeView
 
     private void OnTvGamesUpdatedForHeaderFocus(int gameCount)
     {
-        // Empty delivered board never arms RequestsInitialFocus — release the
-        // Menu hold so Settings remains reachable.
-        if (gameCount == 0 && ViewModel is { IsContentLoading: false })
+        if (!IsTelevision())
         {
-            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+            return;
+        }
+
+        // Empty delivered board never arms RequestsInitialFocus — release the
+        // Menu hold so Settings remains reachable. A re-arm recorded when the
+        // auth overlay hid before any card existed runs once the cards land.
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true,
+            boardHasCards: gameCount > 0 && BoardHasCards(ViewModel),
+            boardSettledEmpty: gameCount == 0 && ViewModel is { IsContentLoading: false },
+            _rearmInitialFocusOnNextCards,
+            StreamExitFocusPending);
+        switch (action)
+        {
+            case TvGamesUpdatedAction.Release:
+                _rearmInitialFocusOnNextCards = false;
+                TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+                break;
+
+            case TvGamesUpdatedAction.RearmAndRetry:
+                _rearmInitialFocusOnNextCards = false;
+                ViewModel!.RearmInitialFocus();
+                TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+                TryStartInitialFocusRetryFromFirstCard();
+                break;
         }
     }
+
+    private bool BoardSettledEmpty() =>
+        ViewModel is { IsContentLoading: false, HasGames: false };
 
     // ------------------------------------------------------- header button --
 
@@ -358,9 +404,9 @@ public partial class HomeView
         // (the one-shot flag was consumed on the earlier view).
         var boardHasCards = BoardHasCards(ViewModel);
         var initialPending = boardHasCards && ViewModel!.Rows[0].Cards[0].RequestsInitialFocus;
-        var streamExitPending = _streamExitLayoutPass is not null;
+        var streamExitPending = StreamExitFocusPending;
         if (TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
-                isTelevision: true, boardHasCards, initialPending))
+                isTelevision: true, boardHasCards, initialPending, streamExitPending))
         {
             ViewModel!.RearmInitialFocus();
             initialPending = true;
@@ -370,7 +416,10 @@ public partial class HomeView
                 isTelevision: true, boardHasCards, initialPending, streamExitPending))
         {
             TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
-            TryStartInitialFocusRetryFromFirstCard();
+            if (!streamExitPending)
+            {
+                TryStartInitialFocusRetryFromFirstCard();
+            }
         }
         else
         {
@@ -387,17 +436,33 @@ public partial class HomeView
             return;
         }
 
-        var boardHasCards = BoardHasCards(ViewModel);
-        if (!TvHeaderFocusGate.ShouldRearmInitialFocusWhenAuthOverlayHides(
-                isTelevision: true, boardHasCards))
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision: true,
+            BoardHasCards(ViewModel),
+            BoardSettledEmpty(),
+            StreamExitFocusPending);
+        switch (action)
         {
-            TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
-            return;
-        }
+            case TvAuthOverlayHiddenAction.RearmNow:
+                _rearmInitialFocusOnNextCards = false;
+                ViewModel!.RearmInitialFocus();
+                TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+                TryStartInitialFocusRetryFromFirstCard();
+                break;
 
-        ViewModel!.RearmInitialFocus();
-        TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
-        TryStartInitialFocusRetryFromFirstCard();
+            case TvAuthOverlayHiddenAction.HoldUntilCards:
+                // Authenticated cold start: StartGamesFeed(); SetAuthOverlayVisible(false)
+                // runs before the catalog. Keep Menu out of the focus order (#113) and
+                // re-arm when the cards land; an empty settle releases instead.
+                _rearmInitialFocusOnNextCards = true;
+                TvDpadFocusRouter.HoldHeaderFocusForInitialCard();
+                break;
+
+            case TvAuthOverlayHiddenAction.Release:
+                _rearmInitialFocusOnNextCards = false;
+                TvDpadFocusRouter.ReleaseHeaderFocusForInitialCard();
+                break;
+        }
     }
 
     private void TryStartInitialFocusRetryFromFirstCard()

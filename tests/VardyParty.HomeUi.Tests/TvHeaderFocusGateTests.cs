@@ -5,97 +5,281 @@ namespace VardyParty.HomeUi.Tests;
 
 public class TvHeaderFocusGateTests
 {
-    [Fact]
-    public void ShouldHoldHeaderOnMenuWire_Phone_NeverHolds()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    public void ShouldHoldHeaderOnMenuWire_Phone_NeverHolds(
+        bool boardHasCards, bool initialFocusPending, bool streamExitPending)
     {
-        Assert.False(TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
-            isTelevision: false,
-            boardHasCards: false,
-            initialFocusPending: false,
-            streamExitPending: false));
-        Assert.False(TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
-            isTelevision: false,
-            boardHasCards: true,
-            initialFocusPending: true,
-            streamExitPending: true));
+        // Arrange
+        const bool isTelevision = false;
+
+        // Act
+        var hold = TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+            isTelevision, boardHasCards, initialFocusPending, streamExitPending);
+
+        // Assert
+        Assert.False(hold);
     }
 
     [Fact]
     public void ShouldHoldHeaderOnMenuWire_ColdStart_HoldsBeforeFirstCard()
     {
-        // Cold start: Menu wires before rails exist. Hold so Android's
+        // Arrange - cold start: Menu wires before rails exist. Hold so Android's
         // default search cannot land on Menu and leave the first rail off-screen.
-        Assert.True(TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
-            isTelevision: true,
-            boardHasCards: false,
-            initialFocusPending: false,
-            streamExitPending: false));
+        const bool boardHasCards = false;
+
+        // Act
+        var hold = TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+            isTelevision: true, boardHasCards, initialFocusPending: false, streamExitPending: false);
+
+        // Assert
+        Assert.True(hold);
     }
 
     [Fact]
     public void ShouldHoldHeaderOnMenuWire_ColdStart_HoldsWhileInitialFocusPending()
     {
-        Assert.True(TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
-            isTelevision: true,
-            boardHasCards: true,
-            initialFocusPending: true,
-            streamExitPending: false));
+        // Arrange
+        const bool initialFocusPending = true;
+
+        // Act
+        var hold = TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+            isTelevision: true, boardHasCards: true, initialFocusPending, streamExitPending: false);
+
+        // Assert
+        Assert.True(hold);
     }
 
     [Fact]
-    public void ShouldRearmInitialFocusOnMenuWire_NewHomeViewWhenVmAlreadyHasGames()
+    public void ShouldHoldHeaderOnMenuWire_NewHomeViewWhenVmAlreadyHasGames_Holds()
     {
-        // Singleton HomeViewModel already consumed RequestsInitialFocus on
-        // an earlier view (CreateWindow / second MainActivity.OnCreate).
-        Assert.True(TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
-            isTelevision: true,
-            boardHasCards: true,
-            initialFocusPending: false));
-        Assert.True(TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
-            isTelevision: true,
-            boardHasCards: true,
-            initialFocusPending: false,
-            streamExitPending: false));
+        // Arrange - the singleton HomeViewModel already consumed RequestsInitialFocus
+        // on an earlier view; the caller re-arms, so the hold has a release path.
+        const bool initialFocusPending = false;
+
+        // Act
+        var hold = TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+            isTelevision: true, boardHasCards: true, initialFocusPending, streamExitPending: false);
+
+        // Assert
+        Assert.True(hold);
     }
 
     [Fact]
-    public void ShouldRearmInitialFocusOnMenuWire_DoesNotRearmWhenStillPendingOrEmpty()
+    public void ShouldHoldHeaderOnMenuWire_StreamExitPending_Holds()
     {
-        Assert.False(TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
-            isTelevision: true,
-            boardHasCards: true,
-            initialFocusPending: true));
-        Assert.False(TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
-            isTelevision: true,
-            boardHasCards: false,
-            initialFocusPending: false));
-        Assert.False(TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
-            isTelevision: false,
-            boardHasCards: true,
-            initialFocusPending: false));
+        // Arrange
+        const bool streamExitPending = true;
+
+        // Act
+        var hold = TvHeaderFocusGate.ShouldHoldHeaderOnMenuWire(
+            isTelevision: true, boardHasCards: true, initialFocusPending: false, streamExitPending);
+
+        // Assert
+        Assert.True(hold);
     }
 
     [Fact]
-    public void ShouldRearmInitialFocusWhenAuthOverlayHides_AfterGamesLoaded()
+    public void ShouldRearmInitialFocusOnMenuWire_NewHomeViewWhenVmAlreadyHasGames_Rearms()
     {
-        Assert.True(TvHeaderFocusGate.ShouldRearmInitialFocusWhenAuthOverlayHides(
-            isTelevision: true,
-            boardHasCards: true));
-        Assert.False(TvHeaderFocusGate.ShouldRearmInitialFocusWhenAuthOverlayHides(
-            isTelevision: true,
-            boardHasCards: false));
-        Assert.False(TvHeaderFocusGate.ShouldRearmInitialFocusWhenAuthOverlayHides(
-            isTelevision: false,
-            boardHasCards: true));
+        // Arrange - CreateWindow / second MainActivity.OnCreate on the singleton VM.
+        const bool initialFocusPending = false;
+
+        // Act
+        var rearm = TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
+            isTelevision: true, boardHasCards: true, initialFocusPending, streamExitPending: false);
+
+        // Assert
+        Assert.True(rearm);
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void ShouldRearmInitialFocusOnMenuWire_StillPendingEmptyOrPhone_DoesNotRearm(
+        bool isTelevision, bool boardHasCards, bool initialFocusPending)
+    {
+        // Arrange
+        const bool streamExitPending = false;
+
+        // Act
+        var rearm = TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
+            isTelevision, boardHasCards, initialFocusPending, streamExitPending);
+
+        // Assert
+        Assert.False(rearm);
+    }
+
+    [Fact]
+    public void ShouldRearmInitialFocusOnMenuWire_StreamExitPending_DoesNotRearm()
+    {
+        // Arrange - Menu re-wires while the stream-exit pass is focusing the
+        // watched game; a first-card retry would race it.
+        const bool streamExitPending = true;
+
+        // Act
+        var rearm = TvHeaderFocusGate.ShouldRearmInitialFocusOnMenuWire(
+            isTelevision: true, boardHasCards: true, initialFocusPending: false, streamExitPending);
+
+        // Assert
+        Assert.False(rearm);
+    }
+
+    [Fact]
+    public void DecideWhenAuthOverlayHides_CardsLoaded_RearmsNow()
+    {
+        // Arrange - device-code sign-in finished after the catalog arrived.
+        const bool boardHasCards = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision: true, boardHasCards, boardSettledEmpty: false, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvAuthOverlayHiddenAction.RearmNow, action);
+    }
+
+    [Fact]
+    public void DecideWhenAuthOverlayHides_AuthenticatedColdStartBeforeCatalog_KeepsHoldUntilCards()
+    {
+        // Arrange - HomeHostPage: StartGamesFeed(); SetAuthOverlayVisible(false);
+        // the board is empty and still loading, so Menu must stay out (#113).
+        const bool boardHasCards = false;
+        const bool boardSettledEmpty = false;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision: true, boardHasCards, boardSettledEmpty, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvAuthOverlayHiddenAction.HoldUntilCards, action);
+    }
+
+    [Fact]
+    public void DecideWhenAuthOverlayHides_BoardSettledEmpty_Releases()
+    {
+        // Arrange - nothing can arm a first card, so Settings must stay reachable.
+        const bool boardSettledEmpty = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision: true, boardHasCards: false, boardSettledEmpty, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvAuthOverlayHiddenAction.Release, action);
+    }
+
+    [Fact]
+    public void DecideWhenAuthOverlayHides_StreamExitPending_LeavesTheHoldToStreamExit()
+    {
+        // Arrange
+        const bool streamExitPending = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision: true, boardHasCards: true, boardSettledEmpty: false, streamExitPending);
+
+        // Assert
+        Assert.Equal(TvAuthOverlayHiddenAction.None, action);
+    }
+
+    [Fact]
+    public void DecideWhenAuthOverlayHides_Phone_DoesNothing()
+    {
+        // Arrange
+        const bool isTelevision = false;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideWhenAuthOverlayHides(
+            isTelevision, boardHasCards: false, boardSettledEmpty: false, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvAuthOverlayHiddenAction.None, action);
+    }
+
+    [Fact]
+    public void DecideOnGamesUpdated_RecordedRearmAndCardsLanded_RearmsAndRetries()
+    {
+        // Arrange - the overlay hid before any card existed (HoldUntilCards).
+        const bool rearmOnNextCards = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true, boardHasCards: true, boardSettledEmpty: false, rearmOnNextCards, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvGamesUpdatedAction.RearmAndRetry, action);
+    }
+
+    [Fact]
+    public void DecideOnGamesUpdated_NoRecordedRearm_LeavesLaterCatalogsAlone()
+    {
+        // Arrange - a routine catalog refresh must not steal focus back to the first card.
+        const bool rearmOnNextCards = false;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true, boardHasCards: true, boardSettledEmpty: false, rearmOnNextCards, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvGamesUpdatedAction.None, action);
+    }
+
+    [Fact]
+    public void DecideOnGamesUpdated_StreamExitPending_DoesNotRearm()
+    {
+        // Arrange - stream exit wins: the watched game keeps focus.
+        const bool streamExitPending = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true, boardHasCards: true, boardSettledEmpty: false, rearmOnNextCards: true, streamExitPending);
+
+        // Assert
+        Assert.Equal(TvGamesUpdatedAction.None, action);
+    }
+
+    [Fact]
+    public void DecideOnGamesUpdated_StillLoadingWithNoCards_KeepsWaiting()
+    {
+        // Arrange - e.g. the null/valve apply before the enriched catalog.
+        const bool boardHasCards = false;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true, boardHasCards, boardSettledEmpty: false, rearmOnNextCards: true, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvGamesUpdatedAction.None, action);
+    }
+
+    [Fact]
+    public void DecideOnGamesUpdated_BoardSettledEmpty_Releases()
+    {
+        // Arrange
+        const bool boardSettledEmpty = true;
+
+        // Act
+        var action = TvHeaderFocusGate.DecideOnGamesUpdated(
+            isTelevision: true, boardHasCards: false, boardSettledEmpty, rearmOnNextCards: true, streamExitPending: false);
+
+        // Assert
+        Assert.Equal(TvGamesUpdatedAction.Release, action);
     }
 
     [Fact]
     public void ShouldAllowUpToMenu_BlockedOnlyWhileHoldHasNoCardAndNotTimedOut()
     {
-        Assert.False(TvHeaderFocusGate.ShouldAllowUpToMenu(
-            holdActive: true,
-            anyCardHasHadFocus: false,
-            holdTimedOut: false));
+        // Arrange
+        const bool holdActive = true;
+
+        // Act
+        var allow = TvHeaderFocusGate.ShouldAllowUpToMenu(holdActive, anyCardHasHadFocus: false, holdTimedOut: false);
+
+        // Assert
+        Assert.False(allow);
     }
 
     [Theory]
@@ -106,17 +290,42 @@ public class TvHeaderFocusGateTests
     public void ShouldAllowUpToMenu_OnceCardFocusedOrTimedOutOrHoldReleased(
         bool holdActive, bool anyCardHasHadFocus, bool holdTimedOut)
     {
-        Assert.True(TvHeaderFocusGate.ShouldAllowUpToMenu(
-            holdActive, anyCardHasHadFocus, holdTimedOut));
+        // Arrange
+        var active = holdActive;
+
+        // Act
+        var allow = TvHeaderFocusGate.ShouldAllowUpToMenu(active, anyCardHasHadFocus, holdTimedOut);
+
+        // Assert
+        Assert.True(allow);
     }
 
     [Fact]
-    public void IsHoldTimedOut_UsesBoundedTimeout()
+    public void HoldTimeout_IsLongerThanTheFirstCardRetry()
     {
+        // Arrange
+        const long minimumMs = 5_000;
+
+        // Act
+        var timeout = TvHeaderFocusGate.HoldTimeoutMilliseconds;
+
+        // Assert
+        Assert.True(timeout >= minimumMs);
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    public void IsHoldTimedOut_UsesBoundedTimeout(long offsetFromTimeoutMs, bool expected)
+    {
+        // Arrange
         const long start = 1_000;
         var timeout = TvHeaderFocusGate.HoldTimeoutMilliseconds;
-        Assert.True(timeout >= 5_000);
-        Assert.False(TvHeaderFocusGate.IsHoldTimedOut(start, start + timeout - 1, timeout));
-        Assert.True(TvHeaderFocusGate.IsHoldTimedOut(start, start + timeout, timeout));
+
+        // Act
+        var timedOut = TvHeaderFocusGate.IsHoldTimedOut(start, start + timeout + offsetFromTimeoutMs, timeout);
+
+        // Assert
+        Assert.Equal(expected, timedOut);
     }
 }

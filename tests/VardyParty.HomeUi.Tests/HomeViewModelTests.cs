@@ -196,21 +196,43 @@ public sealed class HomeViewModelTests : IDisposable
     [Fact]
     public void RearmInitialFocus_AfterConsumedFlag_ReArmsFirstCard()
     {
+        // Arrange - an earlier HomeView consumed the one-shot flag.
         _sut.UpdateGames(CatalogWithOneGame("Alpha"));
         _sut.FlushPendingApply();
-        Assert.True(_sut.Rows[0].Cards[0].TryConsumeInitialFocus());
+        _sut.Rows[0].Cards[0].TryConsumeInitialFocus();
 
-        Assert.True(_sut.RearmInitialFocus());
+        // Act
+        var armed = _sut.RearmInitialFocus();
+
+        // Assert
+        Assert.True(armed);
         Assert.True(_sut.Rows[0].Cards[0].RequestsInitialFocus);
     }
 
     [Fact]
-    public void RearmInitialFocus_EmptyBoard_ReturnsFalse()
+    public void RearmInitialFocus_NoCatalogYet_ReturnsFalse()
     {
-        Assert.False(_sut.RearmInitialFocus());
+        // Arrange - construction only: the catalog has not arrived.
+
+        // Act
+        var armed = _sut.RearmInitialFocus();
+
+        // Assert
+        Assert.False(armed);
+    }
+
+    [Fact]
+    public void RearmInitialFocus_EmptyCatalog_ReturnsFalse()
+    {
+        // Arrange
         _sut.UpdateGames(new Dictionary<string, List<Game>>());
         _sut.FlushPendingApply();
-        Assert.False(_sut.RearmInitialFocus());
+
+        // Act
+        var armed = _sut.RearmInitialFocus();
+
+        // Assert
+        Assert.False(armed);
     }
 
     [Fact]

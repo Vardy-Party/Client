@@ -436,12 +436,13 @@ public static class TvDpadFocusRouter
     /// focus search cannot land on Menu before the first card exists (field:
     /// cold start selected Menu and left the rails off the first row).
     /// Released when the one-shot initial card focus succeeds, when its
-    /// retry budget expires, when a card has already had focus and Up is
-    /// pressed, or when <see cref="TvHeaderFocusGate.HoldTimeout"/> elapses.
+    /// retry budget expires, when an empty board settles, or when Up is
+    /// pressed after a card has had focus or after
+    /// <see cref="TvHeaderFocusGate.HoldTimeout"/>. Nothing releases it on a
+    /// timer: a slow cold start keeps Menu out until the rails exist.
     /// Never leave this set unless a release path is running.
     /// </summary>
     private static bool _holdHeaderFocusForInitialCard;
-    private static int _holdGeneration;
     private static long _holdStartedMs;
     private static bool _anyCardHasHadFocus;
 
@@ -454,22 +455,21 @@ public static class TvDpadFocusRouter
     {
         _headerTarget = new WeakReference<AView>(view);
         ApplyHeaderFocusGate(view);
-        if (_holdHeaderFocusForInitialCard)
-        {
-            ScheduleHoldTimeoutRelease(view, _holdGeneration);
-        }
     }
 
     /// <summary>
     /// Hold Menu out of the focus order until the first card of the first
-    /// rail takes the one-shot autofocus (or the retry budget / bounded
-    /// timeout expires). Callers must also start a release path.
+    /// rail takes the one-shot autofocus (or the retry budget expires, or Up
+    /// after the bounded timeout). Callers must also start a release path.
     /// </summary>
     internal static void HoldHeaderFocusForInitialCard()
     {
+        if (!_holdHeaderFocusForInitialCard)
+        {
+            _holdStartedMs = Environment.TickCount64;
+        }
+
         _holdHeaderFocusForInitialCard = true;
-        _holdStartedMs = Environment.TickCount64;
-        var generation = ++_holdGeneration;
         if (_headerTarget?.TryGetTarget(out var header) == true)
         {
             ApplyHeaderFocusGate(header);
@@ -477,8 +477,6 @@ public static class TvDpadFocusRouter
             {
                 header.ClearFocus();
             }
-
-            ScheduleHoldTimeoutRelease(header, generation);
         }
     }
 
@@ -493,30 +491,10 @@ public static class TvDpadFocusRouter
         }
 
         _holdHeaderFocusForInitialCard = false;
-        _holdGeneration++;
         if (_headerTarget?.TryGetTarget(out var header) == true)
         {
             ApplyHeaderFocusGate(header);
         }
-    }
-
-    private static void ScheduleHoldTimeoutRelease(AView header, int generation)
-    {
-        header.PostDelayed(() =>
-        {
-            if (generation != _holdGeneration || !_holdHeaderFocusForInitialCard)
-            {
-                return;
-            }
-
-            if (TvHeaderFocusGate.IsHoldTimedOut(
-                    _holdStartedMs,
-                    Environment.TickCount64,
-                    TvHeaderFocusGate.HoldTimeoutMilliseconds))
-            {
-                ReleaseHeaderFocusForInitialCard();
-            }
-        }, (int)TvHeaderFocusGate.HoldTimeoutMilliseconds);
     }
 
     private static void ApplyHeaderFocusGate(AView header)
