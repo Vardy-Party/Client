@@ -12,8 +12,11 @@ namespace VardyParty.Presentation;
 /// a fresh 3.6.1-b262 install: first launch entered via SplashActivity,
 /// <c>ApplyLauncherComponents</c> disabled Splash, and MainActivity was
 /// finished at 20:00:14 Europe/London in the same process (PID 27132).
-/// Never disable Splash in a process or launch that entered via Splash;
-/// defer until a later launch through TvLeanbackAlias.
+/// The cleanup (<c>RecentTasks.cleanupDisabledPackageTasksLocked</c>) keys
+/// on each task's root intent component, so the decision reads the real
+/// task roots (<c>ActivityManager.AppTasks</c> base intent) rather than the
+/// intent of the activity being created: never disable Splash while any of
+/// this app's tasks is rooted at it.
 /// </remarks>
 public static class LauncherComponentRules
 {
@@ -42,12 +45,12 @@ public static class LauncherComponentRules
         PhoneSplashHandoff.ShouldAdvertiseTvLeanbackLauncher(isTelevisionDevice);
 
     /// <summary>
-    /// Disabling Splash is only safe when this launch did not enter through
-    /// SplashActivity. <c>Application.OnCreate</c> does not yet know the
-    /// entry activity, so that caller must pass <c>true</c> (defer).
+    /// Disabling Splash is only safe when no task of this app is rooted at
+    /// SplashActivity. <c>Application.OnCreate</c> runs before any task is
+    /// known, so that caller must pass <c>true</c> (defer).
     /// </summary>
-    public static bool CanDisablePhoneLauncher(bool launchEnteredViaSplash) =>
-        !launchEnteredViaSplash;
+    public static bool CanDisablePhoneLauncher(bool anyAppTaskRootedAtSplash) =>
+        !anyAppTaskRootedAtSplash;
 
     /// <summary>
     /// Resolves PackageManager's component enabled setting against the
@@ -68,16 +71,16 @@ public static class LauncherComponentRules
     /// <summary>
     /// Whether to call <c>SetComponentEnabledSetting</c> for SplashActivity.
     /// False when already at the desired state, or when the desired state is
-    /// disabled but this launch entered via Splash (leave Splash enabled
-    /// for this session).
+    /// disabled but a task of this app is still rooted at Splash (leave
+    /// Splash enabled until no task depends on it).
     /// </summary>
     public static bool ShouldApplyPhoneLauncherState(
         bool isTelevisionDevice,
-        bool launchEnteredViaSplash,
+        bool anyAppTaskRootedAtSplash,
         bool currentlyEnabled)
     {
         var desired = DesiredPhoneLauncherEnabled(isTelevisionDevice);
-        if (!desired && !CanDisablePhoneLauncher(launchEnteredViaSplash))
+        if (!desired && !CanDisablePhoneLauncher(anyAppTaskRootedAtSplash))
         {
             return false;
         }
@@ -95,22 +98,30 @@ public static class LauncherComponentRules
         currentlyEnabled != DesiredTvLeanbackLauncherEnabled(isTelevisionDevice);
 
     /// <summary>
-    /// A Leanback-alias intent did not enter via Splash, so it is safe to
-    /// disable Splash (the current task's root is the alias). Any other
-    /// component — including MainActivity after the phone-splash handoff,
-    /// or a missing name in <c>Application.OnCreate</c> — is treated as
-    /// entered-via-Splash so the disable is deferred.
+    /// Whether any of this app's tasks is rooted at SplashActivity, from the
+    /// root component class name of each task (<c>ActivityManager.AppTasks</c>
+    /// → <c>TaskInfo.BaseIntent.Component</c>, else <c>BaseActivity</c>).
+    /// Conservative: when the tasks could not be read (<see langword="null"/>),
+    /// none were returned (the caller's own task should always be there), or
+    /// a task's root is unknown, Splash is treated as a root so the disable
+    /// is deferred. A task rooted at TvLeanbackAlias or MainActivity is safe.
     /// </summary>
-    public static bool LaunchEnteredViaSplash(string? intentComponentClassName)
+    public static bool AnyAppTaskRootedAtSplash(IReadOnlyCollection<string?>? appTaskRootClassNames)
     {
-        if (string.IsNullOrEmpty(intentComponentClassName))
+        if (appTaskRootClassNames is null || appTaskRootClassNames.Count == 0)
         {
             return true;
         }
 
-        return !string.Equals(
-            intentComponentClassName,
-            TvLeanbackAliasClassName,
-            StringComparison.Ordinal);
+        foreach (var root in appTaskRootClassNames)
+        {
+            if (string.IsNullOrEmpty(root)
+                || string.Equals(root, PhoneLauncherClassName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
