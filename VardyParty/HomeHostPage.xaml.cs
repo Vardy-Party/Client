@@ -630,6 +630,10 @@ public partial class HomeHostPage : ContentPage
         {
             SignInButton.Focus();
         }
+        else if (!visible)
+        {
+            HomeSurface.NotifyAuthOverlayHidden();
+        }
     });
 
     private void SetAuthStatus(string? message) => PostUi(() =>
