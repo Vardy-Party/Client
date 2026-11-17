@@ -11,7 +11,7 @@
   -->
   <PropertyGroup>
     <!-- Internal build counter — bumped on the PR branch before merge to main -->
-    <ApplicationVersion>270</ApplicationVersion>
+    <ApplicationVersion>272</ApplicationVersion>
     
     <!-- User-facing semantic version - bump via Actions → Bump Display Version (workflow_dispatch) -->
     <ApplicationDisplayVersion>3.6.1</ApplicationDisplayVersion>
