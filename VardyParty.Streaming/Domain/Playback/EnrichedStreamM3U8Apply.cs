@@ -29,7 +29,9 @@ public static class EnrichedStreamM3U8Apply
             if (pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(pair.Value))
             {
-                current.Referer = pair.Value;
+                var sanitized = HttpReferer.Sanitize(pair.Value);
+                if (sanitized is not null)
+                    current.Referer = sanitized;
                 return;
             }
         }

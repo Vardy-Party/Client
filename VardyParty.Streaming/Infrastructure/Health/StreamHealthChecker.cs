@@ -508,7 +508,7 @@ public class StreamHealthChecker(
                         ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
         request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
 
-        var referer = GetHeader(requestHeaders, "referer") ?? refererUrl;
+        var referer = HttpReferer.Sanitize(GetHeader(requestHeaders, "referer"), refererUrl);
         if (HlsUriResolver.TryGetHttpUrl(referer, out var refUri))
             request.Headers.Referrer = refUri;
 
@@ -524,6 +524,14 @@ public class StreamHealthChecker(
                 || pair.Key.Equals("user-agent", StringComparison.OrdinalIgnoreCase)
                 || pair.Key.Equals("referer", StringComparison.OrdinalIgnoreCase))
             {
+                continue;
+            }
+
+            if (pair.Key.Equals("origin", StringComparison.OrdinalIgnoreCase))
+            {
+                var origin = HttpReferer.Sanitize(pair.Value);
+                if (origin is not null)
+                    request.Headers.TryAddWithoutValidation("Origin", origin);
                 continue;
             }
 

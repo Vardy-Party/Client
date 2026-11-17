@@ -1101,7 +1101,7 @@ public class StreamResolver(
     private static string ResolveReferer(M3U8Response? response, string fallbackUrl)
     {
         var capturedReferer = GetHeaderValue(response?.RequestHeaders, "referer");
-        return string.IsNullOrWhiteSpace(capturedReferer) ? fallbackUrl : capturedReferer;
+        return HttpReferer.Sanitize(capturedReferer, fallbackUrl) ?? string.Empty;
     }
 
     private static string? GetHeaderValue(IReadOnlyDictionary<string, string>? headers, string headerName)
