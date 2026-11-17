@@ -1,4 +1,4 @@
-﻿using Android.App;
+using Android.App;
 using Android.Content.PM;
 using Android.OS;
 using Android.Util;
@@ -123,6 +123,9 @@ namespace VardyParty
             ((MainApplication)MauiApplication.Current).EnsureMauiApp();
 
             base.OnCreate(savedInstanceState);
+            var app = (MainApplication)MauiApplication.Current;
+            app.ApplyLauncherComponents(
+                LauncherComponentRules.AnyAppTaskRootedAtSplash(app.ReadAppTaskRootClassNames()));
             AndroidScreenAwake.BindHomepage(this);
 
             Log.Info("MainActivity", "[MAIN] OnCreate wiring handlers");
