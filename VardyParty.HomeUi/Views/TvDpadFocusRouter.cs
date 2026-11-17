@@ -435,10 +435,16 @@ public static class TvDpadFocusRouter
     /// While true, the Menu header stays non-focusable so Android's default
     /// focus search cannot land on Menu before the first card exists (field:
     /// cold start selected Menu and left the rails off the first row).
-    /// Released when the one-shot initial card focus succeeds, or when its
-    /// retry budget expires so Menu remains reachable.
+    /// Released when the one-shot initial card focus succeeds, when its
+    /// retry budget expires, when an empty board settles, or when Up is
+    /// pressed after a card has had focus or after
+    /// <see cref="TvHeaderFocusGate.HoldTimeout"/>. Nothing releases it on a
+    /// timer: a slow cold start keeps Menu out until the rails exist.
+    /// Never leave this set unless a release path is running.
     /// </summary>
     private static bool _holdHeaderFocusForInitialCard;
+    private static long _holdStartedMs;
+    private static bool _anyCardHasHadFocus;
 
     /// <summary>
     /// The header view (Menu button) that up-from-the-first-row lands on.
@@ -453,10 +459,16 @@ public static class TvDpadFocusRouter
 
     /// <summary>
     /// Hold Menu out of the focus order until the first card of the first
-    /// rail takes the one-shot autofocus (or the retry budget expires).
+    /// rail takes the one-shot autofocus (or the retry budget expires, or Up
+    /// after the bounded timeout). Callers must also start a release path.
     /// </summary>
     internal static void HoldHeaderFocusForInitialCard()
     {
+        if (!_holdHeaderFocusForInitialCard)
+        {
+            _holdStartedMs = Environment.TickCount64;
+        }
+
         _holdHeaderFocusForInitialCard = true;
         if (_headerTarget?.TryGetTarget(out var header) == true)
         {
@@ -545,8 +557,11 @@ public static class TvDpadFocusRouter
     /// remembers it on open, and down-from-the-header returns to it (column
     /// memory across the header round trip).
     /// </summary>
-    internal static void NoteCardFocused(AView card) =>
+    internal static void NoteCardFocused(AView card)
+    {
         _lastFocusedCard = new WeakReference<AView>(card);
+        _anyCardHasHadFocus = true;
+    }
 
     internal static AView? LastFocusedCard() =>
         _lastFocusedCard?.TryGetTarget(out var card) == true ? card : null;
@@ -555,11 +570,29 @@ public static class TvDpadFocusRouter
         LastFocusedCard() is { IsAttachedToWindow: true, IsShown: true } card
         && card.RequestFocus();
 
-    private static bool TryFocusHeaderTarget() =>
-        !_holdHeaderFocusForInitialCard
-        && _headerTarget?.TryGetTarget(out var header) == true
-        && header is { IsAttachedToWindow: true, IsShown: true, Focusable: true }
-        && header.RequestFocus();
+    private static bool TryFocusHeaderTarget()
+    {
+        var allow = TvHeaderFocusGate.ShouldAllowUpToMenu(
+            _holdHeaderFocusForInitialCard,
+            _anyCardHasHadFocus,
+            TvHeaderFocusGate.IsHoldTimedOut(
+                _holdStartedMs,
+                Environment.TickCount64,
+                TvHeaderFocusGate.HoldTimeoutMilliseconds));
+        if (!allow)
+        {
+            return false;
+        }
+
+        if (_holdHeaderFocusForInitialCard)
+        {
+            ReleaseHeaderFocusForInitialCard();
+        }
+
+        return _headerTarget?.TryGetTarget(out var header) == true
+            && header is { IsAttachedToWindow: true, IsShown: true, Focusable: true }
+            && header.RequestFocus();
+    }
 
     /// <summary>UI-thread only: scratch rect for <see cref="TryRevealInStrip"/>.</summary>
     private static readonly global::Android.Graphics.Rect RevealRect = new();

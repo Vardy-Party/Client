@@ -387,6 +387,13 @@ public partial class MatchCardView : ContentView
     /// </summary>
     private const int InitialFocusRetryFrames = 180;
 
+    /// <summary>
+    /// Starts the one-shot first-card focus retry after a re-arm (new
+    /// HomeView or auth overlay hide) when the platform view already exists.
+    /// </summary>
+    internal static void StartInitialFocusRetry(global::Android.Views.View native) =>
+        RequestInitialFocusWhenReady(native, InitialFocusRetryFrames);
+
     private static void RequestInitialFocusWhenReady(
         global::Android.Views.View native, int attemptsLeft)
     {
