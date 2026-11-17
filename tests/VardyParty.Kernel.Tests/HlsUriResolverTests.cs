@@ -154,6 +154,11 @@ public class HlsUriResolverTests
     [InlineData("file:///a.m3u8", false)]
     [InlineData("/a.m3u8", false)]
     [InlineData("ftp://host/a.m3u8", false)]
+    [InlineData("chrome-error://chromewebdata/", false)]
+    [InlineData("about:blank", false)]
+    [InlineData("data:text/html,hi", false)]
+    [InlineData("blob:https://host/abc", false)]
+    [InlineData("chrome://net-internals", false)]
     [InlineData(null, false)]
     public void IsHttpUrl_OnlyExplicitHttpOrHttps(string? value, bool expected)
     {

@@ -39,9 +39,10 @@ public static class PlaybackRowRequestContext
     public static PlaybackRequestContext ForRow(EnrichedStream row)
     {
         ArgumentNullException.ThrowIfNull(row);
-        var referer = !string.IsNullOrWhiteSpace(row.Referer)
-            ? row.Referer!
-            : HeaderReferer(row.RequestHeaders) ?? row.Stream?.Url ?? string.Empty;
+        var referer = HttpReferer.Sanitize(row.Referer)
+            ?? HttpReferer.Sanitize(HeaderReferer(row.RequestHeaders))
+            ?? HttpReferer.Sanitize(row.Stream?.Url)
+            ?? string.Empty;
         return new PlaybackRequestContext(referer, row.RequestHeaders is { Count: > 0 } ? row.RequestHeaders : null);
     }
 

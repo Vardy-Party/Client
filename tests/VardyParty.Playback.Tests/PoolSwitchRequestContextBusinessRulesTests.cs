@@ -95,6 +95,80 @@ public class PoolSwitchRequestContextBusinessRulesTests
     }
 
     [Fact]
+    public void ForRow_ChromeErrorReferer_FallsBackToTheRowsPage()
+    {
+        // Arrange — health/play captured chrome-error:// from a failed scrape frame.
+        var headers = new Dictionary<string, string>
+        {
+            ["Referer"] = "chrome-error://chromewebdata/",
+            ["Origin"] = "chrome-error://chromewebdata"
+        };
+        var row = Row("elm", "https://cdn.elm.test/index.m3u8", referer: "chrome-error://chromewebdata/", headers);
+
+        // Act
+        var context = PlaybackRowRequestContext.ForRow(row);
+
+        // Assert
+        Assert.Equal("https://elm.page.test/watch", context.Referer);
+    }
+
+    [Fact]
+    public void ForContext_ChromeErrorRowHeaders_SendsThePageRefererAndItsOrigin()
+    {
+        // Arrange — the 16 Nov row: chrome-error:// in both the row Referer and its headers.
+        var headers = new Dictionary<string, string>
+        {
+            ["Referer"] = "chrome-error://chromewebdata/",
+            ["Origin"] = "chrome-error://chromewebdata"
+        };
+        var row = Row("elm", "https://cdn.elm.test/index.m3u8", referer: "chrome-error://chromewebdata/", headers);
+        var context = PlaybackRowRequestContext.ForRow(row);
+
+        // Act
+        var sent = PlaybackRequestHeaders.ForContext(context);
+
+        // Assert
+        Assert.Equal("https://elm.page.test/watch", sent["Referer"]);
+        Assert.Equal("https://elm.page.test", sent["Origin"]);
+        Assert.DoesNotContain(sent.Values, value => value.Contains("chrome-error", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Resolve_NonHttpRowOrigin_IsReplacedByTheRefererOrigin()
+    {
+        // Arrange — the row Referer is fine but its Origin is not http(s).
+        var headers = new Dictionary<string, string>
+        {
+            ["Referer"] = "https://player.oak.test/embed",
+            ["Origin"] = "chrome-error://chromewebdata"
+        };
+
+        // Act
+        var sent = PlaybackRequestHeaders.Resolve("https://player.oak.test/embed", headers);
+
+        // Assert
+        Assert.Contains(new KeyValuePair<string, string>("Referer", "https://player.oak.test/embed"), sent);
+        Assert.Contains(new KeyValuePair<string, string>("Origin", "https://player.oak.test"), sent);
+        Assert.DoesNotContain(sent, pair => pair.Value.Contains("chrome-error", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("chrome-error://chromewebdata/")]
+    [InlineData("about:blank")]
+    [InlineData("")]
+    public void Resolve_NonHttpReferer_SendsNoRefererOrOrigin(string referer)
+    {
+        // Arrange
+        IReadOnlyDictionary<string, string>? noRowHeaders = null;
+
+        // Act
+        var sent = PlaybackRequestHeaders.Resolve(referer, noRowHeaders);
+
+        // Assert
+        Assert.DoesNotContain(sent, pair => pair.Key is "Referer" or "Origin");
+    }
+
+    [Fact]
     public void ForUrl_UrlOfNoPoolRow_KeepsTheCurrentContext()
     {
         // Arrange - e.g. a mirror retry inside the player.
