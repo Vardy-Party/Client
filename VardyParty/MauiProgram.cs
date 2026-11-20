@@ -29,6 +29,10 @@ public static class MauiProgram
     // Set by Android startup to indicate TV devices
     public static bool IsTv { get; set; } = false;
 
+    // Set by Android DetectTv after a successful check. When false, do not
+    // change launcher components (do not treat an unknown device as a phone).
+    public static bool TvDetectionCompleted { get; set; } = false;
+
     public static bool IsWindowsPackaged => _isWindowsPackaged;
 
     private static readonly bool _isWindowsPackaged = DetectWindowsPackaged();

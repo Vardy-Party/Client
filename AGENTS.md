@@ -156,7 +156,9 @@ splash SVG after the build. Preferred commands:
 - **Android / Android TV:** `pwsh ./package-android.ps1 -Api production`
   (or `-Api preview` / `-Api local` when asked). Then
   `adb install -r` to the TV (`192.168.1.108:5555` unless told otherwise).
-  Launch `com.vardyparty/.MainActivity` or `.TvLeanbackAlias`. Keep a single
+  Launch `com.vardyparty/.MainActivity` or `.TvLeanbackAlias`. The alias ships
+  enabled, so a fresh TV install already has a Leanback home tile; phones
+  disable it on first run. Keep a single
   logcat capture, by PID:
   `$pid = adb shell pidof -s com.vardyparty; adb logcat --pid=$pid`
 - **Windows:** follow the current release-workflow `dotnet publish` (do not

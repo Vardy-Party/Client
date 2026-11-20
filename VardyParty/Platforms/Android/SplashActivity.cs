@@ -48,9 +48,11 @@ namespace VardyParty
             // Draw nothing of our own: the window background (@drawable/splash_full from
             // VardyParty.PhoneSplashTheme) is the splash. The system starting window, this
             // activity and MainActivity (VardyParty.MauiTheme) all paint that one drawable,
-            // so each hand-off is pixel-identical. A FitCenter ImageView here used to scale
-            // the art to the screen height (about 1.18x on a 1080p TV), so the splash
-            // visibly zoomed a second after launch (3.6.2-b273, Sony Bravia).
+            // so each hand-off is pixel-identical below API 31. On API 31+ every launch
+            // surface shows one system splash icon, then that same sheet. A FitCenter
+            // ImageView here used to scale the art to the screen height (about 1.18x on a
+            // 1080p TV), so the splash visibly zoomed a second after launch (3.6.2-b273,
+            // Sony Bravia).
             var content = new global::Android.Views.View(this);
             SetContentView(content);
             Log.Info("SplashActivity", "[SPLASH] content set — waiting for first draw");

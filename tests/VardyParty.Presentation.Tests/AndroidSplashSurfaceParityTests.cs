@@ -5,10 +5,13 @@ using Xunit;
 namespace VardyParty.Presentation.Tests;
 
 /// <summary>
-/// Android launch surfaces must paint one splash. The system starting window,
-/// SplashActivity (which draws nothing over its window) and MainActivity all show
-/// <c>@drawable/splash_full</c> as their window background, and the art is sized in
-/// that drawable, never scaled in code. A FitCenter ImageView in SplashActivity drew
+/// Android launch surfaces must paint one splash. Below API 31 the system starting
+/// window, SplashActivity (which draws nothing over its window) and MainActivity all
+/// show <c>@drawable/splash_full</c> as their window background, so those hand-offs
+/// are pixel-identical. On API 31+ every launch surface shows one system splash icon,
+/// then that same sheet; <c>VardyParty.MauiTheme</c> and <c>VardyParty.PhoneSplashTheme</c>
+/// share the three <c>windowSplashScreen*</c> items in values-v31. The art is sized in
+/// the drawable, never scaled in code. A FitCenter ImageView in SplashActivity drew
 /// the art about 1.18x larger on a 1080p TV, so the splash zoomed after launch (3.6.2-b273).
 /// </summary>
 public class AndroidSplashSurfaceParityTests
@@ -37,6 +40,30 @@ public class AndroidSplashSurfaceParityTests
 
         // Assert
         Assert.Equal(SplashBackground, windowBackground);
+    }
+
+    [Theory]
+    [InlineData("android:windowSplashScreenBackground", "@color/splash_screen_background")]
+    [InlineData("android:windowSplashScreenAnimatedIcon", "@drawable/vardyparty_splash")]
+    [InlineData("android:windowSplashScreenIconBackgroundColor", "@color/splash_screen_background")]
+    public void ValuesV31_MauiAndPhoneThemes_ShareSplashScreenItems(string itemName, string expected)
+    {
+        // Arrange
+        var styles = XDocument.Load(AndroidResource("values-v31", "styles.xml"));
+
+        // Act
+        string ItemValue(string theme) => styles.Descendants("style")
+            .Single(s => (string?)s.Attribute("name") == theme)
+            .Elements("item")
+            .Single(i => (string?)i.Attribute("name") == itemName)
+            .Value.Trim();
+
+        var maui = ItemValue("VardyParty.MauiTheme");
+        var phone = ItemValue("VardyParty.PhoneSplashTheme");
+
+        // Assert
+        Assert.Equal(expected, maui);
+        Assert.Equal(expected, phone);
     }
 
     [Fact]

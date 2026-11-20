@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The one splash every launch surface paints: the system starting window,
-     SplashActivity and MainActivity all use it as windowBackground, and
-     SplashActivity draws nothing over it, so hand-offs never jump or zoom.
+<!-- The one splash sheet every launch surface paints as windowBackground:
+     the system starting window below API 31, SplashActivity (which draws
+     nothing over it) and MainActivity. Below API 31 those hand-offs are
+     pixel-identical. On API 31+ the system starting window is the
+     SplashScreen (windowSplashScreenAnimatedIcon on
+     windowSplashScreenBackground), then the same sheet; those three
+     windowSplashScreen items are shared by PhoneSplashTheme and MauiTheme
+     so every launch surface shows one system icon, then one sheet.
      The art is sized here (dimens splash_art_size), never scaled in code:
      456dp (the MauiSplashScreen BaseSize) from sw480dp up (TV, tablets), and
      320dp on narrower phones so the 456dp art is not cropped at the sides. -->

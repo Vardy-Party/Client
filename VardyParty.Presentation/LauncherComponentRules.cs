@@ -48,17 +48,38 @@ public static class LauncherComponentRules
     /// a literal, never a configuration-qualified resource. PackageManager parses the
     /// manifest without the <c>television</c> UI-mode qualifier, so
     /// <c>@bool/show_tv_launcher</c> (true only in <c>values-television</c>) installed the
-    /// alias disabled. The app read the same resource under the TV configuration, took
-    /// the alias for enabled at <c>DEFAULT</c>, and never switched it on (3.6.2-b273: no
-    /// LEANBACK_LAUNCHER activity on the Bravia). With a literal false the app always
-    /// enables it explicitly on TV.
+    /// alias disabled on every device, including TV. The alias now ships enabled so a
+    /// fresh TV install has a LEANBACK_LAUNCHER tile before the first launch (stock
+    /// Android TV, Google TV and Shield list only those). Phones disable it at runtime:
+    /// phone launchers ignore LEANBACK_LAUNCHER, so the brief enabled window does not
+    /// advertise a second icon, and no phone task is rooted at the alias.
     /// </summary>
-    public const bool TvLeanbackAliasManifestDefaultEnabled = false;
+    public const bool TvLeanbackAliasManifestDefaultEnabled = true;
+
     public static bool DesiredPhoneLauncherEnabled(bool isTelevisionDevice) =>
         PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(isTelevisionDevice);
 
     public static bool DesiredTvLeanbackLauncherEnabled(bool isTelevisionDevice) =>
         PhoneSplashHandoff.ShouldAdvertiseTvLeanbackLauncher(isTelevisionDevice);
+
+    /// <summary>
+    /// When TV detection did not complete, do not enable or disable either
+    /// launcher component. Treating the device as a phone would disable the
+    /// Leanback alias while a TV task may be rooted at it, and Android 9+
+    /// would finish that task (<c>disabled-package</c>).
+    /// </summary>
+    public static bool ShouldApplyLauncherComponents(bool tvDetectionCompleted) =>
+        tvDetectionCompleted;
+
+    /// <summary>
+    /// Component to restart into after a handled crash: the Leanback alias
+    /// on TV, because the TV steady state disables Splash and
+    /// <c>GetLaunchIntentForPackage</c> is then null, and SplashActivity on phones.
+    /// </summary>
+    public static string CrashRestartLauncherClassName(bool isTelevisionDevice) =>
+        DesiredTvLeanbackLauncherEnabled(isTelevisionDevice)
+            ? TvLeanbackAliasClassName
+            : PhoneLauncherClassName;
 
     /// <summary>
     /// Disabling Splash is only safe when no task of this app is rooted at
@@ -93,7 +114,8 @@ public static class LauncherComponentRules
         IsEffectivelyEnabled(componentEnabledState, TvLeanbackAliasManifestDefaultEnabled);
 
     /// <summary>
-    /// Whether to call <c>SetComponentEnabledSetting</c> for SplashActivity.    /// False when already at the desired state, or when the desired state is
+    /// Whether to call <c>SetComponentEnabledSetting</c> for SplashActivity.
+    /// False when already at the desired state, or when the desired state is
     /// disabled but a task of this app is still rooted at Splash (leave
     /// Splash enabled until no task depends on it).
     /// </summary>
