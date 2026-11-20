@@ -44,7 +44,8 @@ public class StreamResolutionOrchestrator(
 
     /// <summary>
     /// How long a fresh start looks for a second row already in the pool before
-    /// racing alone. Tests stretch it; production stays at a millisecond.
+    /// racing alone. Production stays at a millisecond; tests replace it with a signal that
+    /// ends once their scripted resolver has handed every row to the pool.
     /// </summary>
     internal Func<CancellationToken, Task> PartnerLookoutAsync { get; set; }
         = static ct => Task.Delay(TimeSpan.FromMilliseconds(1), ct);
