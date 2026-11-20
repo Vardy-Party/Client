@@ -9,6 +9,9 @@
 
     <style name="VardyParty.MauiTheme" parent="Maui.MainTheme.NoActionBar">
         <item name="android:windowBackground">@drawable/splash_full</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_screen_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/vardyparty_splash</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_screen_background</item>
     </style>
 
     <!-- System splash is still a 108dp circle until the first frame. Ball icon

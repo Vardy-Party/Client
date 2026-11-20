@@ -4,7 +4,6 @@ using Android.Content.PM;
 using Android.OS;
 using Android.Util;
 using Android.Views;
-using Android.Widget;
 using VardyParty.Presentation;
 
 namespace VardyParty
@@ -46,31 +45,26 @@ namespace VardyParty
                 Log.Info("SplashActivity", "[SPLASH] television device — paint then hand off (do not block OnCreate)");
             }
 
-            var image = new ImageView(this);
-            image.SetBackgroundColor(global::Android.Graphics.Color.ParseColor("#003090"));
-            image.SetScaleType(ImageView.ScaleType.FitCenter);
-            var drawableId = Resources?.GetIdentifier(
-                "vardyparty_splash_generated", "drawable", PackageName) ?? 0;
-            if (drawableId != 0)
-            {
-                image.SetImageResource(drawableId);
-            }
-            else
-            {
-                Log.Warn("SplashActivity", "[SPLASH] generated splash drawable missing");
-            }
-
-            SetContentView(image);
+            // Draw nothing of our own: the window background (@drawable/splash_full from
+            // VardyParty.PhoneSplashTheme) is the splash. The system starting window, this
+            // activity and MainActivity (VardyParty.MauiTheme) all paint that one drawable,
+            // so each hand-off is pixel-identical below API 31. On API 31+ every launch
+            // surface shows one system splash icon, then that same sheet. A FitCenter
+            // ImageView here used to scale the art to the screen height (about 1.18x on a
+            // 1080p TV), so the splash visibly zoomed a second after launch (3.6.2-b273,
+            // Sony Bravia).
+            var content = new global::Android.Views.View(this);
+            SetContentView(content);
             Log.Info("SplashActivity", "[SPLASH] content set — waiting for first draw");
 
-            var observer = image.ViewTreeObserver;
+            var observer = content.ViewTreeObserver;
             if (observer != null && observer.IsAlive)
             {
-                observer.AddOnDrawListener(new FirstDrawListener(this, image));
+                observer.AddOnDrawListener(new FirstDrawListener(this, content));
             }
             else
             {
-                ScheduleHandoffAfterPresentedFrame(image);
+                ScheduleHandoffAfterPresentedFrame(content);
             }
         }
 

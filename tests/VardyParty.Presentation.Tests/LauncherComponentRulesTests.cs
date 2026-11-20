@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Xml.Linq;
 using VardyParty.Presentation;
 using Xunit;
 
@@ -286,5 +288,131 @@ public class LauncherComponentRulesTests
 
         // Assert
         Assert.True(rootedAtSplash);
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasAtDefaultOnTv_NoOp()
+    {
+        // Arrange - the alias now ships enabled, so DEFAULT on TV is already the
+        // desired state and a fresh install already has a Leanback home tile.
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateDefault);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: true, aliasEnabled);
+
+        // Assert
+        Assert.True(aliasEnabled);
+        Assert.False(apply);
+        Assert.True(LauncherComponentRules.DesiredTvLeanbackLauncherEnabled(isTelevisionDevice: true));
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasAtDefaultOnPhone_Disables()
+    {
+        // Arrange - phones disable the alias at runtime; the enabled manifest
+        // default is safe until then because phone launchers ignore LEANBACK_LAUNCHER.
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateDefault);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: false, aliasEnabled);
+
+        // Assert
+        Assert.True(aliasEnabled);
+        Assert.True(apply);
+        Assert.False(LauncherComponentRules.DesiredTvLeanbackLauncherEnabled(isTelevisionDevice: false));
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasEnabledOnTv_NoOp()
+    {
+        // Arrange - a later launch after MainApplication enabled the alias.
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateEnabled);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: true, aliasEnabled);
+
+        // Assert
+        Assert.False(apply);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void ShouldApplyLauncherComponents_OnlyWhenTvDetectionCompleted(bool completed, bool expected)
+    {
+        // Arrange
+        var tvDetectionCompleted = completed;
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyLauncherComponents(tvDetectionCompleted);
+
+        // Assert
+        Assert.Equal(expected, apply);
+    }
+
+    [Theory]
+    [InlineData(true, LauncherComponentRules.TvLeanbackAliasClassName)]
+    [InlineData(false, LauncherComponentRules.PhoneLauncherClassName)]
+    public void CrashRestartLauncherClassName_AliasOnTv_SplashOnPhone(bool isTv, string expected)
+    {
+        // Arrange
+        var isTelevisionDevice = isTv;
+
+        // Act
+        var className = LauncherComponentRules.CrashRestartLauncherClassName(isTelevisionDevice);
+
+        // Assert
+        Assert.Equal(expected, className);
+    }
+
+    [Theory]
+    [InlineData(LauncherComponentRules.ComponentStateDefault, true)]
+    [InlineData(LauncherComponentRules.ComponentStateEnabled, true)]
+    [InlineData(LauncherComponentRules.ComponentStateDisabled, false)]
+    public void IsTvLeanbackAliasEnabled_DefaultsToEnabled(int state, bool expected)
+    {
+        // Arrange
+        var componentEnabledState = state;
+
+        // Act
+        var enabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(componentEnabledState);
+
+        // Assert
+        Assert.Equal(expected, enabled);
+    }
+
+    [Theory]
+    [InlineData(LauncherComponentRules.ComponentStateDefault, true)]
+    [InlineData(LauncherComponentRules.ComponentStateEnabled, true)]
+    [InlineData(LauncherComponentRules.ComponentStateDisabled, false)]
+    public void IsPhoneLauncherEnabled_DefaultsToEnabled(int state, bool expected)
+    {
+        // Arrange
+        var componentEnabledState = state;
+
+        // Act
+        var enabled = LauncherComponentRules.IsPhoneLauncherEnabled(componentEnabledState);
+
+        // Assert
+        Assert.Equal(expected, enabled);
+    }
+
+    [Fact]
+    public void TvLeanbackAlias_ManifestDeclaresLiteralDefault()
+    {
+        // Arrange - the alias default must be a literal that matches the rule; a
+        // configuration-qualified @bool resolves differently at install and at runtime.
+        var manifest = XDocument.Load(RepoFiles.Path("VardyParty", "Platforms", "Android", "AndroidManifest.xml"));
+        XNamespace android = "http://schemas.android.com/apk/res/android";
+
+        // Act
+        var alias = manifest.Descendants("activity-alias")
+            .Single(a => (string?)a.Attribute(android + "name") == LauncherComponentRules.TvLeanbackAliasClassName);
+        var enabled = (string?)alias.Attribute(android + "enabled");
+
+        // Assert
+        Assert.Equal(
+            LauncherComponentRules.TvLeanbackAliasManifestDefaultEnabled ? "true" : "false",
+            enabled);
     }
 }

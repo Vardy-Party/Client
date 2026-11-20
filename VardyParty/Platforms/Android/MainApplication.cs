@@ -93,6 +93,12 @@ namespace VardyParty
         {
             try
             {
+                if (!LauncherComponentRules.ShouldApplyLauncherComponents(MauiProgram.TvDetectionCompleted))
+                {
+                    Console.WriteLine("[MainApplication] Skipping launcher component update because TV detection did not complete");
+                    return;
+                }
+
                 var pm = PackageManager;
                 if (pm == null)
                 {
@@ -103,12 +109,10 @@ namespace VardyParty
                 var splash = new ComponentName("com.vardyparty", LauncherComponentRules.PhoneLauncherClassName);
                 var tvAlias = new ComponentName("com.vardyparty", LauncherComponentRules.TvLeanbackAliasClassName);
 
-                var splashEnabled = LauncherComponentRules.IsEffectivelyEnabled(
-                    (int)pm.GetComponentEnabledSetting(splash),
-                    manifestDefaultEnabled: true);
-                var aliasEnabled = LauncherComponentRules.IsEffectivelyEnabled(
-                    (int)pm.GetComponentEnabledSetting(tvAlias),
-                    manifestDefaultEnabled: ResolveShowTvLauncherDefault());
+                var splashEnabled = LauncherComponentRules.IsPhoneLauncherEnabled(
+                    (int)pm.GetComponentEnabledSetting(splash));
+                var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(
+                    (int)pm.GetComponentEnabledSetting(tvAlias));
 
                 if (LauncherComponentRules.ShouldApplyPhoneLauncherState(
                     isTv, anyAppTaskRootedAtSplash, splashEnabled))
@@ -139,26 +143,6 @@ namespace VardyParty
             {
                 Console.WriteLine($"[MainApplication] Launcher component update failed: {ex.Message}");
             }
-        }
-
-        bool ResolveShowTvLauncherDefault()
-        {
-            try
-            {
-                var id = Resources?.GetIdentifier("show_tv_launcher", "bool", PackageName) ?? 0;
-                if (id != 0)
-                {
-                    return Resources!.GetBoolean(id);
-                }
-            }
-            catch (Exception ex)
-            {
-                Android.Util.Log.Warn(
-                    "MainApplication",
-                    $"show_tv_launcher lookup failed; using DetectTv ({MauiProgram.IsTv}) for the TvLeanbackAlias default: {ex.Message}");
-            }
-
-            return MauiProgram.IsTv;
         }
 
         /// <summary>
@@ -240,10 +224,14 @@ namespace VardyParty
 #pragma warning restore CS0618
                 var isTv = hasLeanback || hasTelevision;
                 MauiProgram.IsTv = isTv;
+                MauiProgram.TvDetectionCompleted = true;
                 Console.WriteLine($"[MainApplication] Device IsTv={isTv}");
             }
             catch (Exception ex)
             {
+                // Leave TvDetectionCompleted and IsTv unchanged. A failed later
+                // call must not treat a known TV as a phone, and a failed first
+                // call leaves completed false so launcher components stay put.
                 Console.WriteLine($"[MainApplication] TV detection failed: {ex.Message}");
             }
         }
@@ -270,7 +258,16 @@ namespace VardyParty
                     Context context = Platform.CurrentActivity ?? Android.App.Application.Context;
                     Toast.MakeText(context, "An error occurred. Reloading...", ToastLength.Long)?.Show();
 
-                    var intent = PackageManager?.GetLaunchIntentForPackage(PackageName ?? "");
+                    var packageName = PackageName ?? "";
+                    var preferLeanback = string.Equals(
+                        LauncherComponentRules.CrashRestartLauncherClassName(MauiProgram.IsTv),
+                        LauncherComponentRules.TvLeanbackAliasClassName,
+                        StringComparison.Ordinal);
+                    var intent = preferLeanback
+                        ? PackageManager?.GetLeanbackLaunchIntentForPackage(packageName)
+                            ?? PackageManager?.GetLaunchIntentForPackage(packageName)
+                        : PackageManager?.GetLaunchIntentForPackage(packageName)
+                            ?? PackageManager?.GetLeanbackLaunchIntentForPackage(packageName);
                     if (intent != null)
                     {
                         intent.AddFlags(ActivityFlags.ClearTop | ActivityFlags.NewTask);

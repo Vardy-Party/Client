@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Full-screen splash (logo + build lines). Phone SplashActivity paints this
-     before MAUI starts. TV MainActivity still uses it as windowBackground. -->
+<!-- The one splash sheet every launch surface paints as windowBackground:
+     the system starting window below API 31, SplashActivity (which draws
+     nothing over it) and MainActivity. Below API 31 those hand-offs are
+     pixel-identical. On API 31+ the system starting window is the
+     SplashScreen (windowSplashScreenAnimatedIcon on
+     windowSplashScreenBackground), then the same sheet; those three
+     windowSplashScreen items are shared by PhoneSplashTheme and MauiTheme
+     so every launch surface shows one system icon, then one sheet.
+     The art is sized here (dimens splash_art_size), never scaled in code:
+     456dp (the MauiSplashScreen BaseSize) from sw480dp up (TV, tablets), and
+     320dp on narrower phones so the 456dp art is not cropped at the sides. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/splash_screen_background" />
-    <item android:gravity="center">
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/vardyparty_splash_generated" />
-    </item>
+    <item
+        android:width="@dimen/splash_art_size"
+        android:height="@dimen/splash_art_size"
+        android:gravity="center"
+        android:drawable="@drawable/vardyparty_splash_generated" />
 </layer-list>
