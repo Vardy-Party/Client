@@ -26,6 +26,9 @@ public class FirstPlayOpenBusinessRulesTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
     private readonly StreamSwitchingService _switching;
     private readonly WarmPlaybackUrlCache _warm = new();
+
+    /// <summary>Set once the resolver has handed every row to the orchestrator (see <see cref="Yield"/>).</summary>
+    private readonly TaskCompletionSource _resolverDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ResolverRaceThrottle _throttle = new();
     private readonly Game _game;
 
@@ -95,7 +98,7 @@ public class FirstPlayOpenBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = ResolverDrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -153,16 +156,16 @@ public class FirstPlayOpenBusinessRulesTests
             return holdPlayback.Task;
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = ResolverDrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
         await firstUrl.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Assert — partner warm finishes into PutUntil while first stream plays.
-        for (var i = 0; i < 50 && _warm.Peek(partner) is null; i++)
-            await Task.Delay(50);
-        Assert.NotNull(_warm.Peek(partner));
+        Assert.True(
+            await AsyncWait.UntilAsync(() => _warm.Peek(partner) is not null),
+            "partner warm never reached the warm cache");
         Assert.Equal(partnerUrl, _warm.Peek(partner)!.Response.Url);
 
         var now = DateTimeOffset.UtcNow;
@@ -243,7 +246,7 @@ public class FirstPlayOpenBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = ResolverDrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -284,7 +287,7 @@ public class FirstPlayOpenBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = ResolverDrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -392,7 +395,7 @@ public class FirstPlayOpenBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = ResolverDrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -498,10 +501,21 @@ public class FirstPlayOpenBusinessRulesTests
         return player;
     }
 
-    private static async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
+    /// <summary>
+    /// Partner lookout that ends once every row has joined the pool, instead of a fixed
+    /// 50 ms that a descheduled resolver loop on a busy CI runner can overrun (the
+    /// fresh start then picks no partner and the test flakes).
+    /// </summary>
+    private Task ResolverDrainedAsync(CancellationToken cancellationToken) =>
+        _resolverDrained.Task.WaitAsync(cancellationToken);
+
+    private async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
     {
         foreach (var stream in streams)
             yield return stream;
+        // Runs when the orchestrator asks for the row after the last one, i.e. after it
+        // has accepted (and pooled) every row above.
+        _resolverDrained.TrySetResult();
         await Task.CompletedTask;
     }
 
