@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Xml.Linq;
 using VardyParty.Presentation;
@@ -354,7 +353,7 @@ public class LauncherComponentRulesTests
     {
         // Arrange - the alias default must be a literal that matches the rule; a
         // configuration-qualified @bool resolves differently at install and at runtime.
-        var manifest = XDocument.Load(Path.Combine(RepoRoot(), "VardyParty", "Platforms", "Android", "AndroidManifest.xml"));
+        var manifest = XDocument.Load(RepoFiles.Path("VardyParty", "Platforms", "Android", "AndroidManifest.xml"));
         XNamespace android = "http://schemas.android.com/apk/res/android";
 
         // Act
@@ -366,13 +365,5 @@ public class LauncherComponentRulesTests
         Assert.Equal(
             LauncherComponentRules.TvLeanbackAliasManifestDefaultEnabled ? "true" : "false",
             enabled);
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "VardyParty.slnx")))
-            dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("VardyParty.slnx not found above the test output.");
     }
 }
