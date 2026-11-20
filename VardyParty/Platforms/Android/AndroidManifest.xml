@@ -12,12 +12,16 @@
         android:logo="@mipmap/appicon"
         android:banner="@drawable/banner">
         <!-- Leanback is an alias so phones never advertise LEANBACK_LAUNCHER.
+             android:enabled must stay the literal false (LauncherComponentRules.
+             TvLeanbackAliasManifestDefaultEnabled): PackageManager resolves the
+             manifest without the television qualifier, so a resource here installs
+             disabled while the app reads it as enabled. MainApplication enables it on TV.
              Do not declare SplashActivity here: a merge stub dropped MAIN/LAUNCHER
              and the Nokia C12 drawer hid the app. Splash comes from [Activity]. -->
         <activity-alias
             android:name="com.vardyparty.TvLeanbackAlias"
             android:targetActivity="com.vardyparty.MainActivity"
-            android:enabled="@bool/show_tv_launcher"
+            android:enabled="false"
             android:exported="true"
             android:label="VardyParty"
             android:banner="@drawable/banner">

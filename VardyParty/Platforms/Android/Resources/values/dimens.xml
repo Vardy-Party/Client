@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<resources>
+    <!-- Splash art edge (drawable/splash_full.xml). Narrow phones: fits a 320dp-wide screen. -->
+    <dimen name="splash_art_size">320dp</dimen>
+</resources>

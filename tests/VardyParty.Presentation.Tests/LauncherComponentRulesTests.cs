@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Xml.Linq;
 using VardyParty.Presentation;
 using Xunit;
 
@@ -286,5 +289,90 @@ public class LauncherComponentRulesTests
 
         // Assert
         Assert.True(rootedAtSplash);
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasAtDefaultOnTv_Enables()
+    {
+        // Arrange - 3.6.2-b273 on the Bravia: the alias was never touched, so
+        // PackageManager reports DEFAULT and the manifest default is false.
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateDefault);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: true, aliasEnabled);
+
+        // Assert
+        Assert.False(aliasEnabled);
+        Assert.True(apply);
+        Assert.True(LauncherComponentRules.DesiredTvLeanbackLauncherEnabled(isTelevisionDevice: true));
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasAtDefaultOnPhone_NoOp()
+    {
+        // Arrange
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateDefault);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: false, aliasEnabled);
+
+        // Assert
+        Assert.False(apply);
+    }
+
+    [Fact]
+    public void ShouldApplyTvLeanbackLauncherState_AliasEnabledOnTv_NoOp()
+    {
+        // Arrange - a later launch after MainApplication enabled the alias.
+        var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(LauncherComponentRules.ComponentStateEnabled);
+
+        // Act
+        var apply = LauncherComponentRules.ShouldApplyTvLeanbackLauncherState(isTelevisionDevice: true, aliasEnabled);
+
+        // Assert
+        Assert.False(apply);
+    }
+
+    [Theory]
+    [InlineData(LauncherComponentRules.ComponentStateDefault, true)]
+    [InlineData(LauncherComponentRules.ComponentStateEnabled, true)]
+    [InlineData(LauncherComponentRules.ComponentStateDisabled, false)]
+    public void IsPhoneLauncherEnabled_DefaultsToEnabled(int state, bool expected)
+    {
+        // Arrange
+        var componentEnabledState = state;
+
+        // Act
+        var enabled = LauncherComponentRules.IsPhoneLauncherEnabled(componentEnabledState);
+
+        // Assert
+        Assert.Equal(expected, enabled);
+    }
+
+    [Fact]
+    public void TvLeanbackAlias_ManifestDeclaresLiteralDefault()
+    {
+        // Arrange - the alias default must be a literal that matches the rule; a
+        // configuration-qualified @bool resolves differently at install and at runtime.
+        var manifest = XDocument.Load(Path.Combine(RepoRoot(), "VardyParty", "Platforms", "Android", "AndroidManifest.xml"));
+        XNamespace android = "http://schemas.android.com/apk/res/android";
+
+        // Act
+        var alias = manifest.Descendants("activity-alias")
+            .Single(a => (string?)a.Attribute(android + "name") == LauncherComponentRules.TvLeanbackAliasClassName);
+        var enabled = (string?)alias.Attribute(android + "enabled");
+
+        // Assert
+        Assert.Equal(
+            LauncherComponentRules.TvLeanbackAliasManifestDefaultEnabled ? "true" : "false",
+            enabled);
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "VardyParty.slnx")))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new InvalidOperationException("VardyParty.slnx not found above the test output.");
     }
 }

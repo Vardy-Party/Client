@@ -38,6 +38,22 @@ public static class LauncherComponentRules
     /// <summary>Android <c>COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED</c>.</summary>
     public const int ComponentStateDisabledUntilUsed = 4;
 
+    /// <summary>
+    /// SplashActivity's <c>android:enabled</c> as declared (the <c>[Activity]</c> default).
+    /// </summary>
+    public const bool PhoneLauncherManifestDefaultEnabled = true;
+
+    /// <summary>
+    /// TvLeanbackAlias's <c>android:enabled</c> literal in AndroidManifest.xml. It must be
+    /// a literal, never a configuration-qualified resource. PackageManager parses the
+    /// manifest without the <c>television</c> UI-mode qualifier, so
+    /// <c>@bool/show_tv_launcher</c> (true only in <c>values-television</c>) installed the
+    /// alias disabled. The app read the same resource under the TV configuration, took
+    /// the alias for enabled at <c>DEFAULT</c>, and never switched it on (3.6.2-b273: no
+    /// LEANBACK_LAUNCHER activity on the Bravia). With a literal false the app always
+    /// enables it explicitly on TV.
+    /// </summary>
+    public const bool TvLeanbackAliasManifestDefaultEnabled = false;
     public static bool DesiredPhoneLauncherEnabled(bool isTelevisionDevice) =>
         PhoneSplashHandoff.ShouldAdvertisePhoneLauncher(isTelevisionDevice);
 
@@ -68,9 +84,16 @@ public static class LauncherComponentRules
         };
     }
 
+    /// <summary>Whether SplashActivity is enabled, for PackageManager's setting.</summary>
+    public static bool IsPhoneLauncherEnabled(int componentEnabledState) =>
+        IsEffectivelyEnabled(componentEnabledState, PhoneLauncherManifestDefaultEnabled);
+
+    /// <summary>Whether TvLeanbackAlias is enabled, for PackageManager's setting.</summary>
+    public static bool IsTvLeanbackAliasEnabled(int componentEnabledState) =>
+        IsEffectivelyEnabled(componentEnabledState, TvLeanbackAliasManifestDefaultEnabled);
+
     /// <summary>
-    /// Whether to call <c>SetComponentEnabledSetting</c> for SplashActivity.
-    /// False when already at the desired state, or when the desired state is
+    /// Whether to call <c>SetComponentEnabledSetting</c> for SplashActivity.    /// False when already at the desired state, or when the desired state is
     /// disabled but a task of this app is still rooted at Splash (leave
     /// Splash enabled until no task depends on it).
     /// </summary>

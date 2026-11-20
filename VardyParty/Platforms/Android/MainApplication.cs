@@ -103,12 +103,10 @@ namespace VardyParty
                 var splash = new ComponentName("com.vardyparty", LauncherComponentRules.PhoneLauncherClassName);
                 var tvAlias = new ComponentName("com.vardyparty", LauncherComponentRules.TvLeanbackAliasClassName);
 
-                var splashEnabled = LauncherComponentRules.IsEffectivelyEnabled(
-                    (int)pm.GetComponentEnabledSetting(splash),
-                    manifestDefaultEnabled: true);
-                var aliasEnabled = LauncherComponentRules.IsEffectivelyEnabled(
-                    (int)pm.GetComponentEnabledSetting(tvAlias),
-                    manifestDefaultEnabled: ResolveShowTvLauncherDefault());
+                var splashEnabled = LauncherComponentRules.IsPhoneLauncherEnabled(
+                    (int)pm.GetComponentEnabledSetting(splash));
+                var aliasEnabled = LauncherComponentRules.IsTvLeanbackAliasEnabled(
+                    (int)pm.GetComponentEnabledSetting(tvAlias));
 
                 if (LauncherComponentRules.ShouldApplyPhoneLauncherState(
                     isTv, anyAppTaskRootedAtSplash, splashEnabled))
@@ -139,26 +137,6 @@ namespace VardyParty
             {
                 Console.WriteLine($"[MainApplication] Launcher component update failed: {ex.Message}");
             }
-        }
-
-        bool ResolveShowTvLauncherDefault()
-        {
-            try
-            {
-                var id = Resources?.GetIdentifier("show_tv_launcher", "bool", PackageName) ?? 0;
-                if (id != 0)
-                {
-                    return Resources!.GetBoolean(id);
-                }
-            }
-            catch (Exception ex)
-            {
-                Android.Util.Log.Warn(
-                    "MainApplication",
-                    $"show_tv_launcher lookup failed; using DetectTv ({MauiProgram.IsTv}) for the TvLeanbackAlias default: {ex.Message}");
-            }
-
-            return MauiProgram.IsTv;
         }
 
         /// <summary>
