@@ -25,6 +25,7 @@ public class StartupRaceBusinessRulesTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
     private readonly StreamSwitchingService _switching;
     private readonly WarmPlaybackUrlCache _warm = new();
+    private readonly ScriptedResolver _resolver = new();
     private readonly Game _game;
 
     public StartupRaceBusinessRulesTests()
@@ -77,7 +78,7 @@ public class StartupRaceBusinessRulesTests
             partnerStarted.TrySetResult();
             return await releasePartner.Task;
         });
-        ResolverYields(_ => Yield(first, partner, cached));
+        ResolverYields(_ => _resolver.Yield(first, partner, cached));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var player = Player((url, _) =>
         {
@@ -85,7 +86,7 @@ public class StartupRaceBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = _resolver.DrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -120,7 +121,7 @@ public class StartupRaceBusinessRulesTests
             url.Contains("north", StringComparison.Ordinal)
                 ? PlaylistVideoVerdict.AudioOnly
                 : PlaylistVideoVerdict.Video));
-        ResolverYields(_ => Yield(first, partner));
+        ResolverYields(_ => _resolver.Yield(first, partner));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var player = Player((url, _) =>
         {
@@ -128,7 +129,7 @@ public class StartupRaceBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = _resolver.DrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -172,7 +173,7 @@ public class StartupRaceBusinessRulesTests
             RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl },
         }));
         _fixture.Inject<IRacePlaylistProbe>(new StubProbe(_ => PlaylistVideoVerdict.Video));
-        ResolverYields(_ => Yield(first, partner));
+        ResolverYields(_ => _resolver.Yield(first, partner));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var player = Player((url, _) =>
         {
@@ -180,7 +181,7 @@ public class StartupRaceBusinessRulesTests
             return Task.FromResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
-        sut.PartnerLookoutAsync = ct => Task.Delay(50, ct);
+        sut.PartnerLookoutAsync = _resolver.DrainedAsync;
 
         // Act
         var start = sut.StartAsync(_game, player.Object);
@@ -209,7 +210,7 @@ public class StartupRaceBusinessRulesTests
         var first = Soak("north");
         first.ResolvedM3U8Url = probed;
         Candidates(first);
-        ResolverYields(_ => Yield(first));
+        ResolverYields(_ => _resolver.Yield(first));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var player = Player((url, _) =>
         {
@@ -245,7 +246,7 @@ public class StartupRaceBusinessRulesTests
             RequestHeaders = new Dictionary<string, string> { ["Referer"] = PageUrl, ["Cookie"] = "session=north2" },
         }));
         _fixture.Inject<IRacePlaylistProbe>(new StubProbe(_ => PlaylistVideoVerdict.Video));
-        ResolverYields(_ => Yield(first));
+        ResolverYields(_ => _resolver.Yield(first));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var player = Player((url, _) =>
         {
@@ -329,13 +330,6 @@ public class StartupRaceBusinessRulesTests
             .Returns((string url, string referer, string _, Func<Task>? _, string? _, string? _, string? _,
                 IReadOnlyDictionary<string, string>? _) => play(url, referer));
         return player;
-    }
-
-    private static async IAsyncEnumerable<EnrichedStream> Yield(params EnrichedStream[] streams)
-    {
-        foreach (var stream in streams)
-            yield return stream;
-        await Task.CompletedTask;
     }
 
     private sealed class StubProbe(Func<string, PlaylistVideoVerdict> classify) : IRacePlaylistProbe

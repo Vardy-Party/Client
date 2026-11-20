@@ -1294,7 +1294,7 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
             .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
                 YieldSeedSiblingThenLater(first, second, second, bothYielded, Task.Delay(Timeout.Infinite, ct), ct));
-        Func<Task>? onNext = null;
+        var onNextCaptured = new TaskCompletionSource<Func<Task>?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _fixture.GetMock<INativeVideoPlayerService>()
             .Setup(p => p.PlayVideoAsync(
@@ -1302,7 +1302,7 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<IReadOnlyDictionary<string, string>?>()))
             .Callback<string, string, string, Func<Task>?, string?, string?, string?, IReadOnlyDictionary<string, string>?>(
-                (_, _, _, next, _, _, _, _) => onNext = next)
+                (_, _, _, next, _, _, _, _) => onNextCaptured.TrySetResult(next))
             .Returns(playbackGate.Task);
         _fixture.GetMock<IApiService>()
             .Setup(a => a.GetM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -1312,34 +1312,39 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var startCount = 0;
-        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        var prewarmer = _fixture.GetMock<IUpcomingStreamPrewarmer>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>()))
             .Callback(() => Interlocked.Increment(ref startCount))
             .Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick());
-        _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        // The fresh start picks its warm partner from the pool once the lookout ends.
+        // Production looks for 1 ms; if the resolver loop is descheduled for longer
+        // (busy CI runner) the second row is not in the pool yet, no partner is warmed
+        // and warm.Peek(second) stays null. End the lookout when the resolver has
+        // handed over both rows instead, so the partner is always there.
+        sut.PartnerLookoutAsync = ct => bothYielded.Task.WaitAsync(ct);
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
 
         // Act
         var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
-        await bothYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        for (var i = 0; i < 100 && onNext == null; i++)
-            await Task.Delay(20);
+        await bothYielded.Task.WaitAsync(AsyncWait.HangGuard);
+        var onNext = await onNextCaptured.Task.WaitAsync(AsyncWait.HangGuard);
         Assert.NotNull(onNext);
         Assert.True(startCount >= 1, $"prewarmer was not wired (Start count={startCount})");
-        for (var i = 0; i < 50 && warm.Peek(second) is null; i++)
-            await Task.Delay(50);
-        Assert.NotNull(warm.Peek(second));
+        Assert.True(
+            await AsyncWait.UntilAsync(() => warm.Peek(second) is not null),
+            "partner warm for the second row never reached the warm cache");
         second.ResolvedM3U8Url = "https://cdn.example.com/live/south-find-burned.m3u8";
         second.UnusedResolvedUrl = false;
         second.RequestHeaders = new Dictionary<string, string>
         {
             ["Referer"] = "https://player.example.test/south",
         };
-        await onNext!();
-        await Task.Delay(100);
+        await onNext();
+        // Give a regressed fire-and-forget prefetch time to show before Times.Never below.
+        await Task.Delay(AsyncWait.NegativeWindow);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1388,7 +1393,7 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<List<StreamModel>>(), It.IsAny<int>(), It.IsAny<CancellationToken>(), It.IsAny<Action<int>?>()))
             .Returns((List<StreamModel> _, int _, CancellationToken ct, Action<int>? _) =>
                 YieldThenWait(first, second, firstYielded, releaseSecond.Task, ct));
-        Func<Task>? onNext = null;
+        var onNextCaptured = new TaskCompletionSource<Func<Task>?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _fixture.GetMock<INativeVideoPlayerService>()
             .Setup(p => p.PlayVideoAsync(
@@ -1396,7 +1401,7 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<IReadOnlyDictionary<string, string>?>()))
             .Callback<string, string, string, Func<Task>?, string?, string?, string?, IReadOnlyDictionary<string, string>?>(
-                (_, _, _, next, _, _, _, _) => onNext = next)
+                (_, _, _, next, _, _, _, _) => onNextCaptured.TrySetResult(next))
             .Returns(playbackGate.Task);
         _fixture.GetMock<IApiService>()
             .Setup(a => a.GetM3U8UrlAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -1406,28 +1411,27 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var kickCount = 0;
-        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        var prewarmer = _fixture.GetMock<IUpcomingStreamPrewarmer>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>())).Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
-        _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
 
         // Act
         var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
-        await firstYielded.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        for (var i = 0; i < 100 && onNext == null; i++)
-            await Task.Delay(20);
+        await firstYielded.Task.WaitAsync(AsyncWait.HangGuard);
+        var onNext = await onNextCaptured.Task.WaitAsync(AsyncWait.HangGuard);
         Assert.NotNull(onNext);
         releaseSecond.TrySetResult();
-        for (var i = 0; i < 100 && !switching.GetHealthyStreams().Any(s => ReferenceEquals(s, second)); i++)
-            await Task.Delay(20);
-        Assert.Contains(second, switching.GetHealthyStreams());
+        Assert.True(
+            await AsyncWait.UntilAsync(() => switching.GetHealthyStreams().Any(s => ReferenceEquals(s, second))),
+            "second row never joined the pool");
         second.UnusedResolvedUrl = false;
         var kicksBeforeNext = kickCount;
-        await onNext!();
-        await Task.Delay(100);
+        await onNext();
+        // Give a regressed fire-and-forget prefetch time to show before Times.Never below.
+        await Task.Delay(AsyncWait.NegativeWindow);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
 
