@@ -1312,12 +1312,11 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var startCount = 0;
-        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        var prewarmer = _fixture.GetMock<IUpcomingStreamPrewarmer>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>()))
             .Callback(() => Interlocked.Increment(ref startCount))
             .Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick());
-        _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         // The fresh start picks its warm partner from the pool once the lookout ends.
         // Production looks for 1 ms; if the resolver loop is descheduled for longer
@@ -1344,7 +1343,8 @@ public class StreamResolutionOrchestratorTests
             ["Referer"] = "https://player.example.test/south",
         };
         await onNext();
-        await Task.Delay(100);
+        // Give a regressed fire-and-forget prefetch time to show before Times.Never below.
+        await Task.Delay(AsyncWait.NegativeWindow);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1411,10 +1411,9 @@ public class StreamResolutionOrchestratorTests
                 RequestHeaders = new Dictionary<string, string> { ["Referer"] = "https://player.example.test/" },
             });
         var kickCount = 0;
-        var prewarmer = new Mock<IUpcomingStreamPrewarmer>();
+        var prewarmer = _fixture.GetMock<IUpcomingStreamPrewarmer>();
         prewarmer.Setup(p => p.Start(It.IsAny<CancellationToken>())).Returns(Mock.Of<IDisposable>());
         prewarmer.Setup(p => p.Kick()).Callback(() => Interlocked.Increment(ref kickCount));
-        _fixture.Inject(prewarmer.Object);
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         var statuses = new List<string>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
@@ -1431,7 +1430,8 @@ public class StreamResolutionOrchestratorTests
         second.UnusedResolvedUrl = false;
         var kicksBeforeNext = kickCount;
         await onNext();
-        await Task.Delay(100);
+        // Give a regressed fire-and-forget prefetch time to show before Times.Never below.
+        await Task.Delay(AsyncWait.NegativeWindow);
         playbackGate.SetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
 

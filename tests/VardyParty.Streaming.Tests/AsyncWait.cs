@@ -14,6 +14,13 @@ internal static class AsyncWait
     /// <summary>Upper bound for any single wait in these tests.</summary>
     internal static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long a test lets fire-and-forget work run before a negative check such as
+    /// <c>Times.Never</c>. It can only shorten how long a regression gets to show; it can
+    /// never make a correct build fail, so it is not a timing guess for a positive result.
+    /// </summary>
+    internal static readonly TimeSpan NegativeWindow = TimeSpan.FromMilliseconds(100);
+
     /// <summary>Returns true as soon as <paramref name="condition"/> holds; false only after the hang guard.</summary>
     internal static async Task<bool> UntilAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
