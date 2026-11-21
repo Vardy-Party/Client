@@ -313,8 +313,47 @@ public class StreamResolver(
             inFlight.Add((task, isMp));
         }
 
+        void FanOutLateMpChips()
+        {
+            if (harvestProbe is null)
+                return;
+
+            var pages = pending
+                .Where(MpPageUrl.IsV2Stream)
+                .Select(st => st.Url)
+                .Where(u => !string.IsNullOrWhiteSpace(u))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var pageUrl in pages)
+            {
+                var labels = harvestProbe.ListedMpChips(pageUrl);
+                if (labels.Count == 0)
+                    continue;
+
+                var seed = pending.First(st =>
+                    MpPageUrl.IsV2Stream(st)
+                    && string.Equals(st.Url, pageUrl, StringComparison.OrdinalIgnoreCase));
+                var rows = V2StreamExpander.RemainingFromLocalService(seed, labels, selectedChip: null, chipNormalizer);
+                var added = rows.Where(st => seen.Add(CandidateKey(st))).ToList();
+                if (added.Count == 0)
+                    continue;
+
+                tiers?.Inherit(seed, added);
+                InsertUnstarted(pending, started, added);
+                nextIndex = FirstUnstarted(pending, started);
+                onTotalStreamsKnown?.Invoke(pending.Count);
+                logger.LogInformation(
+                    "[StreamResolver] Late MP chips for {Url}: queued {Extra} ({Chips}); total now {Total}",
+                    pageUrl,
+                    added.Count,
+                    string.Join(", ", added.Select(st => st.PlayerStream)),
+                    pending.Count);
+            }
+        }
+
         void FillWindow()
         {
+            FanOutLateMpChips();
+
             // A startup race or the post-first-play priority window holds the
             // LocalService cap: finish what is in flight, start no new browser
             // probe. MP chips the harvest already holds need nothing from
