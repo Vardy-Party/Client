@@ -385,8 +385,8 @@ public sealed class MpHarvestSession
     /// first chip, or with whatever the harvest has after <see cref="ProbeReadyWait"/>.
     /// A finished harvest with no playlist at all answers the seed with null: every
     /// chip already has its verdict, so queueing them would only re-ask (rule 6).
-    /// A label answers with its playlist once it is probe-ready, once the harvest ends,
-    /// or <see cref="ProbeReadyWait"/> after its playlist-only line arrived. A label
+    /// A label answers with its captured playlist at once (probe-ready), with a miss
+    /// if the harvest sent an empty URL, or once the harvest ends. A label
     /// LocalService has not sent throws a retryable <see cref="LocalServiceUnavailableException"/>
     /// once the harvest has made no progress for <see cref="ProbeReadyWait"/> (rule 7:
     /// Deferred, never Failed).
@@ -396,9 +396,9 @@ public sealed class MpHarvestSession
         ThrowIfCancelled(cancellationToken);
         var key = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
         // A waiter that joins a running harvest gets its own ProbeReadyWait before the
-        // stall deadline can fail it: "sent nothing for 30s" must be true for this waiter,
-        // never an instant replay of a silence that happened before it asked (TV log
-        // 13 Nov 2026, 18:41:08: NW IT and TD Arabic failed within 1ms).
+        // stall deadline can fail it: "sent nothing for ProbeReadyWait" must be true for
+        // this waiter, never an instant replay of a silence that happened before it asked
+        // (TV log 13 Nov 2026, 18:41:08: NW IT and TD Arabic failed within 1ms).
         var joinedAt = _time.GetUtcNow();
         while (true)
         {

@@ -571,6 +571,31 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public async Task WaitForAsync_NamedChip_EmptyUrlWithProbeShapedRewritten_IsProbeReadyNotMiss()
+    {
+        // Arrange - empty URL would also match IsHarvestedMiss; probe-shaped
+        // rewritten segments must win and hand over as probe-ready.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "chip",
+            Label = "Chip B",
+            Url = "",
+            RewrittenSegments = ["https://seg.example.test/live/Chip-B/1.ts?_s2=a"]
+        });
+
+        // Act
+        var chip = await waiting;
+
+        // Assert
+        Assert.True(string.IsNullOrWhiteSpace(chip?.Url));
+        Assert.Equal(["https://seg.example.test/live/Chip-B/1.ts?_s2=a"], chip?.RewrittenSegments);
+        Assert.True(harvest.IsChipReady("Chip B"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
+    }
+
+    [Fact]
     public async Task WaitForAsync_NamedChip_CompletesWhenThatLineArrives()
     {
         // Arrange
