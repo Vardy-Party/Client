@@ -105,7 +105,7 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
     private static readonly Dictionary<string, string> KnownMisses = new()
     {
         ["SeedSilent A2 mp"] =
-            "the seed gave up at t+30s (R7) and its infrastructure retry asks again at t+37s; LocalService listed the chips at t+34s",
+            "the seed gave up at t+45s (R7) and its infrastructure retry asks again at t+52s; LocalService listed the chips at t+50s",
     };
 
     /// <summary>
@@ -144,13 +144,11 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// The <c>[probe-timing]</c> lines for an early chip that fails and passes on its retry:
-    /// chip listed and handed over (early, then retry), each health check with its result and
-    /// duration, the retry, the verdict, and slot grant/release with tier. Prints them (the
-    /// sample in docs/PROBE_SCHEDULING_RULES.md).
+    /// The <c>[probe-timing]</c> lines for a captured playlist that is probe-ready at once:
+    /// chip listed, handed over as <c>probe-ready</c>, one healthy check, and slot grant/release.
     /// </summary>
     [Fact]
-    public async Task ProbeTimingLog_EarlyChipRetry_EmitsTheKeyLines()
+    public async Task ProbeTimingLog_CapturedPlaylist_EmitsProbeReadyHandover()
     {
         // Arrange
         var scenario = ProbeSchedulingScenarios.EarlyChipRetryPasses();
@@ -163,11 +161,8 @@ public class ProbeSchedulingRulesTests(ITestOutputHelper output)
             output.WriteLine(line);
         var why = Expect.ProbeTimingLogged(
             "slot-grant:lane=fb", "slot-grant:lane=mp", "slot-grant:lane=mp-seed", "slot-release:lane=mp-seed",
-            "slot-release:result=retry-queued", "mp-chips", "chip-listed:chip=A",
-            "chip-handover:handover=early", "health-start:early=true", "health-end:result=ManifestNotFound",
-            "chip-retry-queued:first_result=ManifestNotFound", "chip-handover:handover=retry",
-            "health-start:retry=true", "health-end:result=Healthy", "verdict:after_retry=true",
-            "verdict:reason=no-playlist").Check(timeline);
+            "mp-chips", "chip-listed:chip=A",
+            "chip-handover:handover=probe-ready", "health-end:result=Healthy", "verdict").Check(timeline);
         Assert.True(why is null, why + "\n" + string.Join("\n", timeline.ProbeTimingLines));
     }
 

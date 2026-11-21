@@ -34,8 +34,8 @@ internal static class ProbeAcceptance
     /// <summary>A3: total seconds a lane place (2 FB, 1 MP) may sit idle while a candidate for it is queued (outside priority holds and the top-tier head start).</summary>
     public const double IdleSlotToleranceSeconds = 1;
 
-    /// <summary>A4: an /mp seed gives up (and releases its slot) this many seconds after the POST.</summary>
-    public const double SeedGiveUpSeconds = 30;
+    /// <summary>A4: an /mp seed gives up (and releases its slot) this many seconds after the POST (or after captcha-cleared, capped from harvest start).</summary>
+    public const double SeedGiveUpSeconds = 45;
 
     /// <summary>
     /// A5: the head start (rule 1): High rows may use both LocalService slots, Medium rows
@@ -293,7 +293,7 @@ internal static class Expect
 
     /// <summary>
     /// Rule 2: from <paramref name="mpId"/>'s first <c>POST /mp</c> until LocalService lists
-    /// its chips (or the seed gives up after 30s), LocalService runs at most
+    /// its chips (or the seed gives up after 45s), LocalService runs at most
     /// <paramref name="n"/> sessions: the harvest holds a /play slot until then.
     /// </summary>
     public static Expectation SessionsAtMostUntilListed(string mpId, int n = ResolverRaceThrottle.MaxConcurrent) => new(

@@ -505,6 +505,17 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<string> ListedMpChips(string pageUrl)
+    {
+        lock (_mpHarvestGate)
+        {
+            return _mpHarvest is { } harvest && harvest.CanReuseFor(_mpHarvestPage, pageUrl)
+                ? harvest.Streams
+                : [];
+        }
+    }
+
+    /// <inheritdoc />
     public bool CanStartMp(string pageUrl, string? chip)
     {
         lock (_mpHarvestGate)

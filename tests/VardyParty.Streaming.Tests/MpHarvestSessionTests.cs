@@ -167,26 +167,6 @@ public sealed class MpHarvestSessionTests
         Assert.True(harvest.Listed.IsCompleted);
     }
 
-    [Fact]
-    public async Task WaitForAsync_NamedChip_StillWaitsForRewrittenAfterPlaylistOnlyLine()
-    {
-        // Arrange - a named wait holds out for probe-ready segments after a playlist-only line.
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
-        harvest.Apply(PlaylistOnly("Chip A"));
-        var named = harvest.WaitForAsync("Chip A", CancellationToken.None);
-        Assert.False(named.IsCompleted);
-        Assert.False(harvest.IsChipReady("Chip A"));
-
-        // Act
-        harvest.Apply(ProbeReady("Chip A"));
-        var chip = await named;
-
-        // Assert
-        Assert.Equal("https://stream.example.test/Chip-A.m3u8", chip?.Url);
-        Assert.Equal(["https://cdn.example.test/Chip-A.exe?_s2=1"], chip?.RewrittenSegments);
-        Assert.True(harvest.IsChipReady("Chip A"));
-    }
 
     [Fact]
     public async Task WaitForAsync_Seed_FirstChipWithoutList_ReturnsThatChipAsAList()
@@ -283,52 +263,42 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
-    public async Task WaitForAsync_NamedChip_PlaylistOnly_GivesUpAfterProbeReadyWait()
+    public async Task WaitForAsync_NamedChip_PlaylistOnly_IsReadyImmediately()
     {
-        // Arrange - rule 7: a chip whose playlist never gets probe-ready segments is
-        // handed over as is 30s after its playlist-only line, not at the end of the harvest.
+        // Arrange - a captured MP playlist is probe-ready without rewritten segments.
         var clock = new Timeline.MilestoneClock(Start);
         var harvest = new MpHarvestSession(clock);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip A"));
-        var named = harvest.WaitForAsync("Chip A", CancellationToken.None);
-        Assert.False(named.IsCompleted);
-        Assert.Equal(Start + harvest.ProbeReadyWait, clock.NextDue);
 
         // Act
-        clock.AdvanceToNext();
-        var chip = await named;
+        var chip = await harvest.WaitForAsync("Chip A", CancellationToken.None);
 
         // Assert
         Assert.Equal("https://stream.example.test/Chip-A.m3u8", chip?.Url);
-        Assert.Equal(harvest.ProbeReadyWait.TotalSeconds, clock.T, 3);
+        Assert.Equal(0, clock.T, 3);
         Assert.True(harvest.IsChipReady("Chip A"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip A"));
     }
 
     [Fact]
-    public void IsChipReady_PlaylistOnlyChip_SignalsChangedWhenItsDeadlinePasses()
+    public void IsChipReady_PlaylistOnlyChip_IsReadyAsSoonAsThePlaylistArrives()
     {
-        // Arrange - the resolver only wakes on Changed; a chip that turns ready because
-        // time passed must still wake it.
-        var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
+        // Arrange
+        var harvest = new MpHarvestSession();
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
-        harvest.Apply(PlaylistOnly("Chip A"));
-        var changed = harvest.Changed;
 
         // Act
-        clock.AdvanceToNext();
+        harvest.Apply(PlaylistOnly("Chip A"));
 
         // Assert
-        Assert.True(changed.IsCompleted);
         Assert.True(harvest.IsChipReady("Chip A"));
     }
 
     [Fact]
     public async Task PlaylistOnlyChip_HandedOverAtOnce_OnlyWhileNoBackupExists()
     {
-        // Arrange - rule 7 (Jon, 13 Nov 2026): while no backup exists a playlist-only chip
-        // is handed over at once; once a backup exists the 30s wait applies again.
+        // Arrange - a captured playlist is ready whether or not a backup exists.
         var clock = new Timeline.MilestoneClock(Start);
         var noBackup = false;
         var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => noBackup);
@@ -343,58 +313,40 @@ public sealed class MpHarvestSessionTests
         var answer = await harvest.WaitForAsync("Chip B", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
         // Assert
-        Assert.False(readyWithBackup);
+        Assert.True(readyWithBackup);
         Assert.True(readyWithoutBackup);
         Assert.Equal("https://stream.example.test/Chip-B.m3u8", answer?.Url);
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
     }
 
     [Fact]
-    public async Task EarlyChip_FailedCheck_IsHandedOverOnceMoreAfterTheDelay_OnlyOnce()
+    public async Task PlaylistOnlyChip_IsNotOnTheEarlyHandoverPath()
     {
-        // Arrange - rule 7 (Jon, 13 Nov 2026): a playlist-only chip handed over early (no
-        // backup) that fails its check gets one retry after the configured delay (10s).
-        var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => true);
+        // Arrange - a captured playlist is probe-ready, so it is not handed over
+        // as an early chip and does not get the early-chip retry.
+        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => true);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
         harvest.Apply(PlaylistOnly("Chip A"));
-        await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
-        var firstHandover = harvest.HandoverOf("Chip A");
 
         // Act
-        var scheduled = harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10));
-        var readyBefore = harvest.IsChipReady("Chip A");
-        var waitingBefore = harvest.IsRetryWaiting("Chip A");
-        var retry = harvest.WaitForAsync("Chip A", CancellationToken.None);
-        var answeredBefore = retry.IsCompleted;
-        clock.AdvanceToNext();
-        var answer = await retry.WaitAsync(TimeSpan.FromSeconds(2));
+        var answer = await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
         // Assert
-        Assert.Equal("early", firstHandover);
-        Assert.True(scheduled);
-        Assert.False(readyBefore);
-        Assert.True(waitingBefore);
-        Assert.False(answeredBefore);
-        Assert.Equal(10, clock.T, 3);
         Assert.Equal("https://stream.example.test/Chip-A.m3u8", answer?.Url);
-        Assert.Equal("retry", harvest.HandoverOf("Chip A"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip A"));
         Assert.True(harvest.IsChipReady("Chip A"));
-        Assert.False(harvest.IsRetryWaiting("Chip A"));
         Assert.False(harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10)));
     }
 
     [Fact]
     public async Task ChipHandedOverAtTheNormalTime_GetsNoRetry()
     {
-        // Arrange - with a backup the 30s wait applies; that verdict stands (no retry).
-        var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => false);
+        // Arrange - a captured playlist is handed over at once; that verdict stands (no retry).
+        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => false);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip A"));
         harvest.Apply(ProbeReady("Chip B"));
-        var waitA = harvest.WaitForAsync("Chip A", CancellationToken.None);
-        clock.AdvanceToNext();
-        await waitA.WaitAsync(TimeSpan.FromSeconds(2));
+        await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
         await harvest.WaitForAsync("Chip B", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
         // Act
@@ -402,34 +354,27 @@ public sealed class MpHarvestSessionTests
         var retryB = harvest.RetryEarlyChip("Chip B", TimeSpan.FromSeconds(10));
 
         // Assert
-        Assert.Equal("playlist-wait", harvest.HandoverOf("Chip A"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip A"));
         Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
         Assert.False(retryA);
         Assert.False(retryB);
     }
 
     [Fact]
-    public async Task EarlyChipRetry_WaitsForItsTime_EvenAfterTheHarvestEnds()
+    public async Task EarlyChipRetry_DoesNotApplyToACapturedPlaylist()
     {
         // Arrange
-        var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => true);
+        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => true);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
         harvest.Apply(PlaylistOnly("Chip A"));
         await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
-        harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10));
 
         // Act
         harvest.Complete(failed: false);
-        var readyAtEnd = harvest.IsChipReady("Chip A");
-        var changed = harvest.Changed;
-        clock.AdvanceToNext();
-        await changed.WaitAsync(TimeSpan.FromSeconds(2));
 
         // Assert
-        Assert.False(readyAtEnd);
-        Assert.Equal(10, clock.T, 3);
         Assert.True(harvest.IsChipReady("Chip A"));
+        Assert.False(harvest.RetryEarlyChip("Chip A", TimeSpan.FromSeconds(10)));
     }
 
     [Fact]
@@ -534,6 +479,32 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
+    public void Constructor_Defaults_Are45sSeedWaitAnd90sHardCap()
+    {
+        // Arrange / Act
+        var harvest = new MpHarvestSession();
+
+        // Assert
+        Assert.Equal(TimeSpan.FromSeconds(45), MpHarvestSession.DefaultProbeReadyWait);
+        Assert.Equal(TimeSpan.FromSeconds(90), MpHarvestSession.DefaultHarvestHardCap);
+        Assert.Equal(MpHarvestSession.DefaultProbeReadyWait, harvest.ProbeReadyWait);
+    }
+
+    [Fact]
+    public void IsChipReady_ListedButUnsent_IsNotReady()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+
+        // Act
+        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+
+        // Assert
+        Assert.False(harvest.IsChipReady("Chip A"));
+        Assert.Null(harvest.HandoverOf("Chip A"));
+    }
+
+    [Fact]
     public void Constructor_ProbeReadyWait_IsPerSession()
     {
         // Arrange
@@ -570,12 +541,15 @@ public sealed class MpHarvestSessionTests
         Assert.Equal("Chip B", miss?.SelectedStream);
         Assert.True(miss?.RewrittenSegments is null or { Count: 0 });
         Assert.False(harvest.IsCompleted);
+        Assert.True(harvest.IsChipReady("Chip B"));
+        Assert.Equal("miss", harvest.HandoverOf("Chip B"));
     }
 
     [Fact]
-    public async Task WaitForAsync_NamedChip_NonProbeRewritten_StillWaitsForSoak()
+    public async Task WaitForAsync_NamedChip_PlaylistWithNonProbeRewritten_IsReadyFromTheUrl()
     {
-        // Arrange - Count > 0 is not enough; URLs must look probe-shaped.
+        // Arrange - a captured playlist is probe-ready even when rewritten samples
+        // are not probe-shaped (plain .ts is not HasProbeReady).
         var harvest = new MpHarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
         harvest.Apply(new MpPlayEvent
@@ -585,20 +559,40 @@ public sealed class MpHarvestSessionTests
             Url = "https://stream.example.test/b.m3u8",
             RewrittenSegments = ["https://cdn.example.test/plain.ts"]
         });
-        Assert.False(waiting.IsCompleted);
 
         // Act
+        var chip = await waiting;
+
+        // Assert
+        Assert.Equal("https://stream.example.test/b.m3u8", chip?.Url);
+        Assert.Equal(["https://cdn.example.test/plain.ts"], chip?.RewrittenSegments);
+        Assert.True(harvest.IsChipReady("Chip B"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
+    }
+
+    [Fact]
+    public async Task WaitForAsync_NamedChip_EmptyUrlWithProbeShapedRewritten_IsProbeReadyNotMiss()
+    {
+        // Arrange - empty URL would also match IsHarvestedMiss; probe-shaped
+        // rewritten segments must win and hand over as probe-ready.
+        var harvest = new MpHarvestSession();
+        var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
         harvest.Apply(new MpPlayEvent
         {
             Type = "chip",
             Label = "Chip B",
-            Url = "https://stream.example.test/b.m3u8",
-            RewrittenSegments = ["https://cdn.example.test/b.exe?_s2=1"]
+            Url = "",
+            RewrittenSegments = ["https://seg.example.test/live/Chip-B/1.ts?_s2=a"]
         });
-        var second = await waiting;
+
+        // Act
+        var chip = await waiting;
 
         // Assert
-        Assert.Equal(["https://cdn.example.test/b.exe?_s2=1"], second?.RewrittenSegments);
+        Assert.True(string.IsNullOrWhiteSpace(chip?.Url));
+        Assert.Equal(["https://seg.example.test/live/Chip-B/1.ts?_s2=a"], chip?.RewrittenSegments);
+        Assert.True(harvest.IsChipReady("Chip B"));
+        Assert.Equal("probe-ready", harvest.HandoverOf("Chip B"));
     }
 
     [Fact]
@@ -622,40 +616,35 @@ public sealed class MpHarvestSessionTests
     }
 
     [Fact]
-    public async Task WaitForAsync_NamedChip_WaitsForRewrittenAfterPlaylistOnlyRelease()
+    public async Task WaitForAsync_NamedChip_PlaylistOnlyRelease_IsReadyWithoutRewritten()
     {
         // Arrange - mirrors ReleaseChipThenSoak: playlist line, then soak enrich.
         var harvest = new MpHarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip B"));
-        Assert.False(waiting.IsCompleted);
 
         // Act
-        harvest.Apply(ProbeReady("Chip B"));
         var second = await waiting;
 
         // Assert
         Assert.Equal("https://stream.example.test/Chip-B.m3u8", second?.Url);
-        Assert.Equal(["https://cdn.example.test/Chip-B.exe?_s2=1"], second?.RewrittenSegments);
     }
 
     [Fact]
-    public async Task WaitForAsync_NamedChip_CachedPlaylistOnly_StillWaitsForSoak()
+    public async Task WaitForAsync_NamedChip_CachedPlaylistOnly_IsReadyWithoutSoak()
     {
         // Arrange - sibling WaitForAsync starts after playlist-only was cached.
         var harvest = new MpHarvestSession();
         harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip B"));
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        Assert.False(waiting.IsCompleted);
 
         // Act
-        harvest.Apply(ProbeReady("Chip B"));
         var second = await waiting;
 
         // Assert
-        Assert.Single(second!.RewrittenSegments!);
+        Assert.Equal("https://stream.example.test/Chip-B.m3u8", second?.Url);
     }
 
     [Fact]
@@ -665,10 +654,8 @@ public sealed class MpHarvestSessionTests
         var harvest = new MpHarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
         harvest.Apply(PlaylistOnly("Chip B"));
-        Assert.False(waiting.IsCompleted);
 
         // Act
-        harvest.Complete(failed: false);
         var second = await waiting;
 
         // Assert
@@ -824,5 +811,116 @@ public sealed class MpHarvestSessionTests
         Assert.True(withChip.HasPlaylist);
         Assert.False(withChip.CanReuseFor(Page, Page));
         Assert.True(harvest.Listed.IsCompleted);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Seed_CaptchaCleared_ResetsClockWithinHardCap()
+    {
+        // Arrange
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock);
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(20));
+        harvest.Apply(new MpPlayEvent { Type = MpPlayEvent.TypeCaptchaCleared });
+        Assert.False(seed.IsCompleted);
+
+        // Act - a 45s clock after a clear at 20s is still under the 90s cap.
+        // Signal wakes the seed so it can re-arm; yield until that new timer
+        // (t+65) is registered, then fire it. Do not spin AdvanceToNext while
+        // no timer is due: that exits and leaves the seed waiting forever.
+        var due = Start + TimeSpan.FromSeconds(65);
+        for (var i = 0; i < 50 && !seed.IsCompleted && clock.NextDue != due; i++)
+            await Task.Yield();
+        Assert.Equal(due, clock.NextDue);
+        clock.AdvanceToNext();
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
+
+        // Assert
+        Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
+        Assert.Equal(65, clock.T, 3);
+        Assert.False(harvest.IsCompleted);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Seed_CaptchaCleared_IsCappedFromHarvestStart()
+    {
+        // Arrange
+        var clock = new Timeline.MilestoneClock(Start);
+        var harvest = new MpHarvestSession(clock, harvestHardCap: TimeSpan.FromSeconds(50));
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(20));
+        harvest.Apply(new MpPlayEvent { Type = MpPlayEvent.TypeCaptchaCleared });
+
+        // Act - a fresh 45s clock would end at 65s, but the 50s cap wins (t+50).
+        var due = Start + TimeSpan.FromSeconds(50);
+        for (var i = 0; i < 50 && !seed.IsCompleted && clock.NextDue != due; i++)
+            await Task.Yield();
+        Assert.Equal(due, clock.NextDue);
+        clock.AdvanceToNext();
+        var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
+
+        // Assert
+        Assert.Equal(LocalServiceUnavailableReason.CallTimeout, ex.Reason);
+        Assert.Equal(50, clock.T, 3);
+    }
+
+    [Fact]
+    public async Task Apply_CaptchaUnsolved_503_CompletesAsMissNotInfrastructure()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "error",
+            StatusCode = 503,
+            Error = "MP blocked by captcha (EdgeOne): still challenged",
+            Reason = MpPlayEvent.ReasonCaptchaUnsolved
+        });
+
+        // Assert
+        Assert.Null(await seed);
+        Assert.True(harvest.IsCompleted);
+        Assert.Null(harvest.Fault);
+        Assert.Equal(MpPlayEvent.ReasonCaptchaUnsolved, harvest.Reason);
+    }
+
+    [Fact]
+    public async Task Apply_Plain503_IsStillInfrastructure()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+
+        // Act
+        harvest.Apply(new MpPlayEvent { Type = "error", StatusCode = 503, Error = "mp play execution failed" });
+
+        // Assert
+        await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
+        Assert.NotNull(harvest.Fault);
+    }
+
+    [Fact]
+    public async Task Apply_NoPlayer_404_CompletesAsMiss()
+    {
+        // Arrange
+        var harvest = new MpHarvestSession();
+        var seed = harvest.WaitForAsync(null, CancellationToken.None);
+
+        // Act
+        harvest.Apply(new MpPlayEvent
+        {
+            Type = "error",
+            StatusCode = 404,
+            Error = "MP page has no player.",
+            Reason = MpPlayEvent.ReasonNoPlayer
+        });
+
+        // Assert
+        Assert.Null(await seed);
+        Assert.True(harvest.IsCompleted);
+        Assert.Equal(MpPlayEvent.ReasonNoPlayer, harvest.Reason);
     }
 }

@@ -259,29 +259,28 @@ internal static class ProbeSchedulingScenarios
         .Recommend("m2", RecommendationConfidence.Medium);
 
     /// <summary>
-    /// Rule 7 once a backup exists: fbA plays at 4s and fbB is in the pool at 8s, so chip A's
-    /// playlist-only line at 12s waits the full 30s before it is handed over (42s).
+    /// Rule 7: a captured playlist is probe-ready at once, even after a backup is already
+    /// in the pool (fbA plays at 4s, fbB is ready at 8s, chip A's playlist line at 12s).
     /// </summary>
-    public static ProbeScenario PlaylistOnlyWithBackup() => ProbeScenario.Named("Playlist-only chip after the backup is ready: the 30s wait applies")
+    public static ProbeScenario PlaylistOnlyWithBackup() => ProbeScenario.Named("Playlist-only chip after the backup is ready: probed at once")
         .Mp("mp", MpScript.Headers(8).Chips(8, "A").Chip(12, "A", ChipKind.PlaylistOnly).Done(90))
         .Fb("fbA", Play.HealthyAt(3))
         .Fb("fbB", Play.HealthyAt(4));
 
     /// <summary>
-    /// Rule 7 early-chip retry (Jon, 13 Nov 2026): fbA plays at 4s with no backup, so chip A's
-    /// playlist-only line at 12s is handed over at once. Its first check fails (13s); it is not
-    /// dead: the harvest hands it over again 10s later (EarlyChipRetryDelaySeconds) and that
-    /// check passes (24s), so it becomes the backup.
+    /// Rule 7: a captured playlist is probe-ready at once. fbA plays at 4s with no backup;
+    /// chip A's playlist line at 12s is health-checked immediately and, when healthy, becomes
+    /// the backup (the early-chip retry no longer applies to a captured playlist).
     /// </summary>
-    public static ProbeScenario EarlyChipRetryPasses() => ProbeScenario.Named("Early playlist-only chip fails, passes on the retry 10s later")
+    public static ProbeScenario EarlyChipRetryPasses() => ProbeScenario.Named("Captured playlist-only chip is probed at once and can become the backup")
         .Mp("mp", MpScript.Headers(8).Chips(8, "A")
-            .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.ManifestNotFound, retryHealth: StreamHealthStatus.Healthy)
+            .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.Healthy)
             .Done(90))
         .Fb("fbA", Play.HealthyAt(3))
         .DeadFb("fbB");
 
-    /// <summary>As <see cref="EarlyChipRetryPasses"/>, but the retry fails too: the chip is dead after the retry (24s).</summary>
-    public static ProbeScenario EarlyChipRetryFails() => ProbeScenario.Named("Early playlist-only chip fails twice: dead after the retry")
+    /// <summary>A captured playlist that fails its (single) health check is dead at once; there is no early-chip retry.</summary>
+    public static ProbeScenario EarlyChipRetryFails() => ProbeScenario.Named("Captured playlist-only chip that fails health is dead at once")
         .Mp("mp", MpScript.Headers(8).Chips(8, "A")
             .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.ManifestNotFound)
             .Done(90))
@@ -333,9 +332,9 @@ internal static class ProbeSchedulingScenarios
         .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A", ChipKind.PlaylistOnly).Done(300))
         .DeadFb("d1");
 
-    /// <summary>LocalService lists nothing for 34s: the seed gives up at 30s and the retry picks up the chips.</summary>
-    public static ProbeScenario SeedSilent() => ProbeScenario.Named("/mp silent for 34s, then chips")
-        .Mp("mp", MpScript.Headers(8).Chips(34, "A", "B").Chip(35, "A").Chip(36, "B").Done(36.5))
+    /// <summary>LocalService lists nothing for 50s: the seed gives up at 45s and the retry picks up the chips.</summary>
+    public static ProbeScenario SeedSilent() => ProbeScenario.Named("/mp silent for 50s, then chips")
+        .Mp("mp", MpScript.Headers(8).Chips(50, "A", "B").Chip(51, "A").Chip(52, "B").Done(52.5))
         .DeadFb("d1", "d2");
 
     /// <summary>Every FB link is dead; the MP page works (first chip ~10s, then ~1s each).</summary>
@@ -611,20 +610,20 @@ internal static class ProbeSchedulingScenarios
             NoRowOfPageEnds("mp", StreamResolutionStatus.Deferred),
             NoIdleSlotWhileQueued()),
 
-        new("R7 seed gives up after 30s with nothing listed; the retry queues the chips", "R2 R7 R13",
+        new("R7 seed gives up after 45s with nothing listed; the retry queues the chips", "R2 R7 R13",
             SeedSilent,
             SeedReleasesSlotBy("mp", ProbeAcceptance.SeedGiveUpSeconds + 0.001),
             SessionsAtMostUntilListed("mp"),
             MpHoldsNoSlotFrom(ProbeAcceptance.SeedGiveUpSeconds + 0.001),
-            ChipsQueued("mp", 2, by: 37.001),
-            RowEnds("mp", StreamResolutionStatus.Healthy, 37.9, 38.1),
-            RowEnds("mp:B", StreamResolutionStatus.Healthy, 38.9, 39.1)),
+            ChipsQueued("mp", 2, by: 53.001),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 52.9, 53.1),
+            RowEnds("mp:B", StreamResolutionStatus.Healthy, 53.9, 54.1)),
 
-        new("R7 a playlist-only chip is handed over 30s after its playlist line; a chip never sent waits in the queue", "R5 R7",
+        new("R7 a captured playlist is probe-ready at once; a chip never sent waits in the queue", "R5 R7",
             SeedNeverProbeReady,
             SeedReturns("mp", 7.9, 8.1),
             ChipsQueued("mp", 2, by: 8.001),
-            RowEnds("mp", StreamResolutionStatus.Healthy, 39.9, 40.1),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 9.9, 10.1),
             // B is never sent: its row waits in the queue (not the MP lane) and reads
             // the finished harvest's verdict when it ends at 300s.
             RowEnds("mp:B", StreamResolutionStatus.Failed, 299.9, 300.1),
@@ -654,13 +653,13 @@ internal static class ProbeSchedulingScenarios
             NoPriorityHold(),
             NoIdleSlotWhileQueued()),
 
-        new("R7 playlist-only chips are probed once the harvest ends", "R6 R7 R11",
+        new("R7 playlist-only chips are probed as soon as each playlist arrives", "R6 R7 R11",
             PlaylistOnlyMp,
             FirstPlayOn("fbA"), FirstPlayBy(6.001),
             SeedReturns("mp", 8.9, 9.1),
             // fbA plays at 6s with no backup: the playlist-only chips are handed over at once.
             RowEnds("mp", StreamResolutionStatus.Healthy, 10.9, 11.1),
-            RowEnds("mp:C", StreamResolutionStatus.Healthy, 14.4, 14.6),
+            RowEnds("mp:C", StreamResolutionStatus.Healthy, 12.9, 13.1),
             PoolOrder("fbA", "mp", "mp:B", "mp:C"),
             NoPriorityHold()),
 
@@ -848,30 +847,29 @@ internal static class ProbeSchedulingScenarios
             StartsNotBefore("m3", 40),
             FirstPlayOn("m2"), BackupIs("m1")),
 
-        new("R7 R11 a playlist-only chip waits 30s once a backup exists", "R7 R11",
+        new("R7 R11 a captured playlist is probed at once even when a backup already exists", "R7 R11",
             PlaylistOnlyWithBackup,
             FirstPlayOn("fbA"), FirstPlayBy(4.001),
             BackupIs("fbB"), BackupReadyBy(8.001),
-            RowEnds("mp", StreamResolutionStatus.Healthy, 42.9, 43.1)),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 12.9, 13.1)),
 
-        new("R7 R11 an early playlist-only chip that fails gets one retry 10s later; it passes and is the backup", "R7 R11",
+        new("R7 R11 a captured playlist-only chip is probed at once and can become the backup", "R7 R11",
             EarlyChipRetryPasses,
             FirstPlayOn("fbA"), FirstPlayBy(4.001),
-            ChipHealthChecks("mp:A", 2, StreamHealthStatus.Healthy, 23.9, 24.1),
-            RowEnds("mp", StreamResolutionStatus.Healthy, 23.9, 24.1),
-            BackupIs("mp"), BackupReadyBy(24.101),
+            ChipHealthChecks("mp:A", 1, StreamHealthStatus.Healthy, 12.9, 13.1),
+            RowEnds("mp", StreamResolutionStatus.Healthy, 12.9, 13.1),
+            BackupIs("mp"), BackupReadyBy(13.101),
             PoolOrder("fbA", "mp"),
             MpPostCount("mp", 1),
             MpHoldsNoSlotFrom(8.001),
-            ProbeTimingLogged("slot-grant", "slot-release", "mp-chips", "chip-listed", "chip-handover:handover=early",
-                "health-start:early=true", "health-end:result=ManifestNotFound", "chip-retry-queued",
-                "chip-handover:handover=retry", "health-start:retry=true", "verdict:after_retry=true")),
+            ProbeTimingLogged("slot-grant", "slot-release", "mp-chips", "chip-listed",
+                "chip-handover:handover=probe-ready", "health-end:result=Healthy", "verdict")),
 
-        new("R7 an early playlist-only chip that fails twice is dead after the retry", "R7",
+        new("R7 a captured playlist-only chip that fails health is dead at once", "R7",
             EarlyChipRetryFails,
             FirstPlayOn("fbA"), FirstPlayBy(4.001),
-            ChipHealthChecks("mp:A", 2, StreamHealthStatus.ManifestNotFound, 23.9, 24.1),
-            RowEnds("mp", StreamResolutionStatus.Failed, 23.9, 24.1),
+            ChipHealthChecks("mp:A", 1, StreamHealthStatus.ManifestNotFound, 12.9, 13.1),
+            RowEnds("mp", StreamResolutionStatus.Failed, 12.9, 13.1),
             NoBackup(),
             MpPostCount("mp", 1),
             MpHoldsNoSlotFrom(8.001)),

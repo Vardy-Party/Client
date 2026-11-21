@@ -46,4 +46,10 @@ public interface IMpHarvestProbe
     /// <see cref="MpHarvestSession.HandoverOf"/>), for the <c>[probe-timing]</c> log. Null when unknown.
     /// </summary>
     string? MpChipHandover(string pageUrl, string? chip) => null;
+
+    /// <summary>
+    /// Chip labels the running harvest has listed for <paramref name="pageUrl"/>.
+    /// Used to fan out rows when chips arrive after the seed was already deferred.
+    /// </summary>
+    IReadOnlyList<string> ListedMpChips(string pageUrl) => [];
 }

@@ -59,6 +59,15 @@ internal sealed class MilestoneClock : TimeProvider
         }
     }
 
+    /// <summary>Moves the clock forward without firing timers that are not yet due.</summary>
+    public void Advance(TimeSpan by)
+    {
+        if (by < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(by));
+        lock (_gate)
+            _now += by;
+    }
+
     /// <summary>Moves to the earliest due timer and fires every timer due at that instant.</summary>
     public bool AdvanceToNext()
     {

@@ -313,8 +313,52 @@ public class StreamResolver(
             inFlight.Add((task, isMp));
         }
 
+        void FanOutLateMpChips()
+        {
+            if (harvestProbe is null)
+                return;
+
+            // Snapshot first: InsertUnstarted mutates `pending`, and a deferred
+            // LINQ walk over that List throws InvalidOperationException.
+            var pages = pending
+                .Where(MpPageUrl.IsV2Stream)
+                .Select(st => st.Url)
+                .Where(u => !string.IsNullOrWhiteSpace(u))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var pageUrl in pages)
+            {
+                var labels = harvestProbe.ListedMpChips(pageUrl);
+                if (labels.Count == 0)
+                    continue;
+
+                bool SamePage(Stream st) =>
+                    MpPageUrl.IsV2Stream(st)
+                    && string.Equals(st.Url, pageUrl, StringComparison.OrdinalIgnoreCase);
+                var seed = pending.FirstOrDefault(st => SamePage(st) && string.IsNullOrWhiteSpace(st.PlayerStream))
+                    ?? pending.First(SamePage);
+                var rows = V2StreamExpander.RemainingFromLocalService(seed, labels, selectedChip: null, chipNormalizer);
+                var added = rows.Where(st => seen.Add(CandidateKey(st))).ToList();
+                if (added.Count == 0)
+                    continue;
+
+                tiers?.Inherit(seed, added);
+                InsertUnstarted(pending, started, added);
+                nextIndex = FirstUnstarted(pending, started);
+                onTotalStreamsKnown?.Invoke(pending.Count);
+                logger.LogInformation(
+                    "[StreamResolver] Late MP chips for {Url}: queued {Extra} ({Chips}); total now {Total}",
+                    pageUrl,
+                    added.Count,
+                    string.Join(", ", added.Select(st => st.PlayerStream)),
+                    pending.Count);
+            }
+        }
+
         void FillWindow()
         {
+            FanOutLateMpChips();
+
             // A startup race or the post-first-play priority window holds the
             // LocalService cap: finish what is in flight, start no new browser
             // probe. MP chips the harvest already holds need nothing from
@@ -725,8 +769,8 @@ public class StreamResolver(
             if (ChipListSeed(stream, m3u8Response) is { } chips)
             {
                 // Rules 5-6: an unlabeled MP seed answered with the page's chips
-                // (the chip list arrived, a first chip arrived, or the 30s seed
-                // deadline passed). Not a verdict: this row becomes its first chip and
+                // (the chip list arrived, a first chip arrived, or the 45s seed
+                // deadline passed, capped at 90s from harvest start). Not a verdict: this row becomes its first chip and
                 // every listed chip is queued now, not after this row's health check.
                 // The re-queued row reads its chip from the running harvest.
                 V2StreamExpander.ApplySelectedChip(stream, chips.First);
