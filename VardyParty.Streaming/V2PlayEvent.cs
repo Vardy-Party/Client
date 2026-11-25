@@ -3,7 +3,7 @@ namespace VardyParty.Streaming;
 /// <summary>
 /// One NDJSON line from a streaming <c>POST /mp</c>.
 /// </summary>
-public sealed class MpPlayEvent
+public sealed class V2PlayEvent
 {
     public const string TypeCaptchaCleared = "captcha-cleared";
 

@@ -5,7 +5,7 @@ using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 
-public static class MpNdjson
+public static class V2Ndjson
 {
     public const string ContentType = "application/x-ndjson";
     public const string RequestHeaderName = "X-Vardy-Mp-Stream";
@@ -19,7 +19,7 @@ public static class MpNdjson
         !string.IsNullOrWhiteSpace(contentType)
         && contentType.Contains("ndjson", StringComparison.OrdinalIgnoreCase);
 
-    public static MpPlayEvent? ParseLine(string line)
+    public static V2PlayEvent? ParseLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line))
         {
@@ -28,7 +28,7 @@ public static class MpNdjson
 
         try
         {
-            return JsonSerializer.Deserialize<MpPlayEvent>(line, JsonOptions);
+            return JsonSerializer.Deserialize<V2PlayEvent>(line, JsonOptions);
         }
         catch (JsonException)
         {
@@ -58,7 +58,7 @@ public static class MpNdjson
         }
     }
 
-    public static M3U8Response? ToResponse(MpPlayEvent ev, IReadOnlyList<string>? streams)
+    public static M3U8Response? ToResponse(V2PlayEvent ev, IReadOnlyList<string>? streams)
     {
         if (!string.Equals(ev.Type, "chip", StringComparison.OrdinalIgnoreCase))
         {

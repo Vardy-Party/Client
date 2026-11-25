@@ -4,7 +4,7 @@ namespace VardyParty.Kernel;
 /// Shape checks for LocalService <c>/mp</c> rewritten media URLs shared by
 /// harvest readiness and the MP health probe builder.
 /// </summary>
-public static class MpRewrittenSegment
+public static class V2RewrittenSegment
 {
     /// <summary>
     /// True when <paramref name="url"/> looks like a captured rewritten

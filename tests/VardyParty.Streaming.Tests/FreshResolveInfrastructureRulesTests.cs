@@ -106,7 +106,7 @@ public class FreshResolveInfrastructureRulesTests
         throw new LocalServiceUnavailableException(LocalServiceUnavailableReason.CallTimeout, "GET /play exceeded 20s");
 
     private static M3U8Response? Disabled() =>
-        throw new LocalServiceUnavailableException(LocalServiceUnavailableReason.MpDisabled, "V2/MP scrape disabled on the local service");
+        throw new LocalServiceUnavailableException(LocalServiceUnavailableReason.V2Disabled, "V2/MP scrape disabled on the local service");
 
     private static M3U8Response? Fresh() => new() { Url = FreshUrl };
 
@@ -171,7 +171,7 @@ public class FreshResolveInfrastructureRulesTests
     }
 
     [Fact]
-    public async Task FirstStart_MpDisabled_DefersAtOnceWithoutRetries()
+    public async Task FirstStart_V2Disabled_DefersAtOnceWithoutRetries()
     {
         PoolRow(cachedUrl: null);
         FreshResolve(Disabled);
@@ -238,14 +238,14 @@ public class FreshResolveInfrastructureRulesTests
     }
 
     [Fact]
-    public async Task Resolver_MpDisabled_DefersWithoutRetrying()
+    public async Task Resolver_V2Disabled_DefersWithoutRetrying()
     {
         var lan = _fixture.GetMock<ILocalLanPlayService>();
         var calls = 0;
         lan.Setup(s => s.ResolveM3U8UrlAsync(PageUrl, It.IsAny<string?>(), It.IsAny<string?>(),
                 It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => calls++)
-            .ThrowsAsync(new LocalServiceUnavailableException(LocalServiceUnavailableReason.MpDisabled, "V2/MP scrape disabled"));
+            .ThrowsAsync(new LocalServiceUnavailableException(LocalServiceUnavailableReason.V2Disabled, "V2/MP scrape disabled"));
         var resolver = _fixture.Create<StreamResolver>();
         resolver.DelayAsync = (d, _) =>
         {

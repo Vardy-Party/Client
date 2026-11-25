@@ -78,25 +78,25 @@ internal enum ChipKind
     Miss
 }
 
-internal sealed record MpLine(double At, string Json, string What);
+internal sealed record V2Line(double At, string Json, string What);
 
 /// <summary>
 /// What LocalService streams back on one <c>POST /mp</c> (NDJSON), as milestones
 /// after the request lands. Jon's fact: a normal <c>/mp</c> takes ~10s for the first
 /// chip and ~1s per extra chip; 330s is only our harvest timeout.
 /// </summary>
-internal sealed class MpScript
+internal sealed class V2Script
 {
-    private readonly List<MpLine> _lines = new();
+    private readonly List<V2Line> _lines = new();
     private readonly Dictionary<string, (ChipKind Kind, double HealthTakes, StreamHealthStatus Health)> _chips =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private MpScript(double headersAt) => HeadersAt = headersAt;
+    private V2Script(double headersAt) => HeadersAt = headersAt;
 
     /// <summary>When the 200 response headers arrive (the body keeps streaming after).</summary>
     public double HeadersAt { get; }
 
-    public IReadOnlyList<MpLine> Lines => _lines;
+    public IReadOnlyList<V2Line> Lines => _lines;
 
     public IReadOnlyDictionary<string, (ChipKind Kind, double HealthTakes, StreamHealthStatus Health)> ChipVerdicts => _chips;
 
@@ -105,18 +105,18 @@ internal sealed class MpScript
 
     private readonly Dictionary<string, StreamHealthStatus> _retryVerdicts = new(StringComparer.OrdinalIgnoreCase);
 
-    public static MpScript Headers(double seconds) => new(seconds);
+    public static V2Script Headers(double seconds) => new(seconds);
 
     /// <summary>The <c>chips</c> event: every label LocalService found on the page.</summary>
-    public MpScript Chips(double seconds, params string[] labels)
+    public V2Script Chips(double seconds, params string[] labels)
     {
         var json = "{\"type\":\"chips\",\"streams\":[" + string.Join(",", labels.Select(Quote)) + "]}";
-        _lines.Add(new MpLine(seconds, json, $"chips [{string.Join(", ", labels)}]"));
+        _lines.Add(new V2Line(seconds, json, $"chips [{string.Join(", ", labels)}]"));
         return this;
     }
 
     /// <summary>One <c>chip</c> event.</summary>
-    public MpScript Chip(
+    public V2Script Chip(
         double seconds,
         string label,
         ChipKind kind = ChipKind.Playable,
@@ -127,27 +127,27 @@ internal sealed class MpScript
         _chips[label] = (kind, healthTakes, health);
         if (retryHealth is { } retry)
             _retryVerdicts[label] = retry;
-        _lines.Add(new MpLine(seconds, ChipJson(label, kind), $"chip {label} ({kind})"));
+        _lines.Add(new V2Line(seconds, ChipJson(label, kind), $"chip {label} ({kind})"));
         return this;
     }
 
-    public MpScript Done(double seconds)
+    public V2Script Done(double seconds)
     {
-        _lines.Add(new MpLine(seconds, "{\"type\":\"done\"}", "done"));
+        _lines.Add(new V2Line(seconds, "{\"type\":\"done\"}", "done"));
         return this;
     }
 
     /// <summary>An NDJSON <c>error</c> line that ends the harvest (5xx: LocalService's own failure, infrastructure).</summary>
-    public MpScript Error(double seconds, int statusCode = 500)
+    public V2Script Error(double seconds, int statusCode = 500)
     {
-        _lines.Add(new MpLine(seconds,
+        _lines.Add(new V2Line(seconds,
             "{\"type\":\"error\",\"statusCode\":" + statusCode + ",\"error\":\"mp play execution failed\"}",
             $"error {statusCode}"));
         return this;
     }
 
     /// <summary>A normal harvest: chip list and first chip at ~10s, then one chip per ~1s.</summary>
-    public static MpScript Normal(
+    public static V2Script Normal(
         IReadOnlyList<string> labels,
         double first = 10,
         double then = 1,
@@ -164,7 +164,7 @@ internal sealed class MpScript
     /// headers at 8.4s, ten chips listed, each takes ~10s and none ever carries
     /// probe-ready segments, done at ~111s.
     /// </summary>
-    public static MpScript SlowNoProbeReadySeed(IReadOnlyList<string> labels, double headersAt = 8.4, double every = 10.2, double doneAt = 111)
+    public static V2Script SlowNoProbeReadySeed(IReadOnlyList<string> labels, double headersAt = 8.4, double every = 10.2, double doneAt = 111)
     {
         var script = Headers(headersAt).Chips(headersAt, labels.ToArray());
         for (var i = 0; i < labels.Count; i++)
@@ -188,7 +188,7 @@ internal sealed class MpScript
 }
 
 /// <param name="Retry">What LocalService does with the row's second and later <c>/play</c> (a re-queue pass); null repeats <paramref name="Play"/>.</param>
-internal sealed record RowSpec(string Id, PlayScript? Play, MpScript? Mp, int Run = 1, PlayScript? Retry = null)
+internal sealed record RowSpec(string Id, PlayScript? Play, V2Script? Mp, int Run = 1, PlayScript? Retry = null)
 {
     public bool IsMp => Mp is not null;
 }
@@ -253,7 +253,7 @@ internal sealed class ProbeScenario
     }
 
     /// <summary>An unlabeled catalog MP row (V2 page; LocalService discovers the chips).</summary>
-    public ProbeScenario Mp(string id, MpScript script)
+    public ProbeScenario Mp(string id, V2Script script)
     {
         _rows.Add(new RowSpec(id, null, script, Run));
         return this;

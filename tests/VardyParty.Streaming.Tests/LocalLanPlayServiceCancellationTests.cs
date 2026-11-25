@@ -117,10 +117,10 @@ public class LocalLanPlayServiceCancellationTests
             var path = request.RequestUri?.AbsolutePath ?? "";
             if (path.EndsWith("/health", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK, """{"capabilities":["play.stream","mp.chrome"],"version":"9.9.9"}""");
+                return Json(HttpStatusCode.OK, """{"capabilities":["play.stream","v2.chrome"],"version":"9.9.9"}""");
             }
 
-            if (path.EndsWith("/mp", StringComparison.Ordinal))
+            if (path.EndsWith("/v2", StringComparison.Ordinal))
             {
                 mpEntered.TrySetResult();
                 try

@@ -39,7 +39,7 @@ public class StreamSwitchReuseBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_FbCookieStaysFresh_MpHarvestAttachesWithoutPrewarm()
+    public void Rule_FbCookieStaysFresh_V2HarvestAttachesWithoutPrewarm()
     {
         // Arrange — FB cookie is single-use; MP harvest already streamed playlist to client.
         var fb = Row(M3u8TokenExpiryTests.UzhiUrl, "Channel FB", new Dictionary<string, string> { ["Cookie"] = "fb=1" });

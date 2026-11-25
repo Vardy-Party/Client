@@ -457,7 +457,7 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
-    public async Task StartAsync_MpChipSiblings_JoinPoolBeforeRemainingCatalogFinishes()
+    public async Task StartAsync_V2ChipSiblings_JoinPoolBeforeRemainingCatalogFinishes()
     {
         // Arrange — seed MP plays; sibling chips must reach the healthy pool while
         // a later catalog row is still unresolved (not wait for full catalog).
@@ -714,7 +714,7 @@ public class StreamResolutionOrchestratorTests
     }
 
     [Fact]
-    public async Task StartAsync_SlowMpAtIndexZero_DoesNotHoldHealthyFbFirstPlay()
+    public async Task StartAsync_SlowV2AtIndexZero_DoesNotHoldHealthyFbFirstPlay()
     {
         // Arrange - no recs: MP is tried first, but /mp is slow; a healthy FB
         // at index 1 must open without waiting, and the MP joins the pool after.

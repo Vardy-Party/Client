@@ -82,7 +82,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_RecommendedMpStream_StaysAheadOfFbRemainder()
+    public void Build_RecommendedV2Stream_StaysAheadOfFbRemainder()
     {
         // Arrange
         var streams = new[]
@@ -113,7 +113,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_NoRecommendations_TriesMpFirstThenCatalogOrder()
+    public void Build_NoRecommendations_TriesV2FirstThenCatalogOrder()
     {
         // Arrange — FB ahead of MP in the catalog; MP is still tried first (salt 0).
         var streams = new[]
@@ -135,7 +135,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_UnmatchedRecommendation_FallsBackToMpFirstDiscoveryOrder()
+    public void Build_UnmatchedRecommendation_FallsBackToV2FirstDiscoveryOrder()
     {
         // Arrange
         var streams = new[]
@@ -165,7 +165,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_RecommendedFirst_ThenMpRemainder_ThenFbRemainder()
+    public void Build_RecommendedFirst_ThenV2Remainder_ThenFbRemainder()
     {
         // Arrange — a slow serial FB sweep must not bury the MP page behind it.
         var streams = new[]
@@ -191,7 +191,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_SeveralMpRemainderRows_KeepCatalogOrderAheadOfFb()
+    public void Build_SeveralV2RemainderRows_KeepCatalogOrderAheadOfFb()
     {
         // Arrange
         var streams = new[]
@@ -217,7 +217,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_UnlabeledMpPageRow_IsTriedRightAfterRecommended()
+    public void Build_UnlabeledV2PageRow_IsTriedRightAfterRecommended()
     {
         // Arrange — catalog MP page with no chip labels yet (empty channel name).
         var streams = new[]
@@ -247,7 +247,7 @@ public class StreamTestOrderPolicyTests
     [InlineData(2)]
     [InlineData(7)]
     [InlineData(-5)]
-    public void Build_NoRecommendations_MpStaysFirstForEverySalt(int salt)
+    public void Build_NoRecommendations_V2StaysFirstForEverySalt(int salt)
     {
         // Arrange
         var streams = new[]
@@ -320,7 +320,7 @@ public class StreamTestOrderPolicyTests
     }
 
     [Fact]
-    public void Build_MediumSitsBetweenHighAndLow_ThenMpRemainderBeforeFb()
+    public void Build_MediumSitsBetweenHighAndLow_ThenV2RemainderBeforeFb()
     {
         // Arrange
         var streams = new[]

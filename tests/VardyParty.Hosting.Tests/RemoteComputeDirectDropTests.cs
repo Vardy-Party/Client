@@ -82,8 +82,8 @@ public class RemoteComputeDirectDropTests
     {
         // Arrange
         const string correlationId = "abc12345";
-        var harvest = new MpHarvestSession(mode: MpSeedMode.ProbeReadyOnly);
-        var chips = MpNdjson.ParseLine("""{"type":"chips","streams":["Chip A"]}""");
+        var harvest = new V2HarvestSession(mode: V2SeedMode.ProbeReadyOnly);
+        var chips = V2Ndjson.ParseLine("""{"type":"chips","streams":["Chip A"]}""");
         harvest.Apply(chips!);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var waiting = harvest.WaitForAsync(null, timeout.Token);
@@ -115,7 +115,7 @@ public class RemoteComputeDirectDropTests
     public void MarksResultSeen_ChipWithUrl_IsTrue()
     {
         // Arrange
-        var chip = new MpPlayEvent
+        var chip = new V2PlayEvent
         {
             Type = "chip",
             Label = "Chip A",

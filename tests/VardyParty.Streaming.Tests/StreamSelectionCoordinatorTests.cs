@@ -129,7 +129,7 @@ public class StreamSelectionCoordinatorTests
     }
 
     [Fact]
-    public async Task InitializeAsync_RecommendedMpStream_IsTriedBeforeFbCatalogNeighbors()
+    public async Task InitializeAsync_RecommendedV2Stream_IsTriedBeforeFbCatalogNeighbors()
     {
         // Arrange
         var streams = new List<StreamModel>

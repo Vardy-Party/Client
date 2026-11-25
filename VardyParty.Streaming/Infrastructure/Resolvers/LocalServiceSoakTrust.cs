@@ -48,7 +48,7 @@ public static class LocalServiceSoakTrust
         if (response is null)
             return false;
 
-        if (MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
+        if (V2RewrittenSegment.HasProbeReady(response.RewrittenSegments))
             return true;
 
         // V1/FB /play often returns Referer/Origin without Cookie; ExoPlayer still

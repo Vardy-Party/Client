@@ -12,10 +12,10 @@ namespace VardyParty.Streaming;
 /// sent it nothing while the first ran (TV log 13 Nov 2026, 18:40:32-18:41:06).
 /// Registered as a singleton; tests that build a service by hand get their own hub.
 /// </summary>
-public sealed class MpHarvestHub
+public sealed class V2HarvestHub
 {
     internal readonly object Gate = new();
-    internal MpHarvestSession? Harvest;
+    internal V2HarvestSession? Harvest;
     internal string? Page;
     internal CancellationTokenSource? Cts;
     internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);

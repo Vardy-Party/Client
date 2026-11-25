@@ -336,7 +336,7 @@ namespace VardyParty.Streaming.Tests
         [InlineData(LocalServiceUnavailableReason.CallTimeout)]
         [InlineData(LocalServiceUnavailableReason.ConnectionFailed)]
         [InlineData(LocalServiceUnavailableReason.ServiceError)]
-        [InlineData(LocalServiceUnavailableReason.MpDisabled)]
+        [InlineData(LocalServiceUnavailableReason.V2Disabled)]
         [InlineData(LocalServiceUnavailableReason.Unauthorized)]
         public async Task GetM3U8UrlAsync_LocalServiceUnavailable_Propagates(LocalServiceUnavailableReason reason)
         {

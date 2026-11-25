@@ -41,7 +41,7 @@ public class PlaybackUrlReusePolicyTests
     }
 
     [Fact]
-    public void IsKnownSingleUse_CookieOrRegisteredHost_NotMpHarvest()
+    public void IsKnownSingleUse_CookieOrRegisteredHost_NotV2Harvest()
     {
         // Arrange
         PlaybackUrlReusePolicy.RegisterSingleUseHost("burn-once.northgate.test");
@@ -72,7 +72,7 @@ public class PlaybackUrlReusePolicyTests
     }
 
     [Fact]
-    public void CanReuseCached_MpHarvestProbeReady_RequiresComfortableLifeOrUnused()
+    public void CanReuseCached_V2HarvestProbeReady_RequiresComfortableLifeOrUnused()
     {
         // Arrange — long-lived harvest may AttachCached; unreadable expiry only on first use.
         var longLived = Row(

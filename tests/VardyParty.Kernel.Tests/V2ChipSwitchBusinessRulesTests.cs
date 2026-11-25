@@ -13,12 +13,12 @@ namespace VardyParty.Kernel.Tests;
 /// player stayed on the previous row. A chip with a probed link plays that link at once; a fresh
 /// resolve is only the fallback after that start fails.
 /// </summary>
-public class MpChipSwitchBusinessRulesTests
+public class V2ChipSwitchBusinessRulesTests
 {
     // Path-token style link: no readable expiry.
     private const string ProbedChipUrl = "https://edge7.cdn.example.com/token-AbCdEf1234/live/s2001/v3b/main/super/3x_100001.m3u8";
 
-    internal static EnrichedStream MpChip(string chip, string? url = ProbedChipUrl, Dictionary<string, string>? headers = null) => new()
+    internal static EnrichedStream V2Chip(string chip, string? url = ProbedChipUrl, Dictionary<string, string>? headers = null) => new()
     {
         Stream = new Stream
         {
@@ -35,10 +35,10 @@ public class MpChipSwitchBusinessRulesTests
     };
 
     [Fact]
-    public void Rule_NextOntoProbedMpChip_UnknownExpiry_PlaysProbedLinkAtOnce()
+    public void Rule_NextOntoProbedV2Chip_UnknownExpiry_PlaysProbedLinkAtOnce()
     {
         // Arrange - the TV log's North Sports US row: probed Healthy, Referer soak, unreadable token.
-        var northSports = MpChip("North Sports US");
+        var northSports = V2Chip("North Sports US");
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(northSports, Now);
@@ -52,7 +52,7 @@ public class MpChipSwitchBusinessRulesTests
     public void Rule_NextPrepare_KeepsTheProbedChipLink_NeverClearsItForAFreshResolve()
     {
         // Arrange
-        var northSports = MpChip("North Sports US");
+        var northSports = V2Chip("North Sports US");
 
         // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(northSports, Now, warmEntryReady: false);
@@ -63,10 +63,10 @@ public class MpChipSwitchBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_ProbedMpChip_IsNotPrewarmed()
+    public void Rule_ProbedV2Chip_IsNotPrewarmed()
     {
         // Arrange - a pre-resolve would start another POST /mp beside the page's harvest.
-        var northSports = MpChip("North Sports US");
+        var northSports = V2Chip("North Sports US");
 
         // Act
         var prewarm = PlaybackUrlReusePolicy.ShouldPrewarm(northSports);
@@ -76,10 +76,10 @@ public class MpChipSwitchBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_MpChipWithoutALink_StillResolvesFresh()
+    public void Rule_V2ChipWithoutALink_StillResolvesFresh()
     {
         // Arrange
-        var chip = MpChip("NW IT", url: null);
+        var chip = V2Chip("NW IT", url: null);
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(chip, Now);
@@ -89,10 +89,10 @@ public class MpChipSwitchBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_MpChipWithAKnownSingleUseLink_StillResolvesFresh()
+    public void Rule_V2ChipWithAKnownSingleUseLink_StillResolvesFresh()
     {
         // Arrange - a cookie-bound session cannot be reused.
-        var chip = MpChip("Desert Sports Arabic", headers: new Dictionary<string, string> { ["Referer"] = "https://p.example/", ["Cookie"] = "s=1" });
+        var chip = V2Chip("Desert Sports Arabic", headers: new Dictionary<string, string> { ["Referer"] = "https://p.example/", ["Cookie"] = "s=1" });
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(chip, Now);
@@ -102,10 +102,10 @@ public class MpChipSwitchBusinessRulesTests
     }
 
     [Fact]
-    public void Rule_MpChipWhoseReadableTokenIsNearlyExpired_StillResolvesFresh()
+    public void Rule_V2ChipWhoseReadableTokenIsNearlyExpired_StillResolvesFresh()
     {
         // Arrange - cowedd-style token with 50s left: a readable expiry decides.
-        var chip = MpChip("Sport PT", url: M3u8TokenExpiryTests.CowedUrl);
+        var chip = V2Chip("Sport PT", url: M3u8TokenExpiryTests.CowedUrl);
 
         // Act
         var plan = PlaybackUrlReusePolicy.PlanSwitch(chip, Now.AddSeconds(29));

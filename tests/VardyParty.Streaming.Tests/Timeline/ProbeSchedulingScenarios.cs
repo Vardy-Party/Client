@@ -33,7 +33,7 @@ internal static class ProbeSchedulingScenarios
     /// the others dead.
     /// </summary>
     public static ProbeScenario SlowTenChipPage() => ProbeScenario.Named("Home United v Away City (10 slow chips, 111s harvest)")
-        .Mp("mp-north", MpScript.SlowNoProbeReadySeed(TenChips))
+        .Mp("mp-north", V2Script.SlowNoProbeReadySeed(TenChips))
         .Fb("fb-north", Play.HealthyAt(12))
         .Fb("fb-east", Play.Dead())
         .Fb("fb-south", Play.HealthyAt(15))
@@ -48,7 +48,7 @@ internal static class ProbeSchedulingScenarios
         {
             var id = $"f{i:00}";
             if (i == 40)
-                s.Mp("mp40", MpScript.Normal(["Chip A", "Chip B", "Chip C"]));
+                s.Mp("mp40", V2Script.Normal(["Chip A", "Chip B", "Chip C"]));
             else if (i == 10)
                 s.Fb(id, Play.HealthyAt(8));
             else if (i == 20)
@@ -64,17 +64,17 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>A normal /mp (Jon: ~10s for the first chip, ~1s per extra chip) beside FB rows.</summary>
     public static ProbeScenario NormalMp() => ProbeScenario.Named("Normal MP: first chip ~10s, then ~1s each")
-        .Mp("mp", MpScript.Normal(["A", "B", "C", "D", "E"]))
+        .Mp("mp", V2Script.Normal(["A", "B", "C", "D", "E"]))
         .Fb("fbA", Play.HealthyAt(3))
         .DeadFb("fbB", "fbC");
 
-    public static ProbeScenario SlowMpHealthyFb() => ProbeScenario.Named("Slow MP at try-order 0, healthy FB at 1")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A").Chip(60, "A").Done(61))
+    public static ProbeScenario SlowV2HealthyFb() => ProbeScenario.Named("Slow MP at try-order 0, healthy FB at 1")
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A").Chip(60, "A").Done(61))
         .Fb("south", Play.HealthyAt(5))
         .DeadFb("d1", "d2");
 
-    public static ProbeScenario MpPendingDeadFbs() => ProbeScenario.Named("/mp pending 100s, six dead FB")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A").Chip(100, "A").Done(101))
+    public static ProbeScenario V2PendingDeadFbs() => ProbeScenario.Named("/mp pending 100s, six dead FB")
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A").Chip(100, "A").Done(101))
         .DeadFb("d1", "d2", "d3", "d4", "d5", "d6");
 
     public static ProbeScenario DeadFbsOnly() => ProbeScenario.Named("Six dead FB, no MP")
@@ -93,7 +93,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>Two High recommendations, both healthy inside the head start: they hold both slots; a fast FB and an MP page wait for one.</summary>
     public static ProbeScenario TwoHighHealthy() => ProbeScenario.Named("Two High recommendations healthy at 9s and 10s")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.HealthyAt(8))
         .Fb("h2", Play.HealthyAt(9))
@@ -102,7 +102,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>The only High recommendation is slow (healthy at 31s): finding fills the other slot from 0s and plays first.</summary>
     public static ProbeScenario OneHighSlow() => ProbeScenario.Named("One High recommendation healthy at 31s")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.HealthyAt(30))
         .DeadFb("d1")
@@ -110,7 +110,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>Both High recommendations are dead (20s each); a Low recommendation and the MP page are healthy.</summary>
     public static ProbeScenario HighsDead() => ProbeScenario.Named("Two High recommendations dead, Low and MP healthy")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("l1", Play.HealthyAt(5))
         .Fb("h1", Play.Dead())
         .Fb("h2", Play.Dead())
@@ -120,7 +120,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>Four High recommendations (two dead, two healthy): the top tier keeps both slots while its FB rows wait.</summary>
     public static ProbeScenario FourHighs() => ProbeScenario.Named("Four High recommendations, two healthy")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.Dead())
         .Fb("h2", Play.HealthyAt(9))
@@ -130,7 +130,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>A High-recommended MP page: it takes the MP lane at 0s; the FB rows are finding and fill the other slot.</summary>
     public static ProbeScenario RecommendedMp() => ProbeScenario.Named("High-recommended MP page")
-        .Mp("mp", MpScript.Normal(["A", "B", "C"]))
+        .Mp("mp", V2Script.Normal(["A", "B", "C"]))
         .Fb("f1", Play.HealthyAt(3))
         .DeadFb("d1", "d2")
         .Recommend("mp");
@@ -143,7 +143,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>One High (healthy at 9s) and one Medium (healthy at 11s): the Medium row is the backup.</summary>
     public static ProbeScenario HighPlusMedium() => ProbeScenario.Named("One High healthy at 9s, one Medium at 11s")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.HealthyAt(8))
         .Fb("m1", Play.HealthyAt(10))
@@ -153,7 +153,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>No High, two Medium (one healthy, one dead): one Medium at a time, finding fills the other slot from 0s.</summary>
     public static ProbeScenario NoHighOnlyMedium() => ProbeScenario.Named("No High, two Medium")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("m1", Play.HealthyAt(6))
         .Fb("m2", Play.Dead())
@@ -163,7 +163,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>The High row is dead (20s); the Medium row beside it is healthy at 6s and plays.</summary>
     public static ProbeScenario HighDeadMediumHealthy() => ProbeScenario.Named("High dead, Medium healthy at 6s")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.Dead())
         .Fb("m1", Play.HealthyAt(5))
@@ -208,9 +208,9 @@ internal static class ProbeSchedulingScenarios
     /// Rule 1: the chips of a High-recommended MP page are High rows. Chip B is sent late
     /// (20s) and is appended; Next from the start row still goes to the earlier finding FB row (rule 11).
     /// </summary>
-    public static ProbeScenario HighMpChips() => ProbeScenario.Named("High MP page: its chips are High")
+    public static ProbeScenario HighV2Chips() => ProbeScenario.Named("High MP page: its chips are High")
         .Fb("h1", Play.HealthyAt(25))
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(20, "B").Done(21))
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(20, "B").Done(21))
         .Fb("f1", Play.HealthyAt(3))
         .DeadFb("d1")
         .Recommend("h1").Recommend("mp");
@@ -263,7 +263,7 @@ internal static class ProbeSchedulingScenarios
     /// in the pool (fbA plays at 4s, fbB is ready at 8s, chip A's playlist line at 12s).
     /// </summary>
     public static ProbeScenario PlaylistOnlyWithBackup() => ProbeScenario.Named("Playlist-only chip after the backup is ready: probed at once")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A").Chip(12, "A", ChipKind.PlaylistOnly).Done(90))
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A").Chip(12, "A", ChipKind.PlaylistOnly).Done(90))
         .Fb("fbA", Play.HealthyAt(3))
         .Fb("fbB", Play.HealthyAt(4));
 
@@ -273,7 +273,7 @@ internal static class ProbeSchedulingScenarios
     /// the backup (the early-chip retry no longer applies to a captured playlist).
     /// </summary>
     public static ProbeScenario EarlyChipRetryPasses() => ProbeScenario.Named("Captured playlist-only chip is probed at once and can become the backup")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A")
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A")
             .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.Healthy)
             .Done(90))
         .Fb("fbA", Play.HealthyAt(3))
@@ -281,7 +281,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>A captured playlist that fails its (single) health check is dead at once; there is no early-chip retry.</summary>
     public static ProbeScenario EarlyChipRetryFails() => ProbeScenario.Named("Captured playlist-only chip that fails health is dead at once")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A")
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A")
             .Chip(12, "A", ChipKind.PlaylistOnly, health: StreamHealthStatus.ManifestNotFound)
             .Done(90))
         .Fb("fbA", Play.HealthyAt(3))
@@ -306,8 +306,8 @@ internal static class ProbeSchedulingScenarios
     /// (rule-11 backup push) and waits for m1's slot.
     /// </summary>
     public static ProbeScenario FindingArrivesMidProbe() => ProbeScenario.Named("Finding arrives while two Medium rows run")
-        .Mp("mpA", MpScript.Headers(4).Chips(4, "A").Chip(5, "A", ChipKind.Miss).Done(30))
-        .Mp("mpB", MpScript.Normal(["B1"]))
+        .Mp("mpA", V2Script.Headers(4).Chips(4, "A").Chip(5, "A", ChipKind.Miss).Done(30))
+        .Mp("mpB", V2Script.Normal(["B1"]))
         .Fb("m1", Play.HealthyAt(45))
         .Fb("m2", Play.HealthyAt(35))
         .Fb("m3", Play.HealthyAt(5))
@@ -317,7 +317,7 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary><see cref="TwoHighHealthy"/> with no recommendations: no head start, behaviour unchanged.</summary>
     public static ProbeScenario NoRecs() => ProbeScenario.Named("No recommendations (TwoHighHealthy rows)")
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .Fb("f1", Play.HealthyAt(3))
         .Fb("h1", Play.HealthyAt(8))
         .Fb("h2", Play.HealthyAt(9))
@@ -329,22 +329,22 @@ internal static class ProbeSchedulingScenarios
         .DeadFb("z");
 
     public static ProbeScenario SeedNeverProbeReady() => ProbeScenario.Named("Chip A playlist-only, chip B never sent; harvest runs to 300s")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A", ChipKind.PlaylistOnly).Done(300))
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A", "B").Chip(9, "A", ChipKind.PlaylistOnly).Done(300))
         .DeadFb("d1");
 
     /// <summary>LocalService lists nothing for 50s: the seed gives up at 45s and the retry picks up the chips.</summary>
     public static ProbeScenario SeedSilent() => ProbeScenario.Named("/mp silent for 50s, then chips")
-        .Mp("mp", MpScript.Headers(8).Chips(50, "A", "B").Chip(51, "A").Chip(52, "B").Done(52.5))
+        .Mp("mp", V2Script.Headers(8).Chips(50, "A", "B").Chip(51, "A").Chip(52, "B").Done(52.5))
         .DeadFb("d1", "d2");
 
     /// <summary>Every FB link is dead; the MP page works (first chip ~10s, then ~1s each).</summary>
     public static ProbeScenario AllFbDeadWorkingMp() => ProbeScenario.Named("All FB dead, working MP")
-        .Mp("mp", MpScript.Normal(["A", "B", "C"]))
+        .Mp("mp", V2Script.Normal(["A", "B", "C"]))
         .DeadFb("d1", "d2", "d3", "d4");
 
     /// <summary>Every FB link is dead and the MP page's first chip is dead too; the second chip works.</summary>
     public static ProbeScenario AllFbDeadFirstChipDead() => ProbeScenario.Named("All FB dead, MP chip A dead, chip B works")
-        .Mp("mp", MpScript.Headers(9).Chips(9, "A", "B", "C")
+        .Mp("mp", V2Script.Headers(9).Chips(9, "A", "B", "C")
             .Chip(10, "A", health: StreamHealthStatus.ManifestNotFound)
             .Chip(11, "B")
             .Chip(12, "C")
@@ -353,16 +353,16 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>A listed chip LocalService sends 50s after the chip list, with no other line in between.</summary>
     public static ProbeScenario ChipLateAfterListing() => ProbeScenario.Named("Chip B sent 50s after the chip list, nothing in between")
-        .Mp("mp", MpScript.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(58, "B").Done(59))
+        .Mp("mp", V2Script.Headers(8).Chips(8, "A", "B").Chip(9, "A").Chip(58, "B").Done(59))
         .DeadFb("d1", "d2");
 
     /// <summary>
     /// A High-recommended FB row is slow; with one High row, the Medium-recommended MP
     /// page takes the other slot from 0s (ahead of finding) and is playable first.
     /// </summary>
-    public static ProbeScenario RecommendedMpBeforeSlowFb() => ProbeScenario.Named("Medium MP playable at 11s beside a slow High FB (26s)")
+    public static ProbeScenario RecommendedV2BeforeSlowFb() => ProbeScenario.Named("Medium MP playable at 11s beside a slow High FB (26s)")
         .Fb("north", Play.HealthyAt(25))
-        .Mp("mp", MpScript.Normal(["A", "B"]))
+        .Mp("mp", V2Script.Normal(["A", "B"]))
         .DeadFb("d1")
         .Recommend("north")
         .Recommend("mp", RecommendationConfidence.Medium);
@@ -376,18 +376,18 @@ internal static class ProbeSchedulingScenarios
 
     /// <summary>Jon's normal MP (10s, then 1s per chip) with six chips, no healthy FB.</summary>
     public static ProbeScenario FastMp() => ProbeScenario.Named("Fast MP: six chips, 10s then 1s each")
-        .Mp("mp", MpScript.Normal(["A", "B", "C", "D", "E", "F"]))
+        .Mp("mp", V2Script.Normal(["A", "B", "C", "D", "E", "F"]))
         .DeadFb("d1", "d2", "d3", "d4");
 
     /// <summary>MP chips that only ever carry a playlist (no rewritten segments).</summary>
     public static ProbeScenario PlaylistOnlyMp() => ProbeScenario.Named("MP chips playlist-only")
-        .Mp("mp", MpScript.Normal(["A", "B", "C"], kind: ChipKind.PlaylistOnly))
+        .Mp("mp", V2Script.Normal(["A", "B", "C"], kind: ChipKind.PlaylistOnly))
         .Fb("fbA", Play.HealthyAt(5))
         .DeadFb("fbB", "fbC");
 
     /// <summary>MP lists five chips; A-C are misses, D and E are never sent; done at 15s (rule 6: one POST).</summary>
     public static ProbeScenario AllChipsMiss() => ProbeScenario.Named("MP lists 5 chips, every chip a miss, done at 15s")
-        .Mp("mp", MpScript.Headers(9).Chips(9, "A", "B", "C", "D", "E")
+        .Mp("mp", V2Script.Headers(9).Chips(9, "A", "B", "C", "D", "E")
             .Chip(10, "A", ChipKind.Miss)
             .Chip(11, "B", ChipKind.Miss)
             .Chip(12, "C", ChipKind.Miss)
@@ -395,15 +395,15 @@ internal static class ProbeSchedulingScenarios
         .DeadFb("d1", "d2", "d3");
 
     /// <summary>Two MP pages: page B waits for page A's harvest (LocalService runs one /mp).</summary>
-    public static ProbeScenario TwoMpPages() => ProbeScenario.Named("Two MP pages, one /mp at a time")
-        .Mp("mpA", MpScript.Normal(["A1", "A2", "A3", "A4", "A5"]))
-        .Mp("mpB", MpScript.Normal(["B1", "B2", "B3"]))
+    public static ProbeScenario TwoV2Pages() => ProbeScenario.Named("Two MP pages, one /mp at a time")
+        .Mp("mpA", V2Script.Normal(["A1", "A2", "A3", "A4", "A5"]))
+        .Mp("mpB", V2Script.Normal(["B1", "B2", "B3"]))
         .DeadFb("d1", "d2", "d3", "d4", "d5", "d6")
         .WithoutPriorityWindow();
 
     /// <summary>The harvest fails midway: a 500 error line after 3 of 10 chips.</summary>
     public static ProbeScenario HarvestFaultsMidway() => ProbeScenario.Named("MP harvest 500s after 3 of 10 chips")
-        .Mp("mp", MpScript.Headers(9).Chips(9, TenChips)
+        .Mp("mp", V2Script.Headers(9).Chips(9, TenChips)
             .Chip(10, "Alpha")
             .Chip(11, "Bravo US")
             .Chip(12, "Charlie2")
@@ -412,8 +412,8 @@ internal static class ProbeSchedulingScenarios
         .WithoutPriorityWindow();
 
     /// <summary>LocalService fails /mp (500) before listing anything: the slot comes back on the error path.</summary>
-    public static ProbeScenario MpErrorsBeforeListing() => ProbeScenario.Named("MP 500s at 5s before listing chips")
-        .Mp("mp", MpScript.Headers(4).Error(5))
+    public static ProbeScenario V2ErrorsBeforeListing() => ProbeScenario.Named("MP 500s at 5s before listing chips")
+        .Mp("mp", V2Script.Headers(4).Error(5))
         .DeadFb("d1", "d2", "d3", "d4")
         .WithoutPriorityWindow();
 
@@ -422,10 +422,10 @@ internal static class ProbeSchedulingScenarios
     /// run 1 is cancelled, so its harvest is cancelled and run 2's page can POST at once.
     /// </summary>
     public static ProbeScenario CancelMidHarvest() => ProbeScenario.Named("Match switch at t+20 mid-harvest")
-        .Mp("mpA", MpScript.Headers(8).Chips(25, "A1", "A2").Chip(26, "A1").Chip(27, "A2").Done(27.5))
+        .Mp("mpA", V2Script.Headers(8).Chips(25, "A1", "A2").Chip(26, "A1").Chip(27, "A2").Done(27.5))
         .DeadFb("d1", "d2")
         .ThenSwitchAt(20)
-        .Mp("mpB", MpScript.Normal(["B1", "B2"]))
+        .Mp("mpB", V2Script.Normal(["B1", "B2"]))
         .DeadFb("e1")
         .WithoutPriorityWindow();
 
@@ -435,8 +435,8 @@ internal static class ProbeSchedulingScenarios
         (nameof(SlowTenChipPage), SlowTenChipPage),
         (nameof(BuriedMp54Rows), BuriedMp54Rows),
         (nameof(NormalMp), NormalMp),
-        (nameof(SlowMpHealthyFb), SlowMpHealthyFb),
-        (nameof(MpPendingDeadFbs), MpPendingDeadFbs),
+        (nameof(SlowV2HealthyFb), SlowV2HealthyFb),
+        (nameof(V2PendingDeadFbs), V2PendingDeadFbs),
         (nameof(DeadFbsOnly), DeadFbsOnly),
         (nameof(PriorityWindow), PriorityWindow),
         (nameof(CdnUnreachableFirst), CdnUnreachableFirst),
@@ -447,11 +447,11 @@ internal static class ProbeSchedulingScenarios
         (nameof(FastMp), FastMp),
         (nameof(PlaylistOnlyMp), PlaylistOnlyMp),
         (nameof(AllChipsMiss), AllChipsMiss),
-        (nameof(TwoMpPages), TwoMpPages),
+        (nameof(TwoV2Pages), TwoV2Pages),
         (nameof(HarvestFaultsMidway), HarvestFaultsMidway),
-        (nameof(MpErrorsBeforeListing), MpErrorsBeforeListing),
+        (nameof(V2ErrorsBeforeListing), V2ErrorsBeforeListing),
         (nameof(ChipLateAfterListing), ChipLateAfterListing),
-        (nameof(RecommendedMpBeforeSlowFb), RecommendedMpBeforeSlowFb),
+        (nameof(RecommendedV2BeforeSlowFb), RecommendedV2BeforeSlowFb),
         (nameof(FbBeforeSlowRecommended), FbBeforeSlowRecommended),
         (nameof(TwoHighHealthy), TwoHighHealthy),
         (nameof(OneHighSlow), OneHighSlow),
@@ -466,7 +466,7 @@ internal static class ProbeSchedulingScenarios
         (nameof(EarlyFbBeforeLateHigh), EarlyFbBeforeLateHigh),
         (nameof(EarlyFbBeforeLateMedium), EarlyFbBeforeLateMedium),
         (nameof(DeadHighSlotToMedium), DeadHighSlotToMedium),
-        (nameof(HighMpChips), HighMpChips),
+        (nameof(HighV2Chips), HighV2Chips),
         (nameof(MediumCapAfterHeadStart), MediumCapAfterHeadStart),
         (nameof(MediumCapInReQueuePass), MediumCapInReQueuePass),
         (nameof(MediumOnlyNoFinding), MediumOnlyNoFinding),
@@ -501,12 +501,12 @@ internal static class ProbeSchedulingScenarios
             NoIdleSlotWhileQueued()),
 
         new("R2 /mp holds a slot only until its chips are listed", "R2 R3 R4",
-            MpPendingDeadFbs,
+            V2PendingDeadFbs,
             SessionsAtMostUntilListed("mp"),
-            MpHoldsNoSlotFrom(8.001),
+            V2HoldsNoSlotFrom(8.001),
             PlaysBesideHarvestAtLeast(2),
             LocalServiceSessionsNeverExceed(3),
-            MpPostsAtOnceNeverExceed(1),
+            V2PostsAtOnceNeverExceed(1),
             SlotsNeverExceed(2),
             NoSlotHeldAtEnd()),
 
@@ -518,11 +518,11 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp:E", StreamResolutionStatus.Healthy),
             PoolOrder("fbA", "mp", "mp:B", "mp:C", "mp:D", "mp:E"),
             SessionsAtMostUntilListed("mp"),
-            MpPostCount("mp", 1),
+            V2PostCount("mp", 1),
             NoIdleSlotWhileQueued()),
 
         new("R9 slow MP never holds a healthy FB first play; a chip sent late still joins", "R7 R9 R10",
-            SlowMpHealthyFb,
+            SlowV2HealthyFb,
             FirstPlayOn("south"), FirstPlayBy(6.001),
             FirstPlayWithinOfFirstHealthy(),
             // Listed at 8s, nothing more until 60s: the chip row waits in the queue
@@ -537,12 +537,12 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp:B", StreamResolutionStatus.Healthy, 58.9, 59.1),
             NoRowOfPageEnds("mp", StreamResolutionStatus.Deferred),
             NoRowOfPageEnds("mp", StreamResolutionStatus.Failed),
-            MpPostCount("mp", 1),
+            V2PostCount("mp", 1),
             NoIdleSlotWhileQueued(),
             NoSlotHeldAtEnd()),
 
         new("R1 R9 one High row: the Medium MP takes the other slot at 0s and plays first", "R1 R9 R10",
-            RecommendedMpBeforeSlowFb,
+            RecommendedV2BeforeSlowFb,
             TopTierIs("north"), MediumTierIs("mp"),
             PostStartsBetween("mp", 0, 0.001),
             // d1 (finding) asks at once but waits: High and Medium hold both slots.
@@ -589,7 +589,7 @@ internal static class ProbeSchedulingScenarios
             SlowTenChipPage,
             SeedReleasesSlotBy("mp-north", 8.401),
             SessionsAtMostUntilListed("mp-north"),
-            MpHoldsNoSlotFrom(8.401),
+            V2HoldsNoSlotFrom(8.401),
             PlaysBesideHarvestAtLeast(2),
             LocalServiceSessionsNeverExceed(3)),
 
@@ -599,10 +599,10 @@ internal static class ProbeSchedulingScenarios
             ChipsVisibleWithin("mp-north"),
             RowEnds("mp-north", StreamResolutionStatus.Healthy),
             RowEnds("mp-north:Juliet", StreamResolutionStatus.Healthy),
-            MpPostCount("mp-north", 1)),
+            V2PostCount("mp-north", 1)),
 
         new("R4 two FB at once beside a listed /mp harvest; the waiting chip never holds the MP lane", "R4 R7",
-            MpPendingDeadFbs,
+            V2PendingDeadFbs,
             PlaysBesideHarvestAtLeast(2),
             // d2 starts at 8s (the chip list frees /mp's slot), so six 20s dead FB end at 68s.
             RowEnds("d6", StreamResolutionStatus.Failed, 67.9, 68.1),
@@ -614,7 +614,7 @@ internal static class ProbeSchedulingScenarios
             SeedSilent,
             SeedReleasesSlotBy("mp", ProbeAcceptance.SeedGiveUpSeconds + 0.001),
             SessionsAtMostUntilListed("mp"),
-            MpHoldsNoSlotFrom(ProbeAcceptance.SeedGiveUpSeconds + 0.001),
+            V2HoldsNoSlotFrom(ProbeAcceptance.SeedGiveUpSeconds + 0.001),
             ChipsQueued("mp", 2, by: 53.001),
             RowEnds("mp", StreamResolutionStatus.Healthy, 52.9, 53.1),
             RowEnds("mp:B", StreamResolutionStatus.Healthy, 53.9, 54.1)),
@@ -627,7 +627,7 @@ internal static class ProbeSchedulingScenarios
             // B is never sent: its row waits in the queue (not the MP lane) and reads
             // the finished harvest's verdict when it ends at 300s.
             RowEnds("mp:B", StreamResolutionStatus.Failed, 299.9, 300.1),
-            MpPostCount("mp", 1)),
+            V2PostCount("mp", 1)),
 
         new("R9 all FB dead: first play on the MP page's first chip", "R6 R9",
             AllFbDeadWorkingMp,
@@ -665,18 +665,18 @@ internal static class ProbeSchedulingScenarios
 
         new("R6 every chip a miss: one POST /mp, every chip Failed from that harvest", "R3 R6",
             AllChipsMiss,
-            MpPostCount("mp", 1),
+            V2PostCount("mp", 1),
             RowsEnd(StreamResolutionStatus.Failed, "mp", "mp:B", "mp:C", "mp:D", "mp:E"),
             RowEnds("mp:E", StreamResolutionStatus.Failed, 14.9, 15.1),
             NoIdleSlotWhileQueued()),
 
         new("R3 two MP pages: page B waits for page A's harvest; A's chips still probed", "R2 R3 R4",
-            TwoMpPages,
-            MpPostsAtOnceNeverExceed(1),
+            TwoV2Pages,
+            V2PostsAtOnceNeverExceed(1),
             // A's lane frees at 15s (A5's health check); B's POST then waits for a
             // LocalService slot (d1 ends at 20s): never 3 sessions while B loads.
             PostStartsBetween("mpB", 20, 20.001),
-            MpPostCount("mpA", 1), MpPostCount("mpB", 1),
+            V2PostCount("mpA", 1), V2PostCount("mpB", 1),
             RowsEnd(StreamResolutionStatus.Healthy, "mpA", "mpA:A2", "mpA:A3", "mpA:A4", "mpA:A5", "mpB", "mpB:B2", "mpB:B3"),
             RowEnds("mpA:A5", StreamResolutionStatus.Healthy, 14.9, 15.1),
             SessionsAtMostUntilListed("mpA"), SessionsAtMostUntilListed("mpB"),
@@ -690,12 +690,12 @@ internal static class ProbeSchedulingScenarios
             RowsEnd(StreamResolutionStatus.Deferred, "mp:Delta IT", "mp:Echo FR", "mp:Foxtrot Arabic", "mp:Golf PT", "mp:Hotel TH", "mp:India VN", "mp:Juliet"),
             NoRowOfPageEnds("mp", StreamResolutionStatus.Failed),
             RowEnds("mp:Juliet", StreamResolutionStatus.Deferred, 13, 14.001),
-            MpPostCount("mp", 1),
-            MpHoldsNoSlotFrom(9.001),
+            V2PostCount("mp", 1),
+            V2HoldsNoSlotFrom(9.001),
             NoSlotHeldAtEnd()),
 
         new("R2 R13 /mp 500 before listing: slot back on the error path, row Deferred", "R2 R13",
-            MpErrorsBeforeListing,
+            V2ErrorsBeforeListing,
             NoRowOfPageEnds("mp", StreamResolutionStatus.Failed),
             RowEnds("mp", StreamResolutionStatus.Deferred),
             SessionsAtMostUntilListed("mp"),
@@ -705,7 +705,7 @@ internal static class ProbeSchedulingScenarios
         new("R3 match switch mid-harvest: the harvest is cancelled and the next page POSTs at once", "R3",
             CancelMidHarvest,
             PostStartsBetween("mpB", 20, 20.001),
-            MpPostsAtOnceNeverExceed(1),
+            V2PostsAtOnceNeverExceed(1),
             NoRowOfPageEnds("mpA", StreamResolutionStatus.Failed),
             RowEnds("mpB:B2", StreamResolutionStatus.Healthy),
             LocalServiceSessionsNeverExceed(3),
@@ -860,8 +860,8 @@ internal static class ProbeSchedulingScenarios
             RowEnds("mp", StreamResolutionStatus.Healthy, 12.9, 13.1),
             BackupIs("mp"), BackupReadyBy(13.101),
             PoolOrder("fbA", "mp"),
-            MpPostCount("mp", 1),
-            MpHoldsNoSlotFrom(8.001),
+            V2PostCount("mp", 1),
+            V2HoldsNoSlotFrom(8.001),
             ProbeTimingLogged("slot-grant", "slot-release", "mp-chips", "chip-listed",
                 "chip-handover:handover=probe-ready", "health-end:result=Healthy", "verdict")),
 
@@ -871,8 +871,8 @@ internal static class ProbeSchedulingScenarios
             ChipHealthChecks("mp:A", 1, StreamHealthStatus.ManifestNotFound, 12.9, 13.1),
             RowEnds("mp", StreamResolutionStatus.Failed, 12.9, 13.1),
             NoBackup(),
-            MpPostCount("mp", 1),
-            MpHoldsNoSlotFrom(8.001)),
+            V2PostCount("mp", 1),
+            V2HoldsNoSlotFrom(8.001)),
 
         new("R11 R13 CDN recheck with a backup in the pool: the first recheck waits 2 min", "R11 R13",
             CdnRecheckWithBackup,
@@ -907,7 +907,7 @@ internal static class ProbeSchedulingScenarios
             MediumRunningNeverExceeds(1)),
 
         new("R1 R11 the chips of a High MP page are High: probed as High, a late chip is appended", "R1 R6 R11",
-            HighMpChips,
+            HighV2Chips,
             TopTierIs("h1", "mp"),
             HighTierIncludes("mp", "mp:B"),
             FirstPlayOn("mp"), FirstPlayBy(10.001),

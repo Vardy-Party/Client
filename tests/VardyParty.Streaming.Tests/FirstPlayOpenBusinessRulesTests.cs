@@ -186,13 +186,13 @@ public class FirstPlayOpenBusinessRulesTests
     }
 
     [Fact]
-    public async Task Rule_MpHarvestProbeReady_OpensWithoutFreshPlay()
+    public async Task Rule_V2HarvestProbeReady_OpensWithoutFreshPlay()
     {
         // Arrange — /mp streamed playlist + rewritten segments; token still has MinComfortableLife
         // vs orchestrator UtcNow (frozen fixture UzhiUrl is already past wall-clock).
         var harvestUrl =
             $"https://cdn.example.com/mp-harvest.m3u8?e={DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()}";
-        var mp = MpHealthy("Channel MP Alpha", harvestUrl);
+        var mp = V2Healthy("Channel MP Alpha", harvestUrl);
         Candidates(mp);
         ResolverYields(_ => _resolver.Yield(mp));
         var played = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -430,7 +430,7 @@ public class FirstPlayOpenBusinessRulesTests
             .Create();
     }
 
-    private EnrichedStream MpHealthy(string name, string url)
+    private EnrichedStream V2Healthy(string name, string url)
     {
         var stream = _fixture.Build<StreamModel>()
             .With(s => s.Url, $"{PageUrl}#{name}")

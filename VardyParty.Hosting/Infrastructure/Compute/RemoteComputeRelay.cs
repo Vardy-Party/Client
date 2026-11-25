@@ -49,10 +49,10 @@ public sealed class RemoteComputePlayClient(
     /// </summary>
     internal static readonly TimeSpan RelayPingInterval = TimeSpan.FromSeconds(20);
 
-    private static readonly TimeSpan MpTimeout = RemoteComputeHttp.FindingStreamsTimeout;
+    private static readonly TimeSpan V2Timeout = RemoteComputeHttp.FindingStreamsTimeout;
     private readonly object _harvestGate = new();
     private readonly RelaySocketGate _socketGate = new();
-    private MpHarvestSession? _mpHarvest;
+    private V2HarvestSession? _mpHarvest;
     private string? _mpHarvestPage;
 
     /// <summary>
@@ -108,7 +108,7 @@ public sealed class RemoteComputePlayClient(
         }
         if (useMp)
         {
-            MpHarvestSession? existing = null;
+            V2HarvestSession? existing = null;
             lock (_harvestGate)
             {
                 if (_mpHarvest?.CanReuseFor(_mpHarvestPage, streamUrl) == true)
@@ -153,7 +153,7 @@ public sealed class RemoteComputePlayClient(
                 if (useMp)
                 {
                     method = "POST";
-                    path = "/mp";
+                    path = "/v2";
                     body = JsonSerializer.Serialize(new
                     {
                         pageUrl = streamUrl,
@@ -181,7 +181,7 @@ public sealed class RemoteComputePlayClient(
                     }
 
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(MpTimeout);
+                    timeout.CancelAfter(V2Timeout);
                     try
                     {
                         await session.SendAsync(new { t = "rpc", id, cid = correlationId, method, path, headers, body }, cancellationToken)
@@ -209,7 +209,7 @@ public sealed class RemoteComputePlayClient(
                             cid = correlationId,
                             level = "error",
                             source = "guest",
-                            message = $"Guest timed out after {(int)MpTimeout.TotalSeconds}s"
+                            message = $"Guest timed out after {(int)V2Timeout.TotalSeconds}s"
                         }, CancellationToken.None).ConfigureAwait(false);
                         harvest.Complete(failed: true);
                         return Fail(correlationId, "Local service", "Timed out waiting for the remote PC");
@@ -227,7 +227,7 @@ public sealed class RemoteComputePlayClient(
                     finally
                     {
                         harvestOwnsSocket = true;
-                        lease.HandOff(FinishMpHarvestAsync(session, receive, harvest, socket));
+                        lease.HandOff(FinishV2HarvestAsync(session, receive, harvest, socket));
                     }
                 }
 
@@ -295,7 +295,7 @@ public sealed class RemoteComputePlayClient(
         }
     }
 
-    private async Task FinishMpHarvestAsync(GuestSession session, Task receive, MpHarvestSession harvest, WebSocket socket)
+    private async Task FinishV2HarvestAsync(GuestSession session, Task receive, V2HarvestSession harvest, WebSocket socket)
     {
         try
         {
@@ -372,7 +372,7 @@ public sealed class RemoteComputePlayClient(
             ["X-Correlation-Id"] = correlationId,
             ["X-Vardy-Doh"] = enabled ? "1" : "0"
         };
-        headers[MpNdjson.RequestHeaderName] = "1";
+        headers[V2Ndjson.RequestHeaderName] = "1";
         if (!string.IsNullOrWhiteSpace(connection?.Id))
         {
             headers[LocalServiceConnection.HeaderName] = connection.Id;
@@ -476,7 +476,7 @@ public sealed class RemoteComputePlayClient(
     {
         private readonly SemaphoreSlim _send = new(1, 1);
         private readonly ConcurrentDictionary<string, TaskCompletionSource<(int Status, string Body)>> _pending = new(StringComparer.Ordinal);
-        private readonly ConcurrentDictionary<string, MpHarvestSession> _harvests = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, V2HarvestSession> _harvests = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<int, TcpClient> _clients = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly object _directGate = new();
@@ -510,11 +510,11 @@ public sealed class RemoteComputePlayClient(
             return pending.Task;
         }
 
-        public MpHarvestSession ArmHarvest(string id)
+        public V2HarvestSession ArmHarvest(string id)
         {
             // The relay reads an empty URL as a miss (EmptyHarvestFault), so its seed keeps
             // waiting for a probe-ready chip rather than answering with the chip list.
-            var harvest = new MpHarvestSession(mode: MpSeedMode.ProbeReadyOnly);
+            var harvest = new V2HarvestSession(mode: V2SeedMode.ProbeReadyOnly);
             _harvests[id] = harvest;
             return harvest;
         }
@@ -671,7 +671,7 @@ public sealed class RemoteComputePlayClient(
                 var partBody = frame.TryGetProperty("body", out var partBodyEl) ? partBodyEl.GetString() ?? "" : "";
                 if (_harvests.TryGetValue(partId, out var partHarvest))
                 {
-                    var ev = MpNdjson.ParseLine(partBody);
+                    var ev = V2Ndjson.ParseLine(partBody);
                     if (ev is not null)
                     {
                         partHarvest.Apply(ev);

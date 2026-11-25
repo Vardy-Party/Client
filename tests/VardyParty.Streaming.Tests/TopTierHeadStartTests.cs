@@ -73,7 +73,7 @@ public class TopTierHeadStartTests
     }
 
     [Fact]
-    public void Select_MpChipRecommendation_MatchesItsPageRow()
+    public void Select_V2ChipRecommendation_MatchesItsPageRow()
     {
         // Arrange — the recommendation names a chip; the catalog row is the unlabeled page.
         var page = new StreamModel { Url = "https://mp.example.test/mp", Channel = "", ResolutionStrategy = "v2", Source = "mp" };

@@ -15,7 +15,7 @@ namespace VardyParty.Playback.Tests;
 /// being immediate". A V2 chip with a usable probed link must switch with no LocalService
 /// call; a switch whose target cannot be resolved must not silently stay put.
 /// </summary>
-public class MpChipSwitchPlaybackTests
+public class V2ChipSwitchPlaybackTests
 {
     private const string HomeChipUrl = "https://edge.cdn-chip.test/token-LU4q/cfall/s2001/v3b/4qqp/super/3x_942237.m3u8";
     private const string NorthChipUrl = "https://edge.cdn-chip.test/token-LBV6/cfall/s2001/v3b/s538/hedy/sx_944566.m3u8";
@@ -28,7 +28,7 @@ public class MpChipSwitchPlaybackTests
     private readonly List<PlaybackCommand> _commands = new();
     private Func<EnrichedStream, CancellationToken, Task<string?>> _resolve = (_, _) => Task.FromResult<string?>(null);
 
-    public MpChipSwitchPlaybackTests()
+    public V2ChipSwitchPlaybackTests()
     {
         _pool.Initialize("Fictional League", "Home United", "Away City");
     }
@@ -65,7 +65,7 @@ public class MpChipSwitchPlaybackTests
         => sut.SwitchToCurrentAsync(false, _status.Add, revert => revert());
 
     [Fact]
-    public async Task Rule_NextOntoProbedHealthyMpChip_UnknownExpiry_SwitchesImmediately_WithNoLocalServiceCall()
+    public async Task Rule_NextOntoProbedHealthyV2Chip_UnknownExpiry_SwitchesImmediately_WithNoLocalServiceCall()
     {
         // Arrange - Chip Home plays; Chip North was probed Healthy (unreadable token, Referer soak).
         var chipHome = Chip("Chip Home", HomeChipUrl);
@@ -88,7 +88,7 @@ public class MpChipSwitchPlaybackTests
     }
 
     [Fact]
-    public async Task Rule_AutoAdvanceOntoProbedMpChip_AttachesProbedLink_WithNoLocalServiceCall()
+    public async Task Rule_AutoAdvanceOntoProbedV2Chip_AttachesProbedLink_WithNoLocalServiceCall()
     {
         // Arrange - the playing row was removed after a failure; the pool's current row is Chip North.
         var chipNorth = Chip("Chip North", NorthChipUrl);

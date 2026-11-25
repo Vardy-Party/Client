@@ -180,7 +180,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_MpStreams_StaySingleFlight()
+    public async Task ResolveStreamsIncrementallyAsync_V2Streams_StaySingleFlight()
     {
         var first = _fixture.Build<Stream>()
             .With(s => s.Url, "https://mp.example.test/a")
@@ -593,7 +593,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_MpChips_EnqueuesRemainingLabels()
+    public async Task ResolveStreamsIncrementallyAsync_V2Chips_EnqueuesRemainingLabels()
     {
         var page = "https://www.example-mp.test/football/match.html";
         var stream = _fixture.Build<Stream>()
@@ -652,7 +652,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_RemoteCompute_EnqueuesRemainingMpChipsLikeLan()
+    public async Task ResolveStreamsIncrementallyAsync_RemoteCompute_EnqueuesRemainingV2ChipsLikeLan()
     {
         var page = "https://www.example-mp.test/football/match.html";
         var stream = _fixture.Build<Stream>()
@@ -706,7 +706,7 @@ public class StreamResolverTests
     }
 
     [Fact]
-    public async Task ResolveStreamsIncrementallyAsync_MpChips_EnqueuesRemainingWhenFirstHasNoPlaylist()
+    public async Task ResolveStreamsIncrementallyAsync_V2Chips_EnqueuesRemainingWhenFirstHasNoPlaylist()
     {
         var page = "https://www.example-mp.test/football/match.html";
         var stream = _fixture.Build<Stream>()

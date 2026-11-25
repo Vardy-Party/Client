@@ -46,7 +46,7 @@ public class StreamResolver(
 
         // Catalog MP rows often have no chip labels yet — LocalService discovers them
         // on the first /mp. Keep overlay total unknown (indeterminate) until then.
-        if (!pending.Any(HasUnknownMpChipFanOut))
+        if (!pending.Any(HasUnknownV2ChipFanOut))
         {
             onTotalStreamsKnown?.Invoke(pending.Count);
         }
@@ -72,7 +72,7 @@ public class StreamResolver(
         var activeMp = 0;
         var activeFb = 0;
         var pauseLogged = false;
-        var harvestProbe = localLanPlayService as IMpHarvestProbe;
+        var harvestProbe = localLanPlayService as IV2HarvestProbe;
         // MP pages this run has touched: while the run lives it wants their harvest; a
         // cancelled run lets go, so LocalService's single /mp is not held for nobody.
         var wantedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -127,7 +127,7 @@ public class StreamResolver(
                 if ((!high && !medium) || yielded.Contains(row))
                     continue;
                 var queued = !started.Contains(i);
-                if (queued && !MpPageUrl.IsV2Stream(row))
+                if (queued && !V2PageUrl.IsV2Stream(row))
                 {
                     highFbQueued |= high;
                     mediumFbQueued |= medium;
@@ -141,7 +141,7 @@ public class StreamResolver(
 
             var inHeadStart = headStart is { IsElapsed: false };
             var backupWanted = raceThrottle?.BackupWanted == true;
-            var isMp = MpPageUrl.IsV2Stream(candidate);
+            var isMp = V2PageUrl.IsV2Stream(candidate);
             // The first two High rows are taken: a queued High row is a third (or later) one.
             var leadHighsTaken = highRunning + highHealthy >= 2;
             if (tiers.IsHigh(candidate))
@@ -156,7 +156,7 @@ public class StreamResolver(
             // while the page loads and then needs chip probes: such an MP row waits while a
             // later High FB row is queued.
             if (laterHighFbQueued && isMp && !tiers.IsMedium(candidate)
-                && harvestProbe?.IsMpChipReady(candidate.Url, GetPlayerStreamName(candidate)) != true)
+                && harvestProbe?.IsV2ChipReady(candidate.Url, GetPlayerStreamName(candidate)) != true)
                 return true;
             if (tiers.IsMedium(candidate))
             {
@@ -189,7 +189,7 @@ public class StreamResolver(
                 for (var i = 0; i < pending.Count; i++)
                 {
                     var row = pending[i];
-                    if (started.Contains(i) && !yielded.Contains(row) && MpPageUrl.IsV2Stream(row)
+                    if (started.Contains(i) && !yielded.Contains(row) && V2PageUrl.IsV2Stream(row)
                         && GetPlayerStreamName(row) is null && !tiers!.IsHigh(row) && !tiers.IsMedium(row))
                         seeds++;
                 }
@@ -206,7 +206,7 @@ public class StreamResolver(
 
                 if (tiers!.IsHigh(row) || tiers.IsMedium(row) || HoldsFinding(i))
                     continue;
-                var rowIsMp = MpPageUrl.IsV2Stream(row);
+                var rowIsMp = V2PageUrl.IsV2Stream(row);
                 if (!rowIsMp)
                 {
                     if (!mpLane)
@@ -217,7 +217,7 @@ public class StreamResolver(
                 if (activeMp > 0)
                     continue;
                 var chip = GetPlayerStreamName(row);
-                var ready = harvestProbe?.IsMpChipReady(row.Url, chip) == true;
+                var ready = harvestProbe?.IsV2ChipReady(row.Url, chip) == true;
                 if (forLaterHigh)
                 {
                     // A later High row yields only to a chip the harvest holds (MP lane).
@@ -288,7 +288,7 @@ public class StreamResolver(
             {
                 activeMp++;
                 if (harvestProbe is not null && wantedPages.Add(stream.Url))
-                    pageWants.Add(harvestProbe.WantMpPage(stream.Url, cancellationToken));
+                    pageWants.Add(harvestProbe.WantV2Page(stream.Url, cancellationToken));
             }
             else
             {
@@ -313,7 +313,7 @@ public class StreamResolver(
             inFlight.Add((task, isMp));
         }
 
-        void FanOutLateMpChips()
+        void FanOutLateV2Chips()
         {
             if (harvestProbe is null)
                 return;
@@ -321,19 +321,19 @@ public class StreamResolver(
             // Snapshot first: InsertUnstarted mutates `pending`, and a deferred
             // LINQ walk over that List throws InvalidOperationException.
             var pages = pending
-                .Where(MpPageUrl.IsV2Stream)
+                .Where(V2PageUrl.IsV2Stream)
                 .Select(st => st.Url)
                 .Where(u => !string.IsNullOrWhiteSpace(u))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             foreach (var pageUrl in pages)
             {
-                var labels = harvestProbe.ListedMpChips(pageUrl);
+                var labels = harvestProbe.ListedV2Chips(pageUrl);
                 if (labels.Count == 0)
                     continue;
 
                 bool SamePage(Stream st) =>
-                    MpPageUrl.IsV2Stream(st)
+                    V2PageUrl.IsV2Stream(st)
                     && string.Equals(st.Url, pageUrl, StringComparison.OrdinalIgnoreCase);
                 var seed = pending.FirstOrDefault(st => SamePage(st) && string.IsNullOrWhiteSpace(st.PlayerStream))
                     ?? pending.First(SamePage);
@@ -357,7 +357,7 @@ public class StreamResolver(
 
         void FillWindow()
         {
-            FanOutLateMpChips();
+            FanOutLateV2Chips();
 
             // A startup race or the post-first-play priority window holds the
             // LocalService cap: finish what is in flight, start no new browser
@@ -387,7 +387,7 @@ public class StreamResolver(
                 int? pick = null;
                 for (var i = nextIndex; i < pending.Count; i++)
                 {
-                    if (started.Contains(i) || MpPageUrl.IsV2Stream(pending[i]))
+                    if (started.Contains(i) || V2PageUrl.IsV2Stream(pending[i]))
                         continue;
                     if (tiersOnly && !tiers!.IsHigh(pending[i]) && !tiers.IsMedium(pending[i]))
                         continue;
@@ -406,7 +406,7 @@ public class StreamResolver(
         }
 
         // The MP lane takes a chip the harvest already holds first, so one chip
-        // still soaking (up to MpHarvestSession.ProbeReadyWait) does not hold up
+        // still soaking (up to V2HarvestSession.ProbeReadyWait) does not hold up
         // the ready ones; otherwise the next MP row in queue order that will not just
         // wait on a running harvest (rule 7: a chip the harvest has not answered yet,
         // or another page's row, stays queued and is woken by the harvest). During a
@@ -417,12 +417,12 @@ public class StreamResolver(
             int? firstMp = null;
             for (var i = nextIndex; i < pending.Count; i++)
             {
-                if (started.Contains(i) || !MpPageUrl.IsV2Stream(pending[i]))
+                if (started.Contains(i) || !V2PageUrl.IsV2Stream(pending[i]))
                     continue;
                 if (HoldsFinding(i))
                     continue;
                 var chip = GetPlayerStreamName(pending[i]);
-                if (harvestProbe?.IsMpChipReady(pending[i].Url, chip) == true)
+                if (harvestProbe?.IsV2ChipReady(pending[i].Url, chip) == true)
                     return i;
                 if (firstMp is null && (harvestProbe is null || harvestProbe.CanStartMp(pending[i].Url, chip)))
                     firstMp = i;
@@ -432,13 +432,13 @@ public class StreamResolver(
         }
 
         // The MP lane is empty but MP rows are queued: they wait on the running harvest.
-        bool MpWaitingOnHarvest()
+        bool V2WaitingOnHarvest()
         {
             if (harvestProbe is null || activeMp > 0)
                 return false;
             for (var i = 0; i < pending.Count; i++)
             {
-                if (!started.Contains(i) && MpPageUrl.IsV2Stream(pending[i]))
+                if (!started.Contains(i) && V2PageUrl.IsV2Stream(pending[i]))
                     return true;
             }
 
@@ -456,7 +456,7 @@ public class StreamResolver(
                 if (onRace && raceThrottle is not null)
                     waits.Add(raceThrottle.WaitUntilRaceEndsAsync(token));
                 if (onHarvest && harvestProbe is not null)
-                    waits.Add(harvestProbe.WaitForMpHarvestChangeAsync(token));
+                    waits.Add(harvestProbe.WaitForV2HarvestChangeAsync(token));
                 // Rule 7: while no backup exists playlist-only chips are handed over at once,
                 // so a change of BackupWanted can make a queued chip ready.
                 if (onHarvest && raceThrottle is not null)
@@ -481,7 +481,7 @@ public class StreamResolver(
                 var waitingOnRace = raceThrottle?.RaceInFlight == true && HasUnstarted();
                 if (!waitingOnRace)
                     pauseLogged = false;
-                var waitingOnHarvest = MpWaitingOnHarvest();
+                var waitingOnHarvest = V2WaitingOnHarvest();
                 var waitingOnHeadStart = WaitingOnHeadStart();
 
                 if (inFlight.Count == 0 && !waitingOnRace && !waitingOnHarvest && !waitingOnHeadStart)
@@ -536,7 +536,7 @@ public class StreamResolver(
                 var retryEarly = entry.IsMp && !outcome.RequeueAsChip
                     && outcome.Enriched.Status == StreamResolutionStatus.Failed
                     && outcome.Enriched.Health is not null
-                    && harvestProbe?.RetryEarlyMpChip(done.Url, doneChip) == true;
+                    && harvestProbe?.RetryEarlyV2Chip(done.Url, doneChip) == true;
                 grantedAt.Remove(entry.Task, out var grantedMs);
                 Timing.Log(logger, "slot-release",
                     ("lane", entry.IsMp ? "mp" : "fb"),
@@ -583,7 +583,7 @@ public class StreamResolver(
                 seen.Add(CandidateKey(outcome.Enriched.Stream));
 
                 var added = outcome.Siblings.Count > 0
-                    ? EnqueueMpSiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
+                    ? EnqueueV2SiblingsNext(pending, started, ref nextIndex, seen, outcome.Siblings)
                     : [];
                 if (added.Count > 0)
                     tiers?.Inherit(outcome.Enriched.Stream, added);
@@ -632,7 +632,7 @@ public class StreamResolver(
 
                 logger.LogInformation("[StreamResolver] Yielding resolved stream: {Channel} ({Status})",
                     outcome.Enriched.Stream.Channel, outcome.Enriched.Status);
-                var handover = entry.IsMp ? harvestProbe?.MpChipHandover(done.Url, doneChip) : null;
+                var handover = entry.IsMp ? harvestProbe?.V2ChipHandover(done.Url, doneChip) : null;
                 Timing.Log(logger, "verdict",
                     ("row", done.Channel),
                     ("chip", doneChip),
@@ -821,8 +821,8 @@ public class StreamResolver(
                 };
             }
 
-            var chip = MpPageUrl.IsV2Stream(stream) ? GetPlayerStreamName(stream) : null;
-            var handover = chip is null ? null : (localLanPlayService as IMpHarvestProbe)?.MpChipHandover(stream.Url, chip);
+            var chip = V2PageUrl.IsV2Stream(stream) ? GetPlayerStreamName(stream) : null;
+            var handover = chip is null ? null : (localLanPlayService as IV2HarvestProbe)?.V2ChipHandover(stream.Url, chip);
             var healthStartMs = Timing.Ms;
             Timing.Log(logger, "health-start",
                 ("row", stream.Channel),
@@ -904,7 +904,7 @@ public class StreamResolver(
             return null;
 
         var rewritten = response.RewrittenSegments?
-            .Where(MpRewrittenSegment.LooksLike)
+            .Where(V2RewrittenSegment.LooksLike)
             .ToList();
         var headers = FilterPlaybackHeaders(response.RequestHeaders);
         var hasRewritten = rewritten is { Count: > 0 };
@@ -946,7 +946,7 @@ public class StreamResolver(
     /// so harvested labels resolve before later FB rows. Returns the rows added
     /// (duplicates of rows already queued are skipped).
     /// </summary>
-    private static List<Stream> EnqueueMpSiblingsNext(
+    private static List<Stream> EnqueueV2SiblingsNext(
         List<Stream> pending,
         HashSet<int> started,
         ref int nextIndex,
@@ -994,7 +994,7 @@ public class StreamResolver(
     private (string First, IReadOnlyList<Stream> Others)? ChipListSeed(Stream stream, M3U8Response? response)
     {
         if (response?.Streams is not { Count: > 0 }
-            || !MpPageUrl.IsV2Stream(stream)
+            || !V2PageUrl.IsV2Stream(stream)
             || GetPlayerStreamName(stream) is not null)
         {
             return null;
@@ -1017,15 +1017,15 @@ public class StreamResolver(
         return (first, rest);
     }
 
-    private static bool HasUnknownMpChipFanOut(Stream stream) =>
-        MpPageUrl.IsV2Stream(stream)
+    private static bool HasUnknownV2ChipFanOut(Stream stream) =>
+        V2PageUrl.IsV2Stream(stream)
         && string.IsNullOrWhiteSpace(stream.PlayerStream)
         && (stream.PlayerStreams is null || stream.PlayerStreams.Count == 0)
         && string.IsNullOrWhiteSpace(stream.Channel);
 
     private IReadOnlyList<Stream> SiblingsFrom(Stream source, M3U8Response? response)
     {
-        if (response is null || !MpPageUrl.IsV2Stream(source))
+        if (response is null || !V2PageUrl.IsV2Stream(source))
         {
             return [];
         }

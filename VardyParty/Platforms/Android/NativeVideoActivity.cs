@@ -989,7 +989,7 @@ namespace VardyParty.Platforms.Android
 
                 _logger?.LogInformation(
                     "[NativeVideoActivity] Re-resolving {Kind} m3u8 for {Channel}",
-                    PlaybackUrlReusePolicy.IsMpRow(current) ? "MP chip (/mp)" : "one-shot FB/V1 (/play)",
+                    PlaybackUrlReusePolicy.IsV2Row(current) ? "MP chip (/mp)" : "one-shot FB/V1 (/play)",
                     current.Stream?.Channel ?? "(null)");
                 // Make-before-break: ExoPlayer keeps playing the current stream while
                 // /play (or the warm pre-resolve) runs; only the overlay changes.

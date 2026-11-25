@@ -79,7 +79,7 @@ internal static class Expect
     /// <summary>The seed call (and so its throttle slot and the MP single-flight place) ends in this window.</summary>
     public static Expectation SeedReturns(string mpId, double from, double to) => new(
         $"{mpId} /mp seed returns (slot released) between t+{from}s and t+{to}s",
-        t => t.FirstCall(mpId) is { Kind: ProbeKind.MpSeed } c
+        t => t.FirstCall(mpId) is { Kind: ProbeKind.V2Seed } c
             ? c.End is { } end && end >= from - Eps && end <= to + Eps ? null : $"seed returned {(c.End is { } e ? Fmt(e) : "never")}"
             : $"{mpId} seed never started");
 
@@ -90,7 +90,7 @@ internal static class Expect
         $"A4 {mpId} /mp seed returns within {seconds}s of its POST",
         t =>
         {
-            if (t.FirstCall(mpId) is not { Kind: ProbeKind.MpSeed } c)
+            if (t.FirstCall(mpId) is not { Kind: ProbeKind.V2Seed } c)
                 return $"{mpId} seed never started";
             var post = t.PostsAt(mpId).Select(p => (double?)p).Min();
             if (post is null)
@@ -100,11 +100,11 @@ internal static class Expect
                 : $"POST {Fmt(post.Value)}, seed returned {(c.End is { } e ? Fmt(e) : "never")}";
         });
 
-    public static Expectation PlaysWhileMpOpenAtMost(int n) => new(
+    public static Expectation PlaysWhileV2OpenAtMost(int n) => new(
         $"at most {n} /play at LocalService while an MP probe is open",
         t => MaxPlaysWhileMp(t) is var m && m <= n ? null : $"saw {m}");
 
-    public static Expectation PlaysWhileMpOpenAtLeast(int n) => new(
+    public static Expectation PlaysWhileV2OpenAtLeast(int n) => new(
         $"at least {n} /play at LocalService at once while an MP probe is open",
         t => MaxPlaysWhileMp(t) is var m && m >= n ? null : $"never more than {m}");
 
@@ -140,7 +140,7 @@ internal static class Expect
         {
             if (t.PriorityHolds.Count == 0)
                 return "the priority window never held";
-            var inside = t.Calls.Where(c => c.Kind != ProbeKind.MpChip && t.PriorityHolds.Any(h => c.Start > h.From + Eps && c.Start < h.To - Eps)).ToList();
+            var inside = t.Calls.Where(c => c.Kind != ProbeKind.V2Chip && t.PriorityHolds.Any(h => c.Start > h.From + Eps && c.Start < h.To - Eps)).ToList();
             return inside.Count == 0 ? null : $"started inside: {string.Join(", ", inside.Select(c => $"{c.Key}@{Fmt(c.Start)}"))}";
         });
 
@@ -280,9 +280,9 @@ internal static class Expect
     // ---- LocalService load (rules 2-3) ----
 
     /// <summary>Rule 3: LocalService never runs more than <paramref name="n"/> <c>POST /mp</c> at once.</summary>
-    public static Expectation MpPostsAtOnceNeverExceed(int n) => new(
+    public static Expectation V2PostsAtOnceNeverExceed(int n) => new(
         $"never more than {n} POST /mp open at LocalService",
-        t => t.Snapshots.Max(s => s.MpOpen) is var m && m <= n ? null : $"saw {m}");
+        t => t.Snapshots.Max(s => s.V2Open) is var m && m <= n ? null : $"saw {m}");
 
     /// <summary>Rule 2: <c>/play</c> calls plus open harvests at LocalService.</summary>
     public static Expectation LocalServiceSessionsNeverExceed(int n) => new(
@@ -313,7 +313,7 @@ internal static class Expect
         });
 
     /// <summary>Rule 2: no /mp holds a /play slot from <paramref name="at"/> on (slots in use never exceed /play calls).</summary>
-    public static Expectation MpHoldsNoSlotFrom(double at) => new(
+    public static Expectation V2HoldsNoSlotFrom(double at) => new(
         $"no /mp holds a /play slot from t+{at}s on",
         t =>
         {
@@ -331,7 +331,7 @@ internal static class Expect
     /// <summary>Rule 4: once the slot is back, two FB /play run beside the background harvest.</summary>
     public static Expectation PlaysBesideHarvestAtLeast(int n) => new(
         $"{n} /play at LocalService beside an open /mp harvest",
-        t => t.Snapshots.Where(s => s.MpOpen > 0).Select(s => s.PlaysAtLocalService).DefaultIfEmpty(0).Max() is var m && m >= n
+        t => t.Snapshots.Where(s => s.V2Open > 0).Select(s => s.PlaysAtLocalService).DefaultIfEmpty(0).Max() is var m && m >= n
             ? null
             : $"never more than {m}");
 
@@ -378,7 +378,7 @@ internal static class Expect
             return null;
         });
 
-    public static Expectation MpPostCount(string mpId, int n) => new(
+    public static Expectation V2PostCount(string mpId, int n) => new(
         $"exactly {n} POST /mp for {mpId}",
         t => t.PostsAt(mpId).ToList() is var posts && posts.Count == n
             ? null
@@ -501,7 +501,7 @@ internal static class Expect
             var total = idle.Sum(i => i.Until - i.Snap.At);
             return total <= toleranceSeconds + Eps
                 ? null
-                : $"{total:0.###}s idle: {string.Join("; ", idle.Take(5).Select(i => $"{Fmt(i.Snap.At)}-{Fmt(i.Until)} FB {i.Snap.FbActive}+{i.Snap.UnstartedFb} MP {i.Snap.MpActive}+{i.Snap.UnstartedMp}"))}";
+                : $"{total:0.###}s idle: {string.Join("; ", idle.Take(5).Select(i => $"{Fmt(i.Snap.At)}-{Fmt(i.Until)} FB {i.Snap.FbActive}+{i.Snap.UnstartedFb} MP {i.Snap.V2Active}+{i.Snap.UnstartedMp}"))}";
         });
 
     private static int MaxPlaysWhileMp(ProbeTimeline t) =>

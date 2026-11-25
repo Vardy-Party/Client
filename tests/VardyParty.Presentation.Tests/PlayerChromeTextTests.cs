@@ -706,7 +706,7 @@ public class PlayerChromeTextTests
     }
 
     [Fact]
-    public void FromPlayback_MpChip_UsesPlayerStreamNotGameTitleOrBadge()
+    public void FromPlayback_V2Chip_UsesPlayerStreamNotGameTitleOrBadge()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()

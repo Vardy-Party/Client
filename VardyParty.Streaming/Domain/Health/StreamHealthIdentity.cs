@@ -21,7 +21,7 @@ public static class StreamHealthIdentity
         }
 
         // After LocalService autoplay, ApplySelectedChip stamps the chip onto Channel.
-        if (IsMpStream(stream) && !string.IsNullOrWhiteSpace(stream.Channel))
+        if (IsV2Stream(stream) && !string.IsNullOrWhiteSpace(stream.Channel))
         {
             var channel = stream.Channel.Trim();
             if (!IsCatalogBadgeLabel(channel))
@@ -33,7 +33,7 @@ public static class StreamHealthIdentity
         return null;
     }
 
-    private static bool IsMpStream(StreamModel stream) =>
+    private static bool IsV2Stream(StreamModel stream) =>
         stream.RequiresV2StreamSelection
         || string.Equals(stream.Source, "mp", StringComparison.OrdinalIgnoreCase)
         || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase);

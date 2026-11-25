@@ -16,7 +16,7 @@ namespace VardyParty.Streaming.Tests;
 public class StreamRecommendationBusinessRulesTests
 {
     [Fact]
-    public void EmptyRecDiscovery_MpFirst_DifferentSessionSalts_SpreadFirstFbTry()
+    public void EmptyRecDiscovery_V2First_DifferentSessionSalts_SpreadFirstFbTry()
     {
         var streams = new[]
         {
@@ -39,7 +39,7 @@ public class StreamRecommendationBusinessRulesTests
     }
 
     [Fact]
-    public void ApplyRecommendedChips_SynthesizesMpChip_AndDropsBarePage()
+    public void ApplyRecommendedChips_SynthesizesV2Chip_AndDropsBarePage()
     {
         var page = "https://www.example-mp.invalid/football/match.html";
         var catalog = new List<StreamModel>

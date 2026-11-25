@@ -60,24 +60,24 @@ public static class StreamRecommendationPolicy
                 continue;
             }
 
-            if (!IsMpLike(template))
+            if (!IsV2Like(template))
             {
                 continue;
             }
 
-            streams.Add(CloneMpChip(template, chip));
+            streams.Add(CloneV2Chip(template, chip));
         }
 
         // Drop unlabeled slim MP page rows when at least one chip candidate exists for that URL.
         var urlsWithChips = streams
-            .Where(s => IsMpLike(s) && !string.IsNullOrWhiteSpace(StreamHealthIdentity.GetStreamName(s)))
+            .Where(s => IsV2Like(s) && !string.IsNullOrWhiteSpace(StreamHealthIdentity.GetStreamName(s)))
             .Select(s => StreamHealthIdentity.NormalizeStreamUrl(s.Url))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return streams
             .Where(s =>
             {
-                if (!IsMpLike(s)) return true;
+                if (!IsV2Like(s)) return true;
                 if (!string.IsNullOrWhiteSpace(StreamHealthIdentity.GetStreamName(s))) return true;
                 return !urlsWithChips.Contains(StreamHealthIdentity.NormalizeStreamUrl(s.Url));
             })
@@ -104,7 +104,7 @@ public static class StreamRecommendationPolicy
         var rest = new List<int>();
         for (var i = 0; i < totalStreams; i++)
         {
-            if (IsMpLike(getStream(i)))
+            if (IsV2Like(getStream(i)))
                 mp.Add(i);
             else
                 rest.Add(i);
@@ -218,12 +218,12 @@ public static class StreamRecommendationPolicy
     /// MP (V2) catalog row: resolved through LocalService <c>/mp</c>. Shared by
     /// chip hoisting and try-order (<see cref="StreamTestOrderPolicy"/>).
     /// </summary>
-    internal static bool IsMpLike(StreamModel stream) =>
+    internal static bool IsV2Like(StreamModel stream) =>
         stream.RequiresV2StreamSelection
         || string.Equals(stream.ResolveCatalogSource(), "mp", StringComparison.OrdinalIgnoreCase)
-        || MpPageUrl.IsV2Stream(stream);
+        || V2PageUrl.IsV2Stream(stream);
 
-    private static StreamModel CloneMpChip(StreamModel source, string chip) =>
+    private static StreamModel CloneV2Chip(StreamModel source, string chip) =>
         new()
         {
             Url = source.Url,

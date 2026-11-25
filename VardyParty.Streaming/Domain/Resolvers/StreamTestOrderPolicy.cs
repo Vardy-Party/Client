@@ -83,8 +83,8 @@ public static class StreamTestOrderPolicy
         }
 
         // Recommended first, then MP, then FB - catalog order within each group.
-        ordered.AddRange(remainder.Where(i => StreamRecommendationPolicy.IsMpLike(getStream(i))));
-        ordered.AddRange(remainder.Where(i => !StreamRecommendationPolicy.IsMpLike(getStream(i))));
+        ordered.AddRange(remainder.Where(i => StreamRecommendationPolicy.IsV2Like(getStream(i))));
+        ordered.AddRange(remainder.Where(i => !StreamRecommendationPolicy.IsV2Like(getStream(i))));
         return ordered;
     }
 

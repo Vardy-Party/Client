@@ -23,7 +23,7 @@ public class RemoteComputeRelaySocketTests
     private const string Playlist = "https://stream.example.test/a.m3u8";
 
     [Fact]
-    public async Task ResolveAsync_WhileMpHarvestIsOpen_DoesNotOpenASecondSocket()
+    public async Task ResolveAsync_WhileV2HarvestIsOpen_DoesNotOpenASecondSocket()
     {
         // Arrange
         var connects = 0;

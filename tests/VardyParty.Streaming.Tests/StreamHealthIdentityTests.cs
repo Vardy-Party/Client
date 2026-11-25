@@ -43,7 +43,7 @@ public class StreamHealthIdentityTests
     }
 
     [Fact]
-    public void GetStreamName_MpSourceWithoutV2Strategy_ReturnsPlayerStreamLabel()
+    public void GetStreamName_V2SourceWithoutV2Strategy_ReturnsPlayerStreamLabel()
     {
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match.html")
@@ -58,7 +58,7 @@ public class StreamHealthIdentityTests
     }
 
     [Fact]
-    public void GetStreamName_MpSource_ChannelChipAfterAutoselect_ReturnsChannel()
+    public void GetStreamName_V2Source_ChannelChipAfterAutoselect_ReturnsChannel()
     {
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match.html")
@@ -73,7 +73,7 @@ public class StreamHealthIdentityTests
     }
 
     [Fact]
-    public void GetStreamName_MpSource_BadgeOnlyChannel_ReturnsNull()
+    public void GetStreamName_V2Source_BadgeOnlyChannel_ReturnsNull()
     {
         var stream = _fixture.Build<Stream>()
             .With(s => s.Url, "https://streams.example.com/match.html")

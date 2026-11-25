@@ -10,8 +10,8 @@ namespace VardyParty.Streaming.Tests.Timeline;
 internal enum ProbeKind
 {
     Play,
-    MpSeed,
-    MpChip
+    V2Seed,
+    V2Chip
 }
 
 /// <summary>One resolver call into LocalLanPlayService (includes any wait for a throttle slot).</summary>
@@ -32,12 +32,12 @@ internal sealed record Snapshot(
     double At,
     int SlotsInUse,
     int PlaysAtLocalService,
-    int MpOpen,
+    int V2Open,
     int HealthOpen,
     int UnstartedFb,
     int UnstartedMp,
     int FbActive,
-    int MpActive,
+    int V2Active,
     bool PriorityHold,
     IReadOnlyList<string> InFlight,
     bool TierHold = false)
@@ -45,7 +45,7 @@ internal sealed record Snapshot(
     public int Unstarted => UnstartedFb + UnstartedMp;
 
     /// <summary>Chromium sessions at LocalService: <c>/play</c> calls plus open <c>/mp</c> harvests.</summary>
-    public int LocalServiceSessions => PlaysAtLocalService + MpOpen;
+    public int LocalServiceSessions => PlaysAtLocalService + V2Open;
 
     /// <summary>
     /// A lane is idle with work queued: the FB window has a free place and an FB row
@@ -53,7 +53,7 @@ internal sealed record Snapshot(
     /// LocalService (rules 2-4, 7: queued chips of a running harvest wait on it by design).
     /// </summary>
     public bool IdleWithWork(int fbWindow) =>
-        (FbActive < fbWindow && UnstartedFb > 0) || (MpActive == 0 && UnstartedMp > 0 && MpOpen == 0);
+        (FbActive < fbWindow && UnstartedFb > 0) || (V2Active == 0 && UnstartedMp > 0 && V2Open == 0);
 }
 
 internal sealed record RowResult(string Key, double At, StreamResolutionStatus Status, string? Error);
@@ -192,7 +192,7 @@ internal sealed class ProbeTimeline
         sb.AppendLine($"Harness: {SettleCount} settles, {SettleTotalMs:0} ms total, slowest {SettleMaxMs:0} ms");
         sb.AppendLine("Milestones (play slots / plays at LS / mp open / health / FB active+queued / MP active+queued / hold | in flight):");
         foreach (var s in Snapshots)
-            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.MpOpen}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.MpActive}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : s.TierHold ? "TIER" : "-")} | {string.Join(", ", s.InFlight)}");
+            sb.AppendLine($"  {Fmt(s.At)}  {s.SlotsInUse}/{ResolverRaceThrottle.MaxConcurrent}  {s.PlaysAtLocalService}  {s.V2Open}  {s.HealthOpen}  FB {s.FbActive}+{s.UnstartedFb}  MP {s.V2Active}+{s.UnstartedMp}  {(s.PriorityHold ? "HOLD" : s.TierHold ? "TIER" : "-")} | {string.Join(", ", s.InFlight)}");
         sb.AppendLine("Events:");
         foreach (var (at, line) in Log.OrderBy(l => l.At))
             sb.AppendLine($"  {Fmt(at)}  {line}");

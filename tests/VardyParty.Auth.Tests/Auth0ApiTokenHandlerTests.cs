@@ -100,7 +100,7 @@ public class Auth0ApiTokenHandlerTests
     [InlineData("/health", false)]
     [InlineData("/Health", false)]
     [InlineData("/league-alpha/home-united-vs-away-city/health", true)]
-    [InlineData("/mp", true)]
+    [InlineData("/v2", true)]
     [InlineData("/play/https%3A%2F%2Fexample.test", true)]
     public void ShouldAttachAccessToken_MatchesLocalServicePaths(string path, bool expected)
     {

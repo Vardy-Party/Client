@@ -24,7 +24,7 @@ namespace VardyParty.Streaming.Tests.Timeline;
 /// <summary>
 /// Runs a <see cref="ProbeScenario"/> against the REAL scheduling code - StreamResolver
 /// (FB window, MP lane, seed re-queue, sibling queueing), LocalLanPlayService (throttle slots,
-/// <c>/mp</c> NDJSON harvest, MpHarvestSession seed rules), ResolverRaceThrottle,
+/// <c>/mp</c> NDJSON harvest, V2HarvestSession seed rules), ResolverRaceThrottle,
 /// StreamTestOrderPolicy (try-order) and StreamSwitchingService (channel numbers;
 /// first come, first served, as in the orchestrator), TopTierHeadStart (rule 1) and
 /// FirstPlayOpenStrategy (how first play opens, rule 12; when the priority window holds,
@@ -50,7 +50,7 @@ internal static class ProbeTimelineHarness
         Task.Run(() => new Run(scenario).ExecuteAsync());
 
     internal static string FbPage(string id) => $"https://fb.example.test/{id}";
-    internal static string MpPage(string id) => $"https://mp.example.test/{id}";
+    internal static string V2Page(string id) => $"https://mp.example.test/{id}";
     internal static string FbPlaylist(string id) => $"https://cdn.example.test/{id}.m3u8";
     internal static string ChipPlaylist(string id, string label) => $"https://cdn.example.test/{id}/{Uri.EscapeDataString(label)}.m3u8";
 
@@ -161,7 +161,7 @@ internal static class ProbeTimelineHarness
                 i => catalog[i],
                 sessionSalt: 0);
             _ordered = order.Select(i => catalog[i]).ToList();
-            _mpTotal = _ordered.Count(MpPageUrl.IsV2Stream);
+            _mpTotal = _ordered.Count(V2PageUrl.IsV2Stream);
             _fbTotal = _ordered.Count - _mpTotal;
             Note("try-order: " + string.Join(", ", _ordered.Select(s => _keyByRef[s])));
 
@@ -252,8 +252,8 @@ internal static class ProbeTimelineHarness
                 Note($"re-queue wait {wait.TotalSeconds:F0}s");
                 await Task.Delay(wait, _clock, _cts.Token).ConfigureAwait(false);
                 Note($"re-queue pass: {string.Join(", ", retry.Select(KeyOf))}");
-                Interlocked.Add(ref _mpTotal, retry.Count(MpPageUrl.IsV2Stream));
-                Interlocked.Add(ref _fbTotal, retry.Count(r => !MpPageUrl.IsV2Stream(r)));
+                Interlocked.Add(ref _mpTotal, retry.Count(V2PageUrl.IsV2Stream));
+                Interlocked.Add(ref _fbTotal, retry.Count(r => !V2PageUrl.IsV2Stream(r)));
                 await foreach (var row in resolver
                                    .ResolveStreamsIncrementallyAsync(retry, 2, _cts.Token)
                                    .ConfigureAwait(false))
@@ -456,7 +456,7 @@ internal static class ProbeTimelineHarness
                     _tl.Results.Add(new RowResult(key, T, row.Status, row.ErrorMessage));
                 Note($"yield {key}: {row.Status}{(row.ErrorMessage is { } e ? $" ({e})" : "")}");
 
-                Interlocked.Increment(ref MpPageUrl.IsV2Stream(row.Stream) ? ref _mpDone : ref _fbDone);
+                Interlocked.Increment(ref V2PageUrl.IsV2Stream(row.Stream) ? ref _mpDone : ref _fbDone);
                 if (row.Status == StreamResolutionStatus.Healthy)
                     JoinPool(row);
                 else if (row.Status == StreamResolutionStatus.Deferred)
@@ -682,10 +682,10 @@ internal static class ProbeTimelineHarness
         // ---- identity ----
 
         private static StreamModel BuildStream(RowSpec row) => row.IsMp
-            ? new StreamModel { Url = MpPage(row.Id), Channel = "", ResolutionStrategy = "v2", Source = "mp" }
+            ? new StreamModel { Url = V2Page(row.Id), Channel = "", ResolutionStrategy = "v2", Source = "mp" }
             : new StreamModel { Url = FbPage(row.Id), Channel = row.Id, ResolutionStrategy = "v1", Source = "fb" };
 
-        private static string PageOf(RowSpec row) => row.IsMp ? MpPage(row.Id) : FbPage(row.Id);
+        private static string PageOf(RowSpec row) => row.IsMp ? V2Page(row.Id) : FbPage(row.Id);
 
         private static string RowIdOf(string url) => url[(url.LastIndexOf('/') + 1)..];
 
@@ -715,7 +715,7 @@ internal static class ProbeTimelineHarness
             {
                 RowId = row.Id,
                 Key = string.IsNullOrWhiteSpace(label) ? row.Id : $"{row.Id}:{label.Trim()}",
-                Kind = !row.IsMp ? ProbeKind.Play : string.IsNullOrWhiteSpace(label) ? ProbeKind.MpSeed : ProbeKind.MpChip,
+                Kind = !row.IsMp ? ProbeKind.Play : string.IsNullOrWhiteSpace(label) ? ProbeKind.V2Seed : ProbeKind.V2Chip,
                 Start = T
             };
             lock (_tl)
@@ -793,7 +793,7 @@ internal static class ProbeTimelineHarness
 
         private sealed class ScriptedLocalService(Run run) : HttpMessageHandler
         {
-            private const string Health = """{"capabilities":["play.stream","mp.chrome"],"version":"9.9.9"}""";
+            private const string Health = """{"capabilities":["play.stream","v2.chrome"],"version":"9.9.9"}""";
             private static readonly Regex ChipUrl = new(@"\{chipUrl:(.*?)\}", RegexOptions.Compiled);
 
             protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -802,8 +802,8 @@ internal static class ProbeTimelineHarness
                 var path = request.RequestUri?.AbsolutePath ?? "";
                 if (path.EndsWith("/health", StringComparison.Ordinal))
                     return Json(HttpStatusCode.OK, Health);
-                if (path.EndsWith("/mp", StringComparison.Ordinal) && request.Method == HttpMethod.Post)
-                    return await MpAsync(request, ct).ConfigureAwait(false);
+                if (path.EndsWith("/v2", StringComparison.Ordinal) && request.Method == HttpMethod.Post)
+                    return await V2Async(request, ct).ConfigureAwait(false);
                 if (path.Contains("/play/", StringComparison.Ordinal))
                     return await PlayAsync(request, ct).ConfigureAwait(false);
                 return Json(HttpStatusCode.NotFound, "{}");
@@ -847,7 +847,7 @@ internal static class ProbeTimelineHarness
                 };
             }
 
-            private async Task<HttpResponseMessage> MpAsync(HttpRequestMessage request, CancellationToken ct)
+            private async Task<HttpResponseMessage> V2Async(HttpRequestMessage request, CancellationToken ct)
             {
                 var body = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(body);
@@ -896,7 +896,7 @@ internal static class ProbeTimelineHarness
                 await Task.Delay(TimeSpan.FromSeconds(script.HeadersAt), run._clock, ct).ConfigureAwait(false);
                 run.LocalServiceEvent(row.Id, "/mp 200 headers");
                 var content = new StreamContent(feed);
-                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(MpNdjson.ContentType);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(V2Ndjson.ContentType);
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
             }
 
@@ -1017,21 +1017,21 @@ internal static class ProbeTimelineHarness
 
         // ---- LocalLanPlayService wrapper that records each resolver call ----
 
-        private sealed class RecordingLan(Run run, LocalLanPlayService inner) : ILocalLanPlayService, IMpHarvestProbe
+        private sealed class RecordingLan(Run run, LocalLanPlayService inner) : ILocalLanPlayService, IV2HarvestProbe
         {
             private ILocalLanPlayService Inner => inner;
 
-            public bool IsMpChipReady(string pageUrl, string? chip) => inner.IsMpChipReady(pageUrl, chip);
+            public bool IsV2ChipReady(string pageUrl, string? chip) => inner.IsV2ChipReady(pageUrl, chip);
 
-            public bool RetryEarlyMpChip(string pageUrl, string? chip) => inner.RetryEarlyMpChip(pageUrl, chip);
+            public bool RetryEarlyV2Chip(string pageUrl, string? chip) => inner.RetryEarlyV2Chip(pageUrl, chip);
 
-            public string? MpChipHandover(string pageUrl, string? chip) => inner.MpChipHandover(pageUrl, chip);
+            public string? V2ChipHandover(string pageUrl, string? chip) => inner.V2ChipHandover(pageUrl, chip);
 
             public bool CanStartMp(string pageUrl, string? chip) => inner.CanStartMp(pageUrl, chip);
 
-            public IDisposable WantMpPage(string pageUrl, CancellationToken runToken) => inner.WantMpPage(pageUrl, runToken);
+            public IDisposable WantV2Page(string pageUrl, CancellationToken runToken) => inner.WantV2Page(pageUrl, runToken);
 
-            public Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken) => inner.WaitForMpHarvestChangeAsync(cancellationToken);
+            public Task WaitForV2HarvestChangeAsync(CancellationToken cancellationToken) => inner.WaitForV2HarvestChangeAsync(cancellationToken);
 
             public Task<M3U8Response?> ResolveM3U8UrlAsync(string streamUrl, CancellationToken cancellationToken = default) =>
                 ResolveM3U8UrlAsync(streamUrl, null, null, null, cancellationToken);

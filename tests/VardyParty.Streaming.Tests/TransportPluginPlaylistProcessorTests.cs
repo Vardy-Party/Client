@@ -29,7 +29,7 @@ public class TransportPluginPlaylistProcessorTests
     private sealed class StubPlugin(Func<string, string> rewrite) : IPlaybackTransportPlugin
     {
         public string StrategyId => "stub";
-        public string LocalServiceEndpoint => "mp";
+        public string LocalServiceEndpoint => "v2";
         public bool Matches(string? resolutionStrategy, string? source) => true;
         public string PostProcessPlaylist(string playlistText) => rewrite(playlistText);
     }

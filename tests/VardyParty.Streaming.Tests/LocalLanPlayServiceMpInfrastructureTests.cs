@@ -21,27 +21,27 @@ namespace VardyParty.Streaming.Tests;
 /// disabled" are infrastructure: <see cref="LocalServiceUnavailableException"/>,
 /// so the resolver defers the row (never Failed, never reported).
 /// </summary>
-public class LocalLanPlayServiceMpInfrastructureTests
+public class LocalLanPlayServiceV2InfrastructureTests
 {
     private const string Endpoint = "http://10.0.0.4:5070";
     private const string Page = "https://streams.example.test/mp-match";
-    private const string Health = """{"capabilities":["play.stream","mp.chrome"],"version":"9.9.9"}""";
+    private const string Health = """{"capabilities":["play.stream","v2.chrome"],"version":"9.9.9"}""";
     private const string Disabled = """{"error":"V2/MP scrape disabled on this local service"}""";
 
     [Fact]
-    public async Task Mp503ScrapeDisabled_IsMpDisabled_NotRetryable_AndNotADeadStream()
+    public async Task Mp503ScrapeDisabled_IsV2Disabled_NotRetryable_AndNotADeadStream()
     {
         var service = CreateService((_, _) => Task.FromResult(Json((HttpStatusCode)503, Disabled)), out _);
 
         var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service));
 
-        Assert.Equal(LocalServiceUnavailableReason.MpDisabled, ex.Reason);
+        Assert.Equal(LocalServiceUnavailableReason.V2Disabled, ex.Reason);
         Assert.False(ex.IsRetryable);
         Assert.IsAssignableFrom<InfrastructureUnavailableException>(ex);
     }
 
     [Fact]
-    public async Task MpDisabled_IsRemembered_NoSecondPostWithinWindow_ThenAsksAgainAfterExpiry()
+    public async Task V2Disabled_IsRemembered_NoSecondPostWithinWindow_ThenAsksAgainAfterExpiry()
     {
         var now = new DateTimeOffset(2026, 10, 31, 15, 0, 0, TimeSpan.Zero);
         var service = CreateService((_, _) => Task.FromResult(Json((HttpStatusCode)503, Disabled)), out var counts);
@@ -53,11 +53,11 @@ public class LocalLanPlayServiceMpInfrastructureTests
         // Every other MP row in the sweep: no POST, same "unavailable" answer.
         now += TimeSpan.FromSeconds(30);
         var again = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service, "https://streams.example.test/other"));
-        Assert.Equal(LocalServiceUnavailableReason.MpDisabled, again.Reason);
+        Assert.Equal(LocalServiceUnavailableReason.V2Disabled, again.Reason);
         Assert.Equal(1, counts.Mp);
 
         // The operator may turn MP back on: ask again once the memory lapses.
-        now += LocalLanPlayService.MpDisabledMemory;
+        now += LocalLanPlayService.V2DisabledMemory;
         await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service));
         Assert.Equal(2, counts.Mp);
     }
@@ -76,7 +76,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     }
 
     [Fact]
-    public async Task MpNdjsonErrorEvent500_IsServiceError()
+    public async Task V2NdjsonErrorEvent500_IsServiceError()
     {
         var service = CreateService(
             (_, _) => Task.FromResult(Ndjson(HttpStatusCode.OK,
@@ -92,7 +92,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     }
 
     [Fact]
-    public async Task MpNdjson404NotCaptured_IsAGenuineMiss_Null()
+    public async Task V2Ndjson404NotCaptured_IsAGenuineMiss_Null()
     {
         var service = CreateService(
             (_, _) => Task.FromResult(Ndjson(HttpStatusCode.OK,
@@ -119,7 +119,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
-    public async Task MpAuthRejected_IsUnauthorized_NotRetryable(HttpStatusCode status)
+    public async Task V2AuthRejected_IsUnauthorized_NotRetryable(HttpStatusCode status)
     {
         var service = CreateService((_, _) => Task.FromResult(Json(status, "{}")), out _);
 
@@ -130,7 +130,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     }
 
     [Fact]
-    public async Task MpConnectionRefused_IsConnectionFailed()
+    public async Task V2ConnectionRefused_IsConnectionFailed()
     {
         var service = CreateService(
             (_, _) => throw new HttpRequestException("refused", new SocketException(10061)),
@@ -144,7 +144,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     }
 
     [Fact]
-    public async Task MpOurTimeout_ServiceAlive_IsCallTimeout()
+    public async Task V2OurTimeout_ServiceAlive_IsCallTimeout()
     {
         var service = CreateService(
             async (_, ct) =>
@@ -153,7 +153,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
                 return Json(HttpStatusCode.OK, "{}");
             },
             out _);
-        service.MpHarvestTimeout = TimeSpan.FromMilliseconds(100);
+        service.V2HarvestTimeout = TimeSpan.FromMilliseconds(100);
 
         var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => ResolveMp(service));
 
@@ -161,7 +161,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
     }
 
     [Fact]
-    public async Task MpSuccess_StillResolves()
+    public async Task V2Success_StillResolves()
     {
         var service = CreateService(
             (_, _) => Task.FromResult(Ndjson(HttpStatusCode.OK,
@@ -186,8 +186,8 @@ public class LocalLanPlayServiceMpInfrastructureTests
         // the resolver and the prewarmer separate LocalLanPlayService instances, each with
         // its own harvest. [Prewarm] POSTed /mp for Fubo US while the resolver's harvest of
         // the same page was running; LocalService (one /mp at a time) sent it nothing and
-        // it failed "sent nothing for 30s". With one MpHarvestHub the second caller joins.
-        var hub = new MpHarvestHub();
+        // it failed "sent nothing for 30s". With one V2HarvestHub the second caller joins.
+        var hub = new V2HarvestHub();
         var counts = new Counts();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var posted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -220,8 +220,8 @@ public class LocalLanPlayServiceMpInfrastructureTests
     [InlineData("""{"error":"v2 scrape plugin not registered"}""", false)]
     [InlineData("", false)]
     [InlineData(null, false)]
-    public void IsMpScrapeDisabled_MatchesOnlyTheGateMessage(string? body, bool expected)
-        => Assert.Equal(expected, LocalLanPlayService.IsMpScrapeDisabled(body));
+    public void IsV2ScrapeDisabled_MatchesOnlyTheGateMessage(string? body, bool expected)
+        => Assert.Equal(expected, LocalLanPlayService.IsV2ScrapeDisabled(body));
 
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
@@ -257,7 +257,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> work,
         Counts c,
         bool healthAnswers = true,
-        MpHarvestHub? hub = null)
+        V2HarvestHub? hub = null)
     {
         var service = new LocalLanPlayService(
             new HttpClient(new ScriptHandler((request, ct) =>
@@ -270,7 +270,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
                     return Task.FromResult(Json(HttpStatusCode.OK, Health));
                 }
 
-                if (path.EndsWith("/mp", StringComparison.Ordinal))
+                if (path.EndsWith("/v2", StringComparison.Ordinal))
                     Interlocked.Increment(ref c.Mp);
                 return work(request, ct);
             })),
@@ -294,7 +294,7 @@ public class LocalLanPlayServiceMpInfrastructureTests
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
     private static HttpResponseMessage Ndjson(HttpStatusCode status, params string[] lines) =>
-        new(status) { Content = new StringContent(string.Join("\n", lines) + "\n", Encoding.UTF8, MpNdjson.ContentType) };
+        new(status) { Content = new StringContent(string.Join("\n", lines) + "\n", Encoding.UTF8, V2Ndjson.ContentType) };
 
     private sealed class ScriptHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> next) : HttpMessageHandler
     {

@@ -126,7 +126,7 @@ public class FreshResolveInfrastructureBusinessRulesTests
     }
 
     [Fact]
-    public async Task NonRetryable_MpDisabledOrAuth_DefersAtOnce()
+    public async Task NonRetryable_V2DisabledOrAuth_DefersAtOnce()
     {
         var session = new PlaybackSessionController(() => _now);
         session.BeginAttach("http://oak-lane-cached.m3u8", usedCachedUrl: true);

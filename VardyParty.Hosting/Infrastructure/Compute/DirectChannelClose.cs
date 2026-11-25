@@ -38,7 +38,7 @@ internal static class DirectChannelClose
     /// Harvest chips arrive as <c>rpc-part</c> long before <c>rpc-result</c>.
     /// Only a chip with a playlist URL counts as a finished resolve.
     /// </summary>
-    public static bool MarksResultSeen(MpPlayEvent? ev) =>
+    public static bool MarksResultSeen(V2PlayEvent? ev) =>
         ev is not null
         && string.Equals(ev.Type, "chip", StringComparison.OrdinalIgnoreCase)
         && !string.IsNullOrWhiteSpace(ev.Url);

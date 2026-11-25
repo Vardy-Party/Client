@@ -31,10 +31,10 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanStart_MpHarvestProbeReady_UseExisting_NoPartnerWarm()
+    public void PlanStart_V2HarvestProbeReady_UseExisting_NoPartnerWarm()
     {
         // Arrange — /mp already streamed playlist + rewritten segments; token still comfortable.
-        var mp = MpHarvest("Channel MP Alpha", M3u8TokenExpiryTests.UzhiUrl);
+        var mp = V2Harvest("Channel MP Alpha", M3u8TokenExpiryTests.UzhiUrl);
         var fb = Soak("Channel East");
 
         // Act
@@ -46,11 +46,11 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanStart_MpHarvestUnreadableExpiry_PlaysProbedLink()
+    public void PlanStart_V2HarvestUnreadableExpiry_PlaysProbedLink()
     {
         // Arrange — the /mp harvest link was just probed: first play uses it (rule 12),
         // no second /play; a failed start re-/plays once in the orchestrator.
-        var mp = MpHarvest("Channel MP Alpha", "http://oak-lane.m3u8");
+        var mp = V2Harvest("Channel MP Alpha", "http://oak-lane.m3u8");
         var fb = Soak("Channel East");
 
         // Act
@@ -328,10 +328,10 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void PlanNextPrepare_MpHarvestCanReuse_AttachAsIs()
+    public void PlanNextPrepare_V2HarvestCanReuse_AttachAsIs()
     {
         // Arrange — long-lived harvest URL still has MinComfortableLife.
-        var next = MpHarvest("Channel MP Beta", M3u8TokenExpiryTests.UzhiUrl);
+        var next = V2Harvest("Channel MP Beta", M3u8TokenExpiryTests.UzhiUrl);
 
         // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
@@ -344,9 +344,9 @@ public class FirstPlayOpenStrategyTests
     public void PlanNextPrepare_NonV2RowWithHarvestSamples_UnreadableExpiry_ClearAndResolveFresh()
     {
         // Not a V2 chip (no mp/v2 strategy); a V2 chip keeps its probed link
-        // (MpChipSwitchBusinessRulesTests).
+        // (V2ChipSwitchBusinessRulesTests).
         // Arrange — unreadable harvest without UnusedResolvedUrl forces a fresh /play.
-        var next = MpHarvest("Channel MP Beta", "http://oak-lane.m3u8");
+        var next = V2Harvest("Channel MP Beta", "http://oak-lane.m3u8");
 
         // Act
         var kind = FirstPlayOpenStrategy.PlanNextPrepare(next, Now, warmEntryReady: false);
@@ -497,14 +497,14 @@ public class FirstPlayOpenStrategyTests
     }
 
     [Fact]
-    public void CountBackupsNeedingWarm_WarmCookieUnwarmableOrMpBackups_Zero()
+    public void CountBackupsNeedingWarm_WarmCookieUnwarmableOrV2Backups_Zero()
     {
         // Arrange — warm already, single-use (never warmed), unwarmable, /mp harvest.
         var playing = Soak("Channel Playing");
         var warm = Soak("Channel Warm");
         var cookie = CookieFb("Channel Cookie");
         var unwarmable = Soak("Channel Unwarmable");
-        var mp = MpHarvest("Channel MP", "http://oak-lane.m3u8");
+        var mp = V2Harvest("Channel MP", "http://oak-lane.m3u8");
 
         // Act
         var first = FirstPlayOpenStrategy.CountBackupsNeedingWarm(
@@ -628,7 +628,7 @@ public class FirstPlayOpenStrategyTests
         },
     };
 
-    private static EnrichedStream MpHarvest(string name, string url) => new()
+    private static EnrichedStream V2Harvest(string name, string url) => new()
     {
         Stream = new Stream { Url = $"https://streams.example.com/mp/{name}", Channel = name },
         Status = StreamResolutionStatus.Healthy,

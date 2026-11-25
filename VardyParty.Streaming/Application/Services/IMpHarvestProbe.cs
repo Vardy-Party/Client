@@ -8,10 +8,10 @@ namespace VardyParty.Streaming;
 /// harvest (docs/PROBE_SCHEDULING_RULES.md). Kept apart from
 /// <see cref="ILocalLanPlayService"/> so mocks of that interface are unaffected.
 /// </summary>
-public interface IMpHarvestProbe
+public interface IV2HarvestProbe
 {
     /// <summary>Whether resolving <paramref name="chip"/> on <paramref name="pageUrl"/> would answer from the harvest now, without a <c>POST /mp</c>.</summary>
-    bool IsMpChipReady(string pageUrl, string? chip);
+    bool IsV2ChipReady(string pageUrl, string? chip);
 
     /// <summary>
     /// Whether an MP row for <paramref name="pageUrl"/> / <paramref name="chip"/> may take
@@ -27,10 +27,10 @@ public interface IMpHarvestProbe
     /// goes away cancelled (<paramref name="runToken"/>), that harvest is cancelled so
     /// LocalService's single <c>/mp</c> is free for the next page.
     /// </summary>
-    IDisposable WantMpPage(string pageUrl, CancellationToken runToken);
+    IDisposable WantV2Page(string pageUrl, CancellationToken runToken);
 
     /// <summary>Completes when the harvest changes (a chip event, a deadline, its end) or a new harvest starts.</summary>
-    Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken);
+    Task WaitForV2HarvestChangeAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Rule 7 early-chip retry (Jon, 13 Nov 2026): <paramref name="chip"/> on
@@ -39,17 +39,17 @@ public interface IMpHarvestProbe
     /// <c>EarlyChipRetryDelaySeconds</c>, 10s by default): the resolver re-queues the row
     /// instead of yielding it dead. False when the verdict stands.
     /// </summary>
-    bool RetryEarlyMpChip(string pageUrl, string? chip) => false;
+    bool RetryEarlyV2Chip(string pageUrl, string? chip) => false;
 
     /// <summary>
     /// How the harvest last handed <paramref name="chip"/> over (see
-    /// <see cref="MpHarvestSession.HandoverOf"/>), for the <c>[probe-timing]</c> log. Null when unknown.
+    /// <see cref="V2HarvestSession.HandoverOf"/>), for the <c>[probe-timing]</c> log. Null when unknown.
     /// </summary>
-    string? MpChipHandover(string pageUrl, string? chip) => null;
+    string? V2ChipHandover(string pageUrl, string? chip) => null;
 
     /// <summary>
     /// Chip labels the running harvest has listed for <paramref name="pageUrl"/>.
     /// Used to fan out rows when chips arrive after the seed was already deferred.
     /// </summary>
-    IReadOnlyList<string> ListedMpChips(string pageUrl) => [];
+    IReadOnlyList<string> ListedV2Chips(string pageUrl) => [];
 }

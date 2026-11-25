@@ -84,7 +84,7 @@ public static class PlaybackUrlReusePolicy
         if (stream is null)
             return false;
 
-        if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
+        if (V2RewrittenSegment.HasProbeReady(stream.RewrittenSegments))
             return true;
 
         return HasPlaybackSoakHeaders(stream.RequestHeaders);
@@ -167,7 +167,7 @@ public static class PlaybackUrlReusePolicy
 
         // /mp harvest: only reuse while the token still has comfortable life. Unreadable
         // expiry needs UnusedResolvedUrl (handled above) so stale harvests do not AttachCached forever.
-        if (MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments))
+        if (V2RewrittenSegment.HasProbeReady(stream.RewrittenSegments))
             return HasComfortableLife(stream.ResolvedM3U8Url, now);
 
         return !IsKnownSingleUse(stream) && HasComfortableLife(stream.ResolvedM3U8Url, now);
@@ -176,7 +176,7 @@ public static class PlaybackUrlReusePolicy
     /// <summary>
     /// MP (V2) row: resolved through LocalService <c>/mp</c> (a chip of an MP page).
     /// </summary>
-    public static bool IsMpRow(EnrichedStream? row)
+    public static bool IsV2Row(EnrichedStream? row)
     {
         if (row?.Stream is not { } stream)
             return false;
@@ -210,7 +210,7 @@ public static class PlaybackUrlReusePolicy
             return false;
         // A non-MP row carrying an old harvest (no UnusedResolvedUrl) stays fresh, so a stale
         // harvest is not attached forever (CanReuseCached).
-        if (!IsMpRow(row) && MpRewrittenSegment.HasProbeReady(row.RewrittenSegments))
+        if (!IsV2Row(row) && V2RewrittenSegment.HasProbeReady(row.RewrittenSegments))
             return false;
         if (IsKnownSingleUse(row))
             return false;
@@ -241,7 +241,7 @@ public static class PlaybackUrlReusePolicy
                     "unused playback URL");
             }
 
-            if (MpRewrittenSegment.HasProbeReady(current.RewrittenSegments))
+            if (V2RewrittenSegment.HasProbeReady(current.RewrittenSegments))
             {
                 var mpLeft = M3u8TokenExpiry.RemainingLife(url, now)!.Value;
                 return new PlaybackSwitchPlan(
@@ -262,12 +262,12 @@ public static class PlaybackUrlReusePolicy
             return new PlaybackSwitchPlan(
                 PlaybackSwitchKind.AttachCached,
                 url,
-                IsMpRow(current)
+                IsV2Row(current)
                     ? "probed MP chip link, expiry unknown: play it now; a failed start re-resolves once"
                     : "probed link, expiry unknown: play it now; a failed start re-resolves once");
         }
 
-        var mpStale = MpRewrittenSegment.HasProbeReady(current.RewrittenSegments)
+        var mpStale = V2RewrittenSegment.HasProbeReady(current.RewrittenSegments)
             && M3u8TokenExpiry.RemainingLife(url, now) is not null
             && !HasComfortableLife(url, now);
 
@@ -304,8 +304,8 @@ public static class PlaybackUrlReusePolicy
         => stream?.Stream is not null
             && RequiresFreshM3u8ForPlayback(stream)
             && !IsKnownSingleUse(stream)
-            && !MpRewrittenSegment.HasProbeReady(stream.RewrittenSegments)
-            && !(IsMpRow(stream) && !string.IsNullOrWhiteSpace(stream.ResolvedM3U8Url));
+            && !V2RewrittenSegment.HasProbeReady(stream.RewrittenSegments)
+            && !(IsV2Row(stream) && !string.IsNullOrWhiteSpace(stream.ResolvedM3U8Url));
 
     /// <summary>
     /// Whether the pre-resolver should (re)resolve a candidate at <paramref name="depth"/>

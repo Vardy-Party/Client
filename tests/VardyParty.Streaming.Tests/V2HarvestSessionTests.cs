@@ -7,7 +7,7 @@ using Xunit;
 
 namespace VardyParty.Streaming.Tests;
 
-public sealed class MpHarvestSessionTests
+public sealed class V2HarvestSessionTests
 {
     private const string Page = "https://page.example.test/match/1";
 
@@ -16,14 +16,14 @@ public sealed class MpHarvestSessionTests
     private static LocalServiceUnavailableException Fault() =>
         new(LocalServiceUnavailableReason.ServiceError, "POST /mp returned 500");
 
-    private static MpPlayEvent PlaylistOnly(string label) => new()
+    private static V2PlayEvent PlaylistOnly(string label) => new()
     {
         Type = "chip",
         Label = label,
         Url = $"https://stream.example.test/{label.Replace(' ', '-')}.m3u8"
     };
 
-    private static MpPlayEvent ProbeReady(string label) => new()
+    private static V2PlayEvent ProbeReady(string label) => new()
     {
         Type = "chip",
         Label = label,
@@ -35,7 +35,7 @@ public sealed class MpHarvestSessionTests
     public async Task Fail_WaitersWithoutPlaylist_ThrowInfrastructure_NotNull()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
         var named = harvest.WaitForAsync("Chip B", CancellationToken.None);
 
@@ -55,8 +55,8 @@ public sealed class MpHarvestSessionTests
     public async Task Fail_LabelWithCachedPlaylist_StillGetsIt_LateWaitersToo()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(ProbeReady("Chip A"));
 
         // Act
@@ -72,8 +72,8 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - rule 13: a chip the faulted harvest never sent is Deferred; asking
         // the same finished harvest again at once would only replay the fault.
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(ProbeReady("Chip A"));
         harvest.Fail(Fault());
 
@@ -91,10 +91,10 @@ public sealed class MpHarvestSessionTests
     public async Task ErrorEvent5xx_FailsAsInfrastructure()
     {
         // Arrange
-        var infra = new MpHarvestSession();
+        var infra = new V2HarvestSession();
 
         // Act
-        infra.Apply(new MpPlayEvent { Type = "error", StatusCode = 500, Error = "mp play execution failed" });
+        infra.Apply(new V2PlayEvent { Type = "error", StatusCode = 500, Error = "mp play execution failed" });
 
         // Assert
         var ex = await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => infra.WaitForAsync("Chip A", CancellationToken.None));
@@ -106,10 +106,10 @@ public sealed class MpHarvestSessionTests
     public async Task ErrorEvent4xx_IsAMiss()
     {
         // Arrange
-        var miss = new MpHarvestSession();
+        var miss = new V2HarvestSession();
 
         // Act
-        miss.Apply(new MpPlayEvent { Type = "error", StatusCode = 404, Error = "M3U8 not captured from MP page." });
+        miss.Apply(new V2PlayEvent { Type = "error", StatusCode = 404, Error = "M3U8 not captured from MP page." });
 
         // Assert
         Assert.Null(await miss.WaitForAsync("Chip A", CancellationToken.None));
@@ -120,7 +120,7 @@ public sealed class MpHarvestSessionTests
     public void Fail_AfterDone_IsIgnored()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         harvest.Complete(failed: false);
 
         // Act
@@ -134,8 +134,8 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_ReturnsFirstChipWithoutWaitingForLaterLabels()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"], SelectedStream = "Chip A" });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"], SelectedStream = "Chip A" });
         harvest.Apply(ProbeReady("Chip A"));
 
         // Act
@@ -153,11 +153,11 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - rule 5: the chip list releases the seed (no URL, every label) so
         // the resolver can queue each chip.
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
 
         // Act
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         var list = await seed;
 
         // Assert
@@ -172,7 +172,7 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_Seed_FirstChipWithoutList_ReturnsThatChipAsAList()
     {
         // Arrange - rule 5: with no chips event, the first chip releases the seed.
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
 
         // Act
@@ -189,9 +189,9 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_Seed_OtherLabelMiss_StillListsEveryChip()
     {
         // Arrange - rule 6: a miss on one label never turns the seed into a verdict.
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
-        harvest.Apply(new MpPlayEvent { Type = "chip", Label = "Chip B", Url = "" });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new V2PlayEvent { Type = "chip", Label = "Chip B", Url = "" });
 
         // Act
         var list = await harvest.WaitForAsync(null, CancellationToken.None);
@@ -206,8 +206,8 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - rule 6: a harvest that ends with no probe-ready chip still hands over
         // its chips, led by one that has a playlist.
-        var withPlaylist = new MpHarvestSession();
-        withPlaylist.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var withPlaylist = new V2HarvestSession();
+        withPlaylist.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         withPlaylist.Apply(PlaylistOnly("Chip B"));
         withPlaylist.Complete(failed: false);
 
@@ -224,9 +224,9 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - rule 6: every chip already has its verdict, so the seed is Failed
         // instead of queueing chips that would each ask again.
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B", "Chip C"] });
-        harvest.Apply(new MpPlayEvent { Type = "chip", Label = "Chip A", Url = "" });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B", "Chip C"] });
+        harvest.Apply(new V2PlayEvent { Type = "chip", Label = "Chip A", Url = "" });
         harvest.Complete(failed: false);
 
         // Act
@@ -243,7 +243,7 @@ public sealed class MpHarvestSessionTests
         // Nothing is known about the page yet, so it is infrastructure (retry, then
         // Deferred), never a miss; the next ask on the same harvest gets the list.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
+        var harvest = new V2HarvestSession(clock);
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
         Assert.False(seed.IsCompleted);
         Assert.Equal(Start + harvest.ProbeReadyWait, clock.NextDue);
@@ -257,7 +257,7 @@ public sealed class MpHarvestSessionTests
         Assert.True(ex.IsRetryable);
         Assert.Equal(harvest.ProbeReadyWait.TotalSeconds, clock.T, 3);
         Assert.False(harvest.IsCompleted);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A"] });
         var list = await harvest.WaitForAsync(null, CancellationToken.None);
         Assert.Equal(["Chip A"], list?.Streams);
     }
@@ -267,8 +267,8 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - a captured MP playlist is probe-ready without rewritten segments.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip A"));
 
         // Act
@@ -285,8 +285,8 @@ public sealed class MpHarvestSessionTests
     public void IsChipReady_PlaylistOnlyChip_IsReadyAsSoonAsThePlaylistArrives()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A"] });
 
         // Act
         harvest.Apply(PlaylistOnly("Chip A"));
@@ -301,8 +301,8 @@ public sealed class MpHarvestSessionTests
         // Arrange - a captured playlist is ready whether or not a backup exists.
         var clock = new Timeline.MilestoneClock(Start);
         var noBackup = false;
-        var harvest = new MpHarvestSession(clock, handOverPlaylistOnlyNow: () => noBackup);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock, handOverPlaylistOnlyNow: () => noBackup);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip A"));
         harvest.Apply(PlaylistOnly("Chip B"));
         var readyWithBackup = harvest.IsChipReady("Chip A");
@@ -324,8 +324,8 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - a captured playlist is probe-ready, so it is not handed over
         // as an early chip and does not get the early-chip retry.
-        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => true);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        var harvest = new V2HarvestSession(handOverPlaylistOnlyNow: () => true);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A"] });
         harvest.Apply(PlaylistOnly("Chip A"));
 
         // Act
@@ -342,8 +342,8 @@ public sealed class MpHarvestSessionTests
     public async Task ChipHandedOverAtTheNormalTime_GetsNoRetry()
     {
         // Arrange - a captured playlist is handed over at once; that verdict stands (no retry).
-        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => false);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(handOverPlaylistOnlyNow: () => false);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip A"));
         harvest.Apply(ProbeReady("Chip B"));
         await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
@@ -364,8 +364,8 @@ public sealed class MpHarvestSessionTests
     public async Task EarlyChipRetry_DoesNotApplyToACapturedPlaylist()
     {
         // Arrange
-        var harvest = new MpHarvestSession(handOverPlaylistOnlyNow: () => true);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        var harvest = new V2HarvestSession(handOverPlaylistOnlyNow: () => true);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A"] });
         harvest.Apply(PlaylistOnly("Chip A"));
         await harvest.WaitForAsync("Chip A", CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -384,8 +384,8 @@ public sealed class MpHarvestSessionTests
         // while the harvest sends nothing for 30s, fails as infrastructure (never a 330s
         // wait). The resolver does not start the row (not ready): it stays queued.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         var named = harvest.WaitForAsync("Chip B", CancellationToken.None);
         Assert.False(harvest.IsChipReady("Chip B"));
 
@@ -407,8 +407,8 @@ public sealed class MpHarvestSessionTests
         // had already been silent for 30s and failed within 1ms ("sent nothing for 30s").
         // A late joiner must wait its own ProbeReadyWait from when it asked.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         using var silence = clock.CreateTimer(_ => { }, null, TimeSpan.FromSeconds(45), Timeout.InfiniteTimeSpan);
         while (clock.T < 45 && clock.NextDue is not null)
             clock.AdvanceToNext();
@@ -436,8 +436,8 @@ public sealed class MpHarvestSessionTests
         // Arrange - rule 7: a chip LocalService sends 50s after the chip list, with
         // nothing in between, is picked up when it arrives (the resolver waits on Changed).
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         using var stall = clock.CreateTimer(_ => { }, null, TimeSpan.FromSeconds(45), Timeout.InfiniteTimeSpan);
         while (clock.T < 45 && clock.NextDue is not null)
             clock.AdvanceToNext();
@@ -457,8 +457,8 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - a slow page (one chip every ~10s) is progressing, not stalled.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock, probeReadyWait: TimeSpan.FromSeconds(30));
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B", "Chip C"] });
+        var harvest = new V2HarvestSession(clock, probeReadyWait: TimeSpan.FromSeconds(30));
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B", "Chip C"] });
         var named = harvest.WaitForAsync("Chip C", CancellationToken.None);
         using var tick = clock.CreateTimer(_ => harvest.Apply(ProbeReady("Chip A")), null, TimeSpan.FromSeconds(20), Timeout.InfiniteTimeSpan);
         using var tick2 = clock.CreateTimer(_ => harvest.Apply(ProbeReady("Chip B")), null, TimeSpan.FromSeconds(40), Timeout.InfiniteTimeSpan);
@@ -482,22 +482,22 @@ public sealed class MpHarvestSessionTests
     public void Constructor_Defaults_Are45sSeedWaitAnd90sHardCap()
     {
         // Arrange / Act
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
 
         // Assert
-        Assert.Equal(TimeSpan.FromSeconds(45), MpHarvestSession.DefaultProbeReadyWait);
-        Assert.Equal(TimeSpan.FromSeconds(90), MpHarvestSession.DefaultHarvestHardCap);
-        Assert.Equal(MpHarvestSession.DefaultProbeReadyWait, harvest.ProbeReadyWait);
+        Assert.Equal(TimeSpan.FromSeconds(45), V2HarvestSession.DefaultProbeReadyWait);
+        Assert.Equal(TimeSpan.FromSeconds(90), V2HarvestSession.DefaultHarvestHardCap);
+        Assert.Equal(V2HarvestSession.DefaultProbeReadyWait, harvest.ProbeReadyWait);
     }
 
     [Fact]
     public void IsChipReady_ListedButUnsent_IsNotReady()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
 
         // Act
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A"] });
 
         // Assert
         Assert.False(harvest.IsChipReady("Chip A"));
@@ -511,24 +511,24 @@ public sealed class MpHarvestSessionTests
         var custom = TimeSpan.FromSeconds(12);
 
         // Act
-        var harvest = new MpHarvestSession(probeReadyWait: custom);
-        var other = new MpHarvestSession();
+        var harvest = new V2HarvestSession(probeReadyWait: custom);
+        var other = new V2HarvestSession();
 
         // Assert
         Assert.Equal(custom, harvest.ProbeReadyWait);
-        Assert.Equal(MpHarvestSession.DefaultProbeReadyWait, other.ProbeReadyWait);
+        Assert.Equal(V2HarvestSession.DefaultProbeReadyWait, other.ProbeReadyWait);
     }
 
     [Fact]
     public async Task WaitForAsync_NamedChip_MissCompletesWithoutSoak()
     {
         // Arrange - definitive miss must complete named wait without soak/Complete.
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
 
         // Act
-        harvest.Apply(new MpPlayEvent
+        harvest.Apply(new V2PlayEvent
         {
             Type = "chip",
             Label = "Chip B",
@@ -550,9 +550,9 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - a captured playlist is probe-ready even when rewritten samples
         // are not probe-shaped (plain .ts is not HasProbeReady).
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        harvest.Apply(new MpPlayEvent
+        harvest.Apply(new V2PlayEvent
         {
             Type = "chip",
             Label = "Chip B",
@@ -575,9 +575,9 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange - empty URL would also match IsHarvestedMiss; probe-shaped
         // rewritten segments must win and hand over as probe-ready.
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        harvest.Apply(new MpPlayEvent
+        harvest.Apply(new V2PlayEvent
         {
             Type = "chip",
             Label = "Chip B",
@@ -599,9 +599,9 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_NamedChip_CompletesWhenThatLineArrives()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(ProbeReady("Chip A"));
         Assert.False(waiting.IsCompleted);
 
@@ -619,9 +619,9 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_NamedChip_PlaylistOnlyRelease_IsReadyWithoutRewritten()
     {
         // Arrange - mirrors ReleaseChipThenSoak: playlist line, then soak enrich.
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip B"));
 
         // Act
@@ -635,8 +635,8 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_NamedChip_CachedPlaylistOnly_IsReadyWithoutSoak()
     {
         // Arrange - sibling WaitForAsync starts after playlist-only was cached.
-        var harvest = new MpHarvestSession();
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession();
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Apply(PlaylistOnly("Chip B"));
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
 
@@ -651,7 +651,7 @@ public sealed class MpHarvestSessionTests
     public async Task Complete_NamedWaiter_ReturnsPlaylistOnlyWhenSoakNeverEnriched()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
         harvest.Apply(PlaylistOnly("Chip B"));
 
@@ -667,7 +667,7 @@ public sealed class MpHarvestSessionTests
     public async Task Complete_UnblocksMissingLabels()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip B", CancellationToken.None);
 
         // Act
@@ -684,7 +684,7 @@ public sealed class MpHarvestSessionTests
     public async Task Complete_EmptyDone_UnblocksFirstChipWait()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var waiting = harvest.WaitForAsync(null, timeout.Token);
 
@@ -704,13 +704,13 @@ public sealed class MpHarvestSessionTests
         // Arrange - rule 6: chip rows that start after an all-miss harvest ended are
         // answered from it (no re-POST per chip); a later tap asks LocalService again.
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
-        harvest.Apply(new MpPlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
+        var harvest = new V2HarvestSession(clock);
+        harvest.Apply(new V2PlayEvent { Type = "chips", Streams = ["Chip A", "Chip B"] });
         harvest.Complete(failed: false);
 
         // Act
         var soon = harvest.CanReuseFor(Page, Page);
-        using var later = clock.CreateTimer(_ => { }, null, MpHarvestSession.VerdictMemory, Timeout.InfiniteTimeSpan);
+        using var later = clock.CreateTimer(_ => { }, null, V2HarvestSession.VerdictMemory, Timeout.InfiniteTimeSpan);
         clock.AdvanceToNext();
         var afterMemory = harvest.CanReuseFor(Page, Page);
 
@@ -724,7 +724,7 @@ public sealed class MpHarvestSessionTests
     public async Task WaitForAsync_NamedChip_AfterComplete_ReturnsNull()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         harvest.Complete(failed: false);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
@@ -739,7 +739,7 @@ public sealed class MpHarvestSessionTests
     public void Complete_RelayClosed_SetsErrorUntilAPlaylistArrives()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
 
         // Act
         harvest.Complete(failed: true, error: "The compute relay closed before a playlist arrived");
@@ -753,7 +753,7 @@ public sealed class MpHarvestSessionTests
     public void CanReuseFor_ProbeReadyOnly_RejectsACompletedMissOnTheSamePage()
     {
         // Arrange - remote compute keeps the old rule: a completed miss is never reused.
-        var harvest = new MpHarvestSession(mode: MpSeedMode.ProbeReadyOnly);
+        var harvest = new V2HarvestSession(mode: V2SeedMode.ProbeReadyOnly);
         harvest.Complete(failed: true, error: "The compute relay closed before a playlist arrived");
 
         // Act
@@ -767,7 +767,7 @@ public sealed class MpHarvestSessionTests
     public void CanReuseFor_KeepsAnInFlightHarvestOnTheSamePage()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
 
         // Act
         var reuse = harvest.CanReuseFor(Page, Page);
@@ -780,7 +780,7 @@ public sealed class MpHarvestSessionTests
     public void HasPlaylist_IsTrueAfterAChipUrl()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
 
         // Act
         harvest.Apply(PlaylistOnly("Chip A"));
@@ -794,9 +794,9 @@ public sealed class MpHarvestSessionTests
     public async Task Cancel_WaitersThrow_InsteadOfAFailedPlaylist()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var waiting = harvest.WaitForAsync("Chip A", CancellationToken.None);
-        var withChip = new MpHarvestSession();
+        var withChip = new V2HarvestSession();
         withChip.Apply(PlaylistOnly("Chip A"));
 
         // Act
@@ -818,10 +818,10 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock);
+        var harvest = new V2HarvestSession(clock);
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(20));
-        harvest.Apply(new MpPlayEvent { Type = MpPlayEvent.TypeCaptchaCleared });
+        harvest.Apply(new V2PlayEvent { Type = V2PlayEvent.TypeCaptchaCleared });
         Assert.False(seed.IsCompleted);
 
         // Act - a 45s clock after a clear at 20s is still under the 90s cap.
@@ -846,10 +846,10 @@ public sealed class MpHarvestSessionTests
     {
         // Arrange
         var clock = new Timeline.MilestoneClock(Start);
-        var harvest = new MpHarvestSession(clock, harvestHardCap: TimeSpan.FromSeconds(50));
+        var harvest = new V2HarvestSession(clock, harvestHardCap: TimeSpan.FromSeconds(50));
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(20));
-        harvest.Apply(new MpPlayEvent { Type = MpPlayEvent.TypeCaptchaCleared });
+        harvest.Apply(new V2PlayEvent { Type = V2PlayEvent.TypeCaptchaCleared });
 
         // Act - a fresh 45s clock would end at 65s, but the 50s cap wins (t+50).
         var due = Start + TimeSpan.FromSeconds(50);
@@ -868,34 +868,34 @@ public sealed class MpHarvestSessionTests
     public async Task Apply_CaptchaUnsolved_503_CompletesAsMissNotInfrastructure()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
 
         // Act
-        harvest.Apply(new MpPlayEvent
+        harvest.Apply(new V2PlayEvent
         {
             Type = "error",
             StatusCode = 503,
             Error = "MP blocked by captcha (EdgeOne): still challenged",
-            Reason = MpPlayEvent.ReasonCaptchaUnsolved
+            Reason = V2PlayEvent.ReasonCaptchaUnsolved
         });
 
         // Assert
         Assert.Null(await seed);
         Assert.True(harvest.IsCompleted);
         Assert.Null(harvest.Fault);
-        Assert.Equal(MpPlayEvent.ReasonCaptchaUnsolved, harvest.Reason);
+        Assert.Equal(V2PlayEvent.ReasonCaptchaUnsolved, harvest.Reason);
     }
 
     [Fact]
     public async Task Apply_Plain503_IsStillInfrastructure()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
 
         // Act
-        harvest.Apply(new MpPlayEvent { Type = "error", StatusCode = 503, Error = "mp play execution failed" });
+        harvest.Apply(new V2PlayEvent { Type = "error", StatusCode = 503, Error = "mp play execution failed" });
 
         // Assert
         await Assert.ThrowsAsync<LocalServiceUnavailableException>(() => seed);
@@ -906,21 +906,21 @@ public sealed class MpHarvestSessionTests
     public async Task Apply_NoPlayer_404_CompletesAsMiss()
     {
         // Arrange
-        var harvest = new MpHarvestSession();
+        var harvest = new V2HarvestSession();
         var seed = harvest.WaitForAsync(null, CancellationToken.None);
 
         // Act
-        harvest.Apply(new MpPlayEvent
+        harvest.Apply(new V2PlayEvent
         {
             Type = "error",
             StatusCode = 404,
             Error = "MP page has no player.",
-            Reason = MpPlayEvent.ReasonNoPlayer
+            Reason = V2PlayEvent.ReasonNoPlayer
         });
 
         // Assert
         Assert.Null(await seed);
         Assert.True(harvest.IsCompleted);
-        Assert.Equal(MpPlayEvent.ReasonNoPlayer, harvest.Reason);
+        Assert.Equal(V2PlayEvent.ReasonNoPlayer, harvest.Reason);
     }
 }

@@ -3,12 +3,12 @@ using VardyParty.Kernel;
 
 namespace VardyParty.Streaming;
 
-/// <summary>How the unlabeled seed wait of an <see cref="MpHarvestSession"/> answers.</summary>
-public enum MpSeedMode
+/// <summary>How the unlabeled seed wait of an <see cref="V2HarvestSession"/> answers.</summary>
+public enum V2SeedMode
 {
     /// <summary>
     /// Rules 5-7: the chip list (or the first chip) releases the seed with every label,
-    /// and no waiter holds out more than <see cref="MpHarvestSession.ProbeReadyWait"/>
+    /// and no waiter holds out more than <see cref="V2HarvestSession.ProbeReadyWait"/>
     /// for probe-ready segments or for a stalled harvest. The LAN resolver queues each
     /// chip as a row.
     /// </summary>
@@ -26,7 +26,7 @@ public enum MpSeedMode
 /// lists its chips while later labels wait on the same Chrome session
 /// (docs/PROBE_SCHEDULING_RULES.md rules 5-7).
 /// </summary>
-public sealed class MpHarvestSession
+public sealed class V2HarvestSession
 {
     /// <summary>Default for <see cref="ProbeReadyWait"/> (rule 7).</summary>
     public static readonly TimeSpan DefaultProbeReadyWait = TimeSpan.FromSeconds(45);
@@ -83,9 +83,9 @@ public sealed class MpHarvestSession
     /// True while a playlist-only chip should be handed over at once instead of after
     /// <see cref="ProbeReadyWait"/> (rule 7, Jon 13 Nov 2026: while no backup exists).
     /// </param>
-    public MpHarvestSession(
+    public V2HarvestSession(
         TimeProvider? time = null,
-        MpSeedMode mode = MpSeedMode.ChipList,
+        V2SeedMode mode = V2SeedMode.ChipList,
         TimeSpan? probeReadyWait = null,
         Func<bool>? handOverPlaylistOnlyNow = null,
         TimeSpan? harvestHardCap = null)
@@ -95,7 +95,7 @@ public sealed class MpHarvestSession
         _startedAt = _time.GetUtcNow();
         _seedClockAt = _startedAt;
         _lastProgressAt = _startedAt;
-        _chipListSeed = mode == MpSeedMode.ChipList;
+        _chipListSeed = mode == V2SeedMode.ChipList;
         _legacy = !_chipListSeed;
         ProbeReadyWait = probeReadyWait ?? DefaultProbeReadyWait;
         var cap = harvestHardCap ?? DefaultHarvestHardCap;
@@ -216,7 +216,7 @@ public sealed class MpHarvestSession
         if (!_retryAt.TryAdd(key, _time.GetUtcNow() + delay))
             return false;
         lock (_gate)
-            _retryTimers.Add(_time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, delay, Timeout.InfiniteTimeSpan));
+            _retryTimers.Add(_time.CreateTimer(static s => ((V2HarvestSession)s!).Signal(), this, delay, Timeout.InfiniteTimeSpan));
         Signal();
         return true;
     }
@@ -250,11 +250,11 @@ public sealed class MpHarvestSession
         return response;
     }
 
-    public void Apply(MpPlayEvent ev)
+    public void Apply(V2PlayEvent ev)
     {
         switch (ev.Type)
         {
-            case MpPlayEvent.TypeCaptchaCleared:
+            case V2PlayEvent.TypeCaptchaCleared:
                 lock (_gate)
                 {
                     _seedClockAt = _time.GetUtcNow();
@@ -283,7 +283,7 @@ public sealed class MpHarvestSession
                 break;
 
             case "chip":
-                var response = MpNdjson.ToResponse(ev, Streams);
+                var response = V2Ndjson.ToResponse(ev, Streams);
                 if (response is null)
                 {
                     return;
@@ -309,7 +309,7 @@ public sealed class MpHarvestSession
                     // A probe-ready chip can seed directly. Otherwise the first chip
                     // releases the seed as a chip list (rule 5) - an empty-URL miss
                     // or a playlist still soaking is never the seed's verdict.
-                    if (MpRewrittenSegment.HasProbeReady(response.RewrittenSegments))
+                    if (V2RewrittenSegment.HasProbeReady(response.RewrittenSegments))
                         _seed ??= response;
                     else if (!_legacy && !string.IsNullOrWhiteSpace(label))
                         _seed ??= ChipList(label.Trim());
@@ -324,7 +324,7 @@ public sealed class MpHarvestSession
             case "error":
                 _error = ev.Error;
                 _reason = ev.Reason;
-                if (IsMpPageFailFast(ev))
+                if (IsV2PageFailFast(ev))
                 {
                     // Captcha or no-player: MP is done for this game. Do not
                     // treat 503 as "LocalService down" (which defers and retries);
@@ -333,7 +333,7 @@ public sealed class MpHarvestSession
                 }
                 else if (ev.StatusCode is >= 500)
                 {
-                    // LocalService's own failure (MpStreamResponse writes 500
+                    // LocalService's own failure (V2StreamResponse writes 500
                     // "mp play execution failed"). Only a 4xx, e.g. 404 "M3U8 not
                     // captured from MP page.", is the stream's verdict.
                     Fail(new LocalServiceUnavailableException(
@@ -360,12 +360,12 @@ public sealed class MpHarvestSession
 
         if (result.Streams is { Count: > 0 })
         {
-            Apply(new MpPlayEvent { Type = "chips", Streams = result.Streams, SelectedStream = result.SelectedStream });
+            Apply(new V2PlayEvent { Type = "chips", Streams = result.Streams, SelectedStream = result.SelectedStream });
         }
 
         if (!string.IsNullOrWhiteSpace(result.Url) || !string.IsNullOrWhiteSpace(result.SelectedStream))
         {
-            Apply(new MpPlayEvent
+            Apply(new V2PlayEvent
             {
                 Type = "chip",
                 Label = result.SelectedStream,
@@ -585,7 +585,7 @@ public sealed class MpHarvestSession
         if (!_chipListSeed || _done)
             return;
         _stallTimer?.Dispose();
-        _stallTimer = _time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, ProbeReadyWait, Timeout.InfiniteTimeSpan);
+        _stallTimer = _time.CreateTimer(static s => ((V2HarvestSession)s!).Signal(), this, ProbeReadyWait, Timeout.InfiniteTimeSpan);
     }
 
     private void ScheduleWake(TimeSpan due)
@@ -596,7 +596,7 @@ public sealed class MpHarvestSession
         {
             if (_done)
                 return;
-            _wakeTimers.Add(_time.CreateTimer(static s => ((MpHarvestSession)s!).Signal(), this, due, Timeout.InfiniteTimeSpan));
+            _wakeTimers.Add(_time.CreateTimer(static s => ((V2HarvestSession)s!).Signal(), this, due, Timeout.InfiniteTimeSpan));
         }
     }
 
@@ -631,17 +631,17 @@ public sealed class MpHarvestSession
     {
         lock (_gate)
         {
-            if (_seed is not null && MpRewrittenSegment.HasProbeReady(_seed.RewrittenSegments))
+            if (_seed is not null && V2RewrittenSegment.HasProbeReady(_seed.RewrittenSegments))
                 return _seed;
         }
 
         foreach (var label in Streams)
         {
-            if (_byLabel.TryGetValue(label, out var r) && MpRewrittenSegment.HasProbeReady(r.RewrittenSegments))
+            if (_byLabel.TryGetValue(label, out var r) && V2RewrittenSegment.HasProbeReady(r.RewrittenSegments))
                 return r;
         }
 
-        return _byLabel.Values.FirstOrDefault(r => MpRewrittenSegment.HasProbeReady(r.RewrittenSegments));
+        return _byLabel.Values.FirstOrDefault(r => V2RewrittenSegment.HasProbeReady(r.RewrittenSegments));
     }
 
     private bool PlaylistWaitOver(string key) =>
@@ -708,7 +708,7 @@ public sealed class MpHarvestSession
     /// </summary>
     private static bool IsReadyForWaiter(M3U8Response response) =>
         !string.IsNullOrWhiteSpace(response.Url)
-        || MpRewrittenSegment.HasProbeReady(response.RewrittenSegments);
+        || V2RewrittenSegment.HasProbeReady(response.RewrittenSegments);
 
     private static bool IsHarvestedMiss(M3U8Response response) =>
         string.IsNullOrWhiteSpace(response.Url);
@@ -722,8 +722,8 @@ public sealed class MpHarvestSession
         return clockLeft < capLeft ? clockLeft : capLeft;
     }
 
-    private static bool IsMpPageFailFast(MpPlayEvent ev) =>
-        ev.Reason is MpPlayEvent.ReasonCaptchaUnsolved
-            or MpPlayEvent.ReasonCaptchaRunCap
-            or MpPlayEvent.ReasonNoPlayer;
+    private static bool IsV2PageFailFast(V2PlayEvent ev) =>
+        ev.Reason is V2PlayEvent.ReasonCaptchaUnsolved
+            or V2PlayEvent.ReasonCaptchaRunCap
+            or V2PlayEvent.ReasonNoPlayer;
 }

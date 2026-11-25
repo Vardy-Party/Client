@@ -31,7 +31,7 @@ public enum LocalServiceUnavailableReason
     /// when its MP gate is off). The row is unavailable here, not dead. The
     /// client does not try to re-enable V2/MP and does not retry at once.
     /// </summary>
-    MpDisabled,
+    V2Disabled,
 
     /// <summary>
     /// The service refused our token (401) or role (403). A sign-in problem,
@@ -77,7 +77,7 @@ public sealed class LocalServiceUnavailableException(
     /// </summary>
     public override bool IsRetryable =>
         !FromFinishedHarvest
-        && Reason is not (LocalServiceUnavailableReason.MpDisabled
+        && Reason is not (LocalServiceUnavailableReason.V2Disabled
             or LocalServiceUnavailableReason.Unauthorized
             or LocalServiceUnavailableReason.CdnUnreachable);
 }

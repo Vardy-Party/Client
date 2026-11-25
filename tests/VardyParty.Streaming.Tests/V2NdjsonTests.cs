@@ -8,7 +8,7 @@ using Xunit;
 
 namespace VardyParty.Streaming.Tests;
 
-public sealed class MpNdjsonTests
+public sealed class V2NdjsonTests
 {
     [Fact]
     public void ParseLine_ReadsChipEvent()
@@ -17,7 +17,7 @@ public sealed class MpNdjsonTests
         var line = """{"type":"chip","label":"Chip A","url":"https://stream.example.test/a.m3u8"}""";
 
         // Act
-        var ev = MpNdjson.ParseLine(line);
+        var ev = V2Ndjson.ParseLine(line);
 
         // Assert
         Assert.NotNull(ev);
@@ -35,7 +35,7 @@ public sealed class MpNdjsonTests
 
         // Act
         var lines = new List<string>();
-        await foreach (var line in MpNdjson.ReadLinesAsync(stream, CancellationToken.None))
+        await foreach (var line in V2Ndjson.ReadLinesAsync(stream, CancellationToken.None))
         {
             lines.Add(line);
         }

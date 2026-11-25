@@ -10,7 +10,7 @@ public class StreamCatalogSourceTests
     private readonly IFixture _fixture = AutoMoqFixture.Create();
 
     [Fact]
-    public void ResolveCatalogSource_TagsSourceMpAsMpEvenWhenUrlIsNotMpHost()
+    public void ResolveCatalogSource_TagsSourceV2AsV2EvenWhenUrlIsNotV2Host()
     {
         // Arrange — slim FCTV/v2 rows use source=mp + resolutionStrategy=v2 on non-MP page URLs
         var stream = _fixture.Build<Stream>()
@@ -29,7 +29,7 @@ public class StreamCatalogSourceTests
     }
 
     [Fact]
-    public void ResolveCatalogSource_TagsV2StrategyAsMpWhenUrlIsEmpty()
+    public void ResolveCatalogSource_TagsV2StrategyAsV2WhenUrlIsEmpty()
     {
         // Arrange
         var stream = _fixture.Build<Stream>()

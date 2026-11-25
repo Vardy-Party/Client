@@ -3,7 +3,7 @@ using VardyParty.LocalService.V2;
 
 namespace VardyParty.Streaming.Tests;
 
-public sealed class MpDiscoveredChipsTests
+public sealed class V2DiscoveredChipsTests
 {
     [Fact]
     public void Normalize_KeepsLeafChipsAndDropsStoreButtons()

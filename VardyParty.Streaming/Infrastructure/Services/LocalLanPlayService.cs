@@ -49,10 +49,10 @@ public class LocalLanPlayService(
     IOptions<APISettings>? apiSettings = null,
     SelectionState? selectionState = null,
     IStreamHealthClientEnvironment? clientEnvironment = null,
-    MpHarvestHub? mpHub = null) : ILocalLanPlayService, IMpHarvestProbe
+    V2HarvestHub? mpHub = null) : ILocalLanPlayService, IV2HarvestProbe
 {
-    /// <summary>Shared <c>/mp</c> lane state (<see cref="MpHarvestHub"/>): one per app, not per instance.</summary>
-    private readonly MpHarvestHub _mp = mpHub ?? new MpHarvestHub();
+    /// <summary>Shared <c>/v2</c> lane state (<see cref="V2HarvestHub"/>): one per app, not per instance.</summary>
+    private readonly V2HarvestHub _mp = mpHub ?? new V2HarvestHub();
 
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan DiscoveryCacheTtl = TimeSpan.FromSeconds(120);
@@ -119,7 +119,7 @@ public class LocalLanPlayService(
     private DateTimeOffset _capabilitiesCachedAt = DateTimeOffset.MinValue;
     private string? _cachedServiceVersion;
     private object _mpHarvestGate => _mp.Gate;
-    private MpHarvestSession? _mpHarvest { get => _mp.Harvest; set => _mp.Harvest = value; }
+    private V2HarvestSession? _mpHarvest { get => _mp.Harvest; set => _mp.Harvest = value; }
     private string? _mpHarvestPage { get => _mp.Page; set => _mp.Page = value; }
     private TaskCompletionSource _mpHarvestStarted { get => _mp.Started; set => _mp.Started = value; }
 
@@ -130,14 +130,14 @@ public class LocalLanPlayService(
     private CancellationTokenSource? _mpHarvestCts { get => _mp.Cts; set => _mp.Cts = value; }
 
     /// <summary>
-    /// Who still wants each MP page: <see cref="CallMpEndpointAsync"/> callers while they
-    /// wait, and resolver runs (<see cref="WantMpPage"/>) until they end. Guarded by
+    /// Who still wants each MP page: <see cref="CallV2EndpointAsync"/> callers while they
+    /// wait, and resolver runs (<see cref="WantV2Page"/>) until they end. Guarded by
     /// <see cref="_mpHarvestGate"/>.
     /// </summary>
     private Dictionary<string, int> _mpWants => _mp.Wants;
 
     /// <summary>
-    /// LocalService runs one <c>POST /mp</c> at a time. Held from the POST until that
+    /// LocalService runs one <c>POST /v2</c> at a time. Held from the POST until that
     /// harvest ends (not until its seed returns), so the MP lane stays single-flight
     /// at LocalService after the seed hands its chips to the resolver (rule 3, rule 5).
     /// The harvest also holds one <see cref="ResolverRaceThrottle"/> slot, but only
@@ -145,22 +145,22 @@ public class LocalLanPlayService(
     /// </summary>
     private SemaphoreSlim _mpPostGate => _mp.PostGate;
 
-    /// <summary>Test seam: clock for the <c>/mp</c> harvest (seed deadline, our harvest timeout).</summary>
+    /// <summary>Test seam: clock for the <c>/v2</c> harvest (seed deadline, our harvest timeout).</summary>
     internal TimeProvider Time { get; set; } = TimeProvider.System;
 
     /// <summary>
-    /// After <c>/mp rejected: V2/MP scrape disabled</c>, MP rows on that
+    /// After <c>/v2 rejected: V2/MP scrape disabled</c>, MP rows on that
     /// service are answered from memory for this long (no POST), as
-    /// <see cref="LocalServiceUnavailableReason.MpDisabled"/>. The client never
+    /// <see cref="LocalServiceUnavailableReason.V2Disabled"/>. The client never
     /// tries to switch V2/MP back on.
     /// </summary>
-    internal static readonly TimeSpan MpDisabledMemory = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan V2DisabledMemory = TimeSpan.FromSeconds(60);
 
     private readonly object _mpDisabledGate = new();
     private string? _mpDisabledBaseUrl;
     private DateTimeOffset _mpDisabledAt;
 
-    /// <summary>Test seam: clock for <see cref="MpDisabledMemory"/>.</summary>
+    /// <summary>Test seam: clock for <see cref="V2DisabledMemory"/>.</summary>
     internal Func<DateTimeOffset> Clock { get; set; } = static () => DateTimeOffset.UtcNow;
 
     public HttpStatusCode? LastHealthStatus { get; private set; }
@@ -431,9 +431,9 @@ public class LocalLanPlayService(
         }
 
         await RefreshCapabilitiesIfNeededAsync(cancellationToken);
-        // Catalog resolutionStrategy/source + transport plugins choose /mp vs /play — never URL host sniffing.
-        // Playlist CTU rewrite stays on LocalService (/mp); client has no playlist body on this path.
-        var useMp = ShouldUseMpEndpoint(resolutionStrategy, source, _cachedCapabilities);
+        // Catalog resolutionStrategy/source + transport plugins choose /v2 vs /play — never URL host sniffing.
+        // Playlist CTU rewrite stays on LocalService (/v2); client has no playlist body on this path.
+        var useMp = ShouldUseV2Endpoint(resolutionStrategy, source, _cachedCapabilities);
         var effectiveStreamName = SupportsPlayStreamQuery(_cachedCapabilities)
             ? playerStreamName
             : null;
@@ -449,13 +449,13 @@ public class LocalLanPlayService(
         // time; every dead stream then caused a re-discovery
         // (16:51:43-16:53:03 UK time on 31 Oct 2026) and a double /play
         // (techydeals at 16:49:54 and 16:50:14).
-        // /mp has its own lane (docs/PROBE_SCHEDULING_RULES.md rules 2-5): a new
+        // /v2 has its own lane (docs/PROBE_SCHEDULING_RULES.md rules 2-5): a new
         // harvest takes a /play slot only until LocalService lists the page's chips,
         // then two FB probes run beside the background harvest. _mpPostGate keeps
-        // /mp single-flight for the whole harvest.
+        // /v2 single-flight for the whole harvest.
         if (useMp)
         {
-            return await CallMpEndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken);
+            return await CallV2EndpointAsync(baseUrl, streamUrl, playerStreamName, cancellationToken);
         }
 
         // One slot per browser /play. A startup race holds both slots; other
@@ -472,7 +472,7 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
-    public bool IsMpChipReady(string pageUrl, string? chip)
+    public bool IsV2ChipReady(string pageUrl, string? chip)
     {
         lock (_mpHarvestGate)
         {
@@ -483,7 +483,7 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
-    public bool RetryEarlyMpChip(string pageUrl, string? chip)
+    public bool RetryEarlyV2Chip(string pageUrl, string? chip)
     {
         lock (_mpHarvestGate)
         {
@@ -494,7 +494,7 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
-    public string? MpChipHandover(string pageUrl, string? chip)
+    public string? V2ChipHandover(string pageUrl, string? chip)
     {
         lock (_mpHarvestGate)
         {
@@ -505,7 +505,7 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> ListedMpChips(string pageUrl)
+    public IReadOnlyList<string> ListedV2Chips(string pageUrl)
     {
         lock (_mpHarvestGate)
         {
@@ -526,7 +526,7 @@ public class LocalLanPlayService(
             // No harvest running: a reuse from a finished one, or a new POST, decides.
             if (_mpHarvest is not { } harvest || harvest.IsCompleted)
                 return true;
-            // Another page's harvest holds the single /mp: a POST would only wait on
+            // Another page's harvest holds the single /v2: a POST would only wait on
             // _mpPostGate inside the MP lane, holding it for that whole harvest.
             if (!string.Equals(_mpHarvestPage, pageUrl, StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -537,13 +537,13 @@ public class LocalLanPlayService(
     }
 
     /// <inheritdoc />
-    public IDisposable WantMpPage(string pageUrl, CancellationToken runToken)
+    public IDisposable WantV2Page(string pageUrl, CancellationToken runToken)
     {
-        AddMpWant(pageUrl);
-        return new MpWant(this, pageUrl, runToken);
+        AddV2Want(pageUrl);
+        return new V2Want(this, pageUrl, runToken);
     }
 
-    private void AddMpWant(string pageUrl)
+    private void AddV2Want(string pageUrl)
     {
         lock (_mpHarvestGate)
             _mpWants[pageUrl] = _mpWants.TryGetValue(pageUrl, out var n) ? n + 1 : 1;
@@ -552,10 +552,10 @@ public class LocalLanPlayService(
     /// <summary>
     /// One caller or run no longer wants <paramref name="pageUrl"/>. When the last one
     /// went away because it was cancelled, the page's running harvest is cancelled so
-    /// LocalService's single <c>/mp</c> (and <see cref="_mpPostGate"/>) is free for the
+    /// LocalService's single <c>/v2</c> (and <see cref="_mpPostGate"/>) is free for the
     /// next page. A caller that finished normally leaves the harvest running, as before.
     /// </summary>
-    private void ReleaseMpWant(string pageUrl, bool cancelled)
+    private void ReleaseV2Want(string pageUrl, bool cancelled)
     {
         CancellationTokenSource? cancel = null;
         lock (_mpHarvestGate)
@@ -589,19 +589,19 @@ public class LocalLanPlayService(
         }
     }
 
-    private sealed class MpWant(LocalLanPlayService owner, string pageUrl, CancellationToken runToken) : IDisposable
+    private sealed class V2Want(LocalLanPlayService owner, string pageUrl, CancellationToken runToken) : IDisposable
     {
         private int _released;
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _released, 1) == 0)
-                owner.ReleaseMpWant(pageUrl, runToken.IsCancellationRequested);
+                owner.ReleaseV2Want(pageUrl, runToken.IsCancellationRequested);
         }
     }
 
     /// <inheritdoc />
-    public Task WaitForMpHarvestChangeAsync(CancellationToken cancellationToken)
+    public Task WaitForV2HarvestChangeAsync(CancellationToken cancellationToken)
     {
         Task changed;
         lock (_mpHarvestGate)
@@ -711,15 +711,15 @@ public class LocalLanPlayService(
 
         _usedRemote = true;
         logger.LogInformation("[LocalLanPlay] No LAN service; resolving {Url} via paired compute host", streamUrl);
-        var useMp = ShouldUseMpEndpoint(resolutionStrategy, source, ["play.stream", "mp", "mp.chrome"]);
+        var useMp = ShouldUseV2Endpoint(resolutionStrategy, source, ["play.stream", "v2", "v2.chrome"]);
         return remoteCompute.ResolveAsync(useMp, streamUrl, playerStreamName, cancellationToken);
     }
 
     /// <summary>
-    /// Prefer matching <see cref="IPlaybackTransportPlugin"/> endpoint; require <c>mp.chrome</c>
-    /// when the plugin (or fallback) selects <c>mp</c>.
+    /// Prefer matching <see cref="IPlaybackTransportPlugin"/> endpoint; require <c>v2.chrome</c>
+    /// when the plugin selects <c>v2</c>.
     /// </summary>
-    private bool ShouldUseMpEndpoint(
+    private bool ShouldUseV2Endpoint(
         string? resolutionStrategy,
         string? source,
         IEnumerable<string> capabilities)
@@ -727,15 +727,16 @@ public class LocalLanPlayService(
         var plugin = transportPlugins.FirstOrDefault(p => p.Matches(resolutionStrategy, source));
         if (plugin is not null)
         {
-            var wantsMp = string.Equals(plugin.LocalServiceEndpoint, "mp", StringComparison.OrdinalIgnoreCase);
-            if (!wantsMp)
+            var wantsV2 = string.Equals(plugin.LocalServiceEndpoint, "v2", StringComparison.OrdinalIgnoreCase);
+            if (!wantsV2)
                 return false;
 
             return capabilities.Any(c =>
-                string.Equals(c, "mp.chrome", StringComparison.OrdinalIgnoreCase));
+                string.Equals(c, "v2.chrome", StringComparison.OrdinalIgnoreCase));
         }
 
-        return MpPageUrl.UseMpEndpoint(resolutionStrategy, source, capabilities);
+        return V2PageUrl.IsV2(resolutionStrategy, source)
+            && capabilities.Any(c => string.Equals(c, "v2.chrome", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task RefreshCapabilitiesIfNeededAsync(CancellationToken cancellationToken)
@@ -915,50 +916,50 @@ public class LocalLanPlayService(
         }
     }
 
-    /// <summary>Our own cap on one /mp harvest (settable for tests).</summary>
-    internal TimeSpan MpHarvestTimeout { get; set; } = TimeSpan.FromSeconds(330);
+    /// <summary>Our own cap on one /v2 harvest (settable for tests).</summary>
+    internal TimeSpan V2HarvestTimeout { get; set; } = TimeSpan.FromSeconds(330);
 
-    private async Task<M3U8Response?> CallMpEndpointAsync(
+    private async Task<M3U8Response?> CallV2EndpointAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
         CancellationToken cancellationToken)
     {
-        if (IsMpDisabledRemembered(baseUrl))
+        if (IsV2DisabledRemembered(baseUrl))
         {
-            throw MpDisabledException();
+            throw V2DisabledException();
         }
 
         // This caller wants the page while it waits. Its cancel cancels the harvest
         // only if nobody else (another caller, a resolver run) still wants it.
-        AddMpWant(streamUrl);
+        AddV2Want(streamUrl);
         try
         {
-            return await CallMpEndpointCoreAsync(baseUrl, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
+            return await CallV2EndpointCoreAsync(baseUrl, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            ReleaseMpWant(streamUrl, cancellationToken.IsCancellationRequested);
+            ReleaseV2Want(streamUrl, cancellationToken.IsCancellationRequested);
         }
     }
 
-    private async Task<M3U8Response?> CallMpEndpointCoreAsync(
+    private async Task<M3U8Response?> CallV2EndpointCoreAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
         CancellationToken cancellationToken)
     {
-        if (TryReuseMpHarvest(streamUrl) is { } running)
+        if (TryReuseV2Harvest(streamUrl) is { } running)
         {
             return await HandOverAsync(running, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
 
-        // One POST /mp at LocalService at a time; the gate is released when that
-        // harvest ends (ReadMpHarvestAsync finally), not when its seed returns.
+        // One POST /v2 at LocalService at a time; the gate is released when that
+        // harvest ends (ReadV2HarvestAsync finally), not when its seed returns.
         await _mpPostGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        var reused = TryReuseMpHarvest(streamUrl);
+        var reused = TryReuseV2Harvest(streamUrl);
         IDisposable? slot = null;
-        if (reused is null && !IsMpDisabledRemembered(baseUrl) && raceThrottle is not null)
+        if (reused is null && !IsV2DisabledRemembered(baseUrl) && raceThrottle is not null)
         {
             // Rule 2: a new harvest counts as a LocalService session until the page's
             // chips are listed (ReleaseSlotWhenListedAsync), so LocalService never runs
@@ -975,17 +976,17 @@ public class LocalLanPlayService(
             }
         }
 
-        MpHarvestSession? harvest = null;
+        V2HarvestSession? harvest = null;
         CancellationTokenSource? harvestCts = null;
         TaskCompletionSource? started = null;
         lock (_mpHarvestGate)
         {
-            if (reused is null && !IsMpDisabledRemembered(baseUrl))
+            if (reused is null && !IsV2DisabledRemembered(baseUrl))
             {
                 // Rule 7: while a stream plays with no backup (BackupWanted), playlist-only
                 // chips are handed over at once instead of after ProbeReadyWait.
                 var throttle = raceThrottle;
-                harvest = new MpHarvestSession(Time, handOverPlaylistOnlyNow: () => throttle?.BackupWanted == true);
+                harvest = new V2HarvestSession(Time, handOverPlaylistOnlyNow: () => throttle?.BackupWanted == true);
                 harvestCts = new CancellationTokenSource();
                 _mpHarvest = harvest;
                 _mpHarvestPage = streamUrl;
@@ -1002,18 +1003,18 @@ public class LocalLanPlayService(
             slot?.Dispose();
             _mpPostGate.Release();
             if (reused is null)
-                throw MpDisabledException();
+                throw V2DisabledException();
             return await HandOverAsync(reused, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
         }
 
         started!.TrySetResult();
-        _ = ReadMpHarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, harvestCts!, slot);
+        _ = ReadV2HarvestAsync(baseUrl, streamUrl, playerStreamName, harvest, harvestCts!, slot);
         return await HandOverAsync(harvest, streamUrl, playerStreamName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>A labeled wait on the harvest, logged as a <c>[probe-timing]</c> chip handover.</summary>
     private async Task<M3U8Response?> HandOverAsync(
-        MpHarvestSession harvest,
+        V2HarvestSession harvest,
         string streamUrl,
         string? label,
         CancellationToken cancellationToken)
@@ -1035,10 +1036,10 @@ public class LocalLanPlayService(
     /// <summary>
     /// Rule 2: give the harvest's throttle slot back once LocalService has listed the
     /// page's chips (or sent a chip, or the harvest ended), or when the seed gives up
-    /// after <see cref="MpHarvestSession.ProbeReadyWait"/>. The harvest carries on in
+    /// after <see cref="V2HarvestSession.ProbeReadyWait"/>. The harvest carries on in
     /// the background on <see cref="_mpPostGate"/> alone.
     /// </summary>
-    private async Task ReleaseSlotWhenListedAsync(MpHarvestSession harvest, IDisposable slot, string streamUrl)
+    private async Task ReleaseSlotWhenListedAsync(V2HarvestSession harvest, IDisposable slot, string streamUrl)
     {
         var reason = "listed";
         try
@@ -1057,7 +1058,7 @@ public class LocalLanPlayService(
     }
 
     /// <summary><c>[probe-timing]</c>: when the page listed its chips and when each chip line arrived.</summary>
-    private void LogHarvestLine(string streamUrl, MpPlayEvent ev)
+    private void LogHarvestLine(string streamUrl, V2PlayEvent ev)
     {
         if (ev.Type == "chips" && ev.Streams is { Count: > 0 } chips)
         {
@@ -1069,11 +1070,11 @@ public class LocalLanPlayService(
                 ("chip", (ev.SelectedStream ?? ev.Label)?.Trim()),
                 ("page", ProbeTimingLog.Host(streamUrl)),
                 ("playlist", !string.IsNullOrWhiteSpace(ev.Url)),
-                ("probe_ready", MpRewrittenSegment.HasProbeReady(ev.RewrittenSegments)));
+                ("probe_ready", V2RewrittenSegment.HasProbeReady(ev.RewrittenSegments)));
         }
     }
 
-    private MpHarvestSession? TryReuseMpHarvest(string streamUrl)
+    private V2HarvestSession? TryReuseV2Harvest(string streamUrl)
     {
         lock (_mpHarvestGate)
         {
@@ -1081,23 +1082,23 @@ public class LocalLanPlayService(
         }
     }
 
-    private async Task ReadMpHarvestAsync(
+    private async Task ReadV2HarvestAsync(
         string baseUrl,
         string streamUrl,
         string? playerStreamName,
-        MpHarvestSession harvest,
+        V2HarvestSession harvest,
         CancellationTokenSource harvestCts,
         IDisposable? slot)
     {
-        var url = $"{baseUrl.TrimEnd('/')}/mp";
+        var url = $"{baseUrl.TrimEnd('/')}/v2";
         // The harvest's own lifetime: cancelled only when nobody wants the page any
-        // more (ReleaseMpWant), never by one caller among several.
+        // more (ReleaseV2Want), never by one caller among several.
         var cancellationToken = harvestCts.Token;
         if (slot is not null)
             _ = ReleaseSlotWhenListedAsync(harvest, slot, streamUrl);
         try
         {
-            using var harvestTimeout = new CancellationTokenSource(MpHarvestTimeout, Time);
+            using var harvestTimeout = new CancellationTokenSource(V2HarvestTimeout, Time);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, harvestTimeout.Token);
 
             var payload = JsonSerializer.Serialize(new
@@ -1110,8 +1111,8 @@ public class LocalLanPlayService(
             using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
             ApplyDohHeaders(request);
             ApplyScrapeHealthHeaders(request);
-            request.Headers.TryAddWithoutValidation(MpNdjson.RequestHeaderName, "1");
-            request.Headers.Accept.ParseAdd(MpNdjson.ContentType);
+            request.Headers.TryAddWithoutValidation(V2Ndjson.RequestHeaderName, "1");
+            request.Headers.Accept.ParseAdd(V2Ndjson.ContentType);
             logger.LogInformation(
                 "[LocalLanPlay] Resolving MP stream via POST {Url}{StreamSuffix} (stream)",
                 url,
@@ -1125,42 +1126,42 @@ public class LocalLanPlayService(
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 logger.LogWarning(
-                    "[LocalLanPlay] POST /mp rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
+                    "[LocalLanPlay] POST /v2 rejected with 401 Unauthorized for {StreamUrl}. Local service requires a valid Auth0 access token.",
                     streamUrl);
                 harvest.Fail(new LocalServiceUnavailableException(
-                    LocalServiceUnavailableReason.Unauthorized, "POST /mp rejected with 401 Unauthorized"));
+                    LocalServiceUnavailableReason.Unauthorized, "POST /v2 rejected with 401 Unauthorized"));
                 return;
             }
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
                 logger.LogWarning(
-                    "[LocalLanPlay] POST /mp rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
+                    "[LocalLanPlay] POST /v2 rejected with 403 Forbidden for {StreamUrl}. User lacks required stream-viewer role.",
                     streamUrl);
                 harvest.Fail(new LocalServiceUnavailableException(
-                    LocalServiceUnavailableReason.Unauthorized, "POST /mp rejected with 403 Forbidden"));
+                    LocalServiceUnavailableReason.Unauthorized, "POST /v2 rejected with 403 Forbidden"));
                 return;
             }
 
             if ((int)response.StatusCode >= 500)
             {
                 var body = await ReadErrorBodyAsync(response, cts.Token).ConfigureAwait(false);
-                if (IsMpScrapeDisabled(body))
+                if (IsV2ScrapeDisabled(body))
                 {
-                    RememberMpDisabled(baseUrl);
+                    RememberV2Disabled(baseUrl);
                     logger.LogInformation(
-                        "[LocalLanPlay] POST /mp rejected by {BaseUrl}: V2/MP scrape disabled. {StreamUrl} is unavailable here, not dead (deferred, not reported)",
+                        "[LocalLanPlay] POST /v2 rejected by {BaseUrl}: V2/MP scrape disabled. {StreamUrl} is unavailable here, not dead (deferred, not reported)",
                         baseUrl, streamUrl);
-                    harvest.Fail(MpDisabledException());
+                    harvest.Fail(V2DisabledException());
                 }
                 else
                 {
                     logger.LogWarning(
-                        "[LocalLanPlay] POST /mp returned {StatusCode} for {StreamUrl}: {Body}. Local service error, not a stream verdict",
+                        "[LocalLanPlay] POST /v2 returned {StatusCode} for {StreamUrl}: {Body}. Local service error, not a stream verdict",
                         (int)response.StatusCode, streamUrl, body);
                     harvest.Fail(new LocalServiceUnavailableException(
                         LocalServiceUnavailableReason.ServiceError,
-                        $"POST /mp returned {(int)response.StatusCode}"));
+                        $"POST /v2 returned {(int)response.StatusCode}"));
                 }
 
                 return;
@@ -1172,7 +1173,7 @@ public class LocalLanPlayService(
                 return;
             }
 
-            if (!MpNdjson.IsNdjson(response.Content.Headers.ContentType?.MediaType))
+            if (!V2Ndjson.IsNdjson(response.Content.Headers.ContentType?.MediaType))
             {
                 var json = await response.Content.ReadAsStringAsync(cts.Token);
                 M3U8Response? result = null;
@@ -1185,7 +1186,7 @@ public class LocalLanPlayService(
                     }
                     catch (JsonException ex)
                     {
-                        logger.LogDebug(ex, "[LocalLanPlay] Failed to deserialize POST /mp response body as JSON");
+                        logger.LogDebug(ex, "[LocalLanPlay] Failed to deserialize POST /v2 response body as JSON");
                     }
                 }
 
@@ -1202,9 +1203,9 @@ public class LocalLanPlayService(
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
-            await foreach (var line in MpNdjson.ReadLinesAsync(stream, cts.Token))
+            await foreach (var line in V2Ndjson.ReadLinesAsync(stream, cts.Token))
             {
-                var ev = MpNdjson.ParseLine(line);
+                var ev = V2Ndjson.ParseLine(line);
                 if (ev is not null)
                 {
                     harvest.Apply(ev);
@@ -1227,12 +1228,12 @@ public class LocalLanPlayService(
             // Android aborts a cancelled socket as SocketException 125 wrapped
             // in HttpRequestException, not OperationCanceledException. Completing
             // the harvest as a failure makes the caller invalidate discovery.
-            logger.LogDebug(ex, "[LocalLanPlay] POST /mp cancelled for {StreamUrl}", streamUrl);
+            logger.LogDebug(ex, "[LocalLanPlay] POST /v2 cancelled for {StreamUrl}", streamUrl);
             harvest.Cancel();
         }
         catch (Exception ex) when (ex is OperationCanceledException)
         {
-            // Our MpHarvestTimeout, not the caller. Chrome may still be soaking:
+            // Our V2HarvestTimeout, not the caller. Chrome may still be soaking:
             // that proves nothing about the stream.
             var alive = false;
             try
@@ -1246,39 +1247,39 @@ public class LocalLanPlayService(
             }
             catch (Exception healthEx)
             {
-                logger.LogDebug(healthEx, "[LocalLanPlay] Health check after POST /mp timeout failed");
+                logger.LogDebug(healthEx, "[LocalLanPlay] Health check after POST /v2 timeout failed");
             }
 
             logger.LogInformation(
-                "[LocalLanPlay] POST /mp for {StreamUrl} exceeded our {Timeout}s timeout (service alive: {Alive}); deferring, not failing",
-                streamUrl, MpHarvestTimeout.TotalSeconds, alive);
+                "[LocalLanPlay] POST /v2 for {StreamUrl} exceeded our {Timeout}s timeout (service alive: {Alive}); deferring, not failing",
+                streamUrl, V2HarvestTimeout.TotalSeconds, alive);
             harvest.Fail(new LocalServiceUnavailableException(
                 alive || LastHealthStatus is not null
                     ? LocalServiceUnavailableReason.CallTimeout
                     : LocalServiceUnavailableReason.ConnectionFailed,
-                $"POST /mp exceeded {MpHarvestTimeout.TotalSeconds:F0}s", ex));
+                $"POST /v2 exceeded {V2HarvestTimeout.TotalSeconds:F0}s", ex));
         }
         catch (Exception ex) when (IsConnectionFailure(ex))
         {
-            logger.LogInformation(ex, "[LocalLanPlay] Could not connect to local service {BaseUrl} for POST /mp {StreamUrl}",
+            logger.LogInformation(ex, "[LocalLanPlay] Could not connect to local service {BaseUrl} for POST /v2 {StreamUrl}",
                 baseUrl, streamUrl);
             RecordConnectionFailure(baseUrl, ex);
             harvest.Fail(new LocalServiceUnavailableException(
                 LocalServiceUnavailableReason.ConnectionFailed,
-                "Connection to local service failed during POST /mp", ex));
+                "Connection to local service failed during POST /v2", ex));
         }
         catch (Exception ex)
         {
-            logger.LogInformation(ex, "[LocalLanPlay] Failed POST /mp via {BaseUrl} for {StreamUrl}",
+            logger.LogInformation(ex, "[LocalLanPlay] Failed POST /v2 via {BaseUrl} for {StreamUrl}",
                 baseUrl, streamUrl);
             harvest.Fail(new LocalServiceUnavailableException(
                 LocalServiceUnavailableReason.ConnectionFailed,
-                "POST /mp failed", ex));
+                "POST /v2 failed", ex));
         }
         finally
         {
             // Every path above ends the harvest; make sure, then free the slot (if the
-            // chip list never came) and the /mp lane.
+            // chip list never came) and the /v2 lane.
             if (!harvest.IsCompleted)
                 harvest.Complete(failed: true);
             slot?.Dispose();
@@ -1309,16 +1310,16 @@ public class LocalLanPlayService(
 
     /// <summary>
     /// LocalService answers <c>503 {"error":"V2/MP scrape disabled on this local service"}</c>
-    /// when its MP gate is off (log line: <c>/mp rejected: V2/MP scrape disabled</c>).
+    /// when its MP gate is off (log line: <c>/v2 rejected: V2/MP scrape disabled</c>).
     /// </summary>
-    internal static bool IsMpScrapeDisabled(string? body) =>
+    internal static bool IsV2ScrapeDisabled(string? body) =>
         !string.IsNullOrEmpty(body)
         && body.Contains("scrape disabled", StringComparison.OrdinalIgnoreCase);
 
-    private static LocalServiceUnavailableException MpDisabledException() =>
-        new(LocalServiceUnavailableReason.MpDisabled, "V2/MP scrape disabled on the local service");
+    private static LocalServiceUnavailableException V2DisabledException() =>
+        new(LocalServiceUnavailableReason.V2Disabled, "V2/MP scrape disabled on the local service");
 
-    private void RememberMpDisabled(string baseUrl)
+    private void RememberV2Disabled(string baseUrl)
     {
         lock (_mpDisabledGate)
         {
@@ -1327,14 +1328,14 @@ public class LocalLanPlayService(
         }
     }
 
-    private bool IsMpDisabledRemembered(string baseUrl)
+    private bool IsV2DisabledRemembered(string baseUrl)
     {
         lock (_mpDisabledGate)
         {
             if (_mpDisabledBaseUrl is null)
                 return false;
             if (!string.Equals(_mpDisabledBaseUrl, baseUrl, StringComparison.OrdinalIgnoreCase)
-                || Clock() - _mpDisabledAt >= MpDisabledMemory)
+                || Clock() - _mpDisabledAt >= V2DisabledMemory)
             {
                 _mpDisabledBaseUrl = null;
                 return false;
