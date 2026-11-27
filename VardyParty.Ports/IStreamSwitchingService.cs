@@ -124,8 +124,24 @@ public interface IStreamSwitchingService
     /// <summary>Rows the player confirmed video on (<see cref="ConfirmPlaying"/>); null when not tracked.</summary>
     IObservable<EnrichedStream?>? PlayingConfirmed => null;
 
-    /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, or its feed failed).</summary>
+    /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, a sweep found it not healthy, or its feed failed).</summary>
     bool IsSkippedInCycle(EnrichedStream? row) => false;
+
+    /// <summary>
+    /// Pool rows Next, Previous, or auto-advance can still open. A row a later
+    /// sweep marked not healthy stays in the pool but is not counted.
+    /// </summary>
+    int CountSwitchable()
+    {
+        var count = 0;
+        foreach (var row in GetHealthyStreams())
+        {
+            if (!IsSkippedInCycle(row))
+                count++;
+        }
+
+        return count;
+    }
 
     /// <summary>The reason <paramref name="feedUrl"/>'s feed failed this cycle, or null.</summary>
     string? FailedFeedReason(string? feedUrl) => null;

@@ -382,6 +382,7 @@ namespace VardyParty.Playback.Tests
             // Assert — the picture stays on North, and switching does not come back to it.
             Assert.Equal("North", svc.GetCurrentStream()!.Stream.Channel);
             Assert.True(svc.IsSkippedInCycle(north));
+            Assert.Equal(1, svc.CountSwitchable());
             Assert.True(svc.SwitchToNextStream());
             Assert.Equal("South", svc.GetCurrentStream()!.Stream.Channel);
             Assert.False(svc.SwitchToNextStream());
@@ -389,6 +390,7 @@ namespace VardyParty.Playback.Tests
             // A later sweep that finds North healthy puts it back in the switch order.
             svc.NoteSweepHealth(north, healthy: true);
             Assert.False(svc.IsSkippedInCycle(north));
+            Assert.Equal(2, svc.CountSwitchable());
             Assert.True(svc.SwitchToNextStream());
             Assert.Equal("North", svc.GetCurrentStream()!.Stream.Channel);
         }

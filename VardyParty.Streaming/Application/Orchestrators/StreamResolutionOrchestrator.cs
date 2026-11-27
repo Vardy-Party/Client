@@ -43,9 +43,11 @@ public class StreamResolutionOrchestrator(
     internal Func<TimeSpan, CancellationToken, Task> CdnRecheckDelayAsync { get; set; } = Task.Delay;
 
     /// <summary>
-    /// Test seam for the quiet gap between local-service sweeps once two streams
-    /// are playable (<see cref="LivePageRefreshPolicy.RestAfterBackup"/>), and for
-    /// the wait until kickoff when the viewer is already in the player.
+    /// Test seam for the quiet gap between local-service sweeps: the scan floor
+    /// while fewer than two streams work (<see cref="LivePageRefreshPolicy.ScanFloor"/>),
+    /// the five-minute rest once a backup is in hand
+    /// (<see cref="LivePageRefreshPolicy.RestAfterBackup"/>), and the wait until
+    /// kickoff when that is sooner and the viewer is already in the player.
     /// </summary>
     internal Func<TimeSpan, CancellationToken, Task> LiveRefreshDelayAsync { get; set; } = Task.Delay;
 
@@ -388,7 +390,10 @@ public class StreamResolutionOrchestrator(
                         // A CDN-unreachable row waits minutes, not seconds: it goes to
                         // the CDN recheck (CdnReachabilityPolicy), not the 5s/15s passes.
                         if (enrichedStream.DeferReason == StreamDeferReason.CdnUnreachable)
-                            cdnDeferred.Add(enrichedStream.Stream);
+                        {
+                            lock (cdnDeferred)
+                                cdnDeferred.Add(enrichedStream.Stream);
+                        }
                         else
                             deferred.Add(enrichedStream.Stream);
                         break;
@@ -465,10 +470,11 @@ public class StreamResolutionOrchestrator(
             liveScan = SweepNewlyOnlinePagesAsync(
                 game,
                 orderedStreams,
+                cdnDeferred,
                 () =>
                 {
                     lock (playbackLock)
-                        return streamSwitchingService.GetHealthyStreams().Count;
+                        return streamSwitchingService.CountSwitchable();
                 },
                 playbackLock,
                 enriched =>
@@ -505,7 +511,8 @@ public class StreamResolutionOrchestrator(
                     return outcome;
 
                 cancellationToken.ThrowIfCancellationRequested();
-                outcome.CdnUnreachableStreamCount = cdnDeferred.Count;
+                lock (cdnDeferred)
+                    outcome.CdnUnreachableStreamCount = cdnDeferred.Count;
             }
 
             // The player gave up on its last row(s) as CDN unreachable
@@ -651,7 +658,9 @@ public class StreamResolutionOrchestrator(
         {
             // The sweep outlives the first pass: with no backup it keeps asking
             // the local service; with a backup it rests, then asks again. It
-            // returns when the viewer leaves or playback ends cleanly.
+            // returns when the viewer leaves or playback ends cleanly. A fault
+            // in that sweep must not fail the playback outcome, and the gate
+            // is disposed either way.
             try
             {
                 await liveScan.ConfigureAwait(false);
@@ -659,8 +668,14 @@ public class StreamResolutionOrchestrator(
             catch (OperationCanceledException)
             {
             }
-
-            probeGate.Dispose();
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[StreamResolution] Local-service sweep stopped; playback is unchanged");
+            }
+            finally
+            {
+                probeGate.Dispose();
+            }
         }
 
         // Wait for playback to complete if it was started
@@ -1947,6 +1962,7 @@ public class StreamResolutionOrchestrator(
     private async Task SweepNewlyOnlinePagesAsync(
         Game game,
         IReadOnlyList<StreamModel> catalogRows,
+        List<StreamModel> cdnWaiting,
         Func<int> workingCount,
         object playbackLock,
         Action<EnrichedStream> onHealthy,
@@ -1963,11 +1979,19 @@ public class StreamResolutionOrchestrator(
 
                 var untilKickoff = LivePageRefreshPolicy.UntilKickoff(game, UtcNow());
                 var viewerInPlayer = playback() is { IsCompleted: false };
+                var working = workingCount();
                 var delay = LivePageRefreshPolicy.DelayBeforeNextSweep(
-                    workingCount(), untilKickoff, viewerInPlayer);
+                    working, untilKickoff, viewerInPlayer);
                 if (delay > TimeSpan.Zero)
                 {
-                    if (untilKickoff > TimeSpan.Zero && delay == untilKickoff)
+                    if (LivePageRefreshPolicy.KeepScanning(working))
+                    {
+                        logger.LogInformation(
+                            "[StreamResolution] Next local-service sweep in {Seconds:0.#}s ({Working} playable stream(s))",
+                            delay.TotalSeconds,
+                            working);
+                    }
+                    else if (untilKickoff > TimeSpan.Zero && delay == untilKickoff)
                     {
                         logger.LogInformation(
                             "[StreamResolution] Viewer is in the player before kickoff; next local-service sweep in {Minutes:0.#} min",
@@ -1978,24 +2002,34 @@ public class StreamResolutionOrchestrator(
                         logger.LogInformation(
                             "[StreamResolution] Resting the local-service sweep for {Minutes:0.#} min ({Working} playable stream(s))",
                             delay.TotalMinutes,
-                            workingCount());
+                            working);
                     }
 
-                    if (!await WaitSweepDelayAsync(delay, workingCount, playback, cancellationToken).ConfigureAwait(false))
+                    if (!await WaitSweepDelayAsync(
+                            delay, workingCount, playback, cancellationToken,
+                            abandonWhenScanning: !LivePageRefreshPolicy.KeepScanning(working))
+                        .ConfigureAwait(false))
                         return;
                 }
 
                 if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested)
                     return;
 
-                var pages = LivePageRefreshPolicy.PagesToAskAgain(catalogRows);
+                var waiting = Snapshot(cdnWaiting);
+                var pages = LivePageRefreshPolicy.PagesToAskAgain(catalogRows, waiting);
                 if (pages.Count == 0)
                 {
-                    if (LivePageRefreshPolicy.KeepScanning(workingCount()))
+                    // Nothing to ask, and no CDN back-off to wait out: stop scanning.
+                    // Pages the CDN loop already owns stay out until that delay elapses.
+                    if (waiting.Count == 0 && LivePageRefreshPolicy.KeepScanning(workingCount()))
                         return;
 
+                    var pause = LivePageRefreshPolicy.KeepScanning(workingCount())
+                        ? LivePageRefreshPolicy.ScanFloor
+                        : LivePageRefreshPolicy.RestAfterBackup;
                     if (!await WaitSweepDelayAsync(
-                            LivePageRefreshPolicy.RestAfterBackup, workingCount, playback, cancellationToken)
+                            pause, workingCount, playback, cancellationToken,
+                            abandonWhenScanning: pause == LivePageRefreshPolicy.RestAfterBackup)
                         .ConfigureAwait(false))
                         return;
                     continue;
@@ -2052,11 +2086,18 @@ public class StreamResolutionOrchestrator(
 
                         completed = true;
                     }
-                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    catch (Exception ex)
                     {
-                        if (PlaybackSessionEnded(playback()))
+                        // A replaced playback chain cancels the page token this probe
+                        // captured. The session is still live, so that is one page,
+                        // not the end of the sweep. The same for a resolver fault.
+                        if (cancellationToken.IsCancellationRequested || PlaybackSessionEnded(playback()))
                             return;
-                        throw;
+
+                        logger.LogWarning(
+                            ex,
+                            "[StreamResolution] Local-service sweep failed for {Url}; the sweep is continuing",
+                            page.Url);
                     }
                     finally
                     {
@@ -2113,16 +2154,25 @@ public class StreamResolutionOrchestrator(
         }
     }
 
+    private static List<StreamModel> Snapshot(List<StreamModel> rows)
+    {
+        lock (rows)
+            return rows.ToList();
+    }
+
     /// <summary>
-    /// Waits <paramref name="delay"/>, but stops early when playback ends or when
-    /// the playable count drops below two (scanning should be happening then).
-    /// Returns false when this sweep should end.
+    /// Waits <paramref name="delay"/>, but stops early when playback ends.
+    /// A five-minute rest (<paramref name="abandonWhenScanning"/>) also stops
+    /// when the playable count drops below two. The scan floor does not: that
+    /// wait is how scanning stays off the CDN back-off. Returns false when this
+    /// sweep should end.
     /// </summary>
     private async Task<bool> WaitSweepDelayAsync(
         TimeSpan delay,
         Func<int> workingCount,
         Func<Task<PlaybackResult?>?> playback,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool abandonWhenScanning)
     {
         var remaining = delay;
         while (remaining > TimeSpan.Zero)
@@ -2130,7 +2180,7 @@ public class StreamResolutionOrchestrator(
             if (cancellationToken.IsCancellationRequested || PlaybackSessionEnded(playback()))
                 return false;
 
-            if (LivePageRefreshPolicy.KeepScanning(workingCount()))
+            if (abandonWhenScanning && LivePageRefreshPolicy.KeepScanning(workingCount()))
                 return true;
 
             var slice = remaining > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : remaining;

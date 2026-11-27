@@ -13,8 +13,10 @@ namespace VardyParty.Playback;
 /// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
 /// later numbers down to close the gap. Merged duplicates never take a number; a
 /// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
-/// Next, Previous and auto-advance walk this order (with wrap), skipping only rows
-/// tried or failed this cycle (docs/STREAM_PLAYBACK_RULES.md). The prewarmer warms
+/// Next, Previous and auto-advance walk this order (with wrap), skipping rows
+/// tried or failed this cycle (docs/STREAM_PLAYBACK_RULES.md). A later local-service
+/// sweep can skip a pool row until a sweep finds it healthy again, and that skip
+/// does not remove the row or stop the picture that is playing. The prewarmer warms
 /// the next rows in the same order. Tiers are for LocalService scheduling only
 /// (docs/PROBE_SCHEDULING_RULES.md rule 1), not for which channel Next opens.
 /// </summary>
@@ -670,6 +672,21 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         lock (_healthyStreams)
         {
             return row is not null && IsRowSkipped(row);
+        }
+    }
+
+    public int CountSwitchable()
+    {
+        lock (_healthyStreams)
+        {
+            var count = 0;
+            foreach (var row in _healthyStreams)
+            {
+                if (!IsRowSkipped(row))
+                    count++;
+            }
+
+            return count;
         }
     }
 

@@ -992,6 +992,7 @@ public class StreamResolutionOrchestratorTests
                 return Yield(first, second);
             });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.LiveRefreshDelayAsync = (_, _) => Task.CompletedTask;
 
         // Act
         var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
@@ -1045,6 +1046,7 @@ public class StreamResolutionOrchestratorTests
                 return Yield(stream);
             });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.LiveRefreshDelayAsync = (_, _) => Task.CompletedTask;
 
         // Act
         await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
@@ -1095,6 +1097,7 @@ public class StreamResolutionOrchestratorTests
                 return Yield(stream);
             });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.LiveRefreshDelayAsync = (_, _) => Task.CompletedTask;
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
 
         var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
@@ -1201,6 +1204,303 @@ public class StreamResolutionOrchestratorTests
         }
 
         await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Sweep_FailedRowDropsThePlayableCount_NextPassIsNotTheFiveMinuteRest()
+    {
+        // Arrange — two healthy rows. The sweep then fails the one on screen, so only one is switchable.
+        var (game, north) = BuildGameAndHealthyStream();
+        north.Stream.Source = "fb";
+        north.Stream.ResolutionStrategy = "v1";
+        north.Stream.PlayerStream = string.Empty;
+        north.Stream.StreamStatus = string.Empty;
+        north.Stream.Url = "https://streams.example.com/north.html";
+        north.Stream.Channel = "Channel North";
+        var southStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.com/south.html")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.Source, "fb")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
+        var south = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, southStream)
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, southStream.Url)
+            .Create();
+        var northFailed = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Build<StreamModel>()
+                .With(s => s.Url, north.Stream.Url)
+                .With(s => s.Channel, "Channel North")
+                .With(s => s.Source, "fb")
+                .With(s => s.ResolutionStrategy, "v1")
+                .With(s => s.PlayerStream, string.Empty)
+                .With(s => s.StreamStatus, string.Empty)
+                .Create())
+            .With(e => e.Status, StreamResolutionStatus.Failed)
+            .With(e => e.Referer, north.Stream.Url)
+            .Create();
+        game.IsFinished = false;
+        game.Start = new DateTime(2026, 11, 27, 18, 0, 0, DateTimeKind.Utc);
+        ArrangeCommon(game, north.Stream);
+        var switching = new StreamSwitchingService();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, north.Stream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, south.Stream).Create()
+            });
+        var events = new List<string>();
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> rows, int _, CancellationToken _, Action<int>? _) =>
+            {
+                if (rows.Count == 1)
+                {
+                    lock (events)
+                        events.Add(rows[0].Url.Contains("north", StringComparison.OrdinalIgnoreCase) ? "north" : "south");
+                }
+
+                return rows.Count != 1
+                    ? YieldRelease(north, south)
+                    : rows[0].Url.Contains("south", StringComparison.OrdinalIgnoreCase)
+                        ? YieldRelease(south)
+                        : YieldRelease(northFailed);
+            });
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.UtcNow = () => game.Start.AddHours(1);
+        sut.LiveRefreshDelayAsync = (span, _) =>
+        {
+            lock (events)
+                events.Add($"delay:{span.TotalSeconds}");
+            return Task.CompletedTask;
+        };
+
+        // Act
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        try
+        {
+            var sawNextPass = await AsyncWait.UntilAsync(() => DelaysBetweenNorthPasses(events) >= 0);
+
+            // Assert — after one of the two rows is no longer switchable, the next pass
+            // waits the scan floor, not the five-minute rest.
+            Assert.True(sawNextPass, "the sweep did not ask the failed page a second time");
+            var slices = DelaysBetweenNorthPasses(events);
+            Assert.Equal((int)LivePageRefreshPolicy.ScanFloor.TotalSeconds, slices);
+            Assert.NotEqual((int)LivePageRefreshPolicy.RestAfterBackup.TotalSeconds, slices);
+            Assert.Equal(1, switching.CountSwitchable());
+        }
+        finally
+        {
+            playbackGate.TrySetResult(PlaybackResult.SuccessResult("done"));
+        }
+
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Sweep_CdnUnreachablePage_IsProbedOnceUntilTheCdnDelayElapses()
+    {
+        // Arrange — one playable row and one CDN-unreachable row. The CDN loop is holding its back-off.
+        var (game, north) = BuildGameAndHealthyStream();
+        north.Stream.Source = "fb";
+        north.Stream.ResolutionStrategy = "v1";
+        north.Stream.PlayerStream = string.Empty;
+        north.Stream.StreamStatus = string.Empty;
+        north.Stream.Url = "https://streams.example.com/north.html";
+        north.Stream.Channel = "Channel North";
+        var southStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.com/south.html")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.Source, "fb")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
+        var southDeferred = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, southStream)
+            .With(e => e.Status, StreamResolutionStatus.Deferred)
+            .With(e => e.DeferReason, StreamDeferReason.CdnUnreachable)
+            .With(e => e.Referer, southStream.Url)
+            .Create();
+        game.IsFinished = false;
+        game.Start = new DateTime(2026, 11, 27, 18, 0, 0, DateTimeKind.Utc);
+        ArrangeCommon(game, north.Stream);
+        _fixture.Inject<IStreamSwitchingService>(new StreamSwitchingService());
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, north.Stream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, southStream).Create()
+            });
+        var counts = new int[3];
+        var cdnDelayMs = new int[1];
+        cdnDelayMs[0] = -1;
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> rows, int _, CancellationToken _, Action<int>? _) =>
+            {
+                if (rows.Count != 1)
+                {
+                    if (rows.Any(row => row.Url.Contains("south", StringComparison.OrdinalIgnoreCase)))
+                        Interlocked.Increment(ref counts[0]);
+                    return YieldRelease(north, southDeferred);
+                }
+
+                if (rows[0].Url.Contains("south", StringComparison.OrdinalIgnoreCase))
+                    Interlocked.Increment(ref counts[1]);
+                else
+                    Interlocked.Increment(ref counts[2]);
+                return YieldRelease(rows[0].Url.Contains("south", StringComparison.OrdinalIgnoreCase) ? southDeferred : north);
+            });
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.UtcNow = () => game.Start.AddHours(1);
+        sut.LiveRefreshDelayAsync = (_, _) => Task.CompletedTask;
+        sut.CdnRecheckDelayAsync = (delay, ct) =>
+        {
+            Interlocked.Exchange(ref cdnDelayMs[0], (int)delay.TotalMilliseconds);
+            return Task.Delay(Timeout.Infinite, ct);
+        };
+
+        // Act
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        try
+        {
+            var scanning = await AsyncWait.UntilAsync(() =>
+                Volatile.Read(ref counts[2]) >= 2 && Volatile.Read(ref cdnDelayMs[0]) >= 0);
+
+            // Assert — the sweep keeps asking the playable page. The CDN page is probed
+            // once, by the opening resolve, and not again while its recheck delay is running.
+            Assert.True(scanning, "the sweep did not keep asking the playable page");
+            Assert.Equal((int)CdnReachabilityPolicy.FirstRecheckWithoutBackup.TotalMilliseconds, Volatile.Read(ref cdnDelayMs[0]));
+            Assert.Equal(1, Volatile.Read(ref counts[0]));
+            Assert.Equal(0, Volatile.Read(ref counts[1]));
+        }
+        finally
+        {
+            playbackGate.TrySetResult(PlaybackResult.Completed(PlaybackCloseReasons.UserClosed));
+        }
+
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Sweep_PageProbeFailsOrIsCancelled_SweepContinuesAndStartAsyncSucceeds()
+    {
+        // Arrange — the first two single-page probes fail. Playback is still up.
+        var (game, north) = BuildGameAndHealthyStream();
+        north.Stream.Source = "fb";
+        north.Stream.ResolutionStrategy = "v1";
+        north.Stream.PlayerStream = string.Empty;
+        north.Stream.StreamStatus = string.Empty;
+        north.Stream.Url = "https://streams.example.com/north.html";
+        north.Stream.Channel = "Channel North";
+        var southStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.com/south.html")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.Source, "fb")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
+        var south = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, southStream)
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, southStream.Url)
+            .Create();
+        game.IsFinished = false;
+        game.Start = new DateTime(2026, 11, 27, 18, 0, 0, DateTimeKind.Utc);
+        ArrangeCommon(game, north.Stream);
+        _fixture.Inject<IStreamSwitchingService>(new StreamSwitchingService());
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, north.Stream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, south.Stream).Create()
+            });
+        var calls = new int[1];
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> rows, int _, CancellationToken _, Action<int>? _) =>
+            {
+                if (rows.Count != 1)
+                    return YieldRelease(north, south);
+
+                var n = Interlocked.Increment(ref calls[0]);
+                if (n == 1)
+                    throw new OperationCanceledException("replaced playback chain");
+                if (n == 2)
+                    throw new InvalidOperationException("page probe failed");
+                return YieldRelease(rows[0].Url.Contains("south", StringComparison.OrdinalIgnoreCase) ? south : north);
+            });
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.UtcNow = () => game.Start.AddHours(1);
+        sut.LiveRefreshDelayAsync = (_, _) => Task.CompletedTask;
+
+        // Act
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        try
+        {
+            var continued = await AsyncWait.UntilAsync(() => Volatile.Read(ref calls[0]) >= 3);
+
+            // Assert — a cancelled page and a failed page do not end the sweep or fail playback.
+            Assert.True(continued, "the sweep stopped after a page probe failed");
+            Assert.False(startTask.IsFaulted);
+        }
+        finally
+        {
+            playbackGate.TrySetResult(PlaybackResult.SuccessResult("done"));
+        }
+
+        var outcome = await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(outcome.PlaybackResult?.Success);
+    }
+
+    private static int DelaysBetweenNorthPasses(List<string> events)
+    {
+        lock (events)
+        {
+            var first = events.IndexOf("north");
+            if (first < 0)
+                return -1;
+            var next = events.IndexOf("north", first + 1);
+            if (next < 0)
+                return -1;
+            var slices = 0;
+            for (var i = first + 1; i < next; i++)
+            {
+                if (events[i].StartsWith("delay:", StringComparison.Ordinal))
+                    slices++;
+            }
+
+            return slices;
+        }
     }
 
     private Game RemoteGame() =>

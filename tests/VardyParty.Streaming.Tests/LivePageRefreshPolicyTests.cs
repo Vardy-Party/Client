@@ -10,7 +10,7 @@ public class LivePageRefreshPolicyTests
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
-    public void DelayBeforeNextSweep_FewerThanTwoStreams_DoesNotRest(int working)
+    public void DelayBeforeNextSweep_FewerThanTwoStreams_LeavesTheScanFloor(int working)
     {
         // Arrange
         var untilKickoff = TimeSpan.FromMinutes(20);
@@ -18,8 +18,11 @@ public class LivePageRefreshPolicyTests
         // Act
         var delay = LivePageRefreshPolicy.DelayBeforeNextSweep(working, untilKickoff, viewerInPlayer: true);
 
-        // Assert — scanning keeps going until a backup exists, including before kickoff.
-        Assert.Equal(TimeSpan.Zero, delay);
+        // Assert — scanning keeps going until a backup exists, with a floor so a pass
+        // does not start again the moment the previous one finishes.
+        Assert.Equal(LivePageRefreshPolicy.ScanFloor, delay);
+        Assert.Equal(CdnReachabilityPolicy.FirstRecheckWithoutBackup, delay);
+        Assert.NotEqual(LivePageRefreshPolicy.RestAfterBackup, delay);
         Assert.True(LivePageRefreshPolicy.KeepScanning(working));
     }
 
@@ -39,10 +42,24 @@ public class LivePageRefreshPolicyTests
     }
 
     [Fact]
-    public void DelayBeforeNextSweep_WatchingBeforeKickoffWithABackup_SweepsAtKickoff()
+    public void DelayBeforeNextSweep_WatchingLongBeforeKickoffWithABackup_RestsFiveMinutes()
     {
-        // Arrange — a pre-match backup is already in hand. The next sweep is the kickoff, not a five-minute rest.
+        // Arrange — a backup is already in hand and kickoff is further away than the rest.
         var untilKickoff = TimeSpan.FromMinutes(12);
+
+        // Act
+        var delay = LivePageRefreshPolicy.DelayBeforeNextSweep(2, untilKickoff, viewerInPlayer: true);
+
+        // Assert
+        Assert.Equal(LivePageRefreshPolicy.RestAfterBackup, delay);
+        Assert.Equal(TimeSpan.FromMinutes(5), delay);
+    }
+
+    [Fact]
+    public void DelayBeforeNextSweep_WatchingJustBeforeKickoffWithABackup_SweepsAtKickoff()
+    {
+        // Arrange — kickoff is sooner than the five-minute rest, and the viewer is already in the player.
+        var untilKickoff = TimeSpan.FromMinutes(4);
 
         // Act
         var delay = LivePageRefreshPolicy.DelayBeforeNextSweep(2, untilKickoff, viewerInPlayer: true);
@@ -124,6 +141,21 @@ public class LivePageRefreshPolicyTests
         Assert.True(string.IsNullOrEmpty(pages[2].PlayerStream));
         Assert.Empty(pages[2].PlayerStreams);
         Assert.Equal(1, LivePageRefreshPolicy.SlotsPerSweep);
+    }
+
+    [Fact]
+    public void PagesToAskAgain_LeavesAPageTheCdnRecheckIsWaitingOn()
+    {
+        // Arrange
+        var playable = Page("https://fb.example/live", source: "fb", status: "ready", channel: "North");
+        var cdn = Page("https://fb.example/edge", source: "fb", status: "ready", channel: "South");
+
+        // Act
+        var pages = LivePageRefreshPolicy.PagesToAskAgain([playable, cdn], waitingOnCdnRecheck: [cdn]);
+
+        // Assert — the playable page is asked again; the CDN-unreachable page stays on its back-off.
+        var only = Assert.Single(pages);
+        Assert.Equal("https://fb.example/live", only.Url);
     }
 
     [Fact]

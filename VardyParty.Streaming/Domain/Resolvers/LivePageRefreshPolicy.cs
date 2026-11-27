@@ -12,9 +12,17 @@ public static class LivePageRefreshPolicy
 {
     /// <summary>
     /// Once two streams are playable, a sweep is followed by this quiet period.
-    /// Fewer than two means the next sweep starts at once.
+    /// Fewer than two keeps scanning after <see cref="ScanFloor"/>.
     /// </summary>
     public static readonly TimeSpan RestAfterBackup = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Minimum gap between sweep passes while fewer than two streams work.
+    /// The same length as the shortest CDN recheck, so a scanning pass does not
+    /// start again the moment the previous one finishes and cannot outrun rule 13.
+    /// A page the CDN loop is already waiting on is left out of that pass.
+    /// </summary>
+    public static readonly TimeSpan ScanFloor = CdnReachabilityPolicy.FirstRecheckWithoutBackup;
 
     /// <summary>
     /// One local-service slot per extra sweep, so a stream switch can still take the other.
@@ -25,16 +33,17 @@ public static class LivePageRefreshPolicy
     public static bool KeepScanning(int workingStreams) => workingStreams < 2;
 
     /// <summary>
-    /// How long to wait before the next sweep. Zero while fewer than two streams
-    /// work. Five minutes once a backup is in hand, unless kickoff is sooner and
-    /// the viewer is already watching: that sweep starts when the game starts.
+    /// How long to wait before the next sweep. <see cref="ScanFloor"/> while fewer
+    /// than two streams work. Five minutes once a backup is in hand, unless the
+    /// viewer is already watching and kickoff is sooner than that rest: that sweep
+    /// starts when the game starts.
     /// </summary>
     public static TimeSpan DelayBeforeNextSweep(int workingStreams, TimeSpan untilKickoff, bool viewerInPlayer)
     {
         if (KeepScanning(workingStreams))
-            return TimeSpan.Zero;
+            return ScanFloor;
 
-        if (viewerInPlayer && untilKickoff > TimeSpan.Zero)
+        if (viewerInPlayer && untilKickoff > TimeSpan.Zero && untilKickoff < RestAfterBackup)
             return untilKickoff;
 
         return RestAfterBackup;
@@ -58,9 +67,26 @@ public static class LivePageRefreshPolicy
     /// will not change, and the local service is what can now have a playlist.
     /// Pages that are already playable are asked again. A later answer can show
     /// they are no longer healthy, and switching then passes over them.
+    /// <paramref name="waitingOnCdnRecheck"/> pages are left to the CDN back-off
+    /// (rule 13) and are not asked on this pass.
     /// </summary>
-    public static IReadOnlyList<StreamModel> PagesToAskAgain(IEnumerable<StreamModel> catalogRows)
+    public static IReadOnlyList<StreamModel> PagesToAskAgain(
+        IEnumerable<StreamModel> catalogRows,
+        IEnumerable<StreamModel>? waitingOnCdnRecheck = null)
     {
+        HashSet<string>? waiting = null;
+        if (waitingOnCdnRecheck != null)
+        {
+            waiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in waitingOnCdnRecheck)
+            {
+                if (string.IsNullOrWhiteSpace(row.Url))
+                    continue;
+
+                waiting.Add(StreamHealthIdentity.NormalizeStreamUrl(row.Url));
+            }
+        }
+
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var pages = new List<StreamModel>();
         foreach (var row in catalogRows)
@@ -70,6 +96,9 @@ public static class LivePageRefreshPolicy
 
             var key = StreamHealthIdentity.NormalizeStreamUrl(row.Url);
             if (!seen.Add(key))
+                continue;
+
+            if (waiting != null && waiting.Contains(key))
                 continue;
 
             pages.Add(CopyForLocalAsk(row));
