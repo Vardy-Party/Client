@@ -104,6 +104,13 @@ public interface IStreamSwitchingService
     /// <summary>Marks <paramref name="row"/> as tried-and-failed this cycle; when <paramref name="feedUrl"/> is set its feed (m3u8 identity) is marked failed too.</summary>
     void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason) { }
 
+    /// <summary>
+    /// A later local-service sweep's verdict for a pool row. An unhealthy row stays
+    /// in the pool, so the picture already on screen keeps playing, but Next,
+    /// Previous and auto-advance pass over it until a sweep finds it healthy again.
+    /// </summary>
+    void NoteSweepHealth(EnrichedStream? row, bool healthy) { }
+
     /// <summary>Clears the tried mark of <paramref name="row"/> and the failed mark of <paramref name="feedUrl"/>'s feed (it showed video).</summary>
     void ClearTriedInCycle(EnrichedStream? row, string? feedUrl) { }
 

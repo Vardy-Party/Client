@@ -43,6 +43,13 @@ public class StreamResolutionOrchestrator(
     internal Func<TimeSpan, CancellationToken, Task> CdnRecheckDelayAsync { get; set; } = Task.Delay;
 
     /// <summary>
+    /// Test seam for the quiet gap between local-service sweeps once two streams
+    /// are playable (<see cref="LivePageRefreshPolicy.RestAfterBackup"/>), and for
+    /// the wait until kickoff when the viewer is already in the player.
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> LiveRefreshDelayAsync { get; set; } = Task.Delay;
+
+    /// <summary>
     /// How long a fresh start looks for a second row already in the pool before
     /// racing alone. Production stays at a millisecond; tests replace it with a signal that
     /// ends once their scripted resolver has handed every row to the pool.
@@ -328,6 +335,11 @@ public class StreamResolutionOrchestrator(
             && !await localLanPlayService.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
         using var relayKeepAlive = RelayKeepAliveHold.Start(keepAlive, relayed);
 
+        // One extra sweep at a time shares this with CDN rechecks, so the two
+        // never probe together. The sweep itself asks one page at a time.
+        var probeGate = new SemaphoreSlim(1, 1);
+        var liveScan = Task.CompletedTask;
+
         try
         {
             var deferred = new List<StreamModel>();
@@ -450,6 +462,26 @@ public class StreamResolutionOrchestrator(
                     deferred.Count);
             }
 
+            liveScan = SweepNewlyOnlinePagesAsync(
+                game,
+                orderedStreams,
+                () =>
+                {
+                    lock (playbackLock)
+                        return streamSwitchingService.GetHealthyStreams().Count;
+                },
+                playbackLock,
+                enriched =>
+                {
+                    if (enriched.Stream == null)
+                        return;
+                    _ = ReportHealthAsync(game, enriched.Stream, "working", null, enriched.Health, enumerationCts.Token);
+                    JoinPool(enriched);
+                },
+                () => playbackTask,
+                probeGate,
+                enumerationCts.Token);
+
             // CDN unreachable is never dead (Deferred): recheck those rows after 2 min (30s
             // while the viewer has no backup stream, Jon 13 Nov 2026), 5 min, then every
             // 10 min while the game is live. A row that comes back Healthy
@@ -459,7 +491,7 @@ public class StreamResolutionOrchestrator(
             {
                 var viewerLeft = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
                     cdnDeferred,
-                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    (rows, token) => ResolveExclusive(rows, 2, probeGate, token),
                     row => Accept(row, requeued: true),
                     () => playbackTask,
                     ViewerLeftAsync,
@@ -514,7 +546,7 @@ public class StreamResolutionOrchestrator(
 
                 var viewerLeftDuringRecheck = await CdnUnreachableRecheckLoop.RunWhileSessionLiveAsync(
                     pending,
-                    (rows, token) => streamResolver.ResolveStreamsIncrementallyAsync(rows, 2, token),
+                    (rows, token) => ResolveExclusive(rows, 2, probeGate, token),
                     row => AcceptPoolRecheck(row, poolRows, pending),
                     () => playbackTask,
                     ViewerLeftAsync,
@@ -614,6 +646,21 @@ public class StreamResolutionOrchestrator(
             _isResolving = false;
             PublishProgress();
             throw;
+        }
+        finally
+        {
+            // The sweep outlives the first pass: with no backup it keeps asking
+            // the local service; with a backup it rests, then asks again. It
+            // returns when the viewer leaves or playback ends cleanly.
+            try
+            {
+                await liveScan.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            probeGate.Dispose();
         }
 
         // Wait for playback to complete if it was started
@@ -1888,6 +1935,274 @@ public class StreamResolutionOrchestrator(
     }
 
 
+
+    /// <summary>
+    /// One catalog page at a time through the local service. The games API list
+    /// is unchanged; a page that had no playlist can have one now, and a page
+    /// that was playable can stop being playable. Uses a single slot
+    /// (<see cref="LivePageRefreshPolicy.SlotsPerSweep"/>). A page that comes
+    /// back not healthy is left on screen if it is the one playing, and skipped
+    /// the next time the viewer switches.
+    /// </summary>
+    private async Task SweepNewlyOnlinePagesAsync(
+        Game game,
+        IReadOnlyList<StreamModel> catalogRows,
+        Func<int> workingCount,
+        object playbackLock,
+        Action<EnrichedStream> onHealthy,
+        Func<Task<PlaybackResult?>?> playback,
+        SemaphoreSlim probeGate,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (PlaybackSessionEnded(playback()))
+                    return;
+
+                var untilKickoff = LivePageRefreshPolicy.UntilKickoff(game, UtcNow());
+                var viewerInPlayer = playback() is { IsCompleted: false };
+                var delay = LivePageRefreshPolicy.DelayBeforeNextSweep(
+                    workingCount(), untilKickoff, viewerInPlayer);
+                if (delay > TimeSpan.Zero)
+                {
+                    if (untilKickoff > TimeSpan.Zero && delay == untilKickoff)
+                    {
+                        logger.LogInformation(
+                            "[StreamResolution] Viewer is in the player before kickoff; next local-service sweep in {Minutes:0.#} min",
+                            delay.TotalMinutes);
+                    }
+                    else
+                    {
+                        logger.LogInformation(
+                            "[StreamResolution] Resting the local-service sweep for {Minutes:0.#} min ({Working} playable stream(s))",
+                            delay.TotalMinutes,
+                            workingCount());
+                    }
+
+                    if (!await WaitSweepDelayAsync(delay, workingCount, playback, cancellationToken).ConfigureAwait(false))
+                        return;
+                }
+
+                if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested)
+                    return;
+
+                var pages = LivePageRefreshPolicy.PagesToAskAgain(catalogRows);
+                if (pages.Count == 0)
+                {
+                    if (LivePageRefreshPolicy.KeepScanning(workingCount()))
+                        return;
+
+                    if (!await WaitSweepDelayAsync(
+                            LivePageRefreshPolicy.RestAfterBackup, workingCount, playback, cancellationToken)
+                        .ConfigureAwait(false))
+                        return;
+                    continue;
+                }
+
+                logger.LogInformation(
+                    "[StreamResolution] Asking the local service about {Count} page(s), one slot at a time ({Working} playable)",
+                    pages.Count,
+                    workingCount());
+
+                foreach (var page in pages)
+                {
+                    if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested)
+                        return;
+
+                    using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var playing = playback();
+                    if (playing != null)
+                    {
+                        _ = playing.ContinueWith(
+                            completed =>
+                            {
+                                if (PlaybackSessionEnded(completed))
+                                {
+                                    try { pageCts.Cancel(); }
+                                    catch (ObjectDisposedException) { }
+                                }
+                            },
+                            CancellationToken.None,
+                            TaskContinuationOptions.None,
+                            TaskScheduler.Default);
+                    }
+
+                    var acquired = false;
+                    var completed = false;
+                    var verdicts = new List<EnrichedStream>();
+                    try
+                    {
+                        await probeGate.WaitAsync(pageCts.Token).ConfigureAwait(false);
+                        acquired = true;
+                        await foreach (var enriched in streamResolver
+                                           .ResolveStreamsIncrementallyAsync(
+                                               [page],
+                                               LivePageRefreshPolicy.SlotsPerSweep,
+                                               pageCts.Token)
+                                           .ConfigureAwait(false))
+                        {
+                            verdicts.Add(enriched);
+                            if (enriched.Status != StreamResolutionStatus.Healthy || enriched.Stream == null)
+                                continue;
+                            if (!PoolAlreadyHas(playbackLock, enriched.Stream))
+                                onHealthy(enriched);
+                        }
+
+                        completed = true;
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        if (PlaybackSessionEnded(playback()))
+                            return;
+                        throw;
+                    }
+                    finally
+                    {
+                        if (acquired)
+                            probeGate.Release();
+                    }
+
+                    if (completed && !cancellationToken.IsCancellationRequested)
+                        ApplySweepSwitching(playbackLock, verdicts);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool PoolAlreadyHas(object playbackLock, StreamModel probed)
+    {
+        lock (playbackLock)
+        {
+            foreach (var row in streamSwitchingService.GetHealthyStreams())
+            {
+                if (row.Stream != null && LivePageRefreshPolicy.SameStream(row.Stream, probed))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A finished page probe updates the switch order. Rows that came back healthy
+    /// can be switched to again. Rows that did not are passed over. Playback of
+    /// the current picture is not interrupted.
+    /// </summary>
+    private void ApplySweepSwitching(object playbackLock, IReadOnlyList<EnrichedStream> verdicts)
+    {
+        lock (playbackLock)
+        {
+            var update = LivePageRefreshPolicy.SwitchingAfterPageProbe(
+                streamSwitchingService.GetHealthyStreams().ToList(), verdicts);
+            foreach (var row in update.Restore)
+                streamSwitchingService.NoteSweepHealth(row, true);
+            foreach (var row in update.Skip)
+                streamSwitchingService.NoteSweepHealth(row, false);
+
+            if (update.Skip.Count > 0)
+            {
+                logger.LogInformation(
+                    "[StreamResolution] Sweep: {Count} previously playable stream(s) are not healthy; switching will pass over them",
+                    update.Skip.Count);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits <paramref name="delay"/>, but stops early when playback ends or when
+    /// the playable count drops below two (scanning should be happening then).
+    /// Returns false when this sweep should end.
+    /// </summary>
+    private async Task<bool> WaitSweepDelayAsync(
+        TimeSpan delay,
+        Func<int> workingCount,
+        Func<Task<PlaybackResult?>?> playback,
+        CancellationToken cancellationToken)
+    {
+        var remaining = delay;
+        while (remaining > TimeSpan.Zero)
+        {
+            if (cancellationToken.IsCancellationRequested || PlaybackSessionEnded(playback()))
+                return false;
+
+            if (LivePageRefreshPolicy.KeepScanning(workingCount()))
+                return true;
+
+            var slice = remaining > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : remaining;
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var waiting = LiveRefreshDelayAsync(slice, linked.Token);
+            var playing = playback();
+            if (playing is { IsCompleted: false })
+            {
+                var done = await Task.WhenAny(waiting, playing).ConfigureAwait(false);
+                if (!ReferenceEquals(done, waiting))
+                {
+                    linked.Cancel();
+                    try
+                    {
+                        await waiting.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+
+                    return !PlaybackSessionEnded(playing);
+                }
+            }
+
+            try
+            {
+                await waiting.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            remaining -= slice;
+        }
+
+        return !PlaybackSessionEnded(playback());
+    }
+
+    /// <summary>
+    /// The playback chain has finished, so the extra sweep stops and the outcome can
+    /// return. Scanning continues while the player is still open, and before anything
+    /// has played. A failure inside the chain does not finish it: the chain keeps
+    /// going until it has a result to return.
+    /// </summary>
+    private static bool PlaybackSessionEnded(Task<PlaybackResult?>? playback) =>
+        playback is { IsCompleted: true };
+
+    private async IAsyncEnumerable<EnrichedStream> ResolveExclusive(
+        List<StreamModel> rows,
+        int batchSize,
+        SemaphoreSlim probeGate,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var acquired = false;
+        try
+        {
+            await probeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            acquired = true;
+            await foreach (var row in streamResolver
+                               .ResolveStreamsIncrementallyAsync(rows, batchSize, cancellationToken)
+                               .ConfigureAwait(false))
+            {
+                yield return row;
+            }
+        }
+        finally
+        {
+            if (acquired)
+                probeGate.Release();
+        }
+    }
 
     private void PublishProgress()
     {

@@ -952,6 +952,8 @@ public class StreamResolutionOrchestratorTests
         var first = FailedStream("https://streams.example.com/match.html#north", "Channel North");
         var second = FailedStream("https://streams.example.com/match.html#south", "Channel South");
         var events = new List<string>();
+        using var stopExtraSweep = new CancellationTokenSource();
+        _fixture.Inject<IStreamSwitchingService>(new StreamSwitchingService());
         var keepAlive = _fixture.GetMock<IRemoteComputeKeepAlive>();
         keepAlive.Setup(k => k.Start()).Callback(() => events.Add("start"));
         keepAlive.Setup(k => k.Stop()).Callback(() => events.Add("stop"));
@@ -983,15 +985,22 @@ public class StreamResolutionOrchestratorTests
             .Returns(() =>
             {
                 events.Add("resolve");
+                // The first pass found nothing playable, so the session keeps asking
+                // the local service. Stop that extra sweep so this test can return.
+                if (events.Count(item => item == "resolve") >= 2)
+                    stopExtraSweep.Cancel();
                 return Yield(first, second);
             });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
         // Act
-        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
 
-        // Assert
-        Assert.Equal(new[] { "start", "resolve", "stop" }, events);
+        // Assert — keep-alive wraps every resolve, including the extra sweep, and stops once.
+        Assert.Equal("start", events[0]);
+        Assert.Equal("stop", events[^1]);
+        Assert.Contains("resolve", events);
+        Assert.All(events[1..^1], item => Assert.Equal("resolve", item));
         keepAlive.Verify(k => k.Start(), Times.Once);
         keepAlive.Verify(k => k.Stop(), Times.Once);
         Assert.False(outcome.LocalServiceUnavailable);
@@ -1004,6 +1013,9 @@ public class StreamResolutionOrchestratorTests
         // Arrange
         var game = RemoteGame();
         var stream = FailedStream("https://streams.example.com/match.html", "Channel North");
+        using var stopExtraSweep = new CancellationTokenSource();
+        _fixture.Inject<IStreamSwitchingService>(new StreamSwitchingService());
+        var resolves = 0;
         var keepAlive = _fixture.GetMock<IRemoteComputeKeepAlive>();
         _fixture.GetMock<ILocalLanPlayService>()
             .SetupGet(x => x.UsesRemoteCompute)
@@ -1026,11 +1038,16 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<int>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<int>?>()))
-            .Returns(() => Yield(stream));
+            .Returns(() =>
+            {
+                if (++resolves >= 2)
+                    stopExtraSweep.Cancel();
+                return Yield(stream);
+            });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
 
         // Act
-        await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+        await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
 
         // Assert
         keepAlive.Verify(k => k.Start(), Times.Never);
@@ -1044,6 +1061,9 @@ public class StreamResolutionOrchestratorTests
         var stream = FailedStream("https://streams.example.test/match.html", "Channel North");
         const string fault = "Local service failed: This computer is still finding a stream. Tap the game again to start a new search. Correlation id: abc";
         var statuses = new List<string>();
+        using var stopExtraSweep = new CancellationTokenSource();
+        _fixture.Inject<IStreamSwitchingService>(new StreamSwitchingService());
+        var resolves = 0;
         _fixture.GetMock<ILocalLanPlayService>()
             .SetupGet(x => x.UsesRemoteCompute)
             .Returns(true);
@@ -1068,16 +1088,119 @@ public class StreamResolutionOrchestratorTests
                 It.IsAny<int>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<int>?>()))
-            .Returns(() => Yield(stream));
+            .Returns(() =>
+            {
+                if (++resolves >= 2)
+                    stopExtraSweep.Cancel();
+                return Yield(stream);
+            });
         var sut = _fixture.Create<StreamResolutionOrchestrator>();
         sut.ProgressUpdated.Subscribe(new StatusCapture(statuses));
 
-        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object);
+        var outcome = await sut.StartAsync(game, _fixture.GetMock<IPlaybackLauncher>().Object, stopExtraSweep.Token);
 
         Assert.Contains(StreamResolutionOrchestrator.PairedFindingStatus, statuses);
         Assert.False(outcome.LocalServiceUnavailable);
         Assert.False(outcome.NoWorkingStreams);
         Assert.Equal(fault, outcome.RemoteComputeError);
+    }
+
+    [Fact]
+    public async Task Sweep_PreviouslyHealthyStreamThatFails_IsSkippedWhenSwitching()
+    {
+        // Arrange — two playable streams, then a later sweep finds the one on screen is no longer healthy.
+        var (game, north) = BuildGameAndHealthyStream();
+        north.Stream.Source = "fb";
+        north.Stream.ResolutionStrategy = "v1";
+        north.Stream.PlayerStream = string.Empty;
+        north.Stream.StreamStatus = string.Empty;
+        north.Stream.Url = "https://streams.example.com/north.html";
+        north.Stream.Channel = "Channel North";
+        var southStream = _fixture.Build<StreamModel>()
+            .With(s => s.Url, "https://streams.example.com/south.html")
+            .With(s => s.Channel, "Channel South")
+            .With(s => s.Source, "fb")
+            .With(s => s.ResolutionStrategy, "v1")
+            .With(s => s.PlayerStream, string.Empty)
+            .With(s => s.StreamStatus, string.Empty)
+            .Create();
+        var south = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, southStream)
+            .With(e => e.ResolvedM3U8Url, "https://cdn.example.com/live/south.m3u8")
+            .With(e => e.Status, StreamResolutionStatus.Healthy)
+            .With(e => e.Referer, southStream.Url)
+            .Create();
+        var northFailed = _fixture.Build<EnrichedStream>()
+            .With(e => e.Stream, _fixture.Build<StreamModel>()
+                .With(s => s.Url, north.Stream.Url)
+                .With(s => s.Channel, "Channel North")
+                .With(s => s.Source, "fb")
+                .With(s => s.ResolutionStrategy, "v1")
+                .With(s => s.PlayerStream, string.Empty)
+                .With(s => s.StreamStatus, string.Empty)
+                .Create())
+            .With(e => e.Status, StreamResolutionStatus.Failed)
+            .With(e => e.Referer, north.Stream.Url)
+            .Create();
+        game.IsFinished = false;
+        game.Start = new DateTime(2026, 11, 27, 21, 0, 0, DateTimeKind.Utc);
+
+        ArrangeCommon(game, north.Stream);
+        var switching = new StreamSwitchingService();
+        _fixture.Inject<IStreamSwitchingService>(switching);
+        _fixture.GetMock<IStreamSelectionCoordinator>()
+            .Setup(c => c.GetOrderedCandidates())
+            .Returns(new List<StreamSelectionCandidate>
+            {
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, north.Stream).Create(),
+                _fixture.Build<StreamSelectionCandidate>().With(c => c.Stream, south.Stream).Create()
+            });
+        _fixture.GetMock<IStreamResolver>()
+            .Setup(r => r.ResolveStreamsIncrementallyAsync(
+                It.IsAny<List<StreamModel>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<int>?>()))
+            .Returns((List<StreamModel> rows, int _, CancellationToken _, Action<int>? _) =>
+                rows.Count != 1
+                    ? YieldRelease(north, south)
+                    : rows[0].Url.Contains("south", StringComparison.OrdinalIgnoreCase)
+                        ? YieldRelease(south)
+                        : YieldRelease(northFailed));
+        var playbackGate = new TaskCompletionSource<PlaybackResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArrangePlayer(playbackGate.Task);
+        var sut = _fixture.Create<StreamResolutionOrchestrator>();
+        sut.UtcNow = () => game.Start.AddMilliseconds(-5);
+        sut.LiveRefreshDelayAsync = (_, ct) => Task.Delay(1, ct);
+
+        // Act
+        var startTask = sut.StartAsync(game, _fixture.GetMock<INativeVideoPlayerService>().Object);
+        try
+        {
+            var skipped = await AsyncWait.UntilAsync(() =>
+            {
+                var pool = switching.GetHealthyStreams();
+                var playing = pool.FirstOrDefault(row => row.Stream?.Url?.Contains("north", StringComparison.OrdinalIgnoreCase) == true);
+                return playing != null && switching.IsSkippedInCycle(playing);
+            });
+
+            // Assert — still showing North, and the next switch goes to South and does not come back.
+            Assert.True(skipped, "the later sweep did not take the failed stream out of the switch order");
+            var poolNow = switching.GetHealthyStreams();
+            var northRow = poolNow.Single(row => row.Stream!.Url.Contains("north", StringComparison.OrdinalIgnoreCase));
+            var southRow = poolNow.Single(row => row.Stream!.Url.Contains("south", StringComparison.OrdinalIgnoreCase));
+            Assert.False(switching.IsSkippedInCycle(southRow));
+            Assert.Same(northRow, switching.GetCurrentStream());
+            Assert.True(switching.SwitchToNextStream());
+            Assert.Same(southRow, switching.GetCurrentStream());
+            Assert.False(switching.SwitchToNextStream());
+        }
+        finally
+        {
+            playbackGate.TrySetResult(PlaybackResult.SuccessResult("done"));
+        }
+
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private Game RemoteGame() =>
@@ -1535,6 +1658,16 @@ public class StreamResolutionOrchestratorTests
         foreach (var stream in streams)
             yield return stream;
         await Task.CompletedTask;
+    }
+
+    /// <summary>Like <see cref="Yield"/>, but lets the caller run between rows so an extra sweep cannot spin on this thread.</summary>
+    private static async IAsyncEnumerable<EnrichedStream> YieldRelease(params EnrichedStream[] streams)
+    {
+        foreach (var stream in streams)
+        {
+            await Task.Yield();
+            yield return stream;
+        }
     }
 
     private static async IAsyncEnumerable<EnrichedStream> BlockedYield(

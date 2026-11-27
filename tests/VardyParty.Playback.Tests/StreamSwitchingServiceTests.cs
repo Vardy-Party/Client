@@ -364,5 +364,33 @@ namespace VardyParty.Playback.Tests
             Assert.Equal("B", next!.Stream.Channel);
             Assert.Equal("A", svc.GetCurrentStream()!.Stream.Channel);
         }
+
+        [Fact]
+        public void NoteSweepHealth_UnhealthyRow_StaysOnScreenButIsPassedOverUntilHealthyAgain()
+        {
+            // Arrange
+            var svc = new StreamSwitchingService();
+            svc.Initialize("L", "H", "A");
+            var north = MakeStream("http://a", "North");
+            var south = MakeStream("http://b", "South");
+            svc.AddHealthyStream(north);
+            svc.AddHealthyStream(south);
+
+            // Act — a later sweep found North no longer healthy.
+            svc.NoteSweepHealth(north, healthy: false);
+
+            // Assert — the picture stays on North, and switching does not come back to it.
+            Assert.Equal("North", svc.GetCurrentStream()!.Stream.Channel);
+            Assert.True(svc.IsSkippedInCycle(north));
+            Assert.True(svc.SwitchToNextStream());
+            Assert.Equal("South", svc.GetCurrentStream()!.Stream.Channel);
+            Assert.False(svc.SwitchToNextStream());
+
+            // A later sweep that finds North healthy puts it back in the switch order.
+            svc.NoteSweepHealth(north, healthy: true);
+            Assert.False(svc.IsSkippedInCycle(north));
+            Assert.True(svc.SwitchToNextStream());
+            Assert.Equal("North", svc.GetCurrentStream()!.Stream.Channel);
+        }
     }
 }

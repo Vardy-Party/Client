@@ -48,6 +48,10 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     // change a number. With no active marks the original index arithmetic is unchanged.
     private readonly Dictionary<EnrichedStream, (DateTimeOffset At, string Reason)> _triedRows = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, (DateTimeOffset At, string Reason)> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+
+    // A later finding sweep said this pool row is no longer healthy. Unlike the
+    // cycle TTL, this lasts until a sweep finds the row healthy again.
+    private readonly HashSet<EnrichedStream> _sweepUnhealthy = new(ReferenceEqualityComparer.Instance);
     private Func<DateTimeOffset> _clock = static () => DateTimeOffset.UtcNow;
 
     /// <summary>Test seam: the clock the tried-this-cycle TTL reads (a method so property-filling fixtures leave it alone).</summary>
@@ -99,6 +103,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _mirrorKeyAliases.Clear();
         _triedRows.Clear();
         _failedFeeds.Clear();
+        _sweepUnhealthy.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -516,6 +521,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             _mirrorKeyAliases.Clear();
             _triedRows.Clear();
             _failedFeeds.Clear();
+            _sweepUnhealthy.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
@@ -621,6 +627,23 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         }
     }
 
+    public void NoteSweepHealth(EnrichedStream? row, bool healthy)
+    {
+        if (row is null)
+            return;
+
+        lock (_healthyStreams)
+        {
+            if (healthy)
+                _sweepUnhealthy.Remove(row);
+            else
+                _sweepUnhealthy.Add(row);
+
+            _logger.LogInformation("[Cycle] sweep {Verdict}: {Row}",
+                healthy ? "healthy" : "not healthy", Describe(row));
+        }
+    }
+
     public void ClearTriedInCycle(EnrichedStream? row, string? feedUrl)
     {
         lock (_healthyStreams)
@@ -685,7 +708,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
     private bool AnySkippedRow()
     {
-        if (_triedRows.Count == 0 && _failedFeeds.Count == 0)
+        if (_triedRows.Count == 0 && _failedFeeds.Count == 0 && _sweepUnhealthy.Count == 0)
         {
             return false;
         }
@@ -725,6 +748,9 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
     private bool IsRowSkipped(EnrichedStream row)
     {
+        if (_sweepUnhealthy.Contains(row))
+            return true;
+
         if (_triedRows.TryGetValue(row, out var mark))
         {
             if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)
