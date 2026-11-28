@@ -7,7 +7,16 @@
 #   pwsh ./package-android.ps1 -ReleaseSign     # same keystore as CD / site APKs
 #   pwsh ./package-android.ps1 -Mode all        # store/emulator fat APK
 #   pwsh ./package-android.ps1 -Api preview     # bake Api:HeadlessBaseUrl-Preview
+#   pwsh ./package-android.ps1 -Packages local  # nupkgs in ../Strategies/artifacts/nuget only
+#   pwsh ./package-android.ps1 -Packages both   # local feed, then GitHub Packages
+#   pwsh ./package-android.ps1 -PackFromSource  # pack Strategies + resolver Client, then restore
 #   pwsh ./package-android.ps1 -KeepPatchedAppSettings
+#
+# GitHub Packages auth is the existing repo-root .env key
+# VARDYPARTY_CLIENT_PACKAGES_TOKEN. The script sets non-interactive Git/NuGet
+# flags itself and does not read GH_TOKEN or NUGET_GITHUB_TOKEN.
+# A local nupkg is used only when its version matches the PackageReference.
+# The script fails if dotnet reports any warning.
 #
 # -ReleaseSign password (do NOT paste into chat — agent shells will not see a
 # side-terminal $env: either). Prefer a one-line gitignored file:
@@ -48,11 +57,26 @@ param(
 
     # Sign with certs/vardyparty.keystore (same as CD). Needs the password via
     # certs/android-signing.pass or ANDROID_KEYSTORE_PASSWORD in this process.
-    [switch]$ReleaseSign
+    [switch]$ReleaseSign,
+
+    # github: .env token. local: sibling Strategies artifacts only.
+    # both: local feed plus GitHub Packages. NuGet picks the highest version
+    # that matches each PackageReference.
+    [ValidateSet('github', 'local', 'both')]
+    [string]$Packages = 'github',
+
+    # Pack Abstractions, V1, V2, and LocalService.Client from the sibling
+    # Strategies and M3U8-resolver checkouts into ../Strategies/artifacts/nuget
+    # before restore. Implies the local feed. With -Packages github, both feeds
+    # are used.
+    [switch]$PackFromSource
 )
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+. (Join-Path $PSScriptRoot 'scripts/Set-VardyPartyNuGetFeed.ps1')
+$nugetConfig = Initialize-VardyPartyPackageFeed -RepoRoot $PSScriptRoot -Packages $Packages -PackFromSource:$PackFromSource
+try {
 
 # Fail fast when dotnet resolves to an older SDK (a global.json pin, for example).
 $sdkVersion = (& dotnet --version)
@@ -86,7 +110,23 @@ if (Test-Path 'VardyParty.Core') {
 
 function Invoke-Dotnet {
     param([string[]]$Arguments)
-    & dotnet @Arguments
+    $lines = New-Object System.Collections.Generic.List[string]
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & dotnet @Arguments 2>&1 | ForEach-Object {
+            $line = "$_"
+            $lines.Add($line)
+            Write-Host $line
+        }
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    $warnings = @($lines | Where-Object { $_ -match ': warning ' })
+    if ($warnings.Count -gt 0) {
+        throw "dotnet reported $($warnings.Count) warning(s). A package build must be warning-free."
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }
@@ -98,8 +138,8 @@ function Invoke-Dotnet {
 # Presentation — the two roots of the domain graph — before AND after the MAUI
 # restore puts the assets back; the Release build then runs --no-restore.
 function Restore-DomainGraph {
-    Invoke-Dotnet @('restore', './VardyParty.Hosting/VardyParty.Hosting.csproj', '--ignore-failed-sources')
-    Invoke-Dotnet @('restore', './VardyParty.Presentation/VardyParty.Presentation.csproj', '--ignore-failed-sources')
+    Invoke-Dotnet @('restore', './VardyParty.Hosting/VardyParty.Hosting.csproj', '--configfile', $nugetConfig)
+    Invoke-Dotnet @('restore', './VardyParty.Presentation/VardyParty.Presentation.csproj', '--configfile', $nugetConfig)
 }
 
 $modeProps = @()
@@ -112,7 +152,7 @@ else {
 }
 
 Restore-DomainGraph
-Invoke-Dotnet (@('restore', './VardyParty/VardyParty.csproj', '--ignore-failed-sources', '-p:TargetFrameworks=net11.0-android') + $modeProps)
+Invoke-Dotnet (@('restore', './VardyParty/VardyParty.csproj', '--configfile', $nugetConfig, '-p:TargetFrameworks=net11.0-android') + $modeProps)
 Restore-DomainGraph
 
 # Patch source appsettings BEFORE the Android build so MauiAsset staging cannot
@@ -152,7 +192,8 @@ $buildArgs = @(
 ) + $modeProps + @(
     '-p:RunGenerateBuildInfo=true',
     '-p:RunGenerateSplash=true',
-    '-p:PatchAppSettings=true'
+    '-p:PatchAppSettings=true',
+    "-p:RestoreConfigFile=$nugetConfig"
 )
 
 if ($ReleaseSign) {
@@ -220,6 +261,10 @@ finally {
     $ErrorActionPreference = $previousErrorActionPreference
 }
 if ($LASTEXITCODE -ne 0) { $buildFailed = $true }
+$warningLines = @($buildLog | Where-Object { $_ -match ': warning ' })
+if ($warningLines.Count -gt 0) {
+    throw "Android package build reported $($warningLines.Count) warning(s). A package build must be warning-free."
+}
 
 if ($KeepPatchedAppSettings) {
     Write-Host ''
@@ -261,3 +306,9 @@ if (-not (Test-Path $canonical)) {
 Write-Host ''
 Write-Host 'Install on the TV and the phone with:'
 Write-Host "  adb install -r $canonical"
+}
+finally {
+    if ($nugetConfig -and (Test-Path -LiteralPath $nugetConfig)) {
+        Remove-Item -LiteralPath $nugetConfig -Force
+    }
+}

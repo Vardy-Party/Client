@@ -13,7 +13,17 @@ CI/CD (`.github/workflows/cd.yml`) and local packaging (`package-android.ps1` /
 ```powershell
 pwsh ./package-android.ps1
 pwsh ./package-android.ps1 -Api preview
+pwsh ./package-android.ps1 -Packages local
+pwsh ./package-android.ps1 -PackFromSource
 ```
+
+Add `VARDYPARTY_CLIENT_PACKAGES_TOKEN` to the existing gitignored `.env` (a
+Vardy-Party `read:packages` token). Do not overwrite `.env`. The script loads
+that file, sets non-interactive Git/NuGet flags, and does not use `GH_TOKEN`.
+`-Packages local` restores only from `../Strategies/artifacts/nuget`.
+`-PackFromSource` packs Abstractions, V1, V2, and `VardyParty.LocalService.Client`
+into that folder first. A local nupkg is used only when its version matches the
+PackageReference. Any `dotnet` warning fails the script.
 
 That script patches secrets into `appsettings.json` for the build and produces
 `armeabi-v7a` (TV) + `arm64-v8a` (phones). See script help for `-Mode`. The rest

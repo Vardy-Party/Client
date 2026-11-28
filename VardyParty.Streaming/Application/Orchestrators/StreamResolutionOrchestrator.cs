@@ -1972,6 +1972,10 @@ public class StreamResolutionOrchestrator(
     {
         try
         {
+            logger.LogInformation(
+                "[StreamResolution] Local-service sweep started ({Pages} catalog page(s))",
+                catalogRows.Count);
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 if (PlaybackSessionEnded(playback()) || !GameStillOpen(game))
@@ -2022,6 +2026,9 @@ public class StreamResolutionOrchestrator(
                 {
                     // Nothing to ask, and no CDN back-off to wait out: stop scanning.
                     // Pages the CDN loop already owns stay out until that delay elapses.
+                    logger.LogInformation(
+                        "[StreamResolution] Sweep has no page to ask ({Waiting} left with the CDN recheck)",
+                        waiting.Count);
                     if (waiting.Count == 0 && LivePageRefreshPolicy.KeepScanning(workingCount()))
                         return;
 
@@ -2082,8 +2089,12 @@ public class StreamResolutionOrchestrator(
                             verdicts.Add(enriched);
                             if (enriched.Status != StreamResolutionStatus.Healthy || enriched.Stream == null)
                                 continue;
-                            if (!PoolAlreadyHas(playbackLock, enriched.Stream))
-                                onHealthy(enriched);
+                            if (PoolAlreadyHas(playbackLock, enriched.Stream))
+                                continue;
+                            logger.LogInformation(
+                                "[StreamResolution] Sweep found a new stream {Stream}",
+                                SweepRowLabel(enriched));
+                            onHealthy(enriched);
                         }
 
                         completed = true;
@@ -2098,8 +2109,8 @@ public class StreamResolutionOrchestrator(
 
                         logger.LogWarning(
                             ex,
-                            "[StreamResolution] Local-service sweep failed for {Url}; the sweep is continuing",
-                            page.Url);
+                            "[StreamResolution] Local-service sweep failed for {Page}; the sweep is continuing",
+                            SweepPageLabel(page));
                     }
                     finally
                     {
@@ -2108,13 +2119,65 @@ public class StreamResolutionOrchestrator(
                     }
 
                     if (completed && !cancellationToken.IsCancellationRequested)
+                    {
+                        logger.LogInformation(
+                            "[StreamResolution] Sweep {Page}: {Healthy} healthy, {Failed} failed, {Deferred} deferred",
+                            SweepPageLabel(page),
+                            verdicts.Count(v => v.Status == StreamResolutionStatus.Healthy),
+                            verdicts.Count(v => v.Status == StreamResolutionStatus.Failed),
+                            verdicts.Count(v => v.Status == StreamResolutionStatus.Deferred));
                         ApplySweepSwitching(playbackLock, verdicts);
+                    }
                 }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        finally
+        {
+            logger.LogInformation(
+                "[StreamResolution] Local-service sweep stopped ({Reason})",
+                SweepStopReason(playback, game, cancellationToken));
+        }
+    }
+
+    private string SweepStopReason(
+        Func<Task<PlaybackResult?>?> playback,
+        Game game,
+        CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return "cancelled";
+        if (PlaybackSessionEnded(playback()))
+            return "playback ended";
+        if (!GameStillOpen(game))
+            return "game no longer open";
+        return "nothing left to ask";
+    }
+
+    private static string SweepPageLabel(StreamModel page)
+    {
+        if (!string.IsNullOrWhiteSpace(page.Channel))
+            return page.Channel.Trim();
+        if (Uri.TryCreate(page.Url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+            return uri.Host;
+        return "page";
+    }
+
+    private static string SweepRowLabel(EnrichedStream row)
+    {
+        var stream = row.Stream;
+        if (stream == null)
+            return "row";
+        var chip = StreamHealthIdentity.GetStreamName(stream);
+        if (!string.IsNullOrWhiteSpace(chip))
+            return chip;
+        if (!string.IsNullOrWhiteSpace(stream.Channel))
+            return stream.Channel.Trim();
+        if (Uri.TryCreate(stream.Url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+            return uri.Host;
+        return "row";
     }
 
     private bool PoolAlreadyHas(object playbackLock, StreamModel probed)
@@ -2147,11 +2210,12 @@ public class StreamResolutionOrchestrator(
             foreach (var row in update.Skip)
                 streamSwitchingService.NoteSweepHealth(row, false);
 
-            if (update.Skip.Count > 0)
+            if (update.Skip.Count > 0 || update.Restore.Count > 0)
             {
                 logger.LogInformation(
-                    "[StreamResolution] Sweep: {Count} previously playable stream(s) are not healthy; switching will pass over them",
-                    update.Skip.Count);
+                    "[StreamResolution] Sweep switching: pass over [{Skip}], back in the order [{Restore}]",
+                    string.Join(", ", update.Skip.Select(SweepRowLabel)),
+                    string.Join(", ", update.Restore.Select(SweepRowLabel)));
             }
         }
     }
