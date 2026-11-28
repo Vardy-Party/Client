@@ -1974,7 +1974,7 @@ public class StreamResolutionOrchestrator(
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                if (PlaybackSessionEnded(playback()))
+                if (PlaybackSessionEnded(playback()) || !GameStillOpen(game))
                     return;
 
                 var untilKickoff = LivePageRefreshPolicy.UntilKickoff(game, UtcNow());
@@ -2007,12 +2007,13 @@ public class StreamResolutionOrchestrator(
 
                     if (!await WaitSweepDelayAsync(
                             delay, workingCount, playback, cancellationToken,
-                            abandonWhenScanning: !LivePageRefreshPolicy.KeepScanning(working))
+                            abandonWhenScanning: !LivePageRefreshPolicy.KeepScanning(working),
+                            sessionOpen: () => GameStillOpen(game))
                         .ConfigureAwait(false))
                         return;
                 }
 
-                if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested)
+                if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested || !GameStillOpen(game))
                     return;
 
                 var waiting = Snapshot(cdnWaiting);
@@ -2029,7 +2030,8 @@ public class StreamResolutionOrchestrator(
                         : LivePageRefreshPolicy.RestAfterBackup;
                     if (!await WaitSweepDelayAsync(
                             pause, workingCount, playback, cancellationToken,
-                            abandonWhenScanning: pause == LivePageRefreshPolicy.RestAfterBackup)
+                            abandonWhenScanning: pause == LivePageRefreshPolicy.RestAfterBackup,
+                            sessionOpen: () => GameStillOpen(game))
                         .ConfigureAwait(false))
                         return;
                     continue;
@@ -2042,7 +2044,7 @@ public class StreamResolutionOrchestrator(
 
                 foreach (var page in pages)
                 {
-                    if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested)
+                    if (PlaybackSessionEnded(playback()) || cancellationToken.IsCancellationRequested || !GameStillOpen(game))
                         return;
 
                     using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -2161,10 +2163,10 @@ public class StreamResolutionOrchestrator(
     }
 
     /// <summary>
-    /// Waits <paramref name="delay"/>, but stops early when playback ends.
-    /// A five-minute rest (<paramref name="abandonWhenScanning"/>) also stops
-    /// when the playable count drops below two. The scan floor does not: that
-    /// wait is how scanning stays off the CDN back-off. Returns false when this
+    /// Waits <paramref name="delay"/>, but stops early when playback ends or the
+    /// game is no longer open. A five-minute rest (<paramref name="abandonWhenScanning"/>)
+    /// also stops when the playable count drops below two. The scan floor does not:
+    /// that wait is how scanning stays off the CDN back-off. Returns false when this
     /// sweep should end.
     /// </summary>
     private async Task<bool> WaitSweepDelayAsync(
@@ -2172,12 +2174,13 @@ public class StreamResolutionOrchestrator(
         Func<int> workingCount,
         Func<Task<PlaybackResult?>?> playback,
         CancellationToken cancellationToken,
-        bool abandonWhenScanning)
+        bool abandonWhenScanning,
+        Func<bool> sessionOpen)
     {
         var remaining = delay;
         while (remaining > TimeSpan.Zero)
         {
-            if (cancellationToken.IsCancellationRequested || PlaybackSessionEnded(playback()))
+            if (cancellationToken.IsCancellationRequested || PlaybackSessionEnded(playback()) || !sessionOpen())
                 return false;
 
             if (abandonWhenScanning && LivePageRefreshPolicy.KeepScanning(workingCount()))
@@ -2217,8 +2220,16 @@ public class StreamResolutionOrchestrator(
             remaining -= slice;
         }
 
-        return !PlaybackSessionEnded(playback());
+        return !PlaybackSessionEnded(playback()) && sessionOpen();
     }
+
+    /// <summary>
+    /// Same window as the CDN recheck: a finished game, or one past the live
+    /// window, is no longer in play, so the extra sweep stops and StartAsync
+    /// can return. A game with no kick-off stays open until playback ends.
+    /// </summary>
+    private bool GameStillOpen(Game game) =>
+        CdnReachabilityPolicy.ShouldKeepRechecking(game, UtcNow());
 
     /// <summary>
     /// The playback chain has finished, so the extra sweep stops and the outcome can
