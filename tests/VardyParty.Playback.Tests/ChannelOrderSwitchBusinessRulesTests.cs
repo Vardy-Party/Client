@@ -9,8 +9,10 @@ namespace VardyParty.Playback.Tests;
 
 /// <summary>
 /// Next, Previous, auto-advance and GetUpcoming walk channel numbers in order (with
-/// wrap), skipping only rows tried or failed this cycle (docs/PROBE_SCHEDULING_RULES.md
-/// rule 11; docs/STREAM_PLAYBACK_RULES.md). Tiers do not change switch order: they are
+/// wrap), skipping rows tried or failed this cycle (docs/PROBE_SCHEDULING_RULES.md
+/// rule 11; docs/STREAM_PLAYBACK_RULES.md). A later local-service sweep can skip a
+/// pool row until a sweep finds it healthy again, and that skip does not remove the
+/// row or stop the picture that is playing. Tiers do not change switch order: they are
 /// for LocalService slot scheduling only. The prewarmer follows the same order
 /// (<see cref="StreamSwitchingService.GetUpcoming"/>).
 /// </summary>

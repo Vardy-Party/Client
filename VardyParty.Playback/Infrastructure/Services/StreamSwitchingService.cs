@@ -13,8 +13,10 @@ namespace VardyParty.Playback;
 /// (Next/Prev/wraparound/chips) or recommendations change, and only a drop shifts the
 /// later numbers down to close the gap. Merged duplicates never take a number; a
 /// promoted fallback takes over its entry's number in place. Nothing re-sorts the list.
-/// Next, Previous and auto-advance walk this order (with wrap), skipping only rows
-/// tried or failed this cycle (docs/STREAM_PLAYBACK_RULES.md). The prewarmer warms
+/// Next, Previous and auto-advance walk this order (with wrap), skipping rows
+/// tried or failed this cycle (docs/STREAM_PLAYBACK_RULES.md). A later local-service
+/// sweep can skip a pool row until a sweep finds it healthy again, and that skip
+/// does not remove the row or stop the picture that is playing. The prewarmer warms
 /// the next rows in the same order. Tiers are for LocalService scheduling only
 /// (docs/PROBE_SCHEDULING_RULES.md rule 1), not for which channel Next opens.
 /// </summary>
@@ -48,6 +50,10 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
     // change a number. With no active marks the original index arithmetic is unchanged.
     private readonly Dictionary<EnrichedStream, (DateTimeOffset At, string Reason)> _triedRows = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, (DateTimeOffset At, string Reason)> _failedFeeds = new(StringComparer.OrdinalIgnoreCase);
+
+    // A later finding sweep said this pool row is no longer healthy. Unlike the
+    // cycle TTL, this lasts until a sweep finds the row healthy again.
+    private readonly HashSet<EnrichedStream> _sweepUnhealthy = new(ReferenceEqualityComparer.Instance);
     private Func<DateTimeOffset> _clock = static () => DateTimeOffset.UtcNow;
 
     /// <summary>Test seam: the clock the tried-this-cycle TTL reads (a method so property-filling fixtures leave it alone).</summary>
@@ -99,6 +105,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         _mirrorKeyAliases.Clear();
         _triedRows.Clear();
         _failedFeeds.Clear();
+        _sweepUnhealthy.Clear();
         _currentStreamIndex = -1;
         _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
         _currentIndexSubject.OnNext(-1);
@@ -516,6 +523,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
             _mirrorKeyAliases.Clear();
             _triedRows.Clear();
             _failedFeeds.Clear();
+            _sweepUnhealthy.Clear();
             _currentStreamIndex = -1;
             _healthyStreamsSubject.OnNext(new List<EnrichedStream>().AsReadOnly());
             _currentIndexSubject.OnNext(-1);
@@ -621,6 +629,23 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         }
     }
 
+    public void NoteSweepHealth(EnrichedStream? row, bool healthy)
+    {
+        if (row is null)
+            return;
+
+        lock (_healthyStreams)
+        {
+            if (healthy)
+                _sweepUnhealthy.Remove(row);
+            else
+                _sweepUnhealthy.Add(row);
+
+            _logger.LogInformation("[Cycle] sweep {Verdict}: {Row}",
+                healthy ? "healthy" : "not healthy", Describe(row));
+        }
+    }
+
     public void ClearTriedInCycle(EnrichedStream? row, string? feedUrl)
     {
         lock (_healthyStreams)
@@ -647,6 +672,21 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
         lock (_healthyStreams)
         {
             return row is not null && IsRowSkipped(row);
+        }
+    }
+
+    public int CountSwitchable()
+    {
+        lock (_healthyStreams)
+        {
+            var count = 0;
+            foreach (var row in _healthyStreams)
+            {
+                if (!IsRowSkipped(row))
+                    count++;
+            }
+
+            return count;
         }
     }
 
@@ -685,7 +725,7 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
     private bool AnySkippedRow()
     {
-        if (_triedRows.Count == 0 && _failedFeeds.Count == 0)
+        if (_triedRows.Count == 0 && _failedFeeds.Count == 0 && _sweepUnhealthy.Count == 0)
         {
             return false;
         }
@@ -725,6 +765,9 @@ public class StreamSwitchingService(ILogger<StreamSwitchingService>? logger = nu
 
     private bool IsRowSkipped(EnrichedStream row)
     {
+        if (_sweepUnhealthy.Contains(row))
+            return true;
+
         if (_triedRows.TryGetValue(row, out var mark))
         {
             if (_clock() - mark.At < PlaybackPolicy.FailedInCycleTtl)

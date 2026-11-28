@@ -154,7 +154,11 @@ data (upgrade in place; do not uninstall first). Restore secrets and the
 splash SVG after the build. Preferred commands:
 
 - **Android / Android TV:** `pwsh ./package-android.ps1 -Api production`
-  (or `-Api preview` / `-Api local` when asked). Then
+  (or `-Api preview` / `-Api local` when asked). The script reads
+  `VARDYPARTY_CLIENT_PACKAGES_TOKEN` from the existing gitignored `.env` and
+  sets non-interactive Git/NuGet flags itself. Do not export `GH_TOKEN` for
+  the feed. `-Packages local`, `-Packages both`, and `-PackFromSource` use
+  `../Strategies/artifacts/nuget`. Then
   `adb install -r` to the TV (`192.168.1.108:5555` unless told otherwise).
   Launch `com.vardyparty/.MainActivity` or `.TvLeanbackAlias`. The alias ships
   enabled, so a fresh TV install already has a Leanback home tile; phones

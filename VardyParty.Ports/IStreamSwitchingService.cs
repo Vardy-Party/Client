@@ -104,6 +104,13 @@ public interface IStreamSwitchingService
     /// <summary>Marks <paramref name="row"/> as tried-and-failed this cycle; when <paramref name="feedUrl"/> is set its feed (m3u8 identity) is marked failed too.</summary>
     void MarkTriedInCycle(EnrichedStream? row, string? feedUrl, string reason) { }
 
+    /// <summary>
+    /// A later local-service sweep's verdict for a pool row. An unhealthy row stays
+    /// in the pool, so the picture already on screen keeps playing, but Next,
+    /// Previous and auto-advance pass over it until a sweep finds it healthy again.
+    /// </summary>
+    void NoteSweepHealth(EnrichedStream? row, bool healthy) { }
+
     /// <summary>Clears the tried mark of <paramref name="row"/> and the failed mark of <paramref name="feedUrl"/>'s feed (it showed video).</summary>
     void ClearTriedInCycle(EnrichedStream? row, string? feedUrl) { }
 
@@ -117,8 +124,24 @@ public interface IStreamSwitchingService
     /// <summary>Rows the player confirmed video on (<see cref="ConfirmPlaying"/>); null when not tracked.</summary>
     IObservable<EnrichedStream?>? PlayingConfirmed => null;
 
-    /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, or its feed failed).</summary>
+    /// <summary>True when <paramref name="row"/> is skipped this cycle (marked, a sweep found it not healthy, or its feed failed).</summary>
     bool IsSkippedInCycle(EnrichedStream? row) => false;
+
+    /// <summary>
+    /// Pool rows Next, Previous, or auto-advance can still open. A row a later
+    /// sweep marked not healthy stays in the pool but is not counted.
+    /// </summary>
+    int CountSwitchable()
+    {
+        var count = 0;
+        foreach (var row in GetHealthyStreams())
+        {
+            if (!IsSkippedInCycle(row))
+                count++;
+        }
+
+        return count;
+    }
 
     /// <summary>The reason <paramref name="feedUrl"/>'s feed failed this cycle, or null.</summary>
     string? FailedFeedReason(string? feedUrl) => null;
